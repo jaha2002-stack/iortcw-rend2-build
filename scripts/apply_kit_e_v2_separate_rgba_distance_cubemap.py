@@ -103,12 +103,28 @@ def ensure_cvars(init_path, local_path):
 
 def patch_trglobals(local_path):
     s = read(local_path)
+
     if "dlightDistanceCubemaps" not in s:
-        old = "image_t *shadowCubemaps[MAX_DLIGHTS];"
-        new = old + " image_t *dlightDistanceCubemaps[MAX_DLIGHTS]; image_t *dlightDistanceDepthImage;"
-        if old not in s:
+        # The upstream tr_local.h is often formatted as one very long line.
+        # Do not require an exact "image_t *shadowCubemaps[MAX_DLIGHTS];" string.
+        patterns = [
+            r'(image_t\s*\*\s*shadowCubemaps\s*\[\s*MAX_DLIGHTS\s*\]\s*;)',
+            r'(image_t\s*\*\s*shadowCubemaps\s*\[[^\]]+\]\s*;)'
+        ]
+
+        for pat in patterns:
+            s, n = re.subn(
+                pat,
+                r'\1 image_t *dlightDistanceCubemaps[MAX_DLIGHTS]; image_t *dlightDistanceDepthImage;',
+                s,
+                count=1
+            )
+            if n:
+                break
+
+        if "dlightDistanceCubemaps" not in s:
             raise SystemExit(f"Could not find shadowCubemaps field in {local_path}")
-        s = s.replace(old, new, 1)
+
     save(local_path, s)
     print(f"patched trGlobals fields: {local_path}")
 
@@ -116,7 +132,10 @@ def patch_image_alloc(image_path):
     s = read(image_path)
 
     if "dlightdistancecubemap" not in s:
-        pattern = r'(tr\.shadowCubemaps\[x\]\s*=\s*R_CreateImage\s*\(\s*va\s*\(\s*"\*shadowcubemap%i"\s*,\s*x\s*\)\s*,\s*NULL\s*,\s*PSHADOW_MAP_SIZE\s*,\s*PSHADOW_MAP_SIZE\s*,\s*IMGTYPE_COLORALPHA\s*,\s*IMGFLAG_CLAMPTOEDGE\s*\|\s*IMGFLAG_CUBEMAP\s*,\s*0\s*\)\s*;)'
+        # The source is usually minified into long lines, so patch immediately after
+        # the existing tr.shadowCubemaps[x] = R_CreateImage(...); allocation without
+        # depending on exact whitespace/argument formatting.
+        pattern = r'(tr\.shadowCubemaps\s*\[\s*x\s*\]\s*=\s*R_CreateImage\s*\([^;]+?\)\s*;)'
         replacement = (
             r'\1\n'
             '            tr.dlightDistanceCubemaps[x] = R_CreateImage(va("*dlightdistancecubemap%i", x), NULL,\n'
@@ -127,6 +146,7 @@ def patch_image_alloc(image_path):
             '                GL_RGBA8);'
         )
         s, n = re.subn(pattern, replacement, s, count=1)
+
         if n == 0:
             raise SystemExit(f"Could not patch dlight distance cubemap allocation in {image_path}")
 
@@ -139,11 +159,27 @@ def patch_image_alloc(image_path):
             '        IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE,\n'
             '        GL_DEPTH_COMPONENT24);\n'
         )
-        marker = "// with overbright bits active"
-        if marker in s:
-            s = s.replace(marker, insert + "\n" + marker, 1)
-        else:
-            s = s.replace("tr.renderDepthImage = R_CreateImage", insert + "\n tr.renderDepthImage = R_CreateImage", 1)
+
+        markers = [
+            "// with overbright bits active",
+            "tr.renderDepthImage = R_CreateImage",
+            "tr.renderCubeImage = R_CreateImage",
+        ]
+
+        inserted = False
+        for marker in markers:
+            if marker in s:
+                s = s.replace(marker, insert + "\n" + marker, 1)
+                inserted = True
+                break
+
+        if not inserted:
+            # Last-resort placement near the new cubemap allocation.
+            loc = s.find("tr.dlightDistanceCubemaps[x]")
+            if loc < 0:
+                raise SystemExit(f"Could not place dlightDistanceDepth allocation in {image_path}")
+            semi = s.find(";", loc)
+            s = s[:semi + 1] + insert + s[semi + 1:]
 
     save(image_path, s)
     print(f"patched image allocation: {image_path}")
