@@ -1,0 +1,1152 @@
+name: Build ioRTCW Rend2 Dynamic Lighting Release Windows x64
+
+"on":
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "rend2-dynamic-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: "rend2-dynamic-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP + MP cumulative visual release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      BASE_PATCH_SHA256: "fc380b2019e163719118f75c3d7612b4752c1f7f63901532dc69524a6006f780"
+      BASE_PATCH_GZIP_SHA256: "98897da05741b662a691f9b751f9a7fede8d57be781fa64ed09c0dcd6512c4e3"
+      PATCHER_SHA256: "4fcd5173f583642454a849df3f6fa9254996f707343357597bbf7103ca28a48e"
+      PATCHER_GZIP_SHA256: "0c12352aabba786c9322112f587a6342135eb01fbe308dbb44a0d6817c626491"
+      PATCHER_VALIDATOR_SHA256: "e809b49da4fc81e93c3978267f77e8b28d37e984dd35d0e47254055cd504fbf9"
+      PATCHER_VALIDATOR_GZIP_SHA256: "429a4398cf9e9a37ad0eaf4516a839e2ef11f0c6da322966763a3da535a59005"
+      C_VALIDATOR_SHA256: "fe16814bc1b8f554cca6f8858703bcdd31e2516d8c90f421a7c2300b9cd33372"
+      C_VALIDATOR_GZIP_SHA256: "ace0eceb8d8f0c58279127989dd0a3683544c3cfe1625a2413b288a8d03e6bff"
+      GLSL_VALIDATOR_SHA256: "f24b230b5d963e6614ccfb5d6c8c46fda9d158119914faf0687bbf873a2027fe"
+      GLSL_VALIDATOR_GZIP_SHA256: "a6399b9aa7bcab25d3aa9d0ad227799ba20d562167fc3d8c0052cd3a594b8ea4"
+      SOURCE_VALIDATOR_SHA256: "2e191b72da7226fef05c583320459bd042ac783bb5ac3c19420d6e2e37472d6d"
+      SOURCE_VALIDATOR_GZIP_SHA256: "edbbb915c1dd2a9dcee4491c37a8ff8370d701c54b3c153a672996882857fa90"
+      SHADOW_BASE_BLOB: "2b57e3ba4b128c8009c65d0875d13c2160200a67"
+      SSAO_BASE_BLOB: "f3054404fb996a0164371264c4d0ce4b651bf6b2"
+      SHADOW_PATCHED_BLOB: "90a05f8d38fef6ff103d7efc43147a4836874416"
+      SSAO_PATCHED_BLOB: "de86e87b3e2bfc073863e6fe55d2c8984d2e003d"
+      RELEASE_BASENAME: "iortcw-rend2-dynamic-lighting-upgrade-windows-x64"
+
+    steps:
+      - name: Install cross-build and headless GLSL toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 \
+            build-essential \
+            ca-certificates \
+            g++-mingw-w64-x86-64 \
+            gcc-mingw-w64-x86-64 \
+            gh \
+            git \
+            libegl1 \
+            libegl-mesa0 \
+            libgl1 \
+            libgl1-mesa-dri \
+            make \
+            mingw-w64 \
+            python3 \
+            unzip \
+            zip
+          x86_64-w64-mingw32-gcc --version
+          x86_64-w64-mingw32-g++ --version
+          gcc --version
+          git --version
+          gh --version
+          make --version
+
+      - name: Checkout exact ioRTCW upstream revision
+        run: |
+          set -euo pipefail
+          git init source
+          git -C source remote add origin "$UPSTREAM_REPO"
+          git -C source fetch --depth 1 origin "$UPSTREAM_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA"
+          test -z "$(git -C source status --short)"
+
+      - name: Verify every touched upstream blob
+        run: |
+          set -euo pipefail
+          cat > source-blobs.txt <<'BLOBS'
+          41be0494fcc907913238d3d84c5e92232fe9402a MP/code/rend2/glsl/dlight_fp.glsl
+          c326bd7894b754467683323c4af546a102122e1f MP/code/rend2/glsl/dlight_vp.glsl
+          28b59eb7d3b63574be541a815f83c262280703ec MP/code/rend2/glsl/lightall_fp.glsl
+          fb867a8693841b5723d510394a95d115f160c03e MP/code/rend2/glsl/lightall_vp.glsl
+          150f3d1229155bce5edd17abf452bff4bfe18175 MP/code/rend2/glsl/shadowfill_fp.glsl
+          2b57e3ba4b128c8009c65d0875d13c2160200a67 MP/code/rend2/glsl/shadowmask_fp.glsl
+          f3054404fb996a0164371264c4d0ce4b651bf6b2 MP/code/rend2/glsl/ssao_fp.glsl
+          e52b7332ed29bebfacb8c3b36564c616184b1dbd MP/code/rend2/tr_backend.c
+          135b6ce6602354dede7f70d634a956b543ceacc3 MP/code/rend2/tr_glsl.c
+          2e16bd37854edd2f6bb2ff073b11132ce2169cf7 MP/code/rend2/tr_image.c
+          9a3de7247cd75a2026b978ef50eef191143b4d0f MP/code/rend2/tr_init.c
+          992be71a83c0e93619409487725a808c46837dda MP/code/rend2/tr_local.h
+          4936cb3c33dfefb0a8275cebbe179153495412d2 MP/code/rend2/tr_main.c
+          d0610ad51a49b274bd6e94049e32fdd234d601fa MP/code/rend2/tr_scene.c
+          d377693a56bb99fd12c788eec044ed946e30f15d MP/code/rend2/tr_shade.c
+          41be0494fcc907913238d3d84c5e92232fe9402a SP/code/rend2/glsl/dlight_fp.glsl
+          c326bd7894b754467683323c4af546a102122e1f SP/code/rend2/glsl/dlight_vp.glsl
+          28b59eb7d3b63574be541a815f83c262280703ec SP/code/rend2/glsl/lightall_fp.glsl
+          fb867a8693841b5723d510394a95d115f160c03e SP/code/rend2/glsl/lightall_vp.glsl
+          150f3d1229155bce5edd17abf452bff4bfe18175 SP/code/rend2/glsl/shadowfill_fp.glsl
+          2b57e3ba4b128c8009c65d0875d13c2160200a67 SP/code/rend2/glsl/shadowmask_fp.glsl
+          f3054404fb996a0164371264c4d0ce4b651bf6b2 SP/code/rend2/glsl/ssao_fp.glsl
+          8500f7f1f8498b703cd2bb772aee1665f0827d6a SP/code/rend2/tr_backend.c
+          135b6ce6602354dede7f70d634a956b543ceacc3 SP/code/rend2/tr_glsl.c
+          d5dd01fec5b996596ca7cedd41bf3ffb3f2f8b85 SP/code/rend2/tr_image.c
+          23332c3f643cae4ec125908302911a641cad8510 SP/code/rend2/tr_init.c
+          c5b531e7589f9ddb8cf260ab0091e313d10fdba3 SP/code/rend2/tr_local.h
+          2568742fee3d4d743e48267df207b07efe5b5f50 SP/code/rend2/tr_main.c
+          3e49c1c5bba59e67655842219de5daccf9651700 SP/code/rend2/tr_scene.c
+          2080a15087d1cd0f6e9bd6949945dcd1da2d86b8 SP/code/rend2/tr_shade.c
+          BLOBS
+          test "$(wc -l < source-blobs.txt)" -eq 30
+          while read -r expected path; do
+            actual="$(git -C source rev-parse "HEAD:${path}")"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "Unexpected upstream blob for ${path}: ${actual}, expected ${expected}" >&2
+              exit 1
+            fi
+          done < source-blobs.txt
+
+      - name: Materialize and verify all embedded payloads
+        run: |
+          set -euo pipefail
+          cat > rend2-visual-upgrade.patch.gz.b64 <<'BASE_PATCH_B64'
+          H4sIAAAAAAACA+0ba3PbNvKz9Ssw05meZIkUn3rEl/bc2E4zFzceK2lu2mk9lAhJOFOkSlCWlbT/
+          /XYBkAL18Hv65ahkLJFYLBaLfWGBDdl4TAxjwjIStM8v2qMkpO2UxqHTnkQ8avNpECbLWcCvr8Zz
+          E1+R4cPgaiwO6S1xhn6XukPT7FuB5Y97xLasjufVDMN46Ii1ZrP54FH/9S9iOF6r45ImfPkugRc3
+          Qbpi8YTc0JFLCD5e/czo8oSlRzXSbhOekGxKySy4ZbPFjNA0TVLCOLFNi7SJ87vj1cg3IR2zmJKT
+          04uPP16dH//n6vTy8sMlsUxLfvx+x/JgZt2u7/atjuPXSM0A5O/i+SJ7Rd5lZMEpJxm9zRYpJaMk
+          SUNOAi6GToM4TGYkXsyGNCWc0tAUnT8sMtH7Um9/RX61WnajBT2DDOkc0mxJaYy0EACE7774mKZJ
+          WDyKFpzdUInweJFNE8BwzkbTgEbkIoFHyq+ZaH2TzFcpm0xhRPwZ0XFGHMt2yCujIQAGySId0Vdk
+          mmXzV+02z4LRdXJD03GULM1RMmv/saA8Y0nM277t9X3Pa4+C2GDGhMY0DTJqBIacqyHnYrCYsxBf
+          z9ktjQxcUZrWjJoBKGF2ErgO7Ip5hgvokDkBWr7WDIJL95mSGLhFWArYYdwg4mQMqzfndBEmqntM
+          OTdVh/ME8NSDKPq+Qa7jZBmTDID4CISKxlkQKR5zsmRRROqS7ihaNcgySa8FFo2WlLwWP+r4nhDH
+          NW3P6vSdjut0u/DVt1piVPr7nJH6WxqNkzj8B5cogjhryH7EMTsdYJhne9jHcXy7cYT9nN/5H2lW
+          dxpFZ2MwmsYUWJaWkbRBL0CwYjJOg1GGDON1MkvCOrEd1/M73V7fbBGbGl3SJI7fMckhCZOsPm+l
+          DSL+HSEaheTBHY8ISPlfsF7N9mGtCU2Xpz+dOFc/vxt8On5/9eni7eXxySk2iMaPIOoJCBiDdSJj
+          FmUwizTJQC5CEhA+D1JOQSQZ50lMrmkag4QuWTbFxlEKIm4AzIgKXHKFlTSBTkcLahIYAYRmnibh
+          YgQ4bxhnw2hFYkC5ItJaEBpOQA9RT2Yga6h+El+QATkxGaXBEkadski0kVEwAwkAjtyAUhLyb0rn
+          4j29ZSDpYFXSK4n4TMxH4PpjEUQsW5GI3tCIt8hwIbSfwHINAS1fzWY0S9lIzVFSw5NxBrSO0oRz
+          YwykCVSoXVEwn+NIo4CP4D0HkQ9SJIKlZAhmBMTVROB2jUituXhzVpdSyoPZPKKpczKQk88t5ryl
+          izHP8kfZP4SpNWrka40cyBezRZSBfKgnoAJm8RqkFu1jPv/zYD5gX+gRKu83bEwsgAcRHqewPMpe
+          4JcZIlOSOU3N+IaFLBB24+3Fp7d0xtuT+WIC31ejqW2b02wWARJBYjIec5rl6jZJKQhNCqsd16XA
+          o1E/ofNs+pHemrcr4Fx6dfbDYjwQtB6CTfTBYorOlun4jQbK+4HEaq5I87UawbzF90B+vWj7DhyB
+          3SDF82s0tAgF/5Ex8EJywDmpa/xFb1MHljZzVPBLjG/Ypg9mASlqAGWCmy3Jc1DlA2EQmo9Diche
+          GKWkEv++MJW7USI/Sc7QQ2Sx48O7b8Aus3EuUtIHh/VPg9OrwY/HJx8+X529e//x9LJRyCZaZOU0
+          NkSioQkwixEOvuppQcm6GWwnNqMJLTfPggxsPvyFVvxdR8iWQAfzkl/4qiGUIBeOe5gk8B0qpltm
+          1/L9bqfbAg7YfXAKKLZrFgmUzdePQGmZru94rucChYC927fdXufZOB23b1t+B6ns2z0MfXSUhNy5
+          Wk7jSaMC+VbX71luzxFzsfqOAy6z++zJ+N2eB2yRSC3Hd3p9+/kssvtOr9dDDkFI4Nk9+5kYgbiO
+          68L8bUEoLGrX63aejxTErd9FloJ0ABt6vvfsqXddB2JhH1F2XBtkroSypOU2fqTIgCOkMh5aN7v4
+          Uc3CEjSVjkIcDcHBaxWjb/mgZq15nwjmmFgMIZ7A5PowBYH4qGhNFplodUAxtVZoB99muyQL5uDg
+          lxSjZog4smQZpKEMHCCeTEVMkmBcKUFeEbcDvvoBfiNnGAzaQ3fTzHvduxbS1oppCZ9gNTRcnsD1
+          GEzGi2FCDIBH4HsJTMYeTE/k1BY25+m8egFcOV3GC9K1D9cjKRNKsSERj6XoBXAoeRKYnofD2MKR
+          YznMTQzoLXIKrNTdgUhuONIgZAsu7Irjb1kOXxkOaSQK+7FlLXqPNhZPUCZJ6jPX8yWQqAWVqJ65
+          ovuQFAsqrKryOuQRPBadhC/CXFPfa/VJs+e1XAtTTXLtJzR7z3CTJsLPerEJA7mB53OF1EGZaKku
+          X84Amt388hP0gq3XgdqIS1Jn7LauA7TwfUtt7n6Bt5+Rqr9qpNYcJkmkZvEGU0zvRH6lXmz2PNU4
+          TzjI6lfgihopiKJ6RDkXe6pgyOsFHMTOXxqKDeWGZUPso5p/oVir0FrQJHebj9iDbpMlknUiS1Ys
+          i6IFhByDNuCLTolcfhdbxGKraeFWuDQgIAQk+a8vG+SrLfYPEazwXUzLQ4ebz0UMMgtut9jTyvOD
+          tqBJLDrmH6DTJotRdxFfYSIEDSSJoxW8FxGFjEXmQQphyZgEObFkOaWpTFbE9LaYQ546wNxAzg0+
+          S5JsyjM6Bz7JmK8PISqSjmSZII7ie1UsK7lJGGZKYKtUygiklIucQM6KIVILQlgACFGHeW7owuJq
+          IDI5J2tN0LZpLbIQqdl38Tgxb1GoDwT7hyzgFwmX23+vLoE+iEwSrvs6oYuyIUc2iJSREkKhOIAW
+          Nde2QGlBd23bb3kyT6xP9aC87jA0kC6DzJs5DKNIElPeE2q+OR68OT45baiEwpM1rCFFR6PGKZPj
+          6PRswrplWPcuWK8M65VgARqnsW1c1sqBfPu63rUfHJQV9wmKDDikqEFn1OWCOhQdHZv+hFpt3Lco
+          TQ1zyWrtHkIo8IEQc8wN6HZiAwaZJOG+Eyn5b78ld/DMEcur0YLGXj609tLlaIQ5IDliODE66OwB
+          ujRyz1LJYb8+iAvl0R7AB+cpjHCfwghXI819EiPcRzCiPNoDGOE+hRHeUxjhaaR5T2KE9whGlEdD
+          Mw3Bx4EKpb6WFP8OS4WZgOdaRsAgxnsRS7PX1Dj32JoDmD/8kRmMLYruMMCCBS/AAzXky3BhLxvc
+          e9kg+VAwYousO/zL30C/90D6UWUwBLvAM0k8X10lsUzqRAFfB1h8miyiEEIhjBlIxDAghNgqCDE8
+          E6rD4olCBdFaBG9oqMY0IByVsVZJ4WyxKUEC5Mak+Vgfle9NMBCbRFdnaTB5k0RJmodOglUSZxEN
+          hfddAuBBcs/xvwahDv7HruV7nmWaIe11aK97/8G/jmP/kb8OhWGc1/Ic0vRaXYzgFjEbJ+lMxuxE
+          i/3EaeqXcZCC8HyJxRYKn4AD7SULsyn+mIo9N3JOuzDgqAsDMmqFEBUDvvx8S55Hy/PKE8ZHv/Z/
+          UydU8Ksu2/fl9BHvHfl51XlPpj3vvD8lXvTfl9zen6Ve070733xn5rgYd0cOuGY0ykc66k7FT5/O
+          rwbH5xfvTwfExYbq2kR1beL/49qEIY8UBb8v8SYELMbOZds+3pzvO9Dcc5CJr3M67zm7RPezQzd7
+          aBsfnOHSJiHyXPoFg41s11dpybst34L9uNPqOo/KpT1wpGdk1R5yueUSnRRBV4V6MBgcfyAw/jSI
+          xpgsSaIFrq1JAG4eBSOZr0kiDCvAsxgZTESgkasbrYz8YsyQxeCOYGYwp/wyjLxHIvwV9ty6UYL2
+          TGCTCR/JKyNYBkWumYvLMlTlcYBMDljTJJ5IDQELlcndM0OyJWljuoTWIVB/jfNK5L2VOCldzhHX
+          eK4juvsKzcZFlWA2ZGA/PoyEtQXRf44gbbeUL7ngKb4QNnWlpOy4ZSyuv7NyZ77bhR9tgNsF+G6X
+          vgnvaPA7nPwmuKtTs9vpb3bxtBF2hwGbPXytx3ZksAnd0UnaFStsdujqHXZED5vwPY2cHfGEXDI9
+          H5nfzVGpVilN/FfNiP1W5FfPwCljCJ+CGN5COIAHMmQOcgieEFqWwlmELJigexStGKrnKNfCgQyS
+          l28sS2y4cxBbn+1uEEfHYlkCxPNLIO4miLEF4ukgXatrW+B+BK78oQTul+X6PvDObuzGHvDubuxl
+          8HWaWFnb7UTxWv+F0pc8xsZVNOytt6Pdk2jX+ekCEHPdu4FVst4W9CkbwfGmWj6h8Cy8VRbqFzxY
+          OgtXxWMDHMoaKMMbRzkIPsiE+kFuxAYZnZew3tmBB2P6sdwJN42YC1C4oK9MLcnDBvI9KRrIq/X7
+          1ma31b5uK72bRslj2KGRLVcc0xwRjSfoxhERHnngUgANPowDe1EA0ny0tg7yItlAXTwUw3N1s8+2
+          HE/4c7nE+Q0T7arWRngFcxQzwrgeZoTeMAL/Kk5gU4xXo1C5MnWGCxsGdQCT312V8TYYHbxnyiWu
+          kILTnILDlq5Ruj+I6iEengXXuJ1cQkTcBnGEQBsd5zxN5rmv5equqkgH7JhxPtl6t9MrT3atSiy+
+          +QW5mR9IIWvXmvLlPZsx5IaD+53DHFo7wWGBdly91QwGdg7OlMKeSpxf9XZjSel/6SjLgVxnN1SS
+          O/zcYINwxDADNM4wHWBQnWHTEWHkn3oMCi+azUaeZCzfDFV3kHQHwn7DK7RrTopsbLlXbre2QUEW
+          dRt1glmSu80UhPoSw4a9IsbaIImMnzyltfNjwAI/qqNcqKM1mFNQKUhoFgv9ndhRCFVqqYFLJybN
+          1zIWqsNIf/5J8rS8nBQEoXE+p11oCsCURqA3NzmsRomxRiK9qlQpZA4oR4xx5hBdKQaXATxPBJ4C
+          IcG8E4WAeYS3pM7EkeUiI1GQTqhCFsIigoKweAFhKOVYqcFZNE0WNIN4GOiG6BMpHFHEl00ZRKYh
+          hJ+IKIJVEi5bl7lQXOZCH6BuCeiTM4QOlOaOcvxZBMxKrQz9DFUX9kN5u1V71RKLq48gbfrBWvrx
+          RoN+JGu1ynrWKqhuyK1BTo1KuYstHS9da5ArrqlMY612wsYwcTU9n019Tcyuvg05L38dNeEyAaoo
+          wavvYuby+Bk3OsZ6o0Ng+7MU6VGYHU2XjFMypKNkhjkcvOdvFlThtYoAhECg3sFlDKdFZLzenEmP
+          pM8GN3Ni+7Z+2yphVl5deZf18bV6IbKzdb0zTLuXZ0jFLrB0PlzKmQ4eWDg1eLHCqcEjCqcGVeFU
+          lQGsMoBV4VRVOFUVTlWFU1XhVFU4VRVOVYVTVeFUVThVFU5VhVNV4VRVOFUVTlWFU1XhVFU4VRVO
+          VYVTVeFUVThVFU5VhVNV4VRVOFUVTlWFUw8tnBrcWzg1eIHCqcGDCqcGVeFUVThVXZuork1UhVNV
+          4VRVOFUVTlWFU1XhVFU4VRVOVYVTVeFUVThVFU5VhVNV4VRVOFUVTv39hVP/A9G8Ij5yagAA
+          BASE_PATCH_B64
+          base64 --decode rend2-visual-upgrade.patch.gz.b64 > rend2-visual-upgrade.patch.gz
+          echo "$BASE_PATCH_GZIP_SHA256  rend2-visual-upgrade.patch.gz" | sha256sum --check --strict
+          gzip --decompress --stdout rend2-visual-upgrade.patch.gz > rend2-visual-upgrade.patch
+          echo "$BASE_PATCH_SHA256  rend2-visual-upgrade.patch" | sha256sum --check --strict
+
+          cat > apply_rend2_dynamic_lighting_release.py.gz.b64 <<'PATCHER_B64'
+          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
+          AA==
+          PATCHER_B64
+          base64 --decode apply_rend2_dynamic_lighting_release.py.gz.b64 > apply_rend2_dynamic_lighting_release.py.gz
+          echo "$PATCHER_GZIP_SHA256  apply_rend2_dynamic_lighting_release.py.gz" | sha256sum --check --strict
+          gzip --decompress --stdout apply_rend2_dynamic_lighting_release.py.gz > apply_rend2_dynamic_lighting_release.py
+          echo "$PATCHER_SHA256  apply_rend2_dynamic_lighting_release.py" | sha256sum --check --strict
+
+          cat > validate_rend2_dynamic_patcher.py.gz.b64 <<'PATCHER_VALIDATOR_B64'
+          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
+          vK8bBUEpAAA=
+          PATCHER_VALIDATOR_B64
+          base64 --decode validate_rend2_dynamic_patcher.py.gz.b64 > validate_rend2_dynamic_patcher.py.gz
+          echo "$PATCHER_VALIDATOR_GZIP_SHA256  validate_rend2_dynamic_patcher.py.gz" | sha256sum --check --strict
+          gzip --decompress --stdout validate_rend2_dynamic_patcher.py.gz > validate_rend2_dynamic_patcher.py
+          echo "$PATCHER_VALIDATOR_SHA256  validate_rend2_dynamic_patcher.py" | sha256sum --check --strict
+
+          cat > validate_rend2_dynamic_c_syntax.py.gz.b64 <<'C_VALIDATOR_B64'
+          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
+          C_VALIDATOR_B64
+          base64 --decode validate_rend2_dynamic_c_syntax.py.gz.b64 > validate_rend2_dynamic_c_syntax.py.gz
+          echo "$C_VALIDATOR_GZIP_SHA256  validate_rend2_dynamic_c_syntax.py.gz" | sha256sum --check --strict
+          gzip --decompress --stdout validate_rend2_dynamic_c_syntax.py.gz > validate_rend2_dynamic_c_syntax.py
+          echo "$C_VALIDATOR_SHA256  validate_rend2_dynamic_c_syntax.py" | sha256sum --check --strict
+
+          cat > validate_rend2_dynamic_glsl.py.gz.b64 <<'GLSL_VALIDATOR_B64'
+          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
+          /wGn+AwE7kEAAA==
+          GLSL_VALIDATOR_B64
+          base64 --decode validate_rend2_dynamic_glsl.py.gz.b64 > validate_rend2_dynamic_glsl.py.gz
+          echo "$GLSL_VALIDATOR_GZIP_SHA256  validate_rend2_dynamic_glsl.py.gz" | sha256sum --check --strict
+          gzip --decompress --stdout validate_rend2_dynamic_glsl.py.gz > validate_rend2_dynamic_glsl.py
+          echo "$GLSL_VALIDATOR_SHA256  validate_rend2_dynamic_glsl.py" | sha256sum --check --strict
+
+          cat > validate_rend2_dynamic_sources_release.py.gz.b64 <<'SOURCE_VALIDATOR_B64'
+          H4sIAAAAAAACA71Ze2/iSBL/n0/RcaSJmQXnsbPSXeYSiQDJoA2PwyS7q5nIauw29K0fjLvNwOWy
+          n/2qum0DsWGy0u1lpEnorvpVdXW9ujg+Ok1Fcjrl0SmLlmSxlvM4+rFmGMYt5UHTDWLBPCLiNHEZ
+          4dGSJpxGUhA/ToicM+KmYRpQyZeMjFnkXZAlFykNSMICRgWzAKjmJ3FIHMdPZZowxyE8XMSJJDSK
+          YgmscSRqtWxNrIUmX1A5D/g0px3Bx1ptPBxOyJX6YAKlRZPZ8vP5E+E+CVhULNXJNTknLBCMGJZR
+          txIm4mDJzHrN7nW6NiCYhj0yGsToj4x6rd8a/9wdw6ox7g46F07nt0Gr32s79727T5Pe4M4Zd++7
+          LbvrPF4YtVrNYz6RbCVNOOIlETKpk+Y1/r6sEfhBxQFLqXqKZlCroCEcVm1aXDg+D0AdzYA/CeWg
+          rL0WkoXdFZemb4RcCB7NctMjxyV5RoAX0FkxMbBnpDETRj1HacUiN/aA8cpIpd/8G5ySJUmciCsD
+          VOSuBGZ9hoR9TXnCimM0SMSYh1LUBzdOI3kJVy7Jf8ggjhgcCn+p0+IfWnuPSgo7uUG0ZtSV6ANX
+          atdSSKYGr+fWyEmuyNmbzPCs+Y+SF1CJPIOo3AwApiQQLpSNla408nIRR1fZWQ6JYasFcyV4+rOi
+          fSGx66ZJAsZkgsR+lfgGxEAKYp61nJfCsBAaU+5V2/WV9dAt1CaiFjY8qKlG91gELj+j7hrvXzLw
+          gy0VExZSHoltS9VqGLGCe0qUioPMXxPm8xXclW884/bLKfgPO00wmA2tZMSl3te0L6cycXDRcjVB
+          ELvqtncp1Ko1z0mox5ISzSwQQY7CQzpjZTm4mpNMqfs76FUiytZzMuGyqIykVnMStE+JAhcLjDko
+          XMbA1eLYfDaXjr/YpcIjnaotGgSwa+HCNsPyIMNymwHFxd8g9IMKls3mrhTvgF7FXpl+eYC+UEox
+          oCNFNGQNAt5O00CiR5mFz5pG4mi+WzhQ7PuYaM+NemMPBV5eH1zuAFkvkiwSXK4VjXV+Vk1mK4v0
+          6eoeP4kDgJrylgcQOd8lu+FUYZ1ZZ2cfDoq2Y19GTGjJ1sVPB2klhNhMzjXy3wvc7ejPMjTGGmSb
+          k2e0+gtcU8KtNlRi545Jkxh6GXGeswt5MU7qJRQVjwADuU7lCxcRJCHvNf9HTBIV9MYxgHKIp37r
+          V6ejaqJjf2p1hr/YBKvLeb2SK4X7mkWQULGA7F6P+H0/W8bkzmmyw2UHsfy80cB+OgChGNrpFJLg
+          Qnwuq32A92HQux2O+7kURd9vjf4cw6g1bvXtDU9WD76rHyhWugLMmg1yYqROZ8eGC4C/u7fvnd5g
+          clKhXTXfiCY0FDnrY7f9YT9vce8P0PnsGHCPQV6x7Qm1jO2YFNmf0AC7lzWZUyi1ucDuaPKJZFCY
+          cDy2kPObIE0sMoG201uD03I3w1rE4GVNbVish+6cUM8ThBLB3DjyGuCFAAAlgkUyWJNZShMP3GyD
+          nwEl1ONQylx9OVooiVO5SKVFHmnAoaFhZBrDKlxmAPVUMiyzUJ+pB31CBkOFSEPsWrBDljHUJmxO
+          ZkE8BaY1SSP+NWXWG8yOVgCjXezaugjtjKn4fAL9hHlkcvIOWOpfoi8S//3TgcbDpdAariQcUMEL
+          uImziw9V8r58iYz6x5MN6nmWmP6EDvnlY15vXsPlsBlU/+srUOsv1aqw4rt35OiAFgT21dZkvWDY
+          hCr/7nRvHRSonR3CYzIc1z9WBHIWXf/zkxbxlZ32VTpQvRCwgB4mwZbt7CP8+kdFZob1H36ol6M0
+          R+j1727vW3fOYOi0h/3RuGvbveEAGv18o33f6o8mw27nrru9+nDTrYz+HFcm1qv0tnpqXkNjG6Uh
+          Zh1n0v118jDuKiQHoHYW+72Bc9u7n3THannQbYFik79MGhzo/yftl3Fr5GhJyrbOZOigdbW8HYFZ
+          NwsiR/iXl6U35WbE40JSeJWQVEDm+TaHBFRWeYPwdRa04SGetOMAnObcOvOB+NX/9UMAbug1rzEX
+          VrnZIcZ2vFhP2MpOpz3V2LvquU8w1UNeDqFL4YKGC3j6uKgbmaa+D5HjAYoLOfoQ9O3N0LmlQt4E
+          8CKCa8G3Cktup3GDZE/9m3jVgApjhYLSsV6C7Qpbq0eBvlzoeyEUrde9igqzsjY5YzsOnT4LBcs0
+          KWFg59IgzfMK4fjeAAisS1AsdNOatUc/1asol1zwacA2lKAcVJStz+/IH4IumaerPi5V6J6hCTdO
+          8ImDRS8V9lcoiuBs74l5Bq2rT34gARYxdLb6Xoyx0/K8Nl3os4KftEPPFFsH/1d9vwL7DfZ5yoRU
+          x3rCac1WV1jfgL8dODPVfstkmf3QoTie5XWDpt6DwIHtxYq8uyJ/mEUlUX9MfhthLrB/hiy6U2OK
+          VF9lnxw263KgpRGCsNUi4C7H/gWSAAU/EPCMha5qu2OBYwcQPzhT2w/7Ko1tLPpU7jVynoON7h6e
+          jmqfviWqSRIMFVMdUQQJCe4367aaRUrL8sEC0kB+Hp+6zNp/EsimtgQbmNjR6kYBje1Mxg9dUv9o
+          7NzuFtMNXNgknvQfzHJWD54aZHKzdUGlrjx7Q6tXDgfwMNM8QQxSatUrLngLosNw3rLNosxWtuoW
+          j+6mt3lMfMypgOnwxFqt/31QJk6MolSNXsn7KxLyFZaGRvbiesQswwP93N4PcswCaIBevfWxl7oo
+          d0x7LXbRKdvLqBK5fIvIko/o+Qjm2IQtofeHSMKK2vQyzwQPo9onfXhwLgIasWpnK4B86P5k9jC4
+          Im4AxzCD/CH/itHbnFvPmPdRLL9LoV1FpwN1za3NFZZdZQvWKBzjEcIvxifYj5mhjknLdeEgkFmz
+          of2UClYMDzeT/d2XSvUcKoSEWsyVGvko/bFnP7TunYfR3bjV6ZYt9DYslwoXQvcG7OzB5w/fwRA0
+          3ubOG+zBQ9+xofO671YOLr4HkzBtjA5XEy004jEBn8WaqRsQSFvZsD5MIbtBUluT6VqyJsdnJ8cZ
+          6ZTJbwxeg+hx9khNqfsjaIAWnAlLTWhBzGacZmxGpPq1Y1RN8Sq2lhVbpZlk5WYVZ8Wksby9e2nb
+          2zuGrGXzLYHjRjP7lsSwR9tTZ/29SV1/qYEWFKa+q3CHqf82JsgYIOwI0tzi4GAddIC7CLkI9QDB
+          l6oOFV9vqbnC5WagvkigKzcN/a3XFp2OpdO8dpe+Orsko5ZtA8J/AT9fbWN7GwAA
+          SOURCE_VALIDATOR_B64
+          base64 --decode validate_rend2_dynamic_sources_release.py.gz.b64 > validate_rend2_dynamic_sources_release.py.gz
+          echo "$SOURCE_VALIDATOR_GZIP_SHA256  validate_rend2_dynamic_sources_release.py.gz" | sha256sum --check --strict
+          gzip --decompress --stdout validate_rend2_dynamic_sources_release.py.gz > validate_rend2_dynamic_sources_release.py
+          echo "$SOURCE_VALIDATOR_SHA256  validate_rend2_dynamic_sources_release.py" | sha256sum --check --strict
+
+          chmod 0755 apply_rend2_dynamic_lighting_release.py \
+            validate_rend2_dynamic_patcher.py \
+            validate_rend2_dynamic_c_syntax.py \
+            validate_rend2_dynamic_glsl.py \
+            validate_rend2_dynamic_sources_release.py
+          python3 -m py_compile \
+            apply_rend2_dynamic_lighting_release.py \
+            validate_rend2_dynamic_patcher.py \
+            validate_rend2_dynamic_c_syntax.py \
+            validate_rend2_dynamic_glsl.py \
+            validate_rend2_dynamic_sources_release.py
+
+      - name: Apply accepted SSAO and sunlight-shadow base
+        run: |
+          set -euo pipefail
+          git -C source apply --check --whitespace=nowarn ../rend2-visual-upgrade.patch
+          git -C source apply --whitespace=nowarn ../rend2-visual-upgrade.patch
+          git -C source diff --check
+          git -C source apply --reverse --check --whitespace=nowarn ../rend2-visual-upgrade.patch
+
+          cat > accepted-files.txt <<'FILES'
+          MP/code/rend2/glsl/shadowmask_fp.glsl
+          MP/code/rend2/glsl/ssao_fp.glsl
+          SP/code/rend2/glsl/shadowmask_fp.glsl
+          SP/code/rend2/glsl/ssao_fp.glsl
+          FILES
+          git -C source diff --name-only | LC_ALL=C sort > accepted-actual.txt
+          diff -u accepted-files.txt accepted-actual.txt
+          test "$(git -C source hash-object SP/code/rend2/glsl/shadowmask_fp.glsl)" = "$SHADOW_PATCHED_BLOB"
+          test "$(git -C source hash-object MP/code/rend2/glsl/shadowmask_fp.glsl)" = "$SHADOW_PATCHED_BLOB"
+          test "$(git -C source hash-object SP/code/rend2/glsl/ssao_fp.glsl)" = "$SSAO_PATCHED_BLOB"
+          test "$(git -C source hash-object MP/code/rend2/glsl/ssao_fp.glsl)" = "$SSAO_PATCHED_BLOB"
+          cmp -s source/SP/code/rend2/glsl/shadowmask_fp.glsl source/MP/code/rend2/glsl/shadowmask_fp.glsl
+          cmp -s source/SP/code/rend2/glsl/ssao_fp.glsl source/MP/code/rend2/glsl/ssao_fp.glsl
+
+          git -C source config user.name "Rend2 Release CI"
+          git -C source config user.email "rend2-ci@example.invalid"
+          git -C source add --all
+          GIT_AUTHOR_DATE="2000-01-01T00:00:00Z" \
+          GIT_COMMITTER_DATE="2000-01-01T00:00:00Z" \
+            git -C source commit --no-gpg-sign -m "Rend2 accepted visual base"
+          git -C source rev-parse HEAD > accepted-baseline-commit.txt
+          test -z "$(git -C source status --short)"
+
+      - name: Apply dynamic lighting and omnidirectional shadow upgrade
+        run: |
+          set -euo pipefail
+          python3 apply_rend2_dynamic_lighting_release.py source | tee dynamic-patcher.log
+          grep -Fxq "Applied REND2_DYNAMIC_LIGHTING_RELEASE_V2 to 26 files." dynamic-patcher.log
+          git -C source diff --check
+
+          cat > expected-dynamic-files.txt <<'FILES'
+          MP/code/rend2/glsl/dlight_fp.glsl
+          MP/code/rend2/glsl/dlight_vp.glsl
+          MP/code/rend2/glsl/lightall_fp.glsl
+          MP/code/rend2/glsl/lightall_vp.glsl
+          MP/code/rend2/glsl/shadowfill_fp.glsl
+          MP/code/rend2/tr_backend.c
+          MP/code/rend2/tr_glsl.c
+          MP/code/rend2/tr_image.c
+          MP/code/rend2/tr_init.c
+          MP/code/rend2/tr_local.h
+          MP/code/rend2/tr_main.c
+          MP/code/rend2/tr_scene.c
+          MP/code/rend2/tr_shade.c
+          SP/code/rend2/glsl/dlight_fp.glsl
+          SP/code/rend2/glsl/dlight_vp.glsl
+          SP/code/rend2/glsl/lightall_fp.glsl
+          SP/code/rend2/glsl/lightall_vp.glsl
+          SP/code/rend2/glsl/shadowfill_fp.glsl
+          SP/code/rend2/tr_backend.c
+          SP/code/rend2/tr_glsl.c
+          SP/code/rend2/tr_image.c
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          SP/code/rend2/tr_main.c
+          SP/code/rend2/tr_scene.c
+          SP/code/rend2/tr_shade.c
+          FILES
+          cat > expected-cumulative-files.txt <<'FILES'
+          MP/code/rend2/glsl/dlight_fp.glsl
+          MP/code/rend2/glsl/dlight_vp.glsl
+          MP/code/rend2/glsl/lightall_fp.glsl
+          MP/code/rend2/glsl/lightall_vp.glsl
+          MP/code/rend2/glsl/shadowfill_fp.glsl
+          MP/code/rend2/glsl/shadowmask_fp.glsl
+          MP/code/rend2/glsl/ssao_fp.glsl
+          MP/code/rend2/tr_backend.c
+          MP/code/rend2/tr_glsl.c
+          MP/code/rend2/tr_image.c
+          MP/code/rend2/tr_init.c
+          MP/code/rend2/tr_local.h
+          MP/code/rend2/tr_main.c
+          MP/code/rend2/tr_scene.c
+          MP/code/rend2/tr_shade.c
+          SP/code/rend2/glsl/dlight_fp.glsl
+          SP/code/rend2/glsl/dlight_vp.glsl
+          SP/code/rend2/glsl/lightall_fp.glsl
+          SP/code/rend2/glsl/lightall_vp.glsl
+          SP/code/rend2/glsl/shadowfill_fp.glsl
+          SP/code/rend2/glsl/shadowmask_fp.glsl
+          SP/code/rend2/glsl/ssao_fp.glsl
+          SP/code/rend2/tr_backend.c
+          SP/code/rend2/tr_glsl.c
+          SP/code/rend2/tr_image.c
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          SP/code/rend2/tr_main.c
+          SP/code/rend2/tr_scene.c
+          SP/code/rend2/tr_shade.c
+          FILES
+          test "$(wc -l < expected-dynamic-files.txt)" -eq 26
+          test "$(wc -l < expected-cumulative-files.txt)" -eq 30
+          LC_ALL=C sort -c expected-dynamic-files.txt
+          LC_ALL=C sort -c expected-cumulative-files.txt
+
+          git -C source diff --name-only HEAD | LC_ALL=C sort > actual-dynamic-files.txt
+          git -C source diff --name-only "$UPSTREAM_SHA" | LC_ALL=C sort > actual-cumulative-files.txt
+          diff -u expected-dynamic-files.txt actual-dynamic-files.txt
+          diff -u expected-cumulative-files.txt actual-cumulative-files.txt
+
+          python3 validate_rend2_dynamic_sources_release.py source | tee source-invariants.log
+          grep -Fxq "Rend2 cumulative visual/dynamic source invariants: PASS" source-invariants.log
+
+          grep -q "#define MAX_DLIGHT_SHADOWS 8" source/SP/code/rend2/tr_local.h
+          grep -q "dlightShadowSlot\[MAX_DLIGHTS\]" source/SP/code/rend2/tr_local.h
+          grep -q "R_AddCapShadowmapCmd(shadowSlot, j)" source/SP/code/rend2/tr_main.c
+          grep -q "CopyTexSubImage cannot read a multisample" source/SP/code/rend2/tr_backend.c
+          grep -q "USE_DLIGHT_SHADOWMAP" source/SP/code/rend2/tr_glsl.c
+          grep -q "dynamic pass explicitly disables material cubemap reflections" source/SP/code/rend2/tr_shade.c
+          grep -q "FilterDlightShadow(var_LightDir.xyz" source/SP/code/rend2/glsl/lightall_fp.glsl
+          grep -q "float depth = clamp(length" source/SP/code/rend2/glsl/shadowfill_fp.glsl
+
+      - name: Validate patcher mechanics C snippets and all GLSL paths
+        run: |
+          set -euo pipefail
+          REND2_DYNAMIC_PATCHER="$GITHUB_WORKSPACE/apply_rend2_dynamic_lighting_release.py" \
+            python3 validate_rend2_dynamic_patcher.py | tee patcher-fixture-validation.log
+          grep -Fxq "dynamic patcher exact-marker fixture: PASS" patcher-fixture-validation.log
+
+          REND2_DYNAMIC_PATCHER="$GITHUB_WORKSPACE/apply_rend2_dynamic_lighting_release.py" \
+            python3 validate_rend2_dynamic_c_syntax.py | tee dynamic-c-syntax-validation.log
+          grep -Fxq "dynamic C syntax harness: PASS" dynamic-c-syntax-validation.log
+
+          LIBGL_ALWAYS_SOFTWARE=1 \
+          EGL_PLATFORM=surfaceless \
+          REND2_SOURCE_ROOT="$GITHUB_WORKSPACE/source" \
+          REND2_DYNAMIC_PATCHER="$GITHUB_WORKSPACE/apply_rend2_dynamic_lighting_release.py" \
+            python3 validate_rend2_dynamic_glsl.py | tee dynamic-glsl-validation.log
+          test "$(grep -c '^FAIL' dynamic-glsl-validation.log || true)" -eq 0
+          grep -q "PASS link actual patched lightall GLSL 130 falloff=2 filter=2" dynamic-glsl-validation.log
+          grep -q "PASS link accepted shadowmask GLSL 130 filter2 cascades" dynamic-glsl-validation.log
+          grep -q "PASS link accepted SSAO GLSL 130" dynamic-glsl-validation.log
+
+      - name: Generate and replay dynamic and cumulative patches
+        run: |
+          set -euo pipefail
+          git -C source diff --binary --full-index HEAD -- > rend2-dynamic-lighting-upgrade.patch
+          git -C source diff --binary --full-index "$UPSTREAM_SHA" -- > rend2-cumulative-visual-dynamic.patch
+          test -s rend2-dynamic-lighting-upgrade.patch
+          test -s rend2-cumulative-visual-dynamic.patch
+          git -C source apply --reverse --check --whitespace=nowarn ../rend2-dynamic-lighting-upgrade.patch
+          git -C source apply --reverse --check --whitespace=nowarn ../rend2-cumulative-visual-dynamic.patch
+
+          git clone --no-hardlinks source replay
+          test -z "$(git -C replay status --short)"
+          git -C replay apply --check --whitespace=nowarn ../rend2-dynamic-lighting-upgrade.patch
+          git -C replay apply --whitespace=nowarn ../rend2-dynamic-lighting-upgrade.patch
+          git -C replay diff --check
+          git -C replay diff --name-only | LC_ALL=C sort > replay-files.txt
+          diff -u expected-dynamic-files.txt replay-files.txt
+          while IFS= read -r path; do
+            cmp -s "source/$path" "replay/$path" || {
+              echo "Replay mismatch: $path" >&2
+              exit 1
+            }
+          done < expected-dynamic-files.txt
+          git -C replay apply --reverse --check --whitespace=nowarn ../rend2-dynamic-lighting-upgrade.patch
+
+      - name: Build Single Player Rend2 Windows x64
+        run: |
+          set -euo pipefail
+          jobs="$(nproc)"
+          if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh \
+              -j"$jobs" \
+              BUILD_CLIENT=1 \
+              BUILD_SERVER=0 \
+              BUILD_GAME_SO=1 \
+              BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 \
+              BUILD_RENDERER_REND2=1 \
+              USE_RENDERER_DLOPEN=1
+          ) |& tee build-sp.log
+
+      - name: Build Multiplayer Rend2 Windows x64
+        run: |
+          set -euo pipefail
+          jobs="$(nproc)"
+          if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/MP/cross-make-mingw64.sh
+          (
+            cd source/MP
+            ./cross-make-mingw64.sh \
+              -j"$jobs" \
+              BUILD_CLIENT=1 \
+              BUILD_SERVER=1 \
+              BUILD_GAME_SO=1 \
+              BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 \
+              BUILD_RENDERER_REND2=1 \
+              USE_RENDERER_DLOPEN=1
+          ) |& tee build-mp.log
+
+      - name: Verify exact release outputs
+        run: |
+          set -euo pipefail
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          MP_OUT="source/MP/build/release-mingw32-x86_64"
+          required=(
+            "$SP_OUT/ioWolfSP.x64.exe"
+            "$SP_OUT/renderer_sp_opengl1_x64.dll"
+            "$SP_OUT/renderer_sp_rend2_x64.dll"
+            "$SP_OUT/main/cgame_sp_x64.dll"
+            "$SP_OUT/main/qagame_sp_x64.dll"
+            "$SP_OUT/main/ui_sp_x64.dll"
+            "$MP_OUT/ioWolfMP.x64.exe"
+            "$MP_OUT/ioWolfDED.x64.exe"
+            "$MP_OUT/renderer_mp_opengl1_x64.dll"
+            "$MP_OUT/renderer_mp_rend2_x64.dll"
+            "$MP_OUT/main/cgame_mp_x64.dll"
+            "$MP_OUT/main/qagame_mp_x64.dll"
+            "$MP_OUT/main/ui_mp_x64.dll"
+          )
+          for file in "${required[@]}"; do
+            test -s "$file" || { echo "Missing required output: $file" >&2; exit 1; }
+          done
+          for runtime in SDL264.dll OpenAL64.dll; do
+            test -s "$SP_OUT/$runtime" || test -s "$MP_OUT/$runtime" || {
+              echo "Missing runtime DLL: $runtime" >&2
+              exit 1
+            }
+            if [[ -f "$SP_OUT/$runtime" && -f "$MP_OUT/$runtime" ]]; then
+              cmp -s "$SP_OUT/$runtime" "$MP_OUT/$runtime"
+            fi
+          done
+
+      - name: Package install-ready Windows x64 release
+        run: |
+          set -euo pipefail
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          MP_OUT="source/MP/build/release-mingw32-x86_64"
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          mkdir -p "$STAGE/main" "$STAGE/docs" "$STAGE/tools" "$STAGE/logs"
+
+          install -m 0755 "$SP_OUT/ioWolfSP.x64.exe" "$STAGE/"
+          install -m 0755 "$MP_OUT/ioWolfMP.x64.exe" "$STAGE/"
+          install -m 0755 "$MP_OUT/ioWolfDED.x64.exe" "$STAGE/"
+          install -m 0644 "$SP_OUT/renderer_sp_opengl1_x64.dll" "$STAGE/"
+          install -m 0644 "$SP_OUT/renderer_sp_rend2_x64.dll" "$STAGE/"
+          install -m 0644 "$MP_OUT/renderer_mp_opengl1_x64.dll" "$STAGE/"
+          install -m 0644 "$MP_OUT/renderer_mp_rend2_x64.dll" "$STAGE/"
+          install -m 0644 "$SP_OUT/main/cgame_sp_x64.dll" "$STAGE/main/"
+          install -m 0644 "$SP_OUT/main/qagame_sp_x64.dll" "$STAGE/main/"
+          install -m 0644 "$SP_OUT/main/ui_sp_x64.dll" "$STAGE/main/"
+          install -m 0644 "$MP_OUT/main/cgame_mp_x64.dll" "$STAGE/main/"
+          install -m 0644 "$MP_OUT/main/qagame_mp_x64.dll" "$STAGE/main/"
+          install -m 0644 "$MP_OUT/main/ui_mp_x64.dll" "$STAGE/main/"
+          for runtime in SDL264.dll OpenAL64.dll; do
+            if [[ -f "$SP_OUT/$runtime" ]]; then
+              install -m 0644 "$SP_OUT/$runtime" "$STAGE/"
+            else
+              install -m 0644 "$MP_OUT/$runtime" "$STAGE/"
+            fi
+          done
+
+          install -m 0644 rend2-visual-upgrade.patch "$STAGE/docs/"
+          install -m 0644 rend2-dynamic-lighting-upgrade.patch "$STAGE/docs/"
+          install -m 0644 rend2-cumulative-visual-dynamic.patch "$STAGE/docs/"
+          install -m 0644 source/rend2-readme.md "$STAGE/docs/UPSTREAM_REND2_README.md"
+          install -m 0644 source/SP/README.txt "$STAGE/docs/UPSTREAM_SP_README.txt"
+          install -m 0644 source/MP/README.txt "$STAGE/docs/UPSTREAM_MP_README.txt"
+          install -m 0644 apply_rend2_dynamic_lighting_release.py "$STAGE/tools/"
+          install -m 0644 validate_rend2_dynamic_patcher.py "$STAGE/tools/"
+          install -m 0644 validate_rend2_dynamic_c_syntax.py "$STAGE/tools/"
+          install -m 0644 validate_rend2_dynamic_glsl.py "$STAGE/tools/"
+          install -m 0644 validate_rend2_dynamic_sources_release.py "$STAGE/tools/"
+          install -m 0644 dynamic-patcher.log "$STAGE/logs/"
+          install -m 0644 source-invariants.log "$STAGE/logs/"
+          install -m 0644 patcher-fixture-validation.log "$STAGE/logs/"
+          install -m 0644 dynamic-c-syntax-validation.log "$STAGE/logs/"
+          install -m 0644 dynamic-glsl-validation.log "$STAGE/logs/"
+          install -m 0644 build-sp.log "$STAGE/logs/"
+          install -m 0644 build-mp.log "$STAGE/logs/"
+
+          cat > "$STAGE/main/rend2_dynamic_legacy_ab.cfg" <<'CFG'
+          // A: original Rend2 dynamic-light appearance. Use /vid_restart after exec.
+          seta cl_renderer "rend2"
+          seta r_dynamiclight "1"
+          seta r_dlightMode "0"
+          seta r_dlightFallbackMode "0"
+          seta r_dlightFalloff "0"
+          seta r_dlightIntensity "1.0"
+          seta r_dlightShadowMaxLights "0"
+          seta r_dlightShadowFilter "0"
+          seta r_arb_seamless_cube_map "0"
+          seta r_hdr "1"
+          seta r_postProcess "1"
+          seta r_toneMap "1"
+          seta r_autoExposure "1"
+          seta r_depthPrepass "1"
+          seta r_ssao "1"
+          seta r_shadowFilter "1"
+          seta r_shadowMapSize "1024"
+          seta r_ext_framebuffer_multisample "0"
+          CFG
+
+          cat > "$STAGE/main/rend2_dynamic_enhanced_no_shadows.cfg" <<'CFG'
+          // B1: analytic spherical dynamic light, no six-view point shadows.
+          seta cl_renderer "rend2"
+          seta r_dynamiclight "1"
+          seta r_dlightMode "1"
+          seta r_dlightFallbackMode "1"
+          seta r_dlightFalloff "1"
+          seta r_dlightIntensity "1.15"
+          seta r_dlightShadowMaxLights "0"
+          seta r_dlightShadowFilter "0"
+          seta r_arb_seamless_cube_map "0"
+          seta r_hdr "1"
+          seta r_postProcess "1"
+          seta r_toneMap "1"
+          seta r_autoExposure "1"
+          seta r_depthPrepass "1"
+          seta r_normalMapping "1"
+          seta r_specularMapping "1"
+          seta r_deluxeMapping "1"
+          seta r_ssao "1"
+          seta r_shadowFilter "1"
+          seta r_shadowMapSize "1024"
+          seta r_ext_framebuffer_multisample "0"
+          CFG
+
+          cat > "$STAGE/main/rend2_dynamic_shadows_balanced.cfg" <<'CFG'
+          // B2: one highest-priority point light casts a filtered cubemap shadow.
+          seta cl_renderer "rend2"
+          seta r_dynamiclight "1"
+          seta r_dlightMode "2"
+          seta r_dlightFallbackMode "1"
+          seta r_dlightFalloff "1"
+          seta r_dlightIntensity "1.15"
+          seta r_dlightShadowMaxLights "1"
+          seta r_dlightShadowFilter "1"
+          seta r_dlightShadowBias "0.0040"
+          seta r_dlightShadowSoftness "1.25"
+          seta r_dlightShadowStrength "0.90"
+          seta r_arb_seamless_cube_map "1"
+          seta r_hdr "1"
+          seta r_postProcess "1"
+          seta r_toneMap "1"
+          seta r_autoExposure "1"
+          seta r_depthPrepass "1"
+          seta r_normalMapping "1"
+          seta r_specularMapping "1"
+          seta r_deluxeMapping "1"
+          seta r_ssao "1"
+          seta r_shadowFilter "1"
+          seta r_shadowMapSize "1024"
+          seta r_ext_framebuffer_multisample "0"
+          seta r_forceSun "0"
+          CFG
+
+          cat > "$STAGE/main/rend2_dynamic_shadows_quality.cfg" <<'CFG'
+          // B3: two selected point lights, nine-tap point-shadow filtering. Expensive.
+          seta cl_renderer "rend2"
+          seta r_dynamiclight "1"
+          seta r_dlightMode "2"
+          seta r_dlightFallbackMode "1"
+          seta r_dlightFalloff "1"
+          seta r_dlightIntensity "1.20"
+          seta r_dlightShadowMaxLights "2"
+          seta r_dlightShadowFilter "2"
+          seta r_dlightShadowBias "0.0040"
+          seta r_dlightShadowSoftness "1.75"
+          seta r_dlightShadowStrength "0.95"
+          seta r_arb_seamless_cube_map "1"
+          seta r_hdr "1"
+          seta r_postProcess "1"
+          seta r_toneMap "1"
+          seta r_autoExposure "1"
+          seta r_depthPrepass "1"
+          seta r_normalMapping "1"
+          seta r_specularMapping "1"
+          seta r_deluxeMapping "1"
+          seta r_ssao "1"
+          seta r_shadowFilter "2"
+          seta r_shadowMapSize "2048"
+          seta r_ext_framebuffer_multisample "0"
+          seta r_forceSun "0"
+          CFG
+
+          cat > "$STAGE/START_SP_DYNAMIC_LEGACY_A.bat" <<'BAT'
+          @echo off
+          cd /d "%~dp0"
+          ioWolfSP.x64.exe +set cl_renderer rend2 +set r_dynamiclight 1 +set r_dlightMode 0 +set r_dlightFallbackMode 0 +set r_dlightFalloff 0 +set r_dlightIntensity 1.0 +set r_dlightShadowMaxLights 0 +set r_dlightShadowFilter 0 +set r_hdr 1 +set r_postProcess 1 +set r_toneMap 1 +set r_ssao 1 +set r_ext_framebuffer_multisample 0 %*
+          BAT
+
+          cat > "$STAGE/START_SP_DYNAMIC_ENHANCED_NO_SHADOWS.bat" <<'BAT'
+          @echo off
+          cd /d "%~dp0"
+          ioWolfSP.x64.exe +set cl_renderer rend2 +set r_dynamiclight 1 +set r_dlightMode 1 +set r_dlightFallbackMode 1 +set r_dlightFalloff 1 +set r_dlightIntensity 1.15 +set r_dlightShadowMaxLights 0 +set r_dlightShadowFilter 0 +set r_hdr 1 +set r_postProcess 1 +set r_toneMap 1 +set r_ssao 1 +set r_ext_framebuffer_multisample 0 %*
+          BAT
+
+          cat > "$STAGE/START_SP_DYNAMIC_SHADOWS_BALANCED.bat" <<'BAT'
+          @echo off
+          cd /d "%~dp0"
+          ioWolfSP.x64.exe +set cl_renderer rend2 +set r_dynamiclight 1 +set r_dlightMode 2 +set r_dlightFallbackMode 1 +set r_dlightFalloff 1 +set r_dlightIntensity 1.15 +set r_dlightShadowMaxLights 1 +set r_dlightShadowFilter 1 +set r_dlightShadowBias 0.0040 +set r_dlightShadowSoftness 1.25 +set r_dlightShadowStrength 0.90 +set r_arb_seamless_cube_map 1 +set r_hdr 1 +set r_postProcess 1 +set r_toneMap 1 +set r_ssao 1 +set r_ext_framebuffer_multisample 0 %*
+          BAT
+
+          cat > "$STAGE/START_SP_DYNAMIC_SHADOWS_QUALITY.bat" <<'BAT'
+          @echo off
+          cd /d "%~dp0"
+          ioWolfSP.x64.exe +set cl_renderer rend2 +set r_dynamiclight 1 +set r_dlightMode 2 +set r_dlightFallbackMode 1 +set r_dlightFalloff 1 +set r_dlightIntensity 1.20 +set r_dlightShadowMaxLights 2 +set r_dlightShadowFilter 2 +set r_dlightShadowBias 0.0040 +set r_dlightShadowSoftness 1.75 +set r_dlightShadowStrength 0.95 +set r_arb_seamless_cube_map 1 +set r_hdr 1 +set r_postProcess 1 +set r_toneMap 1 +set r_ssao 1 +set r_ext_framebuffer_multisample 0 %*
+          BAT
+
+          cat > "$STAGE/START_MP_DYNAMIC_SHADOWS_BALANCED.bat" <<'BAT'
+          @echo off
+          cd /d "%~dp0"
+          ioWolfMP.x64.exe +set cl_renderer rend2 +set r_dynamiclight 1 +set r_dlightMode 2 +set r_dlightFallbackMode 1 +set r_dlightFalloff 1 +set r_dlightIntensity 1.15 +set r_dlightShadowMaxLights 1 +set r_dlightShadowFilter 1 +set r_dlightShadowBias 0.0040 +set r_dlightShadowSoftness 1.25 +set r_dlightShadowStrength 0.90 +set r_arb_seamless_cube_map 1 +set r_hdr 1 +set r_postProcess 1 +set r_toneMap 1 +set r_ssao 1 +set r_ext_framebuffer_multisample 0 %*
+          BAT
+
+          cat > "$STAGE/README_RU.txt" <<EOF
+          ioRTCW Rend2 Dynamic Lighting Upgrade - Windows x64
+
+          Это cumulative-релиз: он включает ранее принятые чистый SSAO и фильтрацию
+          солнечных теней, а также новые улучшения динамического света.
+
+          Что заметно в игре:
+          1. Факелы, вспышки выстрелов, взрывы и другие dlight освещают поверхность
+             как сферические источники с плавным радиальным затуханием, а не как
+             плоская проекционная клякса 16x16.
+          2. В r_dlightMode 2 ближайший важный источник строит шесть граней cubemap.
+             Стены, колонны, двери, ящики и непрозрачные модели между источником и
+             поверхностью создают движущуюся тень.
+          3. Normal/specular материалы получают направленный отклик от dlight.
+
+          Быстрый A/B:
+          - START_SP_DYNAMIC_LEGACY_A.bat: старый вид динамического света.
+          - START_SP_DYNAMIC_ENHANCED_NO_SHADOWS.bat: новый свет без тяжёлых теней.
+          - START_SP_DYNAMIC_SHADOWS_BALANCED.bat: один shadowed dlight, 5 выборок.
+          - START_SP_DYNAMIC_SHADOWS_QUALITY.bat: два dlight, 9 выборок; очень тяжело.
+
+          Лучшие места проверки: факел около стены, коридор с колонной, открывающаяся
+          дверь, персонаж между источником и стеной, вспышка выстрела рядом с углом.
+          Смотрите не только скриншот, но и движение тени при перемещении источника.
+
+          Важные ограничения:
+          - каждый shadowed dlight требует шесть дополнительных scene views;
+          - по умолчанию тень строит только один наиболее важный видимый источник;
+          - прозрачные материалы не гарантируются; alpha-tested геометрия пока
+            не вырезается по альфе и может давать сплошной теневой силуэт;
+          - сложные multistage-материалы получают новый сферический fallback-свет,
+            но cubemap-тень принимают только совместимые one-pass lightall-поверхности;
+          - значения r_dlightMode, r_dlightFallbackMode, r_dlightFalloff и
+            r_dlightShadowFilter требуют /vid_restart;
+          - MSAA в готовых профилях отключён: сначала проверяется стабильная база.
+
+          Установка: скопируйте содержимое архива в полностью установленный RTCW,
+          объединив каталог main с существующим main. Оригинальные игровые pak-файлы
+          в архив не входят.
+          EOF
+
+          cat > "$STAGE/README.txt" <<EOF
+          ioRTCW Rend2 cumulative visual and dynamic-lighting release.
+          Includes accepted SSAO/sun-shadow filtering, analytic spherical dlights,
+          and selected omnidirectional cubemap shadows for r_dlightMode 2.
+          Original RTCW game data is not included.
+          Upstream revision: $UPSTREAM_SHA
+          Builder repository: $GITHUB_REPOSITORY
+          EOF
+
+          cat > "$STAGE/SOURCE_REVISION.txt" <<EOF
+          upstream_repository=$UPSTREAM_REPO
+          upstream_commit=$UPSTREAM_SHA
+          accepted_visual_patch_sha256=$BASE_PATCH_SHA256
+          dynamic_patcher_sha256=$PATCHER_SHA256
+          patcher_validator_sha256=$PATCHER_VALIDATOR_SHA256
+          c_validator_sha256=$C_VALIDATOR_SHA256
+          glsl_validator_sha256=$GLSL_VALIDATOR_SHA256
+          source_validator_sha256=$SOURCE_VALIDATOR_SHA256
+          shadow_base_blob=$SHADOW_BASE_BLOB
+          shadow_patched_blob=$SHADOW_PATCHED_BLOB
+          ssao_base_blob=$SSAO_BASE_BLOB
+          ssao_patched_blob=$SSAO_PATCHED_BLOB
+          EOF
+
+          (
+            cd "$STAGE"
+            find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | \
+              xargs -0 sha256sum > SHA256SUMS.txt
+          )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | \
+              xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Publish GitHub Release for a version tag
+        if: startsWith(github.ref, 'refs/tags/rend2-dynamic-v')
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/$RELEASE_BASENAME.zip" \
+            "dist/$RELEASE_BASENAME.zip.sha256" \
+            --verify-tag \
+            --generate-notes \
+            --title "ioRTCW Rend2 Dynamic Lighting ${GITHUB_REF_NAME}"
