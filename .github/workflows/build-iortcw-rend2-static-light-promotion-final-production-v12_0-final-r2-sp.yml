@@ -1,0 +1,650 @@
+name: Build ioRTCW Rend2 V12.0 Final Production R2 Runtime-Complete SP-only Windows x64
+
+"on":
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "rend2-static-light-promotion-v12_0-final-r2-sp-*"
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: "rend2-static-light-promotion-v12_0-final-r2-sp-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP-only V12.0 FINAL R2 over user-tested successful V5
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      V5_RELEASE_BASENAME: "iortcw-rend2-static-light-promotion-final-production-v12_0-fix-v5-sp-windows-x64"
+      RELEASE_BASENAME: "iortcw-rend2-static-light-promotion-final-production-v12_0-final-r2-sp-windows-x64"
+      FINAL_PATCHER_SHA256: "5a8f697123574c059b03a324aebf863925e6356e5cce662448399750a4fbd5c1"
+      FINAL_PATCHER_GZIP_SHA256: "58b7c23f46be75f68e6f974ad75c33e0cbd1817e519b73d71e0c6904b827771d"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+
+      - name: Recover latest successful V12.0 Fix v5 release artifact
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Fix-v5 recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf v5-artifact v5-release
+          mkdir -p v5-artifact v5-release
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > v5-artifacts.tsv
+          python3 - <<'PY_SELECT' > v5-selected-artifact.tsv
+          import os
+          from pathlib import Path
+          prefix=os.environ['V5_RELEASE_BASENAME']+'-'
+          rows=[]
+          for raw in Path('v5-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts=raw.split('\t')
+              if len(parts)!=4:
+                  continue
+              created,aid,rid,name=parts
+              if name.startswith(prefix):
+                  rows.append((created,aid,rid,name))
+          if not rows:
+              raise SystemExit('No retained successful Fix-v5 artifact with prefix %r' % prefix)
+          rows.sort(key=lambda x:x[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < v5-selected-artifact.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed Fix-v5 artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected Fix-v5 run is not successful: $run_conclusion" >&2; exit 1; }
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir v5-artifact
+          base_zip="$(find v5-artifact -type f -name "$V5_RELEASE_BASENAME.zip" -print -quit)"
+          base_sha="$(find v5-artifact -type f -name "$V5_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_sha" && -s "$base_sha" ]] || { echo "::error::Fix-v5 release/SHA missing" >&2; find v5-artifact -type f -print >&2; exit 1; }
+          expected="$(awk 'NF {print $1; exit}' "$base_sha")"
+          actual="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ && "$actual" = "$expected" ]] || { echo "::error::Fix-v5 SHA mismatch expected=$expected actual=$actual" >&2; exit 1; }
+          unzip -q "$base_zip" -d v5-release
+          V5_STAGE="$GITHUB_WORKSPACE/v5-release/$V5_RELEASE_BASENAME"
+          V5_CUMULATIVE="$V5_STAGE/docs/rend2-cumulative-production-v12_0-fix-v5-static-light-promotion-final-sp.patch"
+          [[ -d "$V5_STAGE" && -s "$V5_CUMULATIVE" ]] || { echo "::error::Fix-v5 stage/cumulative patch missing" >&2; exit 1; }
+          [[ -s "$V5_STAGE/ioWolfSP.x64.exe" && -s "$V5_STAGE/renderer_sp_rend2_x64.dll" ]] || { echo "::error::Fix-v5 SP binaries missing" >&2; exit 1; }
+          echo "V5_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "V5_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "V5_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "V5_STAGE=$V5_STAGE" >> "$GITHUB_ENV"
+          echo "V5_CUMULATIVE=$V5_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "Recovered successful Fix-v5 artifact $artifact_name run=$run_id sha=$actual"
+
+      - name: Checkout exact upstream and reconstruct successful Fix v5 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Fix-v5 reconstruction failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          git init source
+          git -C source config core.autocrlf false
+          git -C source config core.eol lf
+          git -C source remote add origin "$UPSTREAM_REPO"
+          git -C source fetch --depth 1 origin "$UPSTREAM_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]] || { echo "::error::Upstream SHA mismatch" >&2; exit 1; }
+          git -C source apply --check --whitespace=nowarn "$V5_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$V5_CUMULATIVE"
+          git -C source diff --check
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V5_V12_0' source/SP/code/client/cl_main.c
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V5_V12_0' source/SP/code/rend2/tr_scene.c
+          grep -Fq '#define STATIC_PROMOTE_USER_OVERRIDE_MAX 8192' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'r_staticPromoteLearn' source/SP/code/rend2/tr_init.c
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -m 'Reconstructed user-tested V12.0 Fix v5 runtime base'
+          V5_BASE_COMMIT="$(git -C source rev-parse HEAD)"
+          echo "V5_BASE_COMMIT=$V5_BASE_COMMIT" >> "$GITHUB_ENV"
+          [[ "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA" ]] || { echo "::error::Reconstructed V5 parent mismatch" >&2; exit 1; }
+
+      - name: Materialize and verify V12.0 final production patcher
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Final patcher materialization failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          cat > apply_rend2_static_light_promotion_final_release_v12_0_sp.py.gz.b64 <<'FINAL_PATCHER_B64'
+          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
+          FINAL_PATCHER_B64
+          base64 -d apply_rend2_static_light_promotion_final_release_v12_0_sp.py.gz.b64 > apply_rend2_static_light_promotion_final_release_v12_0_sp.py.gz
+          echo "$FINAL_PATCHER_GZIP_SHA256  apply_rend2_static_light_promotion_final_release_v12_0_sp.py.gz" | sha256sum -c -
+          gzip -dc apply_rend2_static_light_promotion_final_release_v12_0_sp.py.gz > apply_rend2_static_light_promotion_final_release_v12_0_sp.py
+          echo "$FINAL_PATCHER_SHA256  apply_rend2_static_light_promotion_final_release_v12_0_sp.py" | sha256sum -c -
+          chmod +x apply_rend2_static_light_promotion_final_release_v12_0_sp.py
+          python3 -m py_compile apply_rend2_static_light_promotion_final_release_v12_0_sp.py
+
+      - name: Snapshot V5 manual-learning functions and protected renderer files
+        run: |
+          set -Eeuo pipefail
+          mkdir -p invariant-before
+          sha256sum \
+            source/SP/code/rend2/tr_main.c source/SP/code/rend2/tr_backend.c \
+            source/SP/code/rend2/tr_shade.c source/SP/code/rend2/tr_mesh.c \
+            source/SP/code/rend2/tr_world.c source/SP/code/rend2/tr_image.c \
+            source/SP/code/rend2/tr_fbo.c \
+            > invariant-before/protected-renderer.sha256
+          python3 - <<'PY_MANUAL'
+          from pathlib import Path
+          import hashlib
+          s=Path('source/SP/code/rend2/tr_scene.c').read_text(encoding='utf-8')
+          names=['R_StaticPromoteFindCrosshairFixture','R_StaticPromoteLearnTargetAction','R_StaticPromoteLearn_f','R_StaticPromoteBlock_f','R_StaticPromoteAuto_f','R_StaticPromoteInspect_f','R_StaticPromoteClearMap_f']
+          def function_text(name):
+              p=s.index(name)
+              start=s.rfind('\n',0,p)+1
+              brace=s.index('{',p)
+              depth=0
+              for i in range(brace,len(s)):
+                  if s[i]=='{': depth+=1
+                  elif s[i]=='}':
+                      depth-=1
+                      if depth==0:
+                          return s[start:i+1]+'\n'
+              raise RuntimeError(name)
+          out=[]
+          for n in names:
+              out.append(n+' '+hashlib.sha256(function_text(n).encode()).hexdigest())
+          Path('invariant-before/manual-functions.sha256').write_text('\n'.join(out)+'\n',encoding='ascii')
+          PY_MANUAL
+
+      - name: Check and apply final Wide Synthetic Learn plus native shadow sanitizer
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Final source apply/validation failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          ./apply_rend2_static_light_promotion_final_release_v12_0_sp.py source --check-only | tee final-check-only.log
+          grep -Fq 'Verified V12.0 Final Release anchors for 4 SP files' final-check-only.log
+          ./apply_rend2_static_light_promotion_final_release_v12_0_sp.py source | tee final-apply.log
+          grep -Fq 'Applied V12.0 Final Release' final-apply.log
+          git -C source diff --check
+
+          CLIENT=source/SP/code/client/cl_main.c
+          INIT=source/SP/code/rend2/tr_init.c
+          LOCAL=source/SP/code/rend2/tr_local.h
+          SCENE=source/SP/code/rend2/tr_scene.c
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_RELEASE_V12_0' "$CLIENT"
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_RELEASE_V12_0' "$INIT"
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_RELEASE_V12_0' "$LOCAL"
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_RELEASE_V12_0' "$SCENE"
+          grep -Fq '#define STATIC_PROMOTE_USER_OVERRIDE_MAX 8192' "$SCENE"
+          grep -Fq '#define STATIC_PROMOTE_SYNTHETIC_MAX 8192' "$SCENE"
+          grep -Fq 'r_staticPromoteWideInspect' "$INIT"
+          grep -Fq 'r_staticPromoteSynthetic' "$INIT"
+
+          python3 - <<'PY_POLICY'
+          from pathlib import Path
+          c=Path('source/SP/code/client/cl_main.c').read_text(encoding='utf-8')
+          m='REND2_STATIC_LIGHT_PROMOTION_FINAL_RELEASE_V12_0'
+          start=c.index(m)
+          end=c.index('cl_renderer = Cvar_Get("cl_renderer", "rend2"', start)
+          b=c[start:end]
+          required={
+              'r_dlightShadowAutoTest':'0',
+              'r_dlightMaterialAutoTest':'0',
+              'r_dlightFootprintAutoTest':'0',
+              'r_dlightMaterialProbe':'0',
+              'r_dlightMaterialStage':'0',
+              'r_dlightShadowTestLock':'0',
+              'r_dlightShadowCasterMode':'0',
+              'r_dlightShadowKernelMode':'0',
+              'r_dlightShadowBias':'0.0033',
+              'r_dlightShadowSoftness':'1.70',
+              'r_dlightShadowStrength':'0.88',
+              'r_dlightMode':'2',
+              'r_dlightShadowMapSize':'2048',
+              'r_dlightShadowMaxLights':'3',
+              'r_staticPromote':'1',
+              'r_staticPromoteManualOverride':'0',
+              'r_staticPromoteAutoMapLights':'1',
+              'r_staticPromotePVS':'1',
+              'r_staticPromoteClassifier':'1',
+              'r_staticPromoteMaxLights':'24',
+              'r_staticPromoteIndex0':'-1',
+              'r_staticPromoteIndex1':'-1',
+              'r_staticPromoteDump':'0',
+          }
+          for name,value in required.items():
+              token='Cvar_Set("%s", "%s")' % (name,value)
+              if token not in b:
+                  raise SystemExit('missing final bootstrap token: '+token)
+          forbidden=[
+              'Cvar_Set("r_dlightShadowTestLock", "1")',
+              'Cvar_Set("r_dlightShadowAutoTest", "1")',
+              'Cvar_Set("r_dlightMaterialAutoTest", "1")',
+              'Cvar_Set("r_dlightFootprintAutoTest", "1")',
+          ]
+          for token in forbidden:
+              if token in b:
+                  raise SystemExit('diagnostic enable remains in final bootstrap: '+token)
+          print('Final native shadow-state sanitizer policy PASS')
+          PY_POLICY
+
+          sha256sum -c invariant-before/protected-renderer.sha256
+          python3 - <<'PY_MANUAL_AFTER'
+          from pathlib import Path
+          import hashlib
+          expected={}
+          for line in Path('invariant-before/manual-functions.sha256').read_text(encoding='ascii').splitlines():
+              n,h=line.split(); expected[n]=h
+          s=Path('source/SP/code/rend2/tr_scene.c').read_text(encoding='utf-8')
+          def function_text(name):
+              p=s.index(name); start=s.rfind('\n',0,p)+1; brace=s.index('{',p); depth=0
+              for i in range(brace,len(s)):
+                  if s[i]=='{': depth+=1
+                  elif s[i]=='}':
+                      depth-=1
+                      if depth==0: return s[start:i+1]+'\n'
+              raise RuntimeError(name)
+          for n,h in expected.items():
+              got=hashlib.sha256(function_text(n).encode()).hexdigest()
+              if got!=h: raise SystemExit('V5 manual function changed: %s' % n)
+          print('Exact V5 manual-learning function bodies preserved PASS')
+          PY_MANUAL_AFTER
+
+          python3 - <<'PY_CHANGED'
+          from pathlib import Path
+          import subprocess
+          expected={
+              'SP/code/client/cl_main.c',
+              'SP/code/rend2/tr_init.c',
+              'SP/code/rend2/tr_local.h',
+              'SP/code/rend2/tr_scene.c',
+          }
+          out=subprocess.check_output(['git','-C','source','diff','--name-only','HEAD'],text=True)
+          got={x for x in out.splitlines() if x}
+          if got!=expected:
+              raise SystemExit('unexpected final source delta: expected=%r got=%r' % (sorted(expected),sorted(got)))
+          print('Final source delta exactly 4 files PASS')
+          PY_CHANGED
+
+      - name: Generate final delta and cumulative patches and replay exact trees
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Patch replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          git -C source diff --binary "$V5_BASE_COMMIT" > rend2-static-light-promotion-final-release-v12_0-sp.patch
+          git -C source diff --binary "$UPSTREAM_SHA" > rend2-cumulative-production-v12_0-final-static-light-promotion-sp.patch
+          test -s rend2-static-light-promotion-final-release-v12_0-sp.patch
+          test -s rend2-cumulative-production-v12_0-final-static-light-promotion-sp.patch
+
+          rm -rf final-delta-replay final-cumulative-replay
+          git clone -q source final-delta-replay
+          git -C final-delta-replay checkout -q "$V5_BASE_COMMIT"
+          git -C final-delta-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-static-light-promotion-final-release-v12_0-sp.patch"
+          git -C final-delta-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-static-light-promotion-final-release-v12_0-sp.patch"
+          git -C final-delta-replay diff --check
+
+          git init -q final-cumulative-replay
+          git -C final-cumulative-replay config core.autocrlf false
+          git -C final-cumulative-replay remote add origin "$UPSTREAM_REPO"
+          git -C final-cumulative-replay fetch -q --depth 1 origin "$UPSTREAM_SHA"
+          git -C final-cumulative-replay checkout -q --detach FETCH_HEAD
+          git -C final-cumulative-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-cumulative-production-v12_0-final-static-light-promotion-sp.patch"
+          git -C final-cumulative-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-cumulative-production-v12_0-final-static-light-promotion-sp.patch"
+          git -C final-cumulative-replay diff --check
+
+          for f in SP/code/client/cl_main.c SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h SP/code/rend2/tr_scene.c; do
+            cmp "source/$f" "final-delta-replay/$f"
+            cmp "source/$f" "final-cumulative-replay/$f"
+          done
+          if ./apply_rend2_static_light_promotion_final_release_v12_0_sp.py source > repeat-apply.log 2>&1; then
+            echo "::error::Final patcher was unexpectedly repeat-applicable" >&2
+            exit 1
+          fi
+          grep -Eq 'already present|final/V5.1 marker already present' repeat-apply.log
+
+      - name: Build SP-only Windows x64 with accepted MinGW path
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify exact SP outputs and absence of MP build
+        run: |
+          set -Eeuo pipefail
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          required=("$SP_OUT/ioWolfSP.x64.exe" "$SP_OUT/renderer_sp_opengl1_x64.dll" "$SP_OUT/renderer_sp_rend2_x64.dll" "$SP_OUT/main/cgame_sp_x64.dll" "$SP_OUT/main/qagame_sp_x64.dll" "$SP_OUT/main/ui_sp_x64.dll")
+          for f in "${required[@]}"; do test -s "$f" || { echo "::error::Missing $f" >&2; exit 1; }; done
+          test ! -d source/MP/build || { echo "::error::MP build directory exists" >&2; exit 1; }
+
+      - name: Package clean V12.0 FINAL R2 with complete proven runtime DLL set
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/main" "$STAGE/docs"
+
+          # FINAL R2 runtime-complete packaging:
+          # copy every root-level DLL from the last user-tested successful V5 runtime,
+          # then overwrite renderer/game binaries with the freshly compiled FINAL build.
+          # This preserves required system runtime dependencies (SDL/OpenAL/etc.) without
+          # inheriting old BAT/CFG/test documents or the old staged directory wholesale.
+          mapfile -t BASE_RUNTIME_DLLS < <(find "$V5_STAGE" -maxdepth 1 -type f -iname '*.dll' -printf '%f\n' | LC_ALL=C sort)
+          (( ${#BASE_RUNTIME_DLLS[@]} > 0 )) || { echo "::error::No root runtime DLLs found in successful V5 base" >&2; exit 1; }
+          for dll in "${BASE_RUNTIME_DLLS[@]}"; do
+            install -m 0644 "$V5_STAGE/$dll" "$STAGE/$dll"
+          done
+          # These two are known required ioRTCW Windows runtime dependencies in the proven package.
+          test -s "$STAGE/SDL264.dll" || { echo "::error::SDL264.dll missing from successful runtime dependency set" >&2; exit 1; }
+          test -s "$STAGE/OpenAL64.dll" || { echo "::error::OpenAL64.dll missing from successful runtime dependency set" >&2; exit 1; }
+
+          install -m 0755 "$SP_OUT/ioWolfSP.x64.exe" "$STAGE/ioWolfSP.x64.exe"
+          install -m 0644 "$SP_OUT/renderer_sp_opengl1_x64.dll" "$STAGE/renderer_sp_opengl1_x64.dll"
+          install -m 0644 "$SP_OUT/renderer_sp_rend2_x64.dll" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 "$SP_OUT/main/cgame_sp_x64.dll" "$STAGE/main/cgame_sp_x64.dll"
+          install -m 0644 "$SP_OUT/main/qagame_sp_x64.dll" "$STAGE/main/qagame_sp_x64.dll"
+          install -m 0644 "$SP_OUT/main/ui_sp_x64.dll" "$STAGE/main/ui_sp_x64.dll"
+          install -m 0644 rend2-static-light-promotion-final-release-v12_0-sp.patch "$STAGE/docs/"
+          install -m 0644 rend2-cumulative-production-v12_0-final-static-light-promotion-sp.patch "$STAGE/docs/"
+          install -m 0644 apply_rend2_static_light_promotion_final_release_v12_0_sp.py "$STAGE/docs/"
+
+          cat > "$STAGE/README_V12_0_FINAL.txt" <<'TXT'
+          DarkWolf/ioRTCW Rend2 V12.0 FINAL PRODUCTION
+          ============================================
+          Clean Native Shadow State + Persistent Lamp Learn + Wide Search + Synthetic Learn
+
+          START:
+            ioWolfSP.x64.exe
+
+          No BAT, no autoexec and no CFG file is required by this release.
+          The EXE sanitizes inherited shadow diagnostic state before the Rend2 DLL is loaded.
+
+          Final native production values:
+            r_dlightMode 2
+            r_dlightShadowMapSize 2048
+            r_dlightShadowMaxLights 3
+            r_dlightShadowBias 0.0033
+            r_dlightShadowSoftness 1.70
+            r_dlightShadowStrength 0.88
+            r_staticPromoteMaxLights 24
+
+          The following inherited diagnostic states are forced OFF at native renderer startup:
+            r_dlightShadowAutoTest
+            r_dlightMaterialAutoTest
+            r_dlightFootprintAutoTest
+            r_dlightMaterialProbe
+            r_dlightMaterialStage
+            r_dlightShadowTestLock
+            r_dlightShadowCasterMode
+            r_dlightShadowKernelMode
+
+          Normal Lamp Learn commands retained:
+            r_staticPromoteInspect
+            r_staticPromoteLearn
+            r_staticPromoteBlock
+            r_staticPromoteAuto
+            r_staticPromoteClearMap
+
+          Wide Search commands retained:
+            r_staticPromoteWideInspect
+            r_staticPromoteLearnCandidate <slot>
+            r_staticPromoteBlockCandidate <slot>
+            r_staticPromoteAutoCandidate <slot>
+
+          Synthetic Learn commands retained:
+            r_staticPromoteSynthetic
+            r_staticPromoteSynthetic <distance> <intensity> [r g b]
+            r_staticPromoteSyntheticRemove
+
+          Persistent user data is NOT included in this ZIP and is not overwritten by installing this release:
+            main/static_promote_user_overrides.txt
+            main/static_promote_synthetic_lights.txt
+
+          Limits:
+            user overrides = 8192
+            synthetic definitions = 8192
+            active promoted lights = 24 default / 28 hard maximum
+            cubemap shadow lights = 3 default
+
+          This final package is intentionally clean: it contains no test CFG profiles and no BAT launchers. Required root runtime DLLs are inherited from the last user-tested successful V5 runtime, while renderer/game binaries are freshly rebuilt.
+          TXT
+
+          cat > "$STAGE/docs/V12_0_FINAL_BUILD_INFO.txt" <<EOF
+          workflow_revision=V12.0-final-production-r2-runtime-complete-clean-shadow-state
+          marker=REND2_STATIC_LIGHT_PROMOTION_FINAL_RELEASE_V12_0
+          base=user-tested-successful_V12.0_Fix_v5_artifact
+          base_run_id=$V5_RUN_ID
+          base_artifact_id=$V5_ARTIFACT_ID
+          base_artifact_name=$V5_ARTIFACT_NAME
+          upstream_sha=$UPSTREAM_SHA
+          source_delta=SP/code/client/cl_main.c,SP/code/rend2/tr_init.c,SP/code/rend2/tr_local.h,SP/code/rend2/tr_scene.c
+          manual_v5_learning=preserved
+          wide_search=enabled
+          synthetic_learning=enabled
+          native_shadow_state_sanitizer=enabled_before_renderer_load
+          diagnostic_shadow_state=forced_off
+          persistent_override_limit=8192
+          synthetic_limit=8192
+          active_light_budget_default=24
+          active_light_hard_max=28
+          shadow_budget_default=3
+          shadow_map_default=2048
+          packaged_cfg_files=0
+          packaged_bat_files=0
+          runtime_root_dlls=all_from_user_tested_successful_V5_base
+          required_runtime_dlls=SDL264.dll,OpenAL64.dll
+          final_patcher_sha256=$FINAL_PATCHER_SHA256
+          EOF
+
+          test -s "$STAGE/ioWolfSP.x64.exe"
+          test -s "$STAGE/renderer_sp_rend2_x64.dll"
+          test -s "$STAGE/SDL264.dll"
+          test -s "$STAGE/OpenAL64.dll"
+          for dll in "${BASE_RUNTIME_DLLS[@]}"; do
+            test -s "$STAGE/$dll" || { echo "::error::Runtime DLL lost during packaging: $dll" >&2; exit 1; }
+          done
+          printf '%s\n' "${BASE_RUNTIME_DLLS[@]}" > "$STAGE/docs/V12_0_FINAL_RUNTIME_DLLS.txt"
+          if find "$STAGE" -type f -iname '*.bat' -print -quit | grep -q .; then echo "::error::BAT found in final release" >&2; exit 1; fi
+          if find "$STAGE" -type f -iname '*.cfg' -print -quit | grep -q .; then echo "::error::CFG found in final release" >&2; find "$STAGE" -type f -iname '*.cfg' -print >&2; exit 1; fi
+          if test -e "$STAGE/main/static_promote_user_overrides.txt"; then echo "::error::User override file must not be packaged" >&2; exit 1; fi
+          if test -e "$STAGE/main/static_promote_synthetic_lights.txt"; then echo "::error::Synthetic user file must not be packaged" >&2; exit 1; fi
+          test "$(find "$STAGE/main" -maxdepth 1 -type f | wc -l)" -eq 3
+          grep -Fq 'r_staticPromoteLearn' "$STAGE/README_V12_0_FINAL.txt"
+          grep -Fq 'r_staticPromoteWideInspect' "$STAGE/README_V12_0_FINAL.txt"
+          grep -Fq 'r_staticPromoteSynthetic' "$STAGE/README_V12_0_FINAL.txt"
+          grep -Fq 'r_dlightShadowTestLock' "$STAGE/README_V12_0_FINAL.txt"
+          ( cd "$STAGE"; find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          ( cd "$DIST"; find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip" )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+          if unzip -Z1 "$DIST/$RELEASE_BASENAME.zip" | grep -Ei '\.(cfg|bat)$'; then echo "::error::CFG/BAT leaked into final ZIP" >&2; exit 1; fi
+
+      - name: Upload clean V12.0 FINAL R2 runtime-complete release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Publish GitHub Release for V12.0 FINAL R2 tag
+        if: startsWith(github.ref, 'refs/tags/rend2-static-light-promotion-v12_0-final-sp-')
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/$RELEASE_BASENAME.zip" \
+            "dist/$RELEASE_BASENAME.zip.sha256" \
+            --repo "$GH_REPO" \
+            --title "DarkWolf ioRTCW Rend2 V12.0 FINAL Production R2" \
+            --notes "SP-only final lamp-lighting release R2. Preserves persistent manual Lamp Learn, Wide Search and Synthetic Learn; sanitizes inherited shadow diagnostic state natively; carries the complete root runtime DLL set from the last user-tested successful V5 package; no BAT and no CFG test profiles."
