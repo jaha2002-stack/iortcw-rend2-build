@@ -1,0 +1,862 @@
+name: Build ioRTCW Rend2 V12.0 Final Production Fix v4 Map Lifecycle Physical Fixture Priority SP-only Windows x64
+
+"on":
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "rend2-static-light-promotion-v12_0-fix-v4-sp-*"
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: "rend2-static-light-promotion-v12_0-fix-v4-sp-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP-only V12.0 Fix v4 over successful Fix v3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      V3_RELEASE_BASENAME: "iortcw-rend2-static-light-promotion-final-production-v12_0-fix-v3-sp-windows-x64"
+      RELEASE_BASENAME: "iortcw-rend2-static-light-promotion-final-production-v12_0-fix-v4-sp-windows-x64"
+      FIX_PATCHER_SHA256: "75754bcf18e1ea551e5ff66c16734a0ab800b45e47714218fe6b60f07b394914"
+      FIX_PATCHER_GZIP_SHA256: "4cace6550bb3d9dfb97427daf9632c39d571488b89117ae02d61b3abbe1cd22d"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 \
+            build-essential \
+            ca-certificates \
+            g++-mingw-w64-x86-64 \
+            gcc-mingw-w64-x86-64 \
+            gh \
+            git \
+            libegl1 \
+            libegl-mesa0 \
+            libgl1 \
+            libgl1-mesa-dri \
+            make \
+            mingw-w64 \
+            python3 \
+            unzip \
+            zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+
+      - name: Recover latest successful V12.0 Fix v3 release artifact
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Fix-v3 recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf v3-artifact v3-release
+          mkdir -p v3-artifact v3-release
+
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > v3-artifacts.tsv
+
+          python3 - <<'PY_SELECT' > v3-selected-artifact.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['V3_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('v3-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created_at, artifact_id, run_id, name = parts
+              if name.startswith(prefix):
+                  rows.append((created_at, artifact_id, run_id, name))
+          if not rows:
+              raise SystemExit('No retained successful Fix-v3 artifact with prefix %r was found.' % prefix)
+          rows.sort(key=lambda row: row[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT
+
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < v3-selected-artifact.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || {
+            echo "::error::Malformed selected Fix-v3 artifact record" >&2
+            cat v3-selected-artifact.tsv >&2
+            exit 1
+          }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected Fix-v3 artifact belongs to non-successful run $run_id (conclusion=$run_conclusion)" >&2; exit 1; }
+          echo "Selected Fix-v3 artifact: name=$artifact_name artifact_id=$artifact_id run_id=$run_id created=$artifact_created"
+          echo "V3_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "V3_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "V3_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir v3-artifact
+          base_zip="$(find v3-artifact -type f -name "$V3_RELEASE_BASENAME.zip" -print -quit)"
+          base_sha="$(find v3-artifact -type f -name "$V3_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" ]] || { echo "::error::Fix-v3 release zip missing" >&2; find v3-artifact -maxdepth 3 -type f -print >&2; exit 1; }
+          [[ -n "$base_sha" && -s "$base_sha" ]] || { echo "::error::Fix-v3 SHA sidecar missing" >&2; find v3-artifact -maxdepth 3 -type f -print >&2; exit 1; }
+          expected="$(awk 'NF {print $1; exit}' "$base_sha")"
+          actual="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "::error::Invalid Fix-v3 SHA sidecar: $expected" >&2; exit 1; }
+          [[ "$actual" = "$expected" ]] || { echo "::error::Fix-v3 release SHA mismatch expected=$expected actual=$actual" >&2; exit 1; }
+
+          unzip -q "$base_zip" -d v3-release
+          V3_STAGE="$GITHUB_WORKSPACE/v3-release/$V3_RELEASE_BASENAME"
+          [[ -d "$V3_STAGE" ]] || { echo "::error::Fix-v3 release root missing: $V3_STAGE" >&2; exit 1; }
+          V3_CUMULATIVE="$V3_STAGE/docs/rend2-cumulative-production-v12_0-fix-v3-static-light-promotion-final-sp.patch"
+          [[ -s "$V3_CUMULATIVE" ]] || { echo "::error::Fix-v3 cumulative patch missing: $V3_CUMULATIVE" >&2; exit 1; }
+          [[ -s "$V3_STAGE/renderer_sp_rend2_x64.dll" ]] || { echo "::error::Fix-v3 Rend2 DLL missing" >&2; exit 1; }
+          echo "V3_STAGE=$V3_STAGE" >> "$GITHUB_ENV"
+          echo "V3_CUMULATIVE=$V3_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "Recovered user-confirmed successful Fix-v3 run $run_id with verified release SHA $actual"
+
+      - name: Checkout exact upstream and reconstruct successful Fix v3 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Fix-v3 source reconstruction failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          git init source
+          git -C source config core.autocrlf false
+          git -C source config core.eol lf
+          git -C source remote add origin "$UPSTREAM_REPO"
+          git -C source fetch --depth 1 origin "$UPSTREAM_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          actual_upstream="$(git -C source rev-parse HEAD)"
+          [[ "$actual_upstream" = "$UPSTREAM_SHA" ]] || { echo "::error::Upstream SHA mismatch expected=$UPSTREAM_SHA actual=$actual_upstream" >&2; exit 1; }
+          [[ -z "$(git -C source status --short)" ]] || { echo "::error::Fresh upstream tree unexpectedly dirty" >&2; exit 1; }
+
+          git -C source apply --check --whitespace=nowarn "$V3_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$V3_CUMULATIVE"
+          git -C source diff --check
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V3_V12_0' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'static_promote_v12_fix_v3_status.txt' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'r_staticPromoteClassifierMinIntensity = ri.Cvar_Get( "r_staticPromoteClassifierMinIntensity", "15", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_staticPromoteClassifierMinColorRatio = ri.Cvar_Get( "r_staticPromoteClassifierMinColorRatio", "0.55", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_DLIGHT_FROZEN_TESLA_FOOTPRINT_AB_V8_6_8' source/SP/code/rend2/tr_backend.c
+
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -m 'Reconstructed user-confirmed successful V12.0 Fix v3 runtime base'
+          V3_BASE_COMMIT="$(git -C source rev-parse HEAD)"
+          echo "V3_BASE_COMMIT=$V3_BASE_COMMIT" >> "$GITHUB_ENV"
+          [[ "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA" ]] || { echo "::error::Fix-v3 reconstructed base parent mismatch" >&2; exit 1; }
+
+      - name: Materialize and verify V12.0 Final Production Fix v4 patcher
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Fix-v4 patcher materialization failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          cat > apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py.gz.b64 <<'FIX_PATCHER_B64'
+          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
+          PMhKeXP4AKpy1v8GHMUkqLP2X6MvqRtqrAAA
+          FIX_PATCHER_B64
+          sed 's/^[[:space:]]*//' apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py.gz.b64 | base64 -d > apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py.gz
+          actual_gzip="$(sha256sum apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py.gz | awk '{print $1}')"
+          [[ "$actual_gzip" = "$FIX_PATCHER_GZIP_SHA256" ]] || { echo "::error::Fix-v4 patcher gzip SHA mismatch expected=$FIX_PATCHER_GZIP_SHA256 actual=$actual_gzip" >&2; exit 1; }
+          gzip -dc apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py.gz > apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py
+          actual_patcher="$(sha256sum apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py | awk '{print $1}')"
+          [[ "$actual_patcher" = "$FIX_PATCHER_SHA256" ]] || { echo "::error::Fix-v4 patcher SHA mismatch expected=$FIX_PATCHER_SHA256 actual=$actual_patcher" >&2; exit 1; }
+          chmod +x apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py
+          python3 -m py_compile apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py
+          ./apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py source --check-only
+
+      - name: Snapshot exact Fix v3 invariants before Fix v4
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Invariant snapshot failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          mkdir -p invariants
+          cp source/SP/code/rend2/tr_init.c invariants/tr_init_fix_v3.c
+          cp source/SP/code/rend2/tr_local.h invariants/tr_local_fix_v3.h
+          cp source/SP/code/rend2/tr_scene.c invariants/tr_scene_fix_v3.c
+          for file in \
+            SP/code/rend2/tr_main.c \
+            SP/code/rend2/tr_backend.c \
+            SP/code/rend2/tr_shade.c \
+            SP/code/rend2/tr_mesh.c \
+            SP/code/rend2/tr_world.c \
+            SP/code/rend2/tr_image.c \
+            SP/code/rend2/tr_fbo.c \
+            SP/code/rend2/tr_bsp.c; do
+            sha256sum "source/$file"
+          done > invariants/protected-renderer.sha256
+          grep -Fq 'if (s_staticPromotePersistentWorld == tr.world)' invariants/tr_scene_fix_v3.c
+          grep -Fq 'r_staticPromoteClassifierMinIntensity ? r_staticPromoteClassifierMinIntensity->value : 15.0f' invariants/tr_scene_fix_v3.c
+
+      - name: Check and apply V12.0 Final Production Fix v4 delta
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Fix-v4 apply failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          ./apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py source --check-only
+          ./apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py source
+          git -C source diff --check
+          git -C source diff --name-only "$V3_BASE_COMMIT" | LC_ALL=C sort > actual-fix-v4-delta-files.txt
+          printf '%s\n' \
+            SP/code/rend2/tr_init.c \
+            SP/code/rend2/tr_local.h \
+            SP/code/rend2/tr_scene.c \
+            | LC_ALL=C sort > expected-fix-v4-delta-files.txt
+          diff -u expected-fix-v4-delta-files.txt actual-fix-v4-delta-files.txt
+
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V4_V12_0' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V4_V12_0' source/SP/code/rend2/tr_local.h
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V4_V12_0' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'r_staticPromoteClassifierMinFixtureMembers = ri.Cvar_Get( "r_staticPromoteClassifierMinFixtureMembers", "2", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_staticPromoteClassifierMinIntensity = ri.Cvar_Get( "r_staticPromoteClassifierMinIntensity", "30", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_staticPromoteClassifierMinColorRatio = ri.Cvar_Get( "r_staticPromoteClassifierMinColorRatio", "0.60", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 's_staticPromotePersistentMapName[MAX_QPATH]' source/SP/code/rend2/tr_scene.c
+          grep -Fq 's_staticPromotePersistentEntityString' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'R_StaticPromotePhysicalPriority' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'for (priority = 0; priority <= 3' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'selection=physical_priority_then_influence_pvs_sticky_no_distance' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'static_promote_v12_fix_v4_status.txt' source/SP/code/rend2/tr_scene.c
+          ! grep -Fq 'if (s_staticPromotePersistentWorld == tr.world)' source/SP/code/rend2/tr_scene.c
+          ! grep -Fq 's_staticPromotePersistentWorld = tr.world' source/SP/code/rend2/tr_scene.c
+
+          python3 - <<'PY_LITERAL_TAB_GUARD'
+          from pathlib import Path
+          targets = [Path('source/SP/code/rend2/tr_init.c'), Path('source/SP/code/rend2/tr_local.h'), Path('source/SP/code/rend2/tr_scene.c')]
+          bad = []
+          for path in targets:
+              for line_no, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+                  if line.startswith(r'\t'):
+                      bad.append(f'{path}:{line_no}:{line[:160]}')
+          if bad:
+              raise SystemExit('Fix-v4 generated-source literal \\t regression detected:\n' + '\n'.join(bad[:20]))
+          print('Fix-v4 generated-source literal-tab guard PASS')
+          PY_LITERAL_TAB_GUARD
+          sha256sum -c invariants/protected-renderer.sha256
+
+      - name: Validate map lifecycle and physical fixture priority contract
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Fix-v4 policy validation failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          python3 - <<'PY_POLICY'
+          from pathlib import Path
+          s = Path('source/SP/code/rend2/tr_scene.c').read_text(encoding='utf-8')
+          start = s.index('static int R_StaticPromoteSelectPersistentInfluence')
+          end = s.index('static qboolean R_StaticPromoteAddCandidate', start)
+          selector = s[start:end]
+          for forbidden in ('distanceSq', 'bestDistance', 'DistanceSquared(', 'selection=nearest'):
+              if forbidden in selector:
+                  raise SystemExit('camera-distance selection token remains: ' + forbidden)
+          required = (
+              's_staticPromotePersistentMapName',
+              's_staticPromotePersistentEntityString',
+              's_staticPromotePersistentReady',
+              's_staticPromotePersistentBuildGeneration',
+              '!Q_stricmp(s_staticPromotePersistentMapName, tr.world->baseName)',
+              's_staticPromotePersistentEntityString == tr.world->entityString',
+              'R_StaticPromotePhysicalPriority',
+              'STATIC_PROMOTE_CLASS_FIXTURE_MEMBERS',
+              'light->rawMembers < minFixtureMembers',
+              'for (priority = 0; priority <= 3',
+          )
+          for token in required:
+              if token not in s:
+                  raise SystemExit('missing Fix-v4 policy token: ' + token)
+          if s.find('if (light->approvedFallback)') > s.find('light->rawMembers < minFixtureMembers'):
+              raise SystemExit('validated fixture override must precede generic member-count rejection')
+
+          # Regression model from the user's V3 status: 24 selected slots contained 19 singles and only five 3-member fixture groups.
+          v3_members = [1] * 19 + [3] * 5
+          accepted_default = [m for m in v3_members if m >= 2]
+          if len(accepted_default) != 5:
+              raise SystemExit('V3 status regression model failed')
+          print('V3 observed-slot regression: default minFixtureMembers=2 rejects 19/24 single BSP fill-light candidates and keeps 5/24 grouped fixture candidates.')
+          print('Fix-v4 map lifecycle + physical priority contract PASS')
+          PY_POLICY
+
+          if ./apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py source > repeat-apply.log 2>&1; then
+            echo "::error::Fix-v4 patcher unexpectedly accepted already-patched source" >&2
+            cat repeat-apply.log >&2
+            exit 1
+          fi
+          grep -Fq 'already present' repeat-apply.log
+
+      - name: Generate Fix v4 delta and cumulative patches and replay exact trees
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Patch replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          git -C source diff --binary "$V3_BASE_COMMIT" -- \
+            SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h SP/code/rend2/tr_scene.c \
+            > rend2-static-light-promotion-final-production-v12_0-fix-v4-sp.patch
+          git -C source diff --binary "$UPSTREAM_SHA" > rend2-cumulative-production-v12_0-fix-v4-static-light-promotion-final-sp.patch
+          test -s rend2-static-light-promotion-final-production-v12_0-fix-v4-sp.patch
+          test -s rend2-cumulative-production-v12_0-fix-v4-static-light-promotion-final-sp.patch
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-static-light-promotion-final-production-v12_0-fix-v4-sp.patch"
+
+          rm -rf fix-v4-delta-replay fix-v4-cumulative-replay
+          cp -a source fix-v4-delta-replay
+          git -C fix-v4-delta-replay reset --hard "$V3_BASE_COMMIT"
+          git -C fix-v4-delta-replay clean -fdx
+          git -C fix-v4-delta-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-static-light-promotion-final-production-v12_0-fix-v4-sp.patch"
+          git -C fix-v4-delta-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-static-light-promotion-final-production-v12_0-fix-v4-sp.patch"
+          git -C fix-v4-delta-replay diff --check
+          cmp source/SP/code/rend2/tr_init.c fix-v4-delta-replay/SP/code/rend2/tr_init.c
+          cmp source/SP/code/rend2/tr_local.h fix-v4-delta-replay/SP/code/rend2/tr_local.h
+          cmp source/SP/code/rend2/tr_scene.c fix-v4-delta-replay/SP/code/rend2/tr_scene.c
+
+          cp -a source fix-v4-cumulative-replay
+          git -C fix-v4-cumulative-replay reset --hard "$UPSTREAM_SHA"
+          git -C fix-v4-cumulative-replay clean -fdx
+          git -C fix-v4-cumulative-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-cumulative-production-v12_0-fix-v4-static-light-promotion-final-sp.patch"
+          git -C fix-v4-cumulative-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-cumulative-production-v12_0-fix-v4-static-light-promotion-final-sp.patch"
+          git -C fix-v4-cumulative-replay diff --check
+          cmp source/SP/code/rend2/tr_init.c fix-v4-cumulative-replay/SP/code/rend2/tr_init.c
+          cmp source/SP/code/rend2/tr_local.h fix-v4-cumulative-replay/SP/code/rend2/tr_local.h
+          cmp source/SP/code/rend2/tr_scene.c fix-v4-cumulative-replay/SP/code/rend2/tr_scene.c
+
+      - name: Build SP-only Windows x64 with accepted MinGW path
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"
+          if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify exact SP outputs and absence of MP build
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Output verification failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          required=(
+            "$SP_OUT/ioWolfSP.x64.exe"
+            "$SP_OUT/renderer_sp_opengl1_x64.dll"
+            "$SP_OUT/renderer_sp_rend2_x64.dll"
+            "$SP_OUT/main/cgame_sp_x64.dll"
+            "$SP_OUT/main/qagame_sp_x64.dll"
+            "$SP_OUT/main/ui_sp_x64.dll"
+          )
+          for file in "${required[@]}"; do
+            test -s "$file" || { echo "::error::Missing required SP output: $file" >&2; exit 1; }
+          done
+          test ! -d source/MP/build || { echo "::error::MP build directory exists: Fix v4 must compile SP only" >&2; exit 1; }
+
+      - name: Package V12.0 Final Production Fix v4 release
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE"
+          cp -a "$V3_STAGE/." "$STAGE/"
+          rm -f "$STAGE/SHA256SUMS.txt"
+          rm -f "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V12_FIX_V3_FINAL.bat"
+          rm -f "$STAGE/main/rend2_static_light_promotion_v12_fix_v3_final.cfg"
+          rm -f "$STAGE/main/v12_fix_v3_"*.cfg
+          rm -f "$STAGE/README_V12_0_FIX_V3_FINAL_RU.txt"
+
+          install -m 0755 "$SP_OUT/ioWolfSP.x64.exe" "$STAGE/ioWolfSP.x64.exe"
+          install -m 0644 "$SP_OUT/renderer_sp_opengl1_x64.dll" "$STAGE/renderer_sp_opengl1_x64.dll"
+          install -m 0644 "$SP_OUT/renderer_sp_rend2_x64.dll" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 "$SP_OUT/main/cgame_sp_x64.dll" "$STAGE/main/cgame_sp_x64.dll"
+          install -m 0644 "$SP_OUT/main/qagame_sp_x64.dll" "$STAGE/main/qagame_sp_x64.dll"
+          install -m 0644 "$SP_OUT/main/ui_sp_x64.dll" "$STAGE/main/ui_sp_x64.dll"
+          mkdir -p "$STAGE/docs"
+          install -m 0644 rend2-static-light-promotion-final-production-v12_0-fix-v4-sp.patch "$STAGE/docs/"
+          install -m 0644 rend2-cumulative-production-v12_0-fix-v4-static-light-promotion-final-sp.patch "$STAGE/docs/"
+          install -m 0644 apply_rend2_static_light_promotion_final_production_v12_0_fix_v4_sp.py "$STAGE/docs/"
+
+          cat > "$STAGE/main/rend2_static_light_promotion_v12_fix_v4_final.cfg" <<'CFG'
+          echo "V12.0 FIX V4 FINAL: map lifecycle + physical fixture priority + persistent influence + multi-shadow"
+          set r_dynamiclight 1
+          set r_dlightScale 1
+          set r_dlightMode 2
+          set r_dlightShadowMapSize 2048
+          set r_dlightShadowMaxLights 3
+          set r_dlightShadowBias 0.0033
+          set r_dlightShadowSoftness 1.70
+          set r_dlightShadowStrength 0.88
+          set r_dlightShadowAutoTest 0
+          set r_dlightMaterialAutoTest 0
+          set r_dlightFootprintAutoTest 0
+          set r_staticPromote 1
+          set r_staticPromoteManualOverride 0
+          set r_staticPromoteAutoMapLights 1
+          set r_staticPromotePVS 1
+          set r_staticPromotePVSHoldMs 8000
+          set r_staticPromoteInfluenceRadius 320
+          set r_staticPromoteClassifier 1
+          set r_staticPromoteClassifierMinIntensity 30
+          set r_staticPromoteClassifierMaxIntensity 350
+          set r_staticPromoteClassifierMinColorRatio 0.60
+          set r_staticPromoteClassifierAllowScripted 0
+          set r_staticPromoteClassifierMinFixtureMembers 2
+          set r_staticPromoteGain 0.35
+          set r_staticPromoteDirectGain 1.10
+          set r_staticPromoteRadiusScale 0.70
+          set r_staticPromoteMinRadius 192
+          set r_staticPromoteMaxRadius 320
+          set r_staticPromoteMaxColor 0.50
+          set r_staticPromoteMaxLights 24
+          set r_staticPromoteIndex0 -1
+          set r_staticPromoteIndex1 -1
+          set r_staticPromoteDump 0
+          CFG
+
+          cat > "$STAGE/main/v12_fix_v4_light_dim.cfg" <<'CFG'
+          set r_staticPromoteDirectGain 0.90
+          set r_staticPromoteMaxColor 0.45
+          echo "V12 FIX V4 DIM: softer promoted lamp contribution"
+          CFG
+          cat > "$STAGE/main/v12_fix_v4_light_balanced.cfg" <<'CFG'
+          set r_staticPromoteDirectGain 1.10
+          set r_staticPromoteMaxColor 0.50
+          echo "V12 FIX V4 BALANCED: production default"
+          CFG
+          cat > "$STAGE/main/v12_fix_v4_light_bright.cfg" <<'CFG'
+          set r_staticPromoteDirectGain 1.25
+          set r_staticPromoteMaxColor 0.58
+          echo "V12 FIX V4 BRIGHT: stronger promoted lamp contribution"
+          CFG
+
+          cat > "$STAGE/main/v12_fix_v4_shadows_1.cfg" <<'CFG'
+          set r_dlightShadowMaxLights 1
+          echo "V12 FIX V4 cubemap shadow budget = 1"
+          CFG
+          cat > "$STAGE/main/v12_fix_v4_shadows_2.cfg" <<'CFG'
+          set r_dlightShadowMaxLights 2
+          echo "V12 FIX V4 cubemap shadow budget = 2"
+          CFG
+          cat > "$STAGE/main/v12_fix_v4_shadows_3.cfg" <<'CFG'
+          set r_dlightShadowMaxLights 3
+          echo "V12 FIX V4 cubemap shadow budget = 3 (default)"
+          CFG
+          cat > "$STAGE/main/v12_fix_v4_shadows_4.cfg" <<'CFG'
+          set r_dlightShadowMaxLights 4
+          echo "V12 FIX V4 cubemap shadow budget = 4 (higher GPU cost)"
+          CFG
+
+          cat > "$STAGE/main/v12_fix_v4_shadow_1024.cfg" <<'CFG'
+          set r_dlightMode 2
+          set r_dlightShadowMapSize 1024
+          echo "V12 FIX V4 shadow map 1024; vid_restart follows"
+          vid_restart
+          CFG
+          cat > "$STAGE/main/v12_fix_v4_shadow_2048.cfg" <<'CFG'
+          set r_dlightMode 2
+          set r_dlightShadowMapSize 2048
+          echo "V12 FIX V4 shadow map 2048 production default; vid_restart follows"
+          vid_restart
+          CFG
+          cat > "$STAGE/main/v12_fix_v4_shadow_4096_ultra.cfg" <<'CFG'
+          set r_dlightMode 2
+          set r_dlightShadowMapSize 4096
+          echo "V12 FIX V4 shadow map 4096 ULTRA; unvalidated higher GPU/VRAM cost; vid_restart follows"
+          vid_restart
+          CFG
+
+          cat > "$STAGE/main/v12_fix_v4_lights_16.cfg" <<'CFG'
+          set r_staticPromoteMaxLights 16
+          echo "V12 FIX V4 promoted resident budget = 16"
+          CFG
+          cat > "$STAGE/main/v12_fix_v4_lights_24.cfg" <<'CFG'
+          set r_staticPromoteMaxLights 24
+          echo "V12 FIX V4 promoted resident budget = 24 (default)"
+          CFG
+          cat > "$STAGE/main/v12_fix_v4_lights_28.cfg" <<'CFG'
+          set r_staticPromoteMaxLights 28
+          echo "V12 FIX V4 promoted resident budget = 28 maximum"
+          CFG
+
+          cat > "$STAGE/main/v12_fix_v4_classifier_strict.cfg" <<'CFG'
+          set r_staticPromoteClassifier 1
+          set r_staticPromoteClassifierMinFixtureMembers 3
+          set r_staticPromoteClassifierMinIntensity 40
+          set r_staticPromoteClassifierMaxIntensity 300
+          set r_staticPromoteClassifierMinColorRatio 0.65
+          set r_staticPromoteClassifierAllowScripted 0
+          echo "V12 FIX V4 STRICT: only strong grouped physical-fixture evidence"
+          CFG
+          cat > "$STAGE/main/v12_fix_v4_classifier_balanced.cfg" <<'CFG'
+          set r_staticPromoteClassifier 1
+          set r_staticPromoteClassifierMinFixtureMembers 2
+          set r_staticPromoteClassifierMinIntensity 30
+          set r_staticPromoteClassifierMaxIntensity 350
+          set r_staticPromoteClassifierMinColorRatio 0.60
+          set r_staticPromoteClassifierAllowScripted 0
+          echo "V12 FIX V4 BALANCED classifier: production default"
+          CFG
+          cat > "$STAGE/main/v12_fix_v4_classifier_permissive.cfg" <<'CFG'
+          set r_staticPromoteClassifier 1
+          set r_staticPromoteClassifierMinFixtureMembers 1
+          set r_staticPromoteClassifierMinIntensity 20
+          set r_staticPromoteClassifierMaxIntensity 500
+          set r_staticPromoteClassifierMinColorRatio 0.50
+          set r_staticPromoteClassifierAllowScripted 0
+          echo "V12 FIX V4 PERMISSIVE: allows single BSP lights; use only if real lamps are missing"
+          CFG
+          cat > "$STAGE/main/v12_fix_v4_classifier_off_debug.cfg" <<'CFG'
+          set r_staticPromoteClassifier 0
+          echo "V12 FIX V4 classifier OFF DEBUG: technical BSP fill/effect lights may be promoted"
+          CFG
+
+          export STAGE
+          python3 - <<'PY_BAT'
+          import os
+          from pathlib import Path
+          p = Path(os.environ['STAGE']) / 'START_SP_STATIC_LIGHT_PROMOTION_V12_FIX_V4_FINAL.bat'
+          lines = [
+              '@echo off',
+              'cd /d "%~dp0"',
+              'echo V12.0 Final Production Fix v4 - Map Lifecycle / Physical Fixture Priority / All Maps / Multi-Shadow',
+              'echo One automatic renderer restart primes latched Rend2/dlight settings; no manual vid_restart should be needed.',
+              'if not exist "%~dp0ioWolfSP.x64.exe" (',
+              '  echo ERROR: ioWolfSP.x64.exe not found beside this BAT.',
+              '  pause',
+              '  exit /b 1',
+              ')',
+              '"%~dp0ioWolfSP.x64.exe" +set cl_renderer rend2 +set r_dynamiclight 1 +set r_dlightScale 1 +set r_dlightMode 2 +set r_dlightShadowMapSize 2048 +set r_dlightShadowMaxLights 3 +set r_staticPromote 1 +set r_staticPromoteManualOverride 0 +set r_staticPromoteAutoMapLights 1 +set r_staticPromotePVS 1 +set r_staticPromotePVSHoldMs 8000 +set r_staticPromoteInfluenceRadius 320 +set r_staticPromoteClassifier 1 +set r_staticPromoteClassifierMinIntensity 30 +set r_staticPromoteClassifierMaxIntensity 350 +set r_staticPromoteClassifierMinColorRatio 0.60 +set r_staticPromoteClassifierAllowScripted 0 +set r_staticPromoteClassifierMinFixtureMembers 2 +set r_staticPromoteMaxLights 24 +set r_staticPromoteDirectGain 1.10 +set r_staticPromoteMaxColor 0.50 +set r_staticPromoteMinRadius 192 +set r_staticPromoteMaxRadius 320 +set r_dlightShadowBias 0.0033 +set r_dlightShadowSoftness 1.70 +set r_dlightShadowStrength 0.88 +set r_dlightShadowAutoTest 0 +set r_dlightMaterialAutoTest 0 +set r_dlightFootprintAutoTest 0 +vid_restart',
+          ]
+          p.write_bytes(("\r\n".join(lines) + "\r\n").encode('ascii'))
+          PY_BAT
+
+          cat > "$STAGE/README_V12_0_FIX_V4_FINAL_RU.txt" <<'TXT'
+          DarkWolf/ioRTCW Rend2 V12.0 Final Production Fix v4
+          ===================================================
+          Map Lifecycle + Physical Fixture Priority / All Maps / Persistent Influence / Multi-Shadow
+
+          Что исправляет Fix v4 по реальному V3 runtime-тесту:
+          1) Map lifecycle: Rend2 tr_bsp.c использует один static s_worldData для всех карт. Поэтому сравнивать только tr.world pointer нельзя.
+             V4 идентифицирует registry по map baseName + entityString generation и не кэширует его до готового world/entityString.
+          2) False lights: V3 status показал 253 accepted fixtures и 65 influence-visible в одной области; первые 24 были заполнены в основном одиночными BSP lights.
+             V4 default требует минимум 2 объединенных BSP light members для auto-fixture. Проверенные escape1 835/735/736/737 всегда проходят override.
+          3) Overflow priority: validated > rawMembers>=3 > rawMembers>=2 > optional single. Camera distance не используется.
+          4) Startup: BAT выполняет один автоматический vid_restart после всех +set. Это намеренная и единственная startup-перезагрузка,
+             чтобы latched Rend2/dlight настройки были активны до обычной загрузки save/map. Ручной exec cfg/vid_restart не должен требоваться.
+
+          Production defaults:
+            r_staticPromote 1
+            r_staticPromoteAutoMapLights 1
+            r_staticPromotePVS 1
+            r_staticPromotePVSHoldMs 8000
+            r_staticPromoteInfluenceRadius 320
+            r_staticPromoteMaxLights 24
+            r_staticPromoteDirectGain 1.10
+            r_staticPromoteMaxColor 0.50
+            r_staticPromoteMinRadius 192
+            r_staticPromoteMaxRadius 320
+            r_staticPromoteClassifier 1
+            r_staticPromoteClassifierMinFixtureMembers 2
+            r_staticPromoteClassifierMinIntensity 30
+            r_staticPromoteClassifierMaxIntensity 350
+            r_staticPromoteClassifierMinColorRatio 0.60
+            r_staticPromoteClassifierAllowScripted 0
+            r_dlightMode 2
+            r_dlightShadowMapSize 2048
+            r_dlightShadowMaxLights 3
+
+          Главный запуск:
+            START_SP_STATIC_LIGHT_PROMOTION_V12_FIX_V4_FINAL.bat
+          Не запускай cfg вручную и не делай ручной vid_restart для первого теста.
+
+          Если настоящих ламп на другой карте стало слишком мало:
+            exec v12_fix_v4_classifier_permissive.cfg
+          Если где-то еще остается ложный свет без физической лампы:
+            exec v12_fix_v4_classifier_strict.cfg
+          Вернуть production default:
+            exec v12_fix_v4_classifier_balanced.cfg
+
+          Яркость без restart:
+            exec v12_fix_v4_light_dim.cfg
+            exec v12_fix_v4_light_balanced.cfg
+            exec v12_fix_v4_light_bright.cfg
+
+          Shadow budget без restart:
+            exec v12_fix_v4_shadows_1.cfg
+            exec v12_fix_v4_shadows_2.cfg
+            exec v12_fix_v4_shadows_3.cfg
+            exec v12_fix_v4_shadows_4.cfg
+
+          Primary diagnostic:
+            main/static_promote_v12_fix_v4_status.txt
+          В residentSlot теперь есть priority: 0=validated override, 1=3+ member physical group, 2=pair, 3=single permissive.
+          TXT
+
+          cat > "$STAGE/docs/V12_0_FIX_V4_BUILD_INFO.txt" <<EOF
+          workflow_revision=V12.0-final-production-fix-v4-map-lifecycle-physical-fixture-priority
+          marker=REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V4_V12_0
+          base=user_confirmed_successful_V12.0_Fix_v3_artifact
+          base_run_id=$V3_RUN_ID
+          base_artifact_id=$V3_ARTIFACT_ID
+          base_artifact_name=$V3_ARTIFACT_NAME
+          upstream_sha=$UPSTREAM_SHA
+          source_delta=tr_init.c,tr_local.h,tr_scene.c
+          map_identity=baseName_plus_entityString_generation
+          reused_world_pointer_guard_removed=1
+          all_maps=1
+          physical_priority=validated_group3_group2_single
+          classifier_min_fixture_members_default=2
+          classifier_min_intensity_default=30
+          classifier_min_color_ratio_default=0.60
+          startup_bat_auto_vid_restart=1
+          startup_bat_requires_exec_cfg=0
+          direct_gain_default=1.10
+          max_color_default=0.50
+          promoted_light_budget_default=24
+          shadow_budget_default=3
+          shadow_map_default=2048
+          shadow_renderer_backend=BYTE_UNCHANGED_FIX_V3
+          patcher_sha256=$FIX_PATCHER_SHA256
+          EOF
+
+          test -f "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V12_FIX_V4_FINAL.bat"
+          test -f "$STAGE/main/rend2_static_light_promotion_v12_fix_v4_final.cfg"
+          test -f "$STAGE/main/v12_fix_v4_classifier_balanced.cfg"
+          test -f "$STAGE/main/v12_fix_v4_classifier_strict.cfg"
+          test -f "$STAGE/main/v12_fix_v4_classifier_permissive.cfg"
+          grep -Fq '+set r_staticPromote 1' "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V12_FIX_V4_FINAL.bat"
+          grep -Fq '+set r_staticPromoteClassifierMinFixtureMembers 2' "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V12_FIX_V4_FINAL.bat"
+          grep -Fq '+set r_staticPromoteClassifierMinIntensity 30' "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V12_FIX_V4_FINAL.bat"
+          grep -Fq '+set r_staticPromoteClassifierMinColorRatio 0.60' "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V12_FIX_V4_FINAL.bat"
+          grep -Fq '+set r_dlightShadowMaxLights 3' "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V12_FIX_V4_FINAL.bat"
+          grep -Fq '+vid_restart' "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V12_FIX_V4_FINAL.bat"
+          if grep -Fq '+exec ' "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V12_FIX_V4_FINAL.bat"; then
+            echo "::error::Fix-v4 BAT must not depend on +exec cfg" >&2
+            exit 1
+          fi
+
+          python3 - <<'PY_VERIFY_BAT'
+          import os
+          from pathlib import Path
+          p = Path(os.environ['STAGE']) / 'START_SP_STATIC_LIGHT_PROMOTION_V12_FIX_V4_FINAL.bat'
+          data = p.read_bytes()
+          if b'\\r\\n' in data:
+              raise SystemExit('BAT contains literal backslash-r/backslash-n text')
+          if b'\r\n' not in data:
+              raise SystemExit('BAT does not contain CRLF line endings')
+          if b'\n' in data.replace(b'\r\n', b''):
+              raise SystemExit('BAT contains bare LF outside CRLF')
+          print('BAT CRLF validation PASS')
+          PY_VERIFY_BAT
+
+          (
+            cd "$STAGE"
+            find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload V12.0 Fix v4 final production release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Publish GitHub Release for a V12.0 Fix v4 final version tag
+        if: startsWith(github.ref, 'refs/tags/rend2-static-light-promotion-v12_0-fix-v4-sp-')
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Release publish failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/$RELEASE_BASENAME.zip" \
+            "dist/$RELEASE_BASENAME.zip.sha256" \
+            --repo "$GH_REPO" \
+            --title "ioRTCW Rend2 V12.0 Final Production Fix v4 SP-only" \
+            --notes "Final lamp candidate over the user-confirmed successful Fix v3 base: map registry no longer keys on the reused tr.world pointer; physical-fixture evidence rejects generic single BSP fill lights by default; validated and grouped fixtures receive deterministic priority; all-map persistent influence/PVS behavior and 3x2048 multi-shadow remain; launcher performs one automatic startup vid_restart so no manual cfg/restart should be required."
