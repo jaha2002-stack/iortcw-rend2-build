@@ -1,0 +1,678 @@
+name: Build ioRTCW Rend2 V11.0 Final Production Static Light Promotion SP-only Windows x64
+
+"on":
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "rend2-static-light-promotion-v11_0-sp-*"
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: "rend2-static-light-promotion-v11_0-sp-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP-only V11.0 final production over successful V10.1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      V101_RELEASE_BASENAME: "iortcw-rend2-static-light-promotion-multilamp-shadow-ab-v10_1-sp-windows-x64"
+      RELEASE_BASENAME: "iortcw-rend2-static-light-promotion-final-production-v11_0-sp-windows-x64"
+      V11_PATCHER_SHA256: "f638fd64b39996bbd631cc5b7eeb1aad74ee01956142edf51bb715a21ca2e0ba"
+      V11_PATCHER_GZIP_SHA256: "936b8f23a139690b6a14370b1f520609eb0f44fd6d2f91935ea13d525c0390b2"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 \
+            build-essential \
+            ca-certificates \
+            g++-mingw-w64-x86-64 \
+            gcc-mingw-w64-x86-64 \
+            gh \
+            git \
+            libegl1 \
+            libegl-mesa0 \
+            libgl1 \
+            libgl1-mesa-dri \
+            make \
+            mingw-w64 \
+            python3 \
+            unzip \
+            zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+
+      - name: Recover latest successful V10.1 release artifact without workflow-file dependency
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Recovery step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf v101-artifact v101-release
+          mkdir -p v101-artifact v101-release
+
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > v101-artifacts.tsv
+
+          python3 - <<'PY_SELECT' > v101-selected-artifact.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['V101_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('v101-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created_at, artifact_id, run_id, name = parts
+              if name.startswith(prefix):
+                  rows.append((created_at, artifact_id, run_id, name))
+          if not rows:
+              raise SystemExit(
+                  'No retained successful V10.1 artifact with prefix %r was found. '
+                  'V11.0 requires the successful V10.1 release artifact.' % prefix
+              )
+          rows.sort(key=lambda row: row[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT
+
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < v101-selected-artifact.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || {
+            echo "::error::Malformed selected V10.1 artifact record" >&2
+            cat v101-selected-artifact.tsv >&2
+            exit 1
+          }
+          echo "Selected V10.1 artifact: name=$artifact_name artifact_id=$artifact_id run_id=$run_id created=$artifact_created"
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected V10.1 artifact belongs to non-successful run $run_id (conclusion=$run_conclusion)" >&2; exit 1; }
+          echo "V101_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "V101_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "V101_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir v101-artifact
+          base_zip="$(find v101-artifact -type f -name "$V101_RELEASE_BASENAME.zip" -print -quit)"
+          base_sha="$(find v101-artifact -type f -name "$V101_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" ]] || { echo "::error::V10.1 release zip missing inside artifact $artifact_name" >&2; find v101-artifact -maxdepth 3 -type f -print >&2; exit 1; }
+          [[ -n "$base_sha" && -s "$base_sha" ]] || { echo "::error::V10.1 SHA sidecar missing inside artifact $artifact_name" >&2; find v101-artifact -maxdepth 3 -type f -print >&2; exit 1; }
+          expected="$(awk 'NF {print $1; exit}' "$base_sha")"
+          actual="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "::error::Invalid SHA256 sidecar content: $expected" >&2; exit 1; }
+          [[ "$actual" = "$expected" ]] || { echo "::error::V10.1 artifact SHA mismatch: expected=$expected actual=$actual" >&2; exit 1; }
+
+          unzip -q "$base_zip" -d v101-release
+          V101_STAGE="$GITHUB_WORKSPACE/v101-release/$V101_RELEASE_BASENAME"
+          [[ -d "$V101_STAGE" ]] || { echo "::error::V10.1 release root missing: $V101_STAGE" >&2; find v101-release -maxdepth 2 -type d -print >&2; exit 1; }
+          [[ -s "$V101_STAGE/docs/rend2-cumulative-production-v10_1-static-light-promotion-multilamp-shadow-ab-sp.patch" ]] || { echo "::error::V10.1 cumulative patch missing from recovered release" >&2; exit 1; }
+          [[ -f "$V101_STAGE/renderer_sp_rend2_x64.dll" ]] || { echo "::error::V10.1 Rend2 DLL missing from recovered release" >&2; exit 1; }
+          echo "V101_STAGE=$V101_STAGE" >> "$GITHUB_ENV"
+          echo "Recovered successful V10.1 run $run_id with verified release SHA $actual"
+
+      - name: Checkout exact upstream and reconstruct successful V10.1 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          git init source
+          git -C source remote add origin "$UPSTREAM_REPO"
+          git -C source fetch --depth 1 origin "$UPSTREAM_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          actual_upstream="$(git -C source rev-parse HEAD)"
+          [[ "$actual_upstream" = "$UPSTREAM_SHA" ]] || { echo "::error::Upstream SHA mismatch: expected=$UPSTREAM_SHA actual=$actual_upstream" >&2; exit 1; }
+          [[ -z "$(git -C source status --short)" ]] || { echo "::error::Fresh upstream tree unexpectedly dirty" >&2; exit 1; }
+          BASE_PATCH="$V101_STAGE/docs/rend2-cumulative-production-v10_1-static-light-promotion-multilamp-shadow-ab-sp.patch"
+          git -C source apply --check --whitespace=nowarn "$BASE_PATCH"
+          git -C source apply --whitespace=nowarn "$BASE_PATCH"
+          git -C source diff --check
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_MULTI_LAMP_SHADOW_AB_V10_1' source/SP/code/rend2/tr_scene.c
+          grep -Fq '{ "escape1", 835 }' source/SP/code/rend2/tr_scene.c
+          grep -Fq '{ "escape1", 735 }' source/SP/code/rend2/tr_scene.c
+          grep -Fq '{ "escape1", 736 }' source/SP/code/rend2/tr_scene.c
+          grep -Fq '{ "escape1", 737 }' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'STATIC_PROMOTE_PRODUCTION_MAX_ACTIVE 5' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'Cvar_CheckRange( r_dlightShadowMapSize, 512, 2048, qtrue )' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_DLIGHT_FROZEN_TESLA_FOOTPRINT_AB_V8_6_8' source/SP/code/rend2/tr_backend.c
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -m 'Reconstructed successful V10.1 multi-lamp shadow A-B base'
+          V101_BASE_COMMIT="$(git -C source rev-parse HEAD)"
+          echo "V101_BASE_COMMIT=$V101_BASE_COMMIT" >> "$GITHUB_ENV"
+          [[ "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA" ]] || { echo "::error::V10.1 reconstructed base parent mismatch" >&2; exit 1; }
+
+      - name: Materialize and verify V11.0 final production patcher
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          cat > apply_rend2_static_light_promotion_final_production_v11_0_sp.py.gz.b64 <<'V11_PATCHER_B64'
+          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
+          V11_PATCHER_B64
+          base64 -d apply_rend2_static_light_promotion_final_production_v11_0_sp.py.gz.b64 > apply_rend2_static_light_promotion_final_production_v11_0_sp.py.gz
+          gzip -dc apply_rend2_static_light_promotion_final_production_v11_0_sp.py.gz > apply_rend2_static_light_promotion_final_production_v11_0_sp.py
+          actual_gzip="$(sha256sum apply_rend2_static_light_promotion_final_production_v11_0_sp.py.gz | awk '{print $1}')"
+          actual_py="$(sha256sum apply_rend2_static_light_promotion_final_production_v11_0_sp.py | awk '{print $1}')"
+          [[ "$actual_gzip" = "$V11_PATCHER_GZIP_SHA256" ]] || { echo "::error::V11 patcher gzip SHA mismatch: expected=$V11_PATCHER_GZIP_SHA256 actual=$actual_gzip" >&2; exit 1; }
+          [[ "$actual_py" = "$V11_PATCHER_SHA256" ]] || { echo "::error::V11 patcher SHA mismatch: expected=$V11_PATCHER_SHA256 actual=$actual_py" >&2; exit 1; }
+          python3 -m py_compile apply_rend2_static_light_promotion_final_production_v11_0_sp.py
+          chmod +x apply_rend2_static_light_promotion_final_production_v11_0_sp.py
+
+      - name: Check V11.0 anchors atomically against exact V10.1 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          ./apply_rend2_static_light_promotion_final_production_v11_0_sp.py source --check-only
+          [[ -z "$(git -C source status --short)" ]] || { echo "::error::V11 check-only dirtied source tree" >&2; git -C source status --short >&2; exit 1; }
+
+      - name: Capture V10.1 invariants before V11.0
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          mkdir -p invariants
+          cp source/SP/code/rend2/tr_init.c invariants/tr_init_v101.c
+          cp source/SP/code/rend2/tr_scene.c invariants/tr_scene_v101.c
+          for file in \
+            SP/code/rend2/tr_local.h \
+            SP/code/rend2/tr_main.c \
+            SP/code/rend2/tr_backend.c \
+            SP/code/rend2/tr_shade.c \
+            SP/code/rend2/tr_mesh.c \
+            SP/code/rend2/tr_world.c \
+            SP/code/rend2/tr_image.c \
+            SP/code/rend2/tr_fbo.c; do
+            sha256sum "source/$file"
+          done > invariants/unchanged-files.sha256
+          grep -Fq 'STATIC_PROMOTE_PRODUCTION_MAX_ACTIVE 5' invariants/tr_scene_v101.c
+          grep -Fq 'r_staticPromoteMaxLights = ri.Cvar_Get( "r_staticPromoteMaxLights", "2", CVAR_ARCHIVE );' invariants/tr_init_v101.c
+          grep -Fq 'Cvar_CheckRange( r_dlightShadowMapSize, 512, 2048, qtrue )' invariants/tr_init_v101.c
+
+      - name: Apply V11.0 Final Production Static Light Promotion delta
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          ./apply_rend2_static_light_promotion_final_production_v11_0_sp.py source
+          git -C source diff --check
+          git -C source diff --name-only "$V101_BASE_COMMIT" | LC_ALL=C sort > actual-v11-delta-files.txt
+          printf '%s\n' \
+            SP/code/rend2/tr_init.c \
+            SP/code/rend2/tr_scene.c \
+            | LC_ALL=C sort > expected-v11-delta-files.txt
+          diff -u expected-v11-delta-files.txt actual-v11-delta-files.txt
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_V11_0' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_V11_0' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'STATIC_PROMOTE_PRODUCTION_MAX_ACTIVE 10' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'Cvar_CheckRange( r_staticPromoteMaxLights, 1, 10, qtrue )' source/SP/code/rend2/tr_init.c
+          grep -Fq 'Cvar_CheckRange( r_dlightShadowMapSize, 512, 4096, qtrue )' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_staticPromoteMaxLights = ri.Cvar_Get( "r_staticPromoteMaxLights", "10", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_staticPromoteMinRadius = ri.Cvar_Get( "r_staticPromoteMinRadius", "192", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'static_promote_v11_final_status.txt' source/SP/code/rend2/tr_scene.c
+
+      - name: Prove V10.1 renderer paths stay unchanged outside the exact V11 policy delta
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sha256sum -c invariants/unchanged-files.sha256
+          python3 - <<'PY_EXACT'
+          import importlib.util
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('v11patch', 'apply_rend2_static_light_promotion_final_production_v11_0_sp.py')
+          mod = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(mod)
+          before_init = Path('invariants/tr_init_v101.c').read_text(encoding='utf-8')
+          before_scene = Path('invariants/tr_scene_v101.c').read_text(encoding='utf-8')
+          after_init = Path('source/SP/code/rend2/tr_init.c').read_text(encoding='utf-8')
+          after_scene = Path('source/SP/code/rend2/tr_scene.c').read_text(encoding='utf-8')
+          if mod.patch_init(before_init) != after_init:
+              raise SystemExit('tr_init V11 differs from the exact intended production transformation')
+          if mod.patch_scene(before_scene) != after_scene:
+              raise SystemExit('tr_scene V11 differs from the exact intended production transformation')
+          PY_EXACT
+          shadow_changed="$(git -C source diff --name-only "$V101_BASE_COMMIT" -- \
+            SP/code/rend2/tr_main.c SP/code/rend2/tr_backend.c SP/code/rend2/tr_shade.c \
+            SP/code/rend2/tr_mesh.c SP/code/rend2/tr_world.c SP/code/rend2/tr_image.c SP/code/rend2/tr_fbo.c SP/code/rend2/tr_local.h)"
+          [[ -z "$shadow_changed" ]] || { echo "::error::V11 unexpectedly changed protected renderer files" >&2; printf '%s\n' "$shadow_changed" >&2; exit 1; }
+          grep -Fq 'R_StaticPromoteSelectProduction' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'R_StaticPromoteAddCandidate' source/SP/code/rend2/tr_scene.c
+          grep -Fq '{ "escape1", 835 }' source/SP/code/rend2/tr_scene.c
+          grep -Fq '{ "escape1", 735 }' source/SP/code/rend2/tr_scene.c
+          grep -Fq '{ "escape1", 736 }' source/SP/code/rend2/tr_scene.c
+          grep -Fq '{ "escape1", 737 }' source/SP/code/rend2/tr_scene.c
+
+      - name: Generate V11.0 delta and cumulative patches and replay exact trees
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          git -C source diff --binary --full-index "$V101_BASE_COMMIT" -- \
+            SP/code/rend2/tr_init.c SP/code/rend2/tr_scene.c \
+            > "$GITHUB_WORKSPACE/rend2-static-light-promotion-final-production-v11_0-sp.patch"
+          test -s rend2-static-light-promotion-final-production-v11_0-sp.patch
+          git -C source apply --reverse --check --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-static-light-promotion-final-production-v11_0-sp.patch"
+
+          git -C source diff --binary --full-index "$UPSTREAM_SHA" > "$GITHUB_WORKSPACE/rend2-cumulative-production-v11_0-static-light-promotion-final-sp.patch"
+          test -s rend2-cumulative-production-v11_0-static-light-promotion-final-sp.patch
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_V11_0' rend2-cumulative-production-v11_0-static-light-promotion-final-sp.patch
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_MULTI_LAMP_SHADOW_AB_V10_1' rend2-cumulative-production-v11_0-static-light-promotion-final-sp.patch
+          grep -Fq 'REND2_DLIGHT_FROZEN_TESLA_FOOTPRINT_AB_V8_6_8' rend2-cumulative-production-v11_0-static-light-promotion-final-sp.patch
+
+          rm -rf v11-delta-replay v11-cumulative-replay
+          git clone -q --no-hardlinks source v11-delta-replay
+          git -C v11-delta-replay reset --hard "$V101_BASE_COMMIT"
+          git -C v11-delta-replay apply --check --whitespace=nowarn ../rend2-static-light-promotion-final-production-v11_0-sp.patch
+          git -C v11-delta-replay apply --whitespace=nowarn ../rend2-static-light-promotion-final-production-v11_0-sp.patch
+          git -C v11-delta-replay diff --check
+          cmp source/SP/code/rend2/tr_init.c v11-delta-replay/SP/code/rend2/tr_init.c
+          cmp source/SP/code/rend2/tr_scene.c v11-delta-replay/SP/code/rend2/tr_scene.c
+
+          git clone -q --no-hardlinks source v11-cumulative-replay
+          git -C v11-cumulative-replay reset --hard "$UPSTREAM_SHA"
+          git -C v11-cumulative-replay apply --check --whitespace=nowarn ../rend2-cumulative-production-v11_0-static-light-promotion-final-sp.patch
+          git -C v11-cumulative-replay apply --whitespace=nowarn ../rend2-cumulative-production-v11_0-static-light-promotion-final-sp.patch
+          git -C v11-cumulative-replay diff --check
+          while IFS= read -r file; do
+            [[ -n "$file" ]] || continue
+            cmp "source/$file" "v11-cumulative-replay/$file"
+          done < <(git -C source diff --name-only "$UPSTREAM_SHA")
+
+          if ./apply_rend2_static_light_promotion_final_production_v11_0_sp.py source --check-only > repeat-apply.log 2>&1; then
+            echo "::error::V11 patcher unexpectedly accepted already-patched source" >&2
+            cat repeat-apply.log >&2
+            exit 1
+          fi
+          grep -Fq 'already present' repeat-apply.log
+
+      - name: Build SP-only Windows x64 with accepted MinGW path
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"
+          if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify exact SP outputs and absence of MP build
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          required=(
+            "$SP_OUT/ioWolfSP.x64.exe"
+            "$SP_OUT/renderer_sp_opengl1_x64.dll"
+            "$SP_OUT/renderer_sp_rend2_x64.dll"
+            "$SP_OUT/main/cgame_sp_x64.dll"
+            "$SP_OUT/main/qagame_sp_x64.dll"
+            "$SP_OUT/main/ui_sp_x64.dll"
+          )
+          for file in "${required[@]}"; do
+            test -s "$file" || { echo "::error::Missing required SP output: $file" >&2; exit 1; }
+          done
+          test ! -d source/MP/build || { echo "::error::MP build directory exists: V11.0 must compile SP only" >&2; exit 1; }
+
+      - name: Package V11.0 Final Production release over successful V10.1 runtime
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE"
+          cp -a "$V101_STAGE/." "$STAGE/"
+          rm -f "$STAGE/SHA256SUMS.txt"
+          rm -f "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V10_1.bat"
+          rm -f "$STAGE/main/rend2_static_light_promotion_v10_1.cfg"
+          rm -f "$STAGE/main/v10_1_"*.cfg
+          rm -f "$STAGE/README_V10_1_MULTI_LAMP_SHADOW_AB_RU.txt"
+          rm -f "$STAGE/docs/V10_1_MULTI_LAMP_SHADOW_AB_TEST_PLAN_RU.txt"
+
+          install -m 0755 "$SP_OUT/ioWolfSP.x64.exe" "$STAGE/ioWolfSP.x64.exe"
+          install -m 0644 "$SP_OUT/renderer_sp_opengl1_x64.dll" "$STAGE/renderer_sp_opengl1_x64.dll"
+          install -m 0644 "$SP_OUT/renderer_sp_rend2_x64.dll" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 "$SP_OUT/main/cgame_sp_x64.dll" "$STAGE/main/cgame_sp_x64.dll"
+          install -m 0644 "$SP_OUT/main/qagame_sp_x64.dll" "$STAGE/main/qagame_sp_x64.dll"
+          install -m 0644 "$SP_OUT/main/ui_sp_x64.dll" "$STAGE/main/ui_sp_x64.dll"
+          install -m 0644 rend2-static-light-promotion-final-production-v11_0-sp.patch "$STAGE/docs/"
+          install -m 0644 rend2-cumulative-production-v11_0-static-light-promotion-final-sp.patch "$STAGE/docs/"
+          install -m 0644 apply_rend2_static_light_promotion_final_production_v11_0_sp.py "$STAGE/docs/"
+
+          cat > "$STAGE/main/rend2_static_light_promotion_v11_final.cfg" <<'CFG'
+          echo "STATIC_LIGHT_PROMOTION_V11_FINAL_READY: up to 10 approved direct lights; validated escape1 835,735,736,737; default shadow map 2048; optional 4096 Ultra"
+          set r_dlightShadowAutoTest 0
+          set r_dlightMaterialAutoTest 0
+          set r_dlightFootprintAutoTest 0
+          set r_dlightMaterialProbe 0
+          set r_dlightMaterialStage 0
+          set r_dlightShadowTestLock 0
+          set r_dlightShadowCasterMode 0
+          set r_dlightShadowKernelMode 0
+          set r_dlightShadowBias 0.0033
+          set r_dlightShadowSoftness 1.70
+          set r_dlightShadowStrength 0.88
+          set r_dlightShadowMapSize 2048
+          set r_dlightShadowMaxLights 1
+          set r_staticPromote 1
+          set r_staticPromoteManualOverride 0
+          set r_staticPromoteIndex0 -1
+          set r_staticPromoteIndex1 -1
+          set r_staticPromoteGain 0.35
+          set r_staticPromoteDirectGain 1.35
+          set r_staticPromoteRadiusScale 0.70
+          set r_staticPromoteMinRadius 192
+          set r_staticPromoteMaxRadius 320
+          set r_staticPromoteMaxColor 0.60
+          set r_staticPromoteMaxLights 10
+          set r_staticPromoteDump 0
+          set r_dlightMode 2
+          echo "V11 FINAL: direct lights max=10; all 4 currently approved escape1 lamps remain active simultaneously; shadow lights=1; shadow map=2048."
+          CFG
+
+          cat > "$STAGE/main/v11_profile_classic.cfg" <<'CFG'
+          set r_staticPromoteGain 0.35
+          set r_staticPromoteDirectGain 1.15
+          set r_staticPromoteMinRadius 160
+          set r_staticPromoteMaxRadius 288
+          set r_staticPromoteMaxColor 0.55
+          set r_staticPromoteMaxLights 10
+          echo "V11 CLASSIC: lower promoted-light energy, up to 10 approved lights"
+          CFG
+          cat > "$STAGE/main/v11_profile_balanced.cfg" <<'CFG'
+          set r_staticPromoteGain 0.35
+          set r_staticPromoteDirectGain 1.35
+          set r_staticPromoteMinRadius 192
+          set r_staticPromoteMaxRadius 320
+          set r_staticPromoteMaxColor 0.60
+          set r_staticPromoteMaxLights 10
+          echo "V11 BALANCED FINAL: wider overlap so validated room lights remain visibly continuous"
+          CFG
+          cat > "$STAGE/main/v11_profile_high.cfg" <<'CFG'
+          set r_staticPromoteGain 0.35
+          set r_staticPromoteDirectGain 1.50
+          set r_staticPromoteMinRadius 224
+          set r_staticPromoteMaxRadius 352
+          set r_staticPromoteMaxColor 0.70
+          set r_staticPromoteMaxLights 10
+          echo "V11 HIGH: stronger and wider promoted-light contribution"
+          CFG
+
+          cat > "$STAGE/main/v11_lights_1.cfg" <<'CFG'
+          set r_staticPromoteMaxLights 1
+          echo "V11 promoted direct-light budget = 1"
+          CFG
+          cat > "$STAGE/main/v11_lights_3.cfg" <<'CFG'
+          set r_staticPromoteMaxLights 3
+          echo "V11 promoted direct-light budget = 3"
+          CFG
+          cat > "$STAGE/main/v11_lights_5.cfg" <<'CFG'
+          set r_staticPromoteMaxLights 5
+          echo "V11 promoted direct-light budget = 5"
+          CFG
+          cat > "$STAGE/main/v11_lights_10.cfg" <<'CFG'
+          set r_staticPromoteMaxLights 10
+          echo "V11 promoted direct-light budget = 10"
+          CFG
+
+          cat > "$STAGE/main/v11_shadow_1024.cfg" <<'CFG'
+          set r_dlightMode 2
+          set r_dlightShadowMaxLights 1
+          set r_dlightShadowMapSize 1024
+          echo "V11 shadow map 1024 requested; automatic vid_restart follows"
+          vid_restart
+          CFG
+          cat > "$STAGE/main/v11_shadow_2048.cfg" <<'CFG'
+          set r_dlightMode 2
+          set r_dlightShadowMaxLights 1
+          set r_dlightShadowMapSize 2048
+          echo "V11 shadow map 2048 production default requested; automatic vid_restart follows"
+          vid_restart
+          CFG
+          cat > "$STAGE/main/v11_shadow_4096_ultra.cfg" <<'CFG'
+          set r_dlightMode 2
+          set r_dlightShadowMaxLights 1
+          set r_dlightShadowMapSize 4096
+          echo "V11 shadow map 4096 ULTRA requested; this mode is optional and not runtime-validated; automatic vid_restart follows"
+          vid_restart
+          CFG
+          cat > "$STAGE/main/v11_shadows_off.cfg" <<'CFG'
+          set r_dlightMode 1
+          echo "V11 dynamic cubemap shadows OFF requested; automatic vid_restart follows"
+          vid_restart
+          CFG
+          cat > "$STAGE/main/v11_promote_off.cfg" <<'CFG'
+          set r_staticPromote 0
+          echo "V11 STATIC LIGHT PROMOTION OFF"
+          CFG
+          cat > "$STAGE/main/v11_promote_on.cfg" <<'CFG'
+          set r_staticPromote 1
+          echo "V11 STATIC LIGHT PROMOTION ON"
+          CFG
+
+          export STAGE
+          python3 - <<'PY_BAT'
+          import os
+          from pathlib import Path
+          p = Path(os.environ['STAGE']) / 'START_SP_STATIC_LIGHT_PROMOTION_V11_FINAL.bat'
+          lines = [
+              '@echo off',
+              'cd /d "%~dp0"',
+              'echo V11.0 Final Production Static Light Promotion - 10 direct lights / 1 shadow light / 2048 cubemap shadow',
+              'if not exist "%~dp0ioWolfSP.x64.exe" (',
+              '  echo ERROR: ioWolfSP.x64.exe not found beside this BAT.',
+              '  pause',
+              '  exit /b 1',
+              ')',
+              '"%~dp0ioWolfSP.x64.exe" +set cl_renderer rend2 +set r_dynamiclight 1 +set r_dlightScale 1 +set r_dlightMode 2 +set r_dlightShadowMapSize 2048 +set r_dlightShadowMaxLights 1 +set r_dlightShadowAutoTest 0 +set r_dlightMaterialAutoTest 0 +set r_dlightFootprintAutoTest 0 +exec rend2_static_light_promotion_v11_final.cfg',
+          ]
+          p.write_bytes(("\r\n".join(lines) + "\r\n").encode('ascii'))
+          PY_BAT
+
+          cat > "$STAGE/README_V11_FINAL_STATIC_LIGHT_PROMOTION_RU.txt" <<'TXT'
+          DarkWolf/ioRTCW Rend2 V11.0 — Final Production Static Light Promotion
+          =====================================================================
+
+          Подтвержденная база:
+          - V10.0 production promotion: direct/specular + cubemap shadow confirmed;
+          - V10.1: 1/2/3 promoted room lights all reported added=1 at 90 FPS;
+          - V10.1: 2048 shadow map gave visibly cleaner chair/player shadow at the same displayed 90 FPS.
+
+          Production policy V11.0:
+          - r_staticPromoteMaxLights: 1..10, default 10.
+          - Current validated escape1 whitelist remains 835 + room primaries 735/736/737.
+          - With 4 approved lights and default budget 10, all four are selected every frame; the three room lights do not rotate by nearest-slot selection.
+          - Their visual influence is widened by MinRadius 192 (V10.1 used 128), while DirectGain is reduced to 1.35 and MaxColor to 0.60 to control overlap/overexposure.
+          - Baked lightmap remains untouched.
+
+          Shadow policy:
+          - r_dlightShadowMaxLights default 1. Up to 10 promoted lights can contribute direct/specular, but only one expensive cubemap shadow light is production default.
+          - r_dlightShadowMapSize default 2048.
+          - Allowed range 512..4096.
+          - 4096 is optional Ultra and was not runtime-validated in V10.1; use only if GPU headroom is sufficient.
+          - Existing bias/softness/strength stay 0.0033 / 1.70 / 0.88.
+
+          Main adjustable cvars:
+            r_staticPromote 0/1
+            r_staticPromoteMaxLights 1..10
+            r_staticPromoteGain 0..1
+            r_staticPromoteDirectGain 0..4
+            r_staticPromoteRadiusScale 0.10..1.50
+            r_staticPromoteMinRadius 64..512
+            r_staticPromoteMaxRadius 64..512
+            r_staticPromoteMaxColor 0.10..2.00
+            r_dlightShadowMapSize 512..4096 (latched; vid_restart)
+            r_dlightShadowMaxLights existing shadow budget
+
+          Ready profiles:
+            exec v11_profile_classic.cfg
+            exec v11_profile_balanced.cfg
+            exec v11_profile_high.cfg
+            exec v11_lights_1.cfg / v11_lights_3.cfg / v11_lights_5.cfg / v11_lights_10.cfg
+            exec v11_shadow_1024.cfg / v11_shadow_2048.cfg / v11_shadow_4096_ultra.cfg
+
+          Diagnostics:
+            static_promote_v11_final_status.txt
+          TXT
+
+          cat >> "$STAGE/docs/BUILD_INFO.txt" <<EOF
+          workflow_revision=V11.0-final-production-static-light-promotion
+          v11_marker=REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_V11_0
+          v11_base_successful_run_id=$V101_RUN_ID
+          v11_base_artifact_id=$V101_ARTIFACT_ID
+          v11_base_artifact_name=$V101_ARTIFACT_NAME
+          v11_base_recovery=artifact_api_by_release_prefix
+          v11_delta_files=tr_init.c,tr_scene.c
+          v11_whitelist=escape1:835,735,736,737
+          v11_max_promoted_direct_lights=10
+          v11_default_promoted_direct_lights=10
+          v11_default_gain=0.35
+          v11_default_direct_gain=1.35
+          v11_default_min_radius=192
+          v11_default_max_radius=320
+          v11_default_max_color=0.60
+          v11_default_shadow_lights=1
+          v11_shadow_map_range=512..4096
+          v11_default_shadow_map_size=2048
+          v11_shadow_4096_status=optional_unvalidated_ultra
+          v11_shadow_renderer_code=BYTE_UNCHANGED_V10_1
+          v11_patcher_sha256=$V11_PATCHER_SHA256
+          EOF
+
+          test -f "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V11_FINAL.bat"
+          test -f "$STAGE/main/rend2_static_light_promotion_v11_final.cfg"
+          test -f "$STAGE/main/v11_lights_10.cfg"
+          test -f "$STAGE/main/v11_shadow_4096_ultra.cfg"
+          grep -Fq '+set r_dlightMode 2' "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V11_FINAL.bat"
+          grep -Fq '+set r_dlightShadowMapSize 2048' "$STAGE/START_SP_STATIC_LIGHT_PROMOTION_V11_FINAL.bat"
+          grep -Fq 'set r_staticPromoteMaxLights 10' "$STAGE/main/rend2_static_light_promotion_v11_final.cfg"
+          grep -Fq 'set r_staticPromoteMinRadius 192' "$STAGE/main/rend2_static_light_promotion_v11_final.cfg"
+          grep -Fq 'set r_dlightShadowMapSize 2048' "$STAGE/main/rend2_static_light_promotion_v11_final.cfg"
+          grep -Fq 'set r_dlightShadowMapSize 4096' "$STAGE/main/v11_shadow_4096_ultra.cfg"
+          grep -Fq 'vid_restart' "$STAGE/main/v11_shadow_4096_ultra.cfg"
+
+          python3 - <<'PY_VERIFY_BAT'
+          import os
+          from pathlib import Path
+          p = Path(os.environ['STAGE']) / 'START_SP_STATIC_LIGHT_PROMOTION_V11_FINAL.bat'
+          data = p.read_bytes()
+          if b'\\r\\n' in data:
+              raise SystemExit('BAT contains literal backslash-r/backslash-n text')
+          if b'\r\n' not in data:
+              raise SystemExit('BAT does not contain CRLF line endings')
+          if data.replace(b'\r\n', b'').find(b'\n') >= 0:
+              raise SystemExit('BAT contains stray LF outside CRLF')
+          PY_VERIFY_BAT
+
+          (
+            cd "$STAGE"
+            find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload V11.0 final production release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Publish GitHub Release for a V11.0 final version tag
+        if: startsWith(github.ref, 'refs/tags/rend2-static-light-promotion-v11_0-sp-')
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/$RELEASE_BASENAME.zip" \
+            "dist/$RELEASE_BASENAME.zip.sha256" \
+            --repo "$GH_REPO" \
+            --title "ioRTCW Rend2 V11.0 Final Production Static Light Promotion SP-only" \
+            --notes "Final production over successful V10.1: validated escape1 lamps 835/735/736/737; up to 10 approved promoted direct lights, default 10; wider 192-unit minimum radius with conservative direct gain 1.35/max color 0.60; one cubemap-shadow light; 2048 shadow map production default; 4096 optional Ultra; baked lightmap and cubemap renderer/backend/FBO logic preserved."
