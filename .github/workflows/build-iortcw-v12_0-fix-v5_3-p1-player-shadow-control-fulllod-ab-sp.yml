@@ -1,0 +1,446 @@
+name: Build ioRTCW V12.0 Fix v5.3 P1 Player Shadow Control FullLOD A-B SP-only Windows x64
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "rend2-v12_0-fix-v5_3-p1-player-shadow-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP-only P1 player-shadow A-B over exact successful V5.3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      V53_RELEASE_BASENAME: "iortcw-rend2-static-light-promotion-final-production-v12_0-fix-v5_3-native-dlight-pvs-persistence-sp-windows-x64"
+      RELEASE_BASENAME: "iortcw-v12_0-fix-v5_3-p1-player-shadow-control-fulllod-ab-windows-x64"
+      P1_PATCHER_SHA256: "9cd02c8bacafe07bbeaab910f4673548b206205f94349983dcb2a349c1cd079d"
+      P1_PATCHER_GZIP_SHA256: "16bb8e13817c43d935544a13248d46c543cdfe6480f3b9f8cf7df57b034e9c2f"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+
+      - name: Recover exact latest successful V12.0 Fix v5.3 release artifact
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::V5.3 recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf v5_3-artifact v5_3-release
+          mkdir -p v5_3-artifact v5_3-release
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > v5_3-artifacts.tsv
+          python3 - <<'PY_SELECT' > v5_3-selected-artifact.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['V53_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('v5_3-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created, aid, rid, name = parts
+              if name.startswith(prefix):
+                  rows.append((created, aid, rid, name))
+          if not rows:
+              raise SystemExit('No retained successful-candidate V5.3 artifact with prefix %r. Run this YML in the same repo where V5.3 was compiled.' % prefix)
+          rows.sort(key=lambda x: x[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < v5_3-selected-artifact.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed V5.3 artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected V5.3 run is not successful: $run_conclusion" >&2; exit 1; }
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir v5_3-artifact
+          base_zip="$(find v5_3-artifact -type f -name "$V53_RELEASE_BASENAME.zip" -print -quit)"
+          base_sha="$(find v5_3-artifact -type f -name "$V53_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_sha" && -s "$base_sha" ]] || { echo "::error::V5.3 release ZIP/SHA missing" >&2; find v5_3-artifact -type f -print >&2; exit 1; }
+          expected="$(awk 'NF {print $1; exit}' "$base_sha")"
+          actual="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ && "$actual" = "$expected" ]] || { echo "::error::V5.3 ZIP SHA mismatch expected=$expected actual=$actual" >&2; exit 1; }
+          unzip -q "$base_zip" -d v5_3-release
+          V53_STAGE="$GITHUB_WORKSPACE/v5_3-release/$V53_RELEASE_BASENAME"
+          V53_CUMULATIVE="$V53_STAGE/docs/rend2-cumulative-production-v12_0-fix-v5_3-native-dlight-pvs-persistence-final-sp.patch"
+          [[ -d "$V53_STAGE" && -s "$V53_CUMULATIVE" ]] || { echo "::error::V5.3 stage/cumulative patch missing" >&2; exit 1; }
+          for f in ioWolfSP.x64.exe renderer_sp_opengl1_x64.dll renderer_sp_rend2_x64.dll main/cgame_sp_x64.dll main/qagame_sp_x64.dll main/ui_sp_x64.dll; do
+            [[ -s "$V53_STAGE/$f" ]] || { echo "::error::V5.3 required SP binary missing: $f" >&2; exit 1; }
+          done
+          echo "V53_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "V53_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "V53_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "V53_STAGE=$V53_STAGE" >> "$GITHUB_ENV"
+          echo "V53_CUMULATIVE=$V53_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "Recovered exact successful V5.3 artifact $artifact_name run=$run_id sha=$actual"
+
+      - name: Checkout upstream and reconstruct exact V5.3 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::V5.3 source reconstruction failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git init source
+          git -C source config core.autocrlf false
+          git -C source config core.eol lf
+          git -C source remote add origin "$UPSTREAM_REPO"
+          git -C source fetch --depth 1 origin "$UPSTREAM_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]] || { echo "::error::Upstream SHA mismatch" >&2; exit 1; }
+          git -C source apply --check --whitespace=nowarn "$V53_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$V53_CUMULATIVE"
+          git -C source diff --check
+          grep -Fq 'DARKWOLF_NATIVE_DLIGHT_PVS_PERSISTENCE_FINAL_V5_3_V12_0' source/SP/code/game/g_misc.c
+          grep -Fq 'g_dlightPVSRadius, "g_dlightPVSRadius", "256"' source/SP/code/game/g_main.c
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V5_1_V12_0' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'r_staticPromoteSynthetic' source/SP/code/rend2/tr_init.c
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -m 'Reconstructed exact successful V12.0 Fix v5.3 base'
+          V53_BASE_COMMIT="$(git -C source rev-parse HEAD)"
+          echo "V53_BASE_COMMIT=$V53_BASE_COMMIT" >> "$GITHUB_ENV"
+          [[ "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA" ]] || { echo "::error::V5.3 reconstructed parent mismatch" >&2; exit 1; }
+          test -z "$(git -C source status --porcelain)"
+
+      - name: Snapshot protected exact V5.3 invariants
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::P1 invariant snapshot failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf p1-invariants
+          mkdir -p p1-invariants
+          find source/SP/code/rend2 -type f \
+            ! -path '*/tr_init.c' ! -path '*/tr_local.h' ! -path '*/tr_main.c' \
+            ! -path '*/tr_mesh.c' ! -path '*/tr_animation.c' \
+            -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > p1-invariants/rend2-protected.sha256
+          find source/SP/code/game source/SP/code/cgame source/SP/code/client source/SP/code/ui -type f -print0 \
+            | LC_ALL=C sort -z | xargs -0 sha256sum > p1-invariants/nonrenderer-protected.sha256
+          grep -E 'r_dlightShadow(MapSize|MaxLights|KernelMode|CasterMode|Bias|Softness|Strength)' source/SP/code/rend2/tr_init.c \
+            > p1-invariants/existing-shadow-cvars-before.txt || true
+          cp source/SP/code/rend2/tr_scene.c p1-invariants/tr_scene-before.c
+          cp source/SP/code/rend2/tr_backend.c p1-invariants/tr_backend-before.c
+          cp source/SP/code/rend2/tr_shade.c p1-invariants/tr_shade-before.c
+
+      - name: Materialize and verify P1 player-shadow patcher
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::P1 patcher materialization failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          cat > apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py.gz.b64 <<'P1_PATCHER_B64'
+          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
+          likAAA==
+          P1_PATCHER_B64
+          base64 -d apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py.gz.b64 > apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py.gz
+          [[ "$(sha256sum apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py.gz | awk '{print $1}')" = "$P1_PATCHER_GZIP_SHA256" ]] || { echo "::error::P1 patcher gzip SHA mismatch" >&2; exit 1; }
+          gzip -dc apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py.gz > apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py
+          [[ "$(sha256sum apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py | awk '{print $1}')" = "$P1_PATCHER_SHA256" ]] || { echo "::error::P1 patcher SHA mismatch" >&2; exit 1; }
+          chmod +x apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py
+          python3 -m py_compile apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py
+
+      - name: Check and apply five-file P1 renderer delta
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::P1 apply failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          ./apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py source --check-only
+          ./apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py source
+          git -C source diff --check
+          git -C source diff --name-only "$V53_BASE_COMMIT" | LC_ALL=C sort > actual-p1-delta-files.txt
+          printf '%s\n' \
+            SP/code/rend2/tr_animation.c \
+            SP/code/rend2/tr_init.c \
+            SP/code/rend2/tr_local.h \
+            SP/code/rend2/tr_main.c \
+            SP/code/rend2/tr_mesh.c | LC_ALL=C sort > expected-p1-delta-files.txt
+          diff -u expected-p1-delta-files.txt actual-p1-delta-files.txt
+
+      - name: Validate local-player-only shadow policy and protected systems
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::P1 policy validation failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sha256sum -c p1-invariants/rend2-protected.sha256
+          sha256sum -c p1-invariants/nonrenderer-protected.sha256
+          cmp -s p1-invariants/tr_scene-before.c source/SP/code/rend2/tr_scene.c
+          cmp -s p1-invariants/tr_backend-before.c source/SP/code/rend2/tr_backend.c
+          cmp -s p1-invariants/tr_shade-before.c source/SP/code/rend2/tr_shade.c
+          grep -E 'r_dlightShadow(MapSize|MaxLights|KernelMode|CasterMode|Bias|Softness|Strength)' source/SP/code/rend2/tr_init.c \
+            > p1-invariants/existing-shadow-cvars-after.txt || true
+          cmp -s p1-invariants/existing-shadow-cvars-before.txt p1-invariants/existing-shadow-cvars-after.txt
+          python3 - <<'PY_POLICY'
+          from pathlib import Path
+          def t(name):
+              return Path('source/SP/code/rend2/'+name).read_text(encoding='utf-8').replace('\r\n','\n').replace('\r','\n')
+          init=t('tr_init.c'); local=t('tr_local.h'); main=t('tr_main.c'); mesh=t('tr_mesh.c'); anim=t('tr_animation.c')
+          marker='REND2_DLIGHT_PLAYER_SHADOW_CONTROL_FULLLOD_AB_V12_0_FIX_V5_3_P1'
+          for name,s in [('tr_init.c',init),('tr_local.h',local),('tr_main.c',main),('tr_mesh.c',mesh),('tr_animation.c',anim)]:
+              assert s.count(marker) >= 1, name
+          assert init.count('r_dlightPlayerShadow = ri.Cvar_Get( "r_dlightPlayerShadow", "1", CVAR_ARCHIVE );') == 1
+          assert init.count('r_dlightPlayerShadowFullLOD = ri.Cvar_Get( "r_dlightPlayerShadowFullLOD", "0", CVAR_ARCHIVE );') == 1
+          assert init.count('r_dlightPlayerShadowIsolate = ri.Cvar_Get( "r_dlightPlayerShadowIsolate", "0", 0 );') == 1
+          assert local.count('extern cvar_t  *r_dlightPlayerShadow;') == 1
+          assert local.count('extern cvar_t  *r_dlightPlayerShadowFullLOD;') == 1
+          assert local.count('extern cvar_t  *r_dlightPlayerShadowIsolate;') == 1
+          # Dynamic point-light cubemap uniquely carries VPF_SHADOWMAP; pshadow/sun only use DEPTHSHADOW.
+          assert main.count('shadowParms.flags = VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_NOVIEWMODEL;') == 1
+          pos=main.index(marker)
+          guard_end=main.index('// simple generated models', pos)
+          guard=main[pos:guard_end]
+          assert 'VPF_SHADOWMAP' in guard
+          assert 'VPF_DEPTHSHADOW' not in guard
+          assert 'RF_THIRD_PERSON' in guard
+          assert 'ent->e.reType == RT_MODEL' in guard
+          assert 'r_dlightPlayerShadow && !r_dlightPlayerShadow->integer' in guard
+          assert 'r_dlightPlayerShadowIsolate && r_dlightPlayerShadowIsolate->integer' in guard
+          # Highest LOD only for local RF_THIRD_PERSON caster in point-light cubemap.
+          m0=mesh.index(marker); m1=mesh.index('if ( tr.currentModel->numLods < 2 )',m0)
+          mb=mesh[m0:m1]
+          assert 'VPF_SHADOWMAP' in mb and 'RF_THIRD_PERSON' in mb and 'return 0;' in mb
+          a0=anim.index(marker); a1=anim.index('if ( refent->reFlags & REFLAG_FULL_LOD )',a0)
+          ab=anim[a0:a1]
+          assert 'VPF_SHADOWMAP' in ab and 'RF_THIRD_PERSON' in ab and 'return 1.0f;' in ab
+          print('P1 policy PASS: only local first-person RT_MODEL caster is controllable; FullLOD is player/cubemap-only; world/NPC normal paths protected.')
+          PY_POLICY
+
+      - name: Generate P1 delta and cumulative patches and replay exact trees
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::P1 patch replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          git -C source diff --binary "$V53_BASE_COMMIT" > player-shadow-control-fulllod-ab-v12_0-fix-v5_3-p1-sp.patch
+          git -C source diff --binary "$UPSTREAM_SHA" > rend2-cumulative-v12_0-fix-v5_3-p1-player-shadow-control-fulllod-ab-sp.patch
+          test -s player-shadow-control-fulllod-ab-v12_0-fix-v5_3-p1-sp.patch
+          test -s rend2-cumulative-v12_0-fix-v5_3-p1-player-shadow-control-fulllod-ab-sp.patch
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/player-shadow-control-fulllod-ab-v12_0-fix-v5_3-p1-sp.patch"
+
+          rm -rf p1-delta-replay p1-cumulative-replay
+          git clone -q source p1-delta-replay
+          git -C p1-delta-replay checkout -q "$V53_BASE_COMMIT"
+          git -C p1-delta-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/player-shadow-control-fulllod-ab-v12_0-fix-v5_3-p1-sp.patch"
+          git -C p1-delta-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/player-shadow-control-fulllod-ab-v12_0-fix-v5_3-p1-sp.patch"
+          git -C p1-delta-replay diff --check
+          while IFS= read -r f; do [[ -n "$f" ]] || continue; cmp "source/$f" "p1-delta-replay/$f"; done < expected-p1-delta-files.txt
+
+          git init -q p1-cumulative-replay
+          git -C p1-cumulative-replay config core.autocrlf false
+          git -C p1-cumulative-replay remote add origin "$UPSTREAM_REPO"
+          git -C p1-cumulative-replay fetch -q --depth 1 origin "$UPSTREAM_SHA"
+          git -C p1-cumulative-replay checkout -q --detach FETCH_HEAD
+          git -C p1-cumulative-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-cumulative-v12_0-fix-v5_3-p1-player-shadow-control-fulllod-ab-sp.patch"
+          git -C p1-cumulative-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-cumulative-v12_0-fix-v5_3-p1-player-shadow-control-fulllod-ab-sp.patch"
+          git -C source diff --name-only "$UPSTREAM_SHA" | LC_ALL=C sort > p1-cumulative-files.txt
+          while IFS= read -r f; do [[ -n "$f" ]] || continue; cmp "source/$f" "p1-cumulative-replay/$f"; done < p1-cumulative-files.txt
+
+          if ./apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py source > p1-repeat.log 2>&1; then
+            echo "::error::P1 patcher was unexpectedly repeat-applicable" >&2
+            exit 1
+          fi
+          grep -Eq 'already present|marker/cvars already present' p1-repeat.log
+
+      - name: Build SP-only Windows x64 with accepted MinGW path
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify exact SP build outputs
+        run: |
+          set -Eeuo pipefail
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          required=("$SP_OUT/ioWolfSP.x64.exe" "$SP_OUT/renderer_sp_opengl1_x64.dll" "$SP_OUT/renderer_sp_rend2_x64.dll" "$SP_OUT/main/cgame_sp_x64.dll" "$SP_OUT/main/qagame_sp_x64.dll" "$SP_OUT/main/ui_sp_x64.dll")
+          for f in "${required[@]}"; do test -s "$f" || { echo "::error::Missing $f" >&2; exit 1; }; done
+          test ! -d source/MP/build || { echo "::error::MP build directory exists" >&2; exit 1; }
+
+      - name: Package minimal exact-V5.3 versus P1 renderer A-B
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::P1 packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/A_exact_v53" "$STAGE/B_player_shadow_p1" "$STAGE/docs"
+          install -m 0644 "$V53_STAGE/renderer_sp_rend2_x64.dll" "$STAGE/A_exact_v53/renderer_sp_rend2_x64.dll"
+          install -m 0644 "$SP_OUT/renderer_sp_rend2_x64.dll" "$STAGE/B_player_shadow_p1/renderer_sp_rend2_x64.dll"
+          install -m 0644 player-shadow-control-fulllod-ab-v12_0-fix-v5_3-p1-sp.patch "$STAGE/docs/"
+          install -m 0644 rend2-cumulative-v12_0-fix-v5_3-p1-player-shadow-control-fulllod-ab-sp.patch "$STAGE/docs/"
+          install -m 0644 apply_v12_0_fix_v5_3_p1_player_shadow_control_fulllod_ab_sp.py "$STAGE/docs/"
+
+          cat > "$STAGE/README_V12_0_FIX_V5_3_P1_PLAYER_SHADOW_CONTROL_FULLLOD_AB_RU.txt" <<'TXT'
+          DarkWolf/ioRTCW Rend2 V12.0 Fix v5.3 P1
+          Local Player Point-Shadow Control + Full LOD A/B
+          =================================================
+
+          Эксперимент поверх точного успешного V5.3. Меняется только renderer_sp_rend2_x64.dll.
+
+          A_exact_v53 = точный renderer из успешного V5.3 artifact.
+          B_player_shadow_p1 = P1 renderer.
+
+          Новые runtime cvars:
+            r_dlightPlayerShadow 1/0
+              1 current behavior; 0 removes only local first-person BJ from dynamic point-light cubemap caster pass.
+            r_dlightPlayerShadowFullLOD 0/1
+              1 forces highest MDV/MDR LOD and full MDS progressive geometry only for local-player point-shadow caster.
+            r_dlightPlayerShadowIsolate 0/1
+              diagnostic only; 1 keeps only RF_THIRD_PERSON MODEL entity casters in point-light cubemap. BSP/world stays.
+
+          Recommended controlled quality state:
+            set r_dlightShadowKernelMode 1
+            set r_dlightShadowSoftness 1.70
+            set r_dlightShadowBias 0.0033
+            set r_dlightShadowStrength 0.88
+            set r_dlightShadowMapSize 2048
+
+          If changing MapSize, vid_restart is required. New P1 cvars themselves do NOT require vid_restart.
+
+          Test OFF:
+            set r_dlightPlayerShadowFullLOD 0
+            set r_dlightPlayerShadowIsolate 0
+            set r_dlightPlayerShadow 1
+            // own point-shadow visible
+            set r_dlightPlayerShadow 0
+            // own point-shadow should disappear; NPC/corpse shadow should remain
+            set r_dlightPlayerShadow 1
+
+          Test FullLOD at exactly the same Crypt1 camera/light:
+            set r_dlightPlayerShadowIsolate 0
+            set r_dlightPlayerShadowFullLOD 0
+            // screenshot
+            set r_dlightPlayerShadowFullLOD 1
+            // screenshot
+
+          Optional clean player-only entity-caster comparison:
+            set r_dlightPlayerShadowIsolate 1
+            set r_dlightPlayerShadowFullLOD 0
+            // screenshot
+            set r_dlightPlayerShadowFullLOD 1
+            // screenshot
+            set r_dlightPlayerShadowIsolate 0
+
+          Report:
+            PlayerShadow 1 -> BJ shadow YES/NO
+            PlayerShadow 0 -> BJ shadow YES/NO
+            PlayerShadow 0 -> NPC shadow YES/NO
+            FullLOD 0 -> comb SAME/BETTER/WORSE
+            FullLOD 1 -> comb SAME/BETTER/WORSE
+            FPS FullLOD 0 / 1
+
+          P1 does NOT change KernelMode default and does NOT modify V5.3 PVS/Lamp Learn/Synthetic/game/cgame/client/UI.
+          TXT
+
+          cat > "$STAGE/docs/P1_BUILD_INFO.txt" <<EOF
+          workflow_revision=V12.0-fix-v5.3-P1-player-shadow-control-fulllod-ab
+          upstream_sha=$UPSTREAM_SHA
+          base_v53_run_id=$V53_RUN_ID
+          base_v53_artifact=$V53_ARTIFACT_NAME
+          base_v53_commit=$V53_BASE_COMMIT
+          source_delta=SP/code/rend2/tr_init.c,SP/code/rend2/tr_local.h,SP/code/rend2/tr_main.c,SP/code/rend2/tr_mesh.c,SP/code/rend2/tr_animation.c
+          r_dlightPlayerShadow=default_1_archive
+          r_dlightPlayerShadowFullLOD=default_0_archive
+          r_dlightPlayerShadowIsolate=default_0_nonarchive_diagnostic
+          player_identification=RF_THIRD_PERSON_RT_MODEL
+          shadow_pass_scope=VPF_SHADOWMAP_only
+          pshadow_sun_scope=UNCHANGED
+          game_cgame_client_ui=BYTE_UNCHANGED_V5.3
+          protected_rend2=BYTE_UNCHANGED_V5.3_except_five_targets
+          kernel_default=UNCHANGED_V5.3
+          patcher_sha256=$P1_PATCHER_SHA256
+          EOF
+
+          ( cd "$STAGE"; find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          ( cd "$DIST"; find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip" )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload P1 minimal renderer A-B artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
