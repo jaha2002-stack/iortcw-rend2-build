@@ -1,0 +1,399 @@
+name: Build ioRTCW Rend2 SUN-R0 DepthShadow Isolation over V5.4 FINAL v2 SP-only Windows x64
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "rend2-sun-r0-depthshadow-isolation-v5_4-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP-only SUN-R0 over exact successful V5.4 FINAL v2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      V54_RELEASE_BASENAME: "iortcw-rend2-final-production-v12_0-fix-v5_4-player-shadow-character-picmip-sp-windows-x64"
+      RELEASE_BASENAME: "iortcw-rend2-sun-r0-depthshadow-isolation-v5_4-sp-windows-x64"
+      SUNR0_PATCHER_SHA256: "da03bf8440bc959bd6839651b9e84cd837e398d336b77f991ef09f1f6d08d6aa"
+      SUNR0_PATCHER_GZIP_SHA256: "f8c940f4d9d698b2bca2afa419ec2f3af34731d89164f261180d611b3b598514"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+
+      - name: Recover exact latest successful V5.4 FINAL v2 artifact
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::V5.4 recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf v5_4-artifact v5_4-release
+          mkdir -p v5_4-artifact v5_4-release
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > v5_4-artifacts.tsv
+          python3 - <<'PY_SELECT' > v5_4-selected-artifact.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['V54_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('v5_4-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created, aid, rid, name = parts
+              if name.startswith(prefix):
+                  rows.append((created, aid, rid, name))
+          if not rows:
+              raise SystemExit('No retained V5.4 FINAL v2 artifact with prefix %r. Run SUN-R0 in the same repository where V5.4 FINAL v2 succeeded.' % prefix)
+          rows.sort(key=lambda x: x[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < v5_4-selected-artifact.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed V5.4 artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected V5.4 run is not successful: $run_conclusion" >&2; exit 1; }
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir v5_4-artifact
+          base_zip="$(find v5_4-artifact -type f -name "$V54_RELEASE_BASENAME.zip" -print -quit)"
+          base_sha="$(find v5_4-artifact -type f -name "$V54_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_sha" && -s "$base_sha" ]] || { echo "::error::V5.4 release ZIP/SHA missing" >&2; find v5_4-artifact -type f -print >&2; exit 1; }
+          expected="$(awk 'NF {print $1; exit}' "$base_sha")"
+          actual="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ && "$actual" = "$expected" ]] || { echo "::error::V5.4 ZIP SHA mismatch expected=$expected actual=$actual" >&2; exit 1; }
+          unzip -q "$base_zip" -d v5_4-release
+          V54_STAGE="$GITHUB_WORKSPACE/v5_4-release/$V54_RELEASE_BASENAME"
+          V54_CUMULATIVE="$V54_STAGE/docs/rend2-cumulative-production-v12_0-fix-v5_4-final-sp.patch"
+          [[ -d "$V54_STAGE" && -s "$V54_CUMULATIVE" ]] || { echo "::error::V5.4 stage/cumulative patch missing" >&2; exit 1; }
+          for f in ioWolfSP.x64.exe renderer_sp_rend2_x64.dll main/cgame_sp_x64.dll main/qagame_sp_x64.dll main/ui_sp_x64.dll; do
+            [[ -s "$V54_STAGE/$f" ]] || { echo "::error::V5.4 required file missing: $f" >&2; exit 1; }
+          done
+          echo "V54_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "V54_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "V54_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "V54_STAGE=$V54_STAGE" >> "$GITHUB_ENV"
+          echo "V54_CUMULATIVE=$V54_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "Recovered exact successful V5.4 artifact $artifact_name run=$run_id zip_sha=$actual"
+
+      - name: Checkout upstream and reconstruct exact V5.4 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::V5.4 source reconstruction failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git init source
+          git -C source config core.autocrlf false
+          git -C source config core.eol lf
+          git -C source remote add origin "$UPSTREAM_REPO"
+          git -C source fetch --depth 1 origin "$UPSTREAM_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]] || { echo "::error::Upstream SHA mismatch" >&2; exit 1; }
+          git -C source apply --check --whitespace=nowarn "$V54_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$V54_CUMULATIVE"
+          git -C source diff --check
+          grep -Fq 'REND2_V12_0_FIX_V5_4_FINAL_PLAYER_SHADOW_CHARACTER_PICMIP' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_V12_0_FIX_V5_4_FINAL_PLAYER_SHADOW_CHARACTER_PICMIP' source/SP/code/rend2/tr_image.c
+          grep -Fq 'DARKWOLF_NATIVE_DLIGHT_PVS_PERSISTENCE_FINAL_V5_3_V12_0' source/SP/code/game/g_misc.c
+          grep -Fq 'REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V5_1_V12_0' source/SP/code/rend2/tr_scene.c
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -m 'Reconstructed exact successful V5.4 FINAL v2 base'
+          V54_BASE_COMMIT="$(git -C source rev-parse HEAD)"
+          echo "V54_BASE_COMMIT=$V54_BASE_COMMIT" >> "$GITHUB_ENV"
+          [[ "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA" ]] || { echo "::error::V5.4 reconstructed parent mismatch" >&2; exit 1; }
+          test -z "$(git -C source status --porcelain)"
+
+      - name: Snapshot V5.4 protected invariants before SUN-R0
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-R0 invariant snapshot failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf sunr0-invariants
+          mkdir -p sunr0-invariants
+          find source/SP/code/rend2 -type f \
+            ! -path '*/tr_backend.c' ! -path '*/tr_shade.c' \
+            -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > sunr0-invariants/rend2-protected.sha256
+          find source/SP/code/game source/SP/code/cgame source/SP/code/client source/SP/code/ui -type f -print0 \
+            | LC_ALL=C sort -z | xargs -0 sha256sum > sunr0-invariants/nonrenderer-protected.sha256
+          cp source/SP/code/rend2/tr_backend.c sunr0-invariants/tr_backend-before.c
+          cp source/SP/code/rend2/tr_shade.c sunr0-invariants/tr_shade-before.c
+          grep -E 'r_(sunlightMode|sunShadows|shadowFilter|shadowBlur|shadowMapSize|shadowCascadeZNear|shadowCascadeZFar|shadowCascadeZBias|forceSun|forceSunLightScale|forceSunAmbientScale)' source/SP/code/rend2/tr_init.c \
+            > sunr0-invariants/sun-cvars-before.txt || true
+          grep -E 'r_dlightShadow(MapSize|MaxLights|KernelMode|CasterMode|Bias|Softness|Strength)|r_dlightPlayerShadow' source/SP/code/rend2/tr_init.c \
+            > sunr0-invariants/dlight-cvars-before.txt || true
+
+      - name: Materialize and verify SUN-R0 two-file patcher
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-R0 patcher materialization failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          cat > apply_rend2_sun_r0_depthshadow_isolation_sp.py.gz.b64 <<'SUNR0_PATCHER_B64'
+          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
+          SUNR0_PATCHER_B64
+          base64 -d apply_rend2_sun_r0_depthshadow_isolation_sp.py.gz.b64 > apply_rend2_sun_r0_depthshadow_isolation_sp.py.gz
+          [[ "$(sha256sum apply_rend2_sun_r0_depthshadow_isolation_sp.py.gz | awk '{print $1}')" = "$SUNR0_PATCHER_GZIP_SHA256" ]] || { echo "::error::SUN-R0 patcher gzip SHA mismatch" >&2; exit 1; }
+          gzip -dc apply_rend2_sun_r0_depthshadow_isolation_sp.py.gz > apply_rend2_sun_r0_depthshadow_isolation_sp.py
+          [[ "$(sha256sum apply_rend2_sun_r0_depthshadow_isolation_sp.py | awk '{print $1}')" = "$SUNR0_PATCHER_SHA256" ]] || { echo "::error::SUN-R0 patcher SHA mismatch" >&2; exit 1; }
+          chmod 0755 apply_rend2_sun_r0_depthshadow_isolation_sp.py
+          python3 -m py_compile apply_rend2_sun_r0_depthshadow_isolation_sp.py
+
+      - name: Check and apply SUN-R0 DepthShadow isolation
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-R0 apply failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          ./apply_rend2_sun_r0_depthshadow_isolation_sp.py source --check-only
+          ./apply_rend2_sun_r0_depthshadow_isolation_sp.py source
+          git -C source diff --check
+          git -C source diff --name-only "$V54_BASE_COMMIT" | LC_ALL=C sort > actual-sunr0-delta-files.txt
+          printf '%s\n' \
+            SP/code/rend2/tr_backend.c \
+            SP/code/rend2/tr_shade.c | LC_ALL=C sort > expected-sunr0-delta-files.txt
+          diff -u expected-sunr0-delta-files.txt actual-sunr0-delta-files.txt
+
+      - name: Validate SUN-R0 policy and protect all quality settings
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-R0 policy validation failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sha256sum -c sunr0-invariants/rend2-protected.sha256
+          sha256sum -c sunr0-invariants/nonrenderer-protected.sha256
+          grep -E 'r_(sunlightMode|sunShadows|shadowFilter|shadowBlur|shadowMapSize|shadowCascadeZNear|shadowCascadeZFar|shadowCascadeZBias|forceSun|forceSunLightScale|forceSunAmbientScale)' source/SP/code/rend2/tr_init.c \
+            > sunr0-invariants/sun-cvars-after.txt || true
+          cmp -s sunr0-invariants/sun-cvars-before.txt sunr0-invariants/sun-cvars-after.txt
+          grep -E 'r_dlightShadow(MapSize|MaxLights|KernelMode|CasterMode|Bias|Softness|Strength)|r_dlightPlayerShadow' source/SP/code/rend2/tr_init.c \
+            > sunr0-invariants/dlight-cvars-after.txt || true
+          cmp -s sunr0-invariants/dlight-cvars-before.txt sunr0-invariants/dlight-cvars-after.txt
+          python3 - <<'PY_POLICY'
+          from pathlib import Path
+
+          def t(name):
+              return Path('source/SP/code/rend2/' + name).read_text(encoding='utf-8').replace('\r\n','\n').replace('\r','\n')
+
+          backend = t('tr_backend.c')
+          shade = t('tr_shade.c')
+          marker = 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4'
+          assert backend.count(marker) == 1
+          assert shade.count(marker) == 1
+
+          # Keep the original shared shadow-view classifier: sun/pshadow still use VPF_DEPTHSHADOW.
+          assert backend.count('isShadowView = !!(backEnd.viewParms.flags & VPF_DEPTHSHADOW);') == 1
+
+          # Packed radial RGB storage is now point-light cubemap only.
+          clear0 = backend.index('// REND2_DYNAMIC_LIGHTING_RELEASE_V2')
+          clear1 = backend.index('// clear to black for reflection cube maps', clear0)
+          clear_block = backend[clear0:clear1]
+          assert 'if (backEnd.viewParms.flags & VPF_SHADOWMAP)' in clear_block
+          assert 'if (backEnd.viewParms.flags & VPF_DEPTHSHADOW)' not in clear_block
+          assert 'qglClearColor(1.0f, 1.0f, 1.0f, 1.0f);' in clear_block
+
+          restore_pos = backend.index('qglClearColor(0.0f, 0.0f, 0.0f, 1.0f);', clear1)
+          restore_window = backend[restore_pos-120:restore_pos+100]
+          assert 'if (backEnd.viewParms.flags & VPF_SHADOWMAP)' in restore_window
+
+          mask0 = backend.index('// REND2_DLIGHT_COLORMASK_V4')
+          mask1 = backend.index('RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );', mask0)
+          mask_block = backend[mask0:mask1]
+          assert 'if (backEnd.viewParms.flags & VPF_SHADOWMAP)' in mask_block
+          assert 'if (isShadowView)' not in mask_block
+          assert 'sunlight VPF_DEPTHSHADOW' in mask_block
+
+          # The custom packed radial shader/caster policy is now point-light only.
+          path0 = shade.index('// REND2_DLIGHT_SHADOW_PATH_V5')
+          path1 = shade.index('//\n\t// render depth if in depthfill mode', path0)
+          path_block = shade[path0:path1]
+          assert 'if (backEnd.depthFill && (backEnd.viewParms.flags & VPF_SHADOWMAP))' in path_block
+          assert 'if (backEnd.depthFill && (backEnd.viewParms.flags & VPF_DEPTHSHADOW))' not in path_block
+          assert 'r_dlightShadowCasterMode && r_dlightShadowCasterMode->integer >= 1' in path_block
+          assert 'SS_SEE_THROUGH' in path_block
+
+          # Original generic depth-fill path remains immediately after the point-light special path.
+          generic_window = shade[path1:path1+700]
+          assert 'if (backEnd.depthFill)' in generic_window
+          assert 'RB_IterateStagesGeneric( input );' in generic_window
+
+          # V5.4 production systems remain present.
+          assert 'REND2_V12_0_FIX_V5_4_FINAL_PLAYER_SHADOW_CHARACTER_PICMIP' in t('tr_main.c')
+          assert 'r_staticPromoteSynthetic' in t('tr_init.c')
+          assert 'DARKWOLF_NATIVE_DLIGHT_PVS_PERSISTENCE_FINAL_V5_3_V12_0' in Path('source/SP/code/game/g_misc.c').read_text(encoding='utf-8', errors='ignore')
+          print('SUN-R0 policy PASS: packed point-shadow logic is VPF_SHADOWMAP-only; generic VPF_DEPTHSHADOW sunlight/pshadow path restored; quality/cvar systems protected.')
+          PY_POLICY
+
+      - name: Generate SUN-R0 delta and cumulative patches and replay exact trees
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-R0 patch replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          git -C source diff --binary "$V54_BASE_COMMIT" -- \
+            SP/code/rend2/tr_backend.c SP/code/rend2/tr_shade.c \
+            > rend2-sun-r0-depthshadow-isolation-sp.patch
+          git -C source diff --binary "$UPSTREAM_SHA" > rend2-cumulative-production-v12_0-fix-v5_4-sun-r0-sp.patch
+          test -s rend2-sun-r0-depthshadow-isolation-sp.patch
+          test -s rend2-cumulative-production-v12_0-fix-v5_4-sun-r0-sp.patch
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' rend2-sun-r0-depthshadow-isolation-sp.patch
+          if grep -Eq 'r_(sunlightMode|sunShadows|shadowFilter|shadowBlur|shadowMapSize|shadowCascadeZNear|shadowCascadeZFar|shadowCascadeZBias|forceSunLightScale|forceSunAmbientScale)[^A-Za-z0-9_]' rend2-sun-r0-depthshadow-isolation-sp.patch; then
+            echo "::error::SUN-R0 delta unexpectedly changes sunlight quality/intensity cvars" >&2
+            exit 1
+          fi
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-r0-depthshadow-isolation-sp.patch"
+
+          rm -rf sunr0-delta-replay sunr0-cumulative-replay
+          git clone -q source sunr0-delta-replay
+          git -C sunr0-delta-replay checkout -q "$V54_BASE_COMMIT"
+          git -C sunr0-delta-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-r0-depthshadow-isolation-sp.patch"
+          git -C sunr0-delta-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-r0-depthshadow-isolation-sp.patch"
+          git -C sunr0-delta-replay diff --check
+          while IFS= read -r f; do [[ -n "$f" ]] || continue; cmp "source/$f" "sunr0-delta-replay/$f"; done < expected-sunr0-delta-files.txt
+
+          git init -q sunr0-cumulative-replay
+          git -C sunr0-cumulative-replay config core.autocrlf false
+          git -C sunr0-cumulative-replay remote add origin "$UPSTREAM_REPO"
+          git -C sunr0-cumulative-replay fetch -q --depth 1 origin "$UPSTREAM_SHA"
+          git -C sunr0-cumulative-replay checkout -q --detach FETCH_HEAD
+          git -C sunr0-cumulative-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-cumulative-production-v12_0-fix-v5_4-sun-r0-sp.patch"
+          git -C sunr0-cumulative-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-cumulative-production-v12_0-fix-v5_4-sun-r0-sp.patch"
+          git -C source diff --name-only "$UPSTREAM_SHA" | LC_ALL=C sort > sunr0-cumulative-files.txt
+          while IFS= read -r f; do [[ -n "$f" ]] || continue; cmp "source/$f" "sunr0-cumulative-replay/$f"; done < sunr0-cumulative-files.txt
+
+          if ./apply_rend2_sun_r0_depthshadow_isolation_sp.py source > sunr0-repeat.log 2>&1; then
+            echo "::error::SUN-R0 patcher was unexpectedly repeat-applicable" >&2
+            exit 1
+          fi
+          grep -Fq 'SUN-R0 already present' sunr0-repeat.log
+
+      - name: Build SP-only Windows x64 with accepted MinGW path
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify exact SP build outputs
+        run: |
+          set -Eeuo pipefail
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          required=("$SP_OUT/ioWolfSP.x64.exe" "$SP_OUT/renderer_sp_opengl1_x64.dll" "$SP_OUT/renderer_sp_rend2_x64.dll" "$SP_OUT/main/cgame_sp_x64.dll" "$SP_OUT/main/qagame_sp_x64.dll" "$SP_OUT/main/ui_sp_x64.dll")
+          for f in "${required[@]}"; do test -s "$f" || { echo "::error::Missing $f" >&2; exit 1; }; done
+          test ! -d source/MP/build || { echo "::error::MP build directory exists" >&2; exit 1; }
+
+      - name: Package minimal SUN-R0 runtime patch
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-R0 packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/docs"
+          install -m 0644 "$SP_OUT/renderer_sp_rend2_x64.dll" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 rend2-sun-r0-depthshadow-isolation-sp.patch "$STAGE/docs/"
+          install -m 0644 rend2-cumulative-production-v12_0-fix-v5_4-sun-r0-sp.patch "$STAGE/docs/"
+          install -m 0755 apply_rend2_sun_r0_depthshadow_isolation_sp.py "$STAGE/docs/"
+
+          cat > "$STAGE/README_SUN_R0_RU.txt" <<'TXT'
+          DarkWolf/ioRTCW Rend2 SUN-R0 — DepthShadow Isolation Restore
+          ============================================================
+
+          База: точно успешный V5.4 FINAL v2 artifact.
+          Runtime payload: ТОЛЬКО renderer_sp_rend2_x64.dll.
+          Source delta: ТОЛЬКО SP/code/rend2/tr_backend.c и SP/code/rend2/tr_shade.c.
+
+          Что делает SUN-R0:
+          - packed RGB radial-distance path dynamic point-light cubemap теперь включается только по VPF_SHADOWMAP;
+          - общий VPF_DEPTHSHADOW снова остаётся обычным Rend2 depth-shadow path для sunlight/pshadow;
+          - r_dlightShadowCasterMode продолжает действовать только внутри point-light cubemap special path;
+          - НЕ меняются r_sunlightMode, яркость, r_forceSun scales, cascade/filter/blur/map-size/bias;
+          - НЕ меняются Lamp Learn/PVS/static promotion/player-shadow/picmip2.
+
+          Установка для теста:
+          1. Сделать копию рабочей папки V5.4 FINAL v2 или сохранить её renderer_sp_rend2_x64.dll.
+          2. Заменить в V5.4 только renderer_sp_rend2_x64.dll из этого SUN-R0 пакета.
+          3. Не копировать никакие CFG/BAT: их в SUN-R0 пакете нет.
+
+          Чистый runtime A/B:
+          A = исходный V5.4 FINAL v2 renderer_sp_rend2_x64.dll.
+          B = SUN-R0 renderer_sp_rend2_x64.dll.
+
+          Для обеих версий использовать одинаковые значения:
+            seta r_sunlightMode 1
+            seta r_sunShadows 1
+            set  r_depthPrepass 1
+            set  r_forceSun 1
+            vid_restart
+
+          В SUN-R0 НЕ использовать r_forceSun 2: он намеренно двигает направление солнца по времени и мешает restore A/B.
+          Не менять между A/B r_shadowFilter/r_shadowBlur/r_shadowMapSize/r_shadowCascade* и параметры dlight shadows.
+
+          Главные кадры:
+          1. Решётчатая дверь — должна вернуться структурированная тень от решётки.
+          2. Ограждение вышки — отдельные металлические прутья должны снова давать отдельные тени.
+          3. Indoor контроль — проверить, что sunlight не стал проходить через закрытые стены/перекрытия.
+          4. Sanity point-light — убедиться, что существующие dynamic point-light cubemap shadows не сломались.
+
+          После теста прислать одинаковые A/B кадры двери и ограждения плюс indoor кадр.
+          TXT
+
+          cat > "$STAGE/docs/BUILD_INFO.txt" <<EOF
+          workflow_revision=SUN-R0-depthshadow-isolation-v5_4
+          marker=REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4
+          upstream_sha=$UPSTREAM_SHA
+          base_v54_run_id=$V54_RUN_ID
+          base_v54_artifact_id=$V54_ARTIFACT_ID
+          base_v54_artifact_name=$V54_ARTIFACT_NAME
+          source_delta=SP/code/rend2/tr_backend.c,SP/code/rend2/tr_shade.c
+          point_shadow_gate=VPF_SHADOWMAP
+          shared_depth_shadow_gate=VPF_DEPTHSHADOW_UNCHANGED
+          sunlight_quality_changes=NONE
+          sunlight_intensity_changes=NONE
+          startup_overrides=NONE
+          runtime_payload=renderer_sp_rend2_x64.dll_ONLY
+          patcher_sha256=$SUNR0_PATCHER_SHA256
+          patcher_gzip_sha256=$SUNR0_PATCHER_GZIP_SHA256
+          EOF
+
+          test ! -e "$STAGE/ioWolfSP.x64.exe"
+          test ! -d "$STAGE/main"
+          test ! -e "$STAGE/renderer_sp_opengl1_x64.dll"
+          find "$STAGE" -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > "$STAGE/SHA256SUMS.txt"
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload minimal SUN-R0 test artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
