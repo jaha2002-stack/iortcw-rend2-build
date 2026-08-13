@@ -1,0 +1,639 @@
+name: Build ioRTCW Rend2 SUN-5A Controlled forceSun2 over SUN-3C2 SP-only Windows x64
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "rend2-sun-5a-controlled-forcesun2-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP-only SUN-5A controlled dynamic sun clock
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      BASE_RELEASE_BASENAME: "iortcw-rend2-sun-3c2-fixed-cascade-basis-over-sun-3c1-v2-v5_4-sp-windows-x64"
+      BASE_EXPECTED_CUMULATIVE_SHA256: "dba56ac639969d00009c5fd239395e7f4f2be3ba6b17df8b46f880517649923a"
+      RELEASE_BASENAME: "iortcw-rend2-sun-5a-controlled-forcesun2-over-sun-3c2-v5_4-sp-windows-x64"
+      PATCHER_SHA256: "5f5f8e536c46c1856aceb293b3a711705df67d8df8d1340fddc0b7300b4d6c29"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Prerequisite step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+          python3 --version
+
+      - name: Recover exact successful SUN-3C2 artifact
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-3C2 recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > all-artifacts.tsv
+
+          python3 - <<'PY_SELECT_BASE' > base-selected.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['BASE_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('all-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created, aid, rid, name = parts
+              if name.startswith(prefix):
+                  rows.append((created, aid, rid, name))
+          if not rows:
+              raise SystemExit('No retained SUN-3C2 artifact with prefix %r' % prefix)
+          rows.sort(key=lambda x: x[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT_BASE
+
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < base-selected.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed SUN-3C2 artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected SUN-3C2 run is not successful: $run_conclusion" >&2; exit 1; }
+
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir base-artifact
+          base_zip="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip" -print -quit)"
+          base_sha="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_sha" && -s "$base_sha" ]] || { echo "::error::SUN-3C2 ZIP/SHA missing" >&2; exit 1; }
+          expected="$(awk 'NF {print $1; exit}' "$base_sha")"
+          actual="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ && "$actual" = "$expected" ]] || { echo "::error::SUN-3C2 ZIP SHA mismatch" >&2; exit 1; }
+          unzip -q "$base_zip" -d base-release
+
+          BASE_STAGE="$GITHUB_WORKSPACE/base-release/$BASE_RELEASE_BASENAME"
+          BASE_CUMULATIVE="$BASE_STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch"
+          [[ -d "$BASE_STAGE" && -s "$BASE_CUMULATIVE" && -s "$BASE_STAGE/renderer_sp_rend2_x64.dll" ]] || { echo "::error::SUN-3C2 stage/cumulative/runtime DLL missing" >&2; exit 1; }
+          cumulative_sha="$(sha256sum "$BASE_CUMULATIVE" | awk '{print $1}')"
+          [[ "$cumulative_sha" = "$BASE_EXPECTED_CUMULATIVE_SHA256" ]] || { echo "::error::Wrong SUN-3C2 cumulative SHA: $cumulative_sha" >&2; exit 1; }
+
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_VISUAL_UPGRADE' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_3C2_FIXED_CASCADE_BASIS_FILTER4' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER3' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SUN_4A' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SUN_5A_CONTROLLED_DYNAMIC_SUN_CLOCK' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' "$BASE_CUMULATIVE"
+
+          echo "BASE_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE=$BASE_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE_SHA256=$cumulative_sha" >> "$GITHUB_ENV"
+          echo "Recovered exact successful SUN-3C2 artifact $artifact_name run=$run_id cumulative_sha=$cumulative_sha"
+
+      - name: Reconstruct and audit exact SUN-3C2 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Source reconstruction/audit failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git init source
+          git -C source config core.autocrlf false
+          git -C source config core.eol lf
+          git -C source remote add origin "$UPSTREAM_REPO"
+          git -C source fetch --depth 1 origin "$UPSTREAM_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]] || { echo "::error::Upstream SHA mismatch" >&2; exit 1; }
+
+          git -C source apply --check --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source diff --check
+          git -C source apply --check --reverse --whitespace=nowarn "$BASE_CUMULATIVE"
+
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_3C2_FIXED_CASCADE_BASIS_FILTER4' source/SP/code/rend2/tr_main.c
+          grep -Fq 'qboolean fixedCascadeBasis = (r_shadowFilter->integer >= 4 && level != 3);' source/SP/code/rend2/tr_main.c
+          test "$(grep -Fc 'if (level == 3 || lightViewIndependentOfCameraView || fixedCascadeBasis)' source/SP/code/rend2/tr_main.c)" -eq 2
+          grep -Fq 'if (lightViewIndependentOfCameraView || (r_shadowFilter->integer >= 3 && level != 3))' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER3' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "3", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          ! grep -Fq 'REND2_SUN_4A' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'REND2_SUN_4A' source/SP/code/rend2/tr_shade.c
+
+          # Exact legacy forceSun 2 motion + brightness baseline before SUN-5A.
+          grep -Fq 'int scale = 32768;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'float angle = (fd->time % scale) / (float)scale * M_PI;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'lightCol[2] = CLAMP(sin(angle) * 2.0f, 0.0f, 1.0f) * 2.0f;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'VectorScale4(lightCol, 0.2f, tr.refdef.sunAmbCol);' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'r_forceSunSpeed' source/SP/code/rend2/tr_init.c
+          ! grep -Fq 'r_forceSunTime' source/SP/code/rend2/tr_init.c
+          ! grep -Fq 'r_forceSunPause' source/SP/code/rend2/tr_init.c
+
+          git -C source config user.name "DarkWolf CI"
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source add -A
+          git -C source commit -m "Accepted SUN-3C2 baseline for SUN-5A" >/dev/null
+          BASE_COMMIT="$(git -C source rev-parse HEAD)"
+          echo "BASE_COMMIT=$BASE_COMMIT" >> "$GITHUB_ENV"
+
+          # Protected systems must remain byte-identical in SUN-5A.
+          sha256sum \
+            source/SP/code/rend2/glsl/lightall_fp.glsl \
+            source/SP/code/rend2/glsl/shadowmask_fp.glsl \
+            source/SP/code/rend2/tr_glsl.c \
+            source/SP/code/rend2/tr_shade.c \
+            source/SP/code/rend2/tr_backend.c \
+            source/SP/code/rend2/tr_scene.c \
+            source/SP/code/rend2/tr_shader.c \
+            > sun5a-protected-files.sha256
+          echo "Exact SUN-3C2 source audit PASS"
+
+      - name: Apply SUN-5A controlled forceSun2 clock
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-5A patch failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+
+          cat > sun5a-patcher.b64 <<'PATCHER_B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKaW1wb3J0IHN5
+          cwoKUk9PVCA9IFBhdGgoc3lzLmFyZ3ZbMV0pIGlmIGxlbihzeXMuYXJndikgPiAxIGVsc2UgUGF0
+          aCgnLicpClRSX01BSU4gPSBST09UIC8gJ1NQL2NvZGUvcmVuZDIvdHJfbWFpbi5jJwpUUl9JTklU
+          ID0gUk9PVCAvICdTUC9jb2RlL3JlbmQyL3RyX2luaXQuYycKVFJfTE9DQUwgPSBST09UIC8gJ1NQ
+          L2NvZGUvcmVuZDIvdHJfbG9jYWwuaCcKCk1BSU5fTUFSS0VSID0gJ1JFTkQyX1NVTl81QV9DT05U
+          Uk9MTEVEX0RZTkFNSUNfU1VOX0NMT0NLJwpERUZBVUxUX01BUktFUiA9ICdSRU5EMl9TVU5fQlJB
+          TkNIX1BSRUZFUlJFRF9TSEFET1dGSUxURVI0JwpPTERfREVGQVVMVF9NQVJLRVIgPSAnUkVORDJf
+          U1VOX0JSQU5DSF9QUkVGRVJSRURfU0hBRE9XRklMVEVSMycKU1VOM0MyX01BUktFUiA9ICdSRU5E
+          Ml9TVU5fM0MyX0ZJWEVEX0NBU0NBREVfQkFTSVNfRklMVEVSNCcKCgpkZWYgcmVhZF9ub3JtYWxp
+          emVkKHBhdGg6IFBhdGgpOgogICAgcmF3ID0gcGF0aC5yZWFkX2J5dGVzKCkKICAgIGVvbCA9ICdc
+          clxuJyBpZiBiJ1xyXG4nIGluIHJhdyBlbHNlICdcbicKICAgIHRleHQgPSByYXcuZGVjb2RlKCd1
+          dGYtOCcpLnJlcGxhY2UoJ1xyXG4nLCAnXG4nKS5yZXBsYWNlKCdccicsICdcbicpCiAgICByZXR1
+          cm4gdGV4dCwgZW9sCgoKZGVmIHdyaXRlX3ByZXNlcnZpbmdfZW9sKHBhdGg6IFBhdGgsIHRleHQ6
+          IHN0ciwgZW9sOiBzdHIpOgogICAgaWYgZW9sICE9ICdcbic6CiAgICAgICAgdGV4dCA9IHRleHQu
+          cmVwbGFjZSgnXG4nLCBlb2wpCiAgICBwYXRoLndyaXRlX2J5dGVzKHRleHQuZW5jb2RlKCd1dGYt
+          OCcpKQoKCm1haW4sIG1haW5fZW9sID0gcmVhZF9ub3JtYWxpemVkKFRSX01BSU4pCmluaXQsIGlu
+          aXRfZW9sID0gcmVhZF9ub3JtYWxpemVkKFRSX0lOSVQpCmxvY2FsLCBsb2NhbF9lb2wgPSByZWFk
+          X25vcm1hbGl6ZWQoVFJfTE9DQUwpCgojIElkZW1wb3RlbnQgc3VjY2VzcyBvbmx5IHdoZW4gdGhl
+          IGNvbXBsZXRlIGV4cGVyaW1lbnQgaXMgYWxyZWFkeSBwcmVzZW50LgphbHJlYWR5ID0gWwogICAg
+          TUFJTl9NQVJLRVIgaW4gbWFpbiwKICAgIERFRkFVTFRfTUFSS0VSIGluIGluaXQsCiAgICAnY3Zh
+          cl90ICAqcl9mb3JjZVN1blNwZWVkOycgaW4gaW5pdCwKICAgICdjdmFyX3QgICpyX2ZvcmNlU3Vu
+          VGltZTsnIGluIGluaXQsCiAgICAnY3Zhcl90ICAqcl9mb3JjZVN1blBhdXNlOycgaW4gaW5pdCwK
+          ICAgICdleHRlcm4gIGN2YXJfdCAgKnJfZm9yY2VTdW5TcGVlZDsnIGluIGxvY2FsLAogICAgJ2V4
+          dGVybiAgY3Zhcl90ICAqcl9mb3JjZVN1blRpbWU7JyBpbiBsb2NhbCwKICAgICdleHRlcm4gIGN2
+          YXJfdCAgKnJfZm9yY2VTdW5QYXVzZTsnIGluIGxvY2FsLApdCmlmIGFueShhbHJlYWR5KToKICAg
+          IGlmIGFsbChhbHJlYWR5KToKICAgICAgICByZXF1aXJlZF9tYWluID0gWwogICAgICAgICAgICAn
+          c3RhdGljIGRvdWJsZSBzX2ZvcmNlU3VuQ2xvY2tQaGFzZSA9IDAuMDsnLAogICAgICAgICAgICAn
+          ZmxvYXQgbWFudWFsUGhhc2UgPSByX2ZvcmNlU3VuVGltZS0+dmFsdWU7JywKICAgICAgICAgICAg
+          J2FuZ2xlID0gKGZsb2F0KShzX2ZvcmNlU3VuQ2xvY2tQaGFzZSAqIE1fUEkpOycsCiAgICAgICAg
+          ICAgICdDTEFNUChzaW4oYW5nbGUpICogMi4wZiwgMC4wZiwgMS4wZikgKiAyLjBmOycsCiAgICAg
+          ICAgICAgICdWZWN0b3JTY2FsZTQobGlnaHRDb2wsIDAuMmYsIHRyLnJlZmRlZi5zdW5BbWJDb2wp
+          OycsCiAgICAgICAgXQogICAgICAgIHJlcXVpcmVkX2luaXQgPSBbCiAgICAgICAgICAgICdyX2Zv
+          cmNlU3VuU3BlZWQgPSByaS5DdmFyX0dldCggInJfZm9yY2VTdW5TcGVlZCIsICIwLjA1IiwgQ1ZB
+          Ul9BUkNISVZFICk7JywKICAgICAgICAgICAgJ3JfZm9yY2VTdW5UaW1lID0gcmkuQ3Zhcl9HZXQo
+          ICJyX2ZvcmNlU3VuVGltZSIsICItMS4wIiwgQ1ZBUl9BUkNISVZFICk7JywKICAgICAgICAgICAg
+          J3JfZm9yY2VTdW5QYXVzZSA9IHJpLkN2YXJfR2V0KCAicl9mb3JjZVN1blBhdXNlIiwgIjAiLCBD
+          VkFSX0FSQ0hJVkUgKTsnLAogICAgICAgICAgICAncl9zaGFkb3dGaWx0ZXIgPSByaS5DdmFyX0dl
+          dCggInJfc2hhZG93RmlsdGVyIiwgIjQiLCBDVkFSX0FSQ0hJVkUgfCBDVkFSX0xBVENIICk7JywK
+          ICAgICAgICBdCiAgICAgICAgaWYgYWxsKHggaW4gbWFpbiBmb3IgeCBpbiByZXF1aXJlZF9tYWlu
+          KSBhbmQgYWxsKHggaW4gaW5pdCBmb3IgeCBpbiByZXF1aXJlZF9pbml0KToKICAgICAgICAgICAg
+          cHJpbnQoJ1NVTi01QSBhbHJlYWR5IGFwcGxpZWQnKQogICAgICAgICAgICByYWlzZSBTeXN0ZW1F
+          eGl0KDApCiAgICByYWlzZSBTeXN0ZW1FeGl0KCdQYXJ0aWFsIFNVTi01QSBtYXJrZXIvc3RhdGUg
+          ZGV0ZWN0ZWQ7IHJlZnVzaW5nIHRvIHBhdGNoJykKCmlmIFNVTjNDMl9NQVJLRVIgbm90IGluIG1h
+          aW46CiAgICByYWlzZSBTeXN0ZW1FeGl0KCdTVU4tM0MyIEZpbHRlciA0IG1hcmtlciBtaXNzaW5n
+          IGZyb20gdHJfbWFpbi5jOyB3cm9uZyBiYXNlbGluZScpCmlmIE9MRF9ERUZBVUxUX01BUktFUiBu
+          b3QgaW4gaW5pdDoKICAgIHJhaXNlIFN5c3RlbUV4aXQoJ0FjY2VwdGVkIFNVTi0zQzIgcHJlZmVy
+          cmVkIEZpbHRlciAzIGRlZmF1bHQgbWFya2VyIG1pc3NpbmcgZnJvbSB0cl9pbml0LmM7IHdyb25n
+          IGJhc2VsaW5lJykKCiMgMSkgUmVuZGVyZXIgY3ZhciBkZWZpbml0aW9ucy4Kb2xkX2RlZnMgPSAo
+          CiAgICAnY3Zhcl90ICAqcl9mb3JjZVN1bjtcbicKICAgICdjdmFyX3QgICpyX2ZvcmNlU3VuTGln
+          aHRTY2FsZTtcbicKICAgICdjdmFyX3QgICpyX2ZvcmNlU3VuQW1iaWVudFNjYWxlO1xuJwopCm5l
+          d19kZWZzID0gKAogICAgJ2N2YXJfdCAgKnJfZm9yY2VTdW47XG4nCiAgICAnY3Zhcl90ICAqcl9m
+          b3JjZVN1blNwZWVkO1xuJwogICAgJ2N2YXJfdCAgKnJfZm9yY2VTdW5UaW1lO1xuJwogICAgJ2N2
+          YXJfdCAgKnJfZm9yY2VTdW5QYXVzZTtcbicKICAgICdjdmFyX3QgICpyX2ZvcmNlU3VuTGlnaHRT
+          Y2FsZTtcbicKICAgICdjdmFyX3QgICpyX2ZvcmNlU3VuQW1iaWVudFNjYWxlO1xuJwopCmlmIGlu
+          aXQuY291bnQob2xkX2RlZnMpICE9IDE6CiAgICByYWlzZSBTeXN0ZW1FeGl0KGYnRXhwZWN0ZWQg
+          ZXhhY3RseSBvbmUgcl9mb3JjZVN1biBjdmFyIGRlZmluaXRpb24gYmxvY2ssIGZvdW5kIHtpbml0
+          LmNvdW50KG9sZF9kZWZzKX0nKQppbml0ID0gaW5pdC5yZXBsYWNlKG9sZF9kZWZzLCBuZXdfZGVm
+          cywgMSkKCiMgMikgUnVudGltZSBjdmFyIHJlZ2lzdHJhdGlvbi4gVGhlc2UgYXJlIGRlbGliZXJh
+          dGVseSBub24tbGF0Y2hlZCBzbyB0aGUKIyAgICBkeW5hbWljIHN1biBjYW4gYmUgdHVuZWQgbGl2
+          ZSB3aXRob3V0IHZpZF9yZXN0YXJ0LgpvbGRfcmVnID0gKAogICAgJ1x0cl9mb3JjZVN1biA9IHJp
+          LkN2YXJfR2V0KCAicl9mb3JjZVN1biIsICIwIiwgQ1ZBUl9BUkNISVZFICk7XG4nCiAgICAnXHRy
+          X2ZvcmNlU3VuTGlnaHRTY2FsZSA9IHJpLkN2YXJfR2V0KCAicl9mb3JjZVN1bkxpZ2h0U2NhbGUi
+          LCAiMS4wIiwgQ1ZBUl9DSEVBVCApO1xuJwogICAgJ1x0cl9mb3JjZVN1bkFtYmllbnRTY2FsZSA9
+          IHJpLkN2YXJfR2V0KCAicl9mb3JjZVN1bkFtYmllbnRTY2FsZSIsICIwLjUiLCBDVkFSX0NIRUFU
+          ICk7XG4nCikKbmV3X3JlZyA9ICgKICAgICdcdHJfZm9yY2VTdW4gPSByaS5DdmFyX0dldCggInJf
+          Zm9yY2VTdW4iLCAiMCIsIENWQVJfQVJDSElWRSApO1xuJwogICAgJ1x0Ly8gJyArIE1BSU5fTUFS
+          S0VSICsgJzogbGl2ZSBjb250cm9scyBmb3IgdGhlIGxlZ2FjeSByX2ZvcmNlU3VuIDIgZGF5bGln
+          aHQgYXJjLlxuJwogICAgJ1x0Ly8gcl9mb3JjZVN1blRpbWU6IC0xID0gYXV0b21hdGljLCAwLi4x
+          ID0gbWFudWFsIHN1bnJpc2UuLnN1bnNldCBwaGFzZS5cbicKICAgICdcdHJfZm9yY2VTdW5TcGVl
+          ZCA9IHJpLkN2YXJfR2V0KCAicl9mb3JjZVN1blNwZWVkIiwgIjAuMDUiLCBDVkFSX0FSQ0hJVkUg
+          KTtcbicKICAgICdcdHJfZm9yY2VTdW5UaW1lID0gcmkuQ3Zhcl9HZXQoICJyX2ZvcmNlU3VuVGlt
+          ZSIsICItMS4wIiwgQ1ZBUl9BUkNISVZFICk7XG4nCiAgICAnXHRyX2ZvcmNlU3VuUGF1c2UgPSBy
+          aS5DdmFyX0dldCggInJfZm9yY2VTdW5QYXVzZSIsICIwIiwgQ1ZBUl9BUkNISVZFICk7XG4nCiAg
+          ICAnXHRyaS5DdmFyX0NoZWNrUmFuZ2UoIHJfZm9yY2VTdW5TcGVlZCwgMC4wZiwgMTAuMGYsIHFm
+          YWxzZSApO1xuJwogICAgJ1x0cmkuQ3Zhcl9DaGVja1JhbmdlKCByX2ZvcmNlU3VuVGltZSwgLTEu
+          MGYsIDEuMGYsIHFmYWxzZSApO1xuJwogICAgJ1x0cmkuQ3Zhcl9DaGVja1JhbmdlKCByX2ZvcmNl
+          U3VuUGF1c2UsIDAsIDEsIHF0cnVlICk7XG4nCiAgICAnXHRyX2ZvcmNlU3VuTGlnaHRTY2FsZSA9
+          IHJpLkN2YXJfR2V0KCAicl9mb3JjZVN1bkxpZ2h0U2NhbGUiLCAiMS4wIiwgQ1ZBUl9DSEVBVCAp
+          O1xuJwogICAgJ1x0cl9mb3JjZVN1bkFtYmllbnRTY2FsZSA9IHJpLkN2YXJfR2V0KCAicl9mb3Jj
+          ZVN1bkFtYmllbnRTY2FsZSIsICIwLjUiLCBDVkFSX0NIRUFUICk7XG4nCikKaWYgaW5pdC5jb3Vu
+          dChvbGRfcmVnKSAhPSAxOgogICAgcmFpc2UgU3lzdGVtRXhpdChmJ0V4cGVjdGVkIGV4YWN0bHkg
+          b25lIHJfZm9yY2VTdW4gcmVnaXN0cmF0aW9uIGJsb2NrLCBmb3VuZCB7aW5pdC5jb3VudChvbGRf
+          cmVnKX0nKQppbml0ID0gaW5pdC5yZXBsYWNlKG9sZF9yZWcsIG5ld19yZWcsIDEpCgojIDMpIEFj
+          Y2VwdGVkIEZpbHRlciA0IGJlY29tZXMgdGhlIGJyYW5jaCBkZWZhdWx0LiBUaGlzIGRvZXMgbm90
+          IHJlbW92ZSBGaWx0ZXIgMy4Kb2xkX2RlZmF1bHQgPSAoCiAgICAnXHQvLyAnICsgT0xEX0RFRkFV
+          TFRfTUFSS0VSICsgJzogU1VOLTNDMSB2MiBGaWx0ZXIgMyBpcyB0aGUgcHJlZmVycmVkIHN1bmxp
+          Z2h0IGJyYW5jaCBkZWZhdWx0LlxuJwogICAgJ1x0cl9zaGFkb3dGaWx0ZXIgPSByaS5DdmFyX0dl
+          dCggInJfc2hhZG93RmlsdGVyIiwgIjMiLCBDVkFSX0FSQ0hJVkUgfCBDVkFSX0xBVENIICk7XG4n
+          CikKbmV3X2RlZmF1bHQgPSAoCiAgICAnXHQvLyAnICsgREVGQVVMVF9NQVJLRVIgKyAnOiBTVU4t
+          M0MyIEZpbHRlciA0IGlzIHRoZSBhY2NlcHRlZCBwcmVmZXJyZWQgc3VubGlnaHQgYnJhbmNoIGRl
+          ZmF1bHQuXG4nCiAgICAnXHRyX3NoYWRvd0ZpbHRlciA9IHJpLkN2YXJfR2V0KCAicl9zaGFkb3dG
+          aWx0ZXIiLCAiNCIsIENWQVJfQVJDSElWRSB8IENWQVJfTEFUQ0ggKTtcbicKKQppZiBpbml0LmNv
+          dW50KG9sZF9kZWZhdWx0KSAhPSAxOgogICAgcmFpc2UgU3lzdGVtRXhpdChmJ0V4cGVjdGVkIGV4
+          YWN0bHkgb25lIGFjY2VwdGVkIEZpbHRlciAzIGRlZmF1bHQgYmxvY2ssIGZvdW5kIHtpbml0LmNv
+          dW50KG9sZF9kZWZhdWx0KX0nKQppbml0ID0gaW5pdC5yZXBsYWNlKG9sZF9kZWZhdWx0LCBuZXdf
+          ZGVmYXVsdCwgMSkKCiMgNCkgUHVibGljIHJlbmRlcmVyIGRlY2xhcmF0aW9ucy4Kb2xkX2V4dGVy
+          biA9ICgKICAgICdleHRlcm4gIGN2YXJfdCAgKnJfZm9yY2VTdW47XG4nCiAgICAnZXh0ZXJuICBj
+          dmFyX3QgICpyX2ZvcmNlU3VuTGlnaHRTY2FsZTtcbicKICAgICdleHRlcm4gIGN2YXJfdCAgKnJf
+          Zm9yY2VTdW5BbWJpZW50U2NhbGU7XG4nCikKbmV3X2V4dGVybiA9ICgKICAgICdleHRlcm4gIGN2
+          YXJfdCAgKnJfZm9yY2VTdW47XG4nCiAgICAnZXh0ZXJuICBjdmFyX3QgICpyX2ZvcmNlU3VuU3Bl
+          ZWQ7XG4nCiAgICAnZXh0ZXJuICBjdmFyX3QgICpyX2ZvcmNlU3VuVGltZTtcbicKICAgICdleHRl
+          cm4gIGN2YXJfdCAgKnJfZm9yY2VTdW5QYXVzZTtcbicKICAgICdleHRlcm4gIGN2YXJfdCAgKnJf
+          Zm9yY2VTdW5MaWdodFNjYWxlO1xuJwogICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9mb3JjZVN1bkFt
+          YmllbnRTY2FsZTtcbicKKQppZiBsb2NhbC5jb3VudChvbGRfZXh0ZXJuKSAhPSAxOgogICAgcmFp
+          c2UgU3lzdGVtRXhpdChmJ0V4cGVjdGVkIGV4YWN0bHkgb25lIHJfZm9yY2VTdW4gZXh0ZXJuIGJs
+          b2NrLCBmb3VuZCB7bG9jYWwuY291bnQob2xkX2V4dGVybil9JykKbG9jYWwgPSBsb2NhbC5yZXBs
+          YWNlKG9sZF9leHRlcm4sIG5ld19leHRlcm4sIDEpCgojIDUpIEFkZCBhIHBoYXNlIGNsb2NrIGlt
+          bWVkaWF0ZWx5IGJlZm9yZSBSX1JlbmRlclN1blNoYWRvd01hcHMuCm9sZF9mdW5jX2FuY2hvciA9
+          ICgKICAgICdzdGF0aWMgZmxvYXQgQ2FsY1NwbGl0KGZsb2F0IG4sIGZsb2F0IGYsIGZsb2F0IGks
+          IGZsb2F0IG0pXG4nCiAgICAne1xuJwogICAgJ1x0cmV0dXJuIChuICogcG93KGYgLyBuLCBpIC8g
+          bSkgKyAoZiAtIG4pICogaSAvIG0pIC8gMi4wZjtcbicKICAgICd9XG5cblxuJwogICAgJ3ZvaWQg
+          Ul9SZW5kZXJTdW5TaGFkb3dNYXBzKGNvbnN0IHJlZmRlZl90ICpmZCwgaW50IGxldmVsKVxuJwop
+          Cm5ld19mdW5jX2FuY2hvciA9ICgKICAgICdzdGF0aWMgZmxvYXQgQ2FsY1NwbGl0KGZsb2F0IG4s
+          IGZsb2F0IGYsIGZsb2F0IGksIGZsb2F0IG0pXG4nCiAgICAne1xuJwogICAgJ1x0cmV0dXJuIChu
+          ICogcG93KGYgLyBuLCBpIC8gbSkgKyAoZiAtIG4pICogaSAvIG0pIC8gMi4wZjtcbicKICAgICd9
+          XG5cbicKICAgICcvLyAnICsgTUFJTl9NQVJLRVIgKyAnXG4nCiAgICAnLy8gUGhhc2UgaXMgbm9y
+          bWFsaXplZCBhY3Jvc3MgdGhlIGV4aXN0aW5nIGRheWxpZ2h0IGFyYzogMCA9IHN1bnJpc2UsIDAu
+          NSA9IG5vb24sIDEgPSBzdW5zZXQuXG4nCiAgICAnLy8gQXV0b21hdGljIHNwZWVkIDEuMCByZXBy
+          b2R1Y2VzIHRoZSBsZWdhY3kgMzIuNzY4IHNlY29uZCBzdW5yaXNlLXRvLXN1bnNldCByYXRlOyBs
+          b3dlciB2YWx1ZXMgc2xvdyBpdCBkb3duLlxuJwogICAgJ3N0YXRpYyBxYm9vbGVhbiBzX2ZvcmNl
+          U3VuQ2xvY2tJbml0aWFsaXplZCA9IHFmYWxzZTtcbicKICAgICdzdGF0aWMgaW50IHNfZm9yY2VT
+          dW5DbG9ja0xhc3RUaW1lID0gMDtcbicKICAgICdzdGF0aWMgZG91YmxlIHNfZm9yY2VTdW5DbG9j
+          a1BoYXNlID0gMC4wO1xuXG4nCiAgICAndm9pZCBSX1JlbmRlclN1blNoYWRvd01hcHMoY29uc3Qg
+          cmVmZGVmX3QgKmZkLCBpbnQgbGV2ZWwpXG4nCikKaWYgbWFpbi5jb3VudChvbGRfZnVuY19hbmNo
+          b3IpICE9IDE6CiAgICByYWlzZSBTeXN0ZW1FeGl0KGYnRXhwZWN0ZWQgZXhhY3RseSBvbmUgQ2Fs
+          Y1NwbGl0L1JfUmVuZGVyU3VuU2hhZG93TWFwcyBhbmNob3IsIGZvdW5kIHttYWluLmNvdW50KG9s
+          ZF9mdW5jX2FuY2hvcil9JykKbWFpbiA9IG1haW4ucmVwbGFjZShvbGRfZnVuY19hbmNob3IsIG5l
+          d19mdW5jX2FuY2hvciwgMSkKCiMgNikgUmVwbGFjZSBvbmx5IHRoZSB0aW1lIHNvdXJjZSBvZiB0
+          aGUgbGVnYWN5IHJfZm9yY2VTdW4gMiBibG9jay4gVGhlCiMgICAgZGlyZWN0aW9uIGVxdWF0aW9u
+          IGFuZCBhbGwgbGlnaHQvYW1iaWVudCBlcXVhdGlvbnMgcmVtYWluIGJ5dGUtZm9yLWJ5dGUKIyAg
+          ICBlcXVpdmFsZW50IHNvIFNVTi01QSBpc29sYXRlcyBtb3Rpb24gY29udHJvbCBmcm9tIGJyaWdo
+          dG5lc3MgdHVuaW5nLgpvbGRfZm9yY2VfYmxvY2sgPSAnJydcdGlmIChyX2ZvcmNlU3VuLT5pbnRl
+          Z2VyID09IDIpXG5cdHtcblx0XHRpbnQgc2NhbGUgPSAzMjc2ODtcblx0XHRmbG9hdCBhbmdsZSA9
+          IChmZC0+dGltZSAlIHNjYWxlKSAvIChmbG9hdClzY2FsZSAqIE1fUEk7XG5cdFx0bGlnaHREaXJb
+          MF0gPSBjb3MoYW5nbGUpO1xuXHRcdGxpZ2h0RGlyWzFdID0gc2luKDM1LjBmICogTV9QSSAvIDE4
+          MC4wZik7XG5cdFx0bGlnaHREaXJbMl0gPSBzaW4oYW5nbGUpICogY29zKDM1LjBmICogTV9QSSAv
+          IDE4MC4wZik7XG5cdFx0bGlnaHREaXJbM10gPSAwLjBmO1xuXG5cdFx0aWYgKDEpIC8vKChmZC0+
+          dGltZSAlIChzY2FsZSAqIDIpKSA8IHNjYWxlKVxuXHRcdHtcblx0XHRcdGxpZ2h0Q29sWzBdID0g
+          XG5cdFx0XHRsaWdodENvbFsxXSA9IFxuXHRcdFx0bGlnaHRDb2xbMl0gPSBDTEFNUChzaW4oYW5n
+          bGUpICogMi4wZiwgMC4wZiwgMS4wZikgKiAyLjBmO1xuXHRcdFx0bGlnaHRDb2xbM10gPSAxLjBm
+          O1xuXHRcdH1cblx0XHRlbHNlXG5cdFx0e1xuXHRcdFx0bGlnaHRDb2xbMF0gPSBcblx0XHRcdGxp
+          Z2h0Q29sWzFdID0gXG5cdFx0XHRsaWdodENvbFsyXSA9IENMQU1QKHNpbihhbmdsZSkgKiAyLjBm
+          ICogMC4xZiwgMC4wZiwgMC4xZik7XG5cdFx0XHRsaWdodENvbFszXSA9IDEuMGY7XG5cdFx0fVxu
+          XG5cdFx0VmVjdG9yQ29weTQobGlnaHREaXIsIHRyLnJlZmRlZi5zdW5EaXIpO1xuXHRcdFZlY3Rv
+          ckNvcHk0KGxpZ2h0Q29sLCB0ci5yZWZkZWYuc3VuQ29sKTtcblx0XHRWZWN0b3JTY2FsZTQobGln
+          aHRDb2wsIDAuMmYsIHRyLnJlZmRlZi5zdW5BbWJDb2wpO1xuXHR9XG5cdGVsc2Vcblx0e1xuXHRc
+          dFZlY3RvckNvcHk0KHRyLnJlZmRlZi5zdW5EaXIsIGxpZ2h0RGlyKTtcblx0fVxuJycnCm5ld19m
+          b3JjZV9ibG9jayA9ICcnJ1x0aWYgKHJfZm9yY2VTdW4tPmludGVnZXIgPT0gMilcblx0e1xuXHRc
+          dGNvbnN0IGludCBzY2FsZSA9IDMyNzY4O1xuXHRcdGZsb2F0IG1hbnVhbFBoYXNlID0gcl9mb3Jj
+          ZVN1blRpbWUtPnZhbHVlO1xuXHRcdGZsb2F0IGFuZ2xlO1xuXG5cdFx0aWYgKCFzX2ZvcmNlU3Vu
+          Q2xvY2tJbml0aWFsaXplZClcblx0XHR7XG5cdFx0XHRzX2ZvcmNlU3VuQ2xvY2tJbml0aWFsaXpl
+          ZCA9IHF0cnVlO1xuXHRcdFx0c19mb3JjZVN1bkNsb2NrTGFzdFRpbWUgPSBmZC0+dGltZTtcblx0
+          XHRcdHNfZm9yY2VTdW5DbG9ja1BoYXNlID0gKGZkLT50aW1lICUgc2NhbGUpIC8gKGRvdWJsZSlz
+          Y2FsZTtcblx0XHR9XG5cblx0XHRpZiAobWFudWFsUGhhc2UgPj0gMC4wZilcblx0XHR7XG5cdFx0
+          XHQvLyBNYW51YWwgcGhhc2UgaXMgbGl2ZSBhbmQgZGV0ZXJtaW5pc3RpYy4gUmV0dXJuaW5nIHRv
+          IC0xIHJlc3VtZXMgZnJvbSBoZXJlLlxuXHRcdFx0c19mb3JjZVN1bkNsb2NrUGhhc2UgPSBDTEFN
+          UChtYW51YWxQaGFzZSwgMC4wZiwgMS4wZik7XG5cdFx0XHRzX2ZvcmNlU3VuQ2xvY2tMYXN0VGlt
+          ZSA9IGZkLT50aW1lO1xuXHRcdH1cblx0XHRlbHNlIGlmIChmZC0+dGltZSAhPSBzX2ZvcmNlU3Vu
+          Q2xvY2tMYXN0VGltZSlcblx0XHR7XG5cdFx0XHRpbnQgZGVsdGFNc2VjID0gZmQtPnRpbWUgLSBz
+          X2ZvcmNlU3VuQ2xvY2tMYXN0VGltZTtcblxuXHRcdFx0aWYgKGRlbHRhTXNlYyA8IDApXG5cdFx0
+          XHR7XG5cdFx0XHRcdC8vIEdhbWUvbWFwIHRpbWUgbW92ZWQgYmFja3dhcmRzOiByZXN5bmMgdG8g
+          dGhlIGxlZ2FjeSBwaGFzZSBpbnN0ZWFkIG9mIGp1bXBpbmcgYnkgYSBuZWdhdGl2ZSBkZWx0YS5c
+          blx0XHRcdFx0c19mb3JjZVN1bkNsb2NrUGhhc2UgPSAoZmQtPnRpbWUgJSBzY2FsZSkgLyAoZG91
+          YmxlKXNjYWxlO1xuXHRcdFx0fVxuXHRcdFx0ZWxzZSBpZiAoIXJfZm9yY2VTdW5QYXVzZS0+aW50
+          ZWdlciAmJiByX2ZvcmNlU3VuU3BlZWQtPnZhbHVlID4gMC4wZilcblx0XHRcdHtcblx0XHRcdFx0
+          c19mb3JjZVN1bkNsb2NrUGhhc2UgKz0gKChkb3VibGUpZGVsdGFNc2VjIC8gKGRvdWJsZSlzY2Fs
+          ZSkgKiByX2ZvcmNlU3VuU3BlZWQtPnZhbHVlO1xuXHRcdFx0XHRzX2ZvcmNlU3VuQ2xvY2tQaGFz
+          ZSAtPSBmbG9vcihzX2ZvcmNlU3VuQ2xvY2tQaGFzZSk7XG5cdFx0XHR9XG5cblx0XHRcdHNfZm9y
+          Y2VTdW5DbG9ja0xhc3RUaW1lID0gZmQtPnRpbWU7XG5cdFx0fVxuXG5cdFx0YW5nbGUgPSAoZmxv
+          YXQpKHNfZm9yY2VTdW5DbG9ja1BoYXNlICogTV9QSSk7XG5cdFx0bGlnaHREaXJbMF0gPSBjb3Mo
+          YW5nbGUpO1xuXHRcdGxpZ2h0RGlyWzFdID0gc2luKDM1LjBmICogTV9QSSAvIDE4MC4wZik7XG5c
+          dFx0bGlnaHREaXJbMl0gPSBzaW4oYW5nbGUpICogY29zKDM1LjBmICogTV9QSSAvIDE4MC4wZik7
+          XG5cdFx0bGlnaHREaXJbM10gPSAwLjBmO1xuXG5cdFx0Ly8gU1VOLTVBIGludGVudGlvbmFsbHkg
+          cHJlc2VydmVzIHRoZSBsZWdhY3kgZm9yY2VTdW4gMiBicmlnaHRuZXNzIGN1cnZlIGZvciBpc29s
+          YXRlZCBBL0IgdGVzdGluZy5cblx0XHRpZiAoMSkgLy8oKGZkLT50aW1lICUgKHNjYWxlICogMikp
+          IDwgc2NhbGUpXG5cdFx0e1xuXHRcdFx0bGlnaHRDb2xbMF0gPSBcblx0XHRcdGxpZ2h0Q29sWzFd
+          ID0gXG5cdFx0XHRsaWdodENvbFsyXSA9IENMQU1QKHNpbihhbmdsZSkgKiAyLjBmLCAwLjBmLCAx
+          LjBmKSAqIDIuMGY7XG5cdFx0XHRsaWdodENvbFszXSA9IDEuMGY7XG5cdFx0fVxuXHRcdGVsc2Vc
+          blx0XHR7XG5cdFx0XHRsaWdodENvbFswXSA9IFxuXHRcdFx0bGlnaHRDb2xbMV0gPSBcblx0XHRc
+          dGxpZ2h0Q29sWzJdID0gQ0xBTVAoc2luKGFuZ2xlKSAqIDIuMGYgKiAwLjFmLCAwLjBmLCAwLjFm
+          KTtcblx0XHRcdGxpZ2h0Q29sWzNdID0gMS4wZjtcblx0XHR9XG5cblx0XHRWZWN0b3JDb3B5NChs
+          aWdodERpciwgdHIucmVmZGVmLnN1bkRpcik7XG5cdFx0VmVjdG9yQ29weTQobGlnaHRDb2wsIHRy
+          LnJlZmRlZi5zdW5Db2wpO1xuXHRcdFZlY3RvclNjYWxlNChsaWdodENvbCwgMC4yZiwgdHIucmVm
+          ZGVmLnN1bkFtYkNvbCk7XG5cdH1cblx0ZWxzZVxuXHR7XG5cdFx0c19mb3JjZVN1bkNsb2NrSW5p
+          dGlhbGl6ZWQgPSBxZmFsc2U7XG5cdFx0VmVjdG9yQ29weTQodHIucmVmZGVmLnN1bkRpciwgbGln
+          aHREaXIpO1xuXHR9XG4nJycKaWYgbWFpbi5jb3VudChvbGRfZm9yY2VfYmxvY2spICE9IDE6CiAg
+          ICByYWlzZSBTeXN0ZW1FeGl0KGYnRXhwZWN0ZWQgZXhhY3RseSBvbmUgbGVnYWN5IHJfZm9yY2VT
+          dW4gMiBibG9jaywgZm91bmQge21haW4uY291bnQob2xkX2ZvcmNlX2Jsb2NrKX0nKQptYWluID0g
+          bWFpbi5yZXBsYWNlKG9sZF9mb3JjZV9ibG9jaywgbmV3X2ZvcmNlX2Jsb2NrLCAxKQoKIyBGaW5h
+          bCBpbnZhcmlhbnRzLgpjaGVja3MgPSBbCiAgICAobWFpbi5jb3VudChNQUlOX01BUktFUikgPj0g
+          MSwgJ1NVTi01QSBtYWluIG1hcmtlciBtaXNzaW5nJyksCiAgICAobWFpbi5jb3VudCgnQ0xBTVAo
+          c2luKGFuZ2xlKSAqIDIuMGYsIDAuMGYsIDEuMGYpICogMi4wZjsnKSA9PSAxLCAnbGVnYWN5IGJy
+          aWdodG5lc3MgY3VydmUgY2hhbmdlZC9kdXBsaWNhdGVkJyksCiAgICAobWFpbi5jb3VudCgnVmVj
+          dG9yU2NhbGU0KGxpZ2h0Q29sLCAwLjJmLCB0ci5yZWZkZWYuc3VuQW1iQ29sKTsnKSA9PSAxLCAn
+          bGVnYWN5IGFtYmllbnQgY3VydmUgY2hhbmdlZC9kdXBsaWNhdGVkJyksCiAgICAoaW5pdC5jb3Vu
+          dCgnY3Zhcl90ICAqcl9mb3JjZVN1blNwZWVkOycpID09IDEsICdyX2ZvcmNlU3VuU3BlZWQgZGVm
+          aW5pdGlvbiBtaXNtYXRjaCcpLAogICAgKGluaXQuY291bnQoJ2N2YXJfdCAgKnJfZm9yY2VTdW5U
+          aW1lOycpID09IDEsICdyX2ZvcmNlU3VuVGltZSBkZWZpbml0aW9uIG1pc21hdGNoJyksCiAgICAo
+          aW5pdC5jb3VudCgnY3Zhcl90ICAqcl9mb3JjZVN1blBhdXNlOycpID09IDEsICdyX2ZvcmNlU3Vu
+          UGF1c2UgZGVmaW5pdGlvbiBtaXNtYXRjaCcpLAogICAgKGluaXQuY291bnQoREVGQVVMVF9NQVJL
+          RVIpID09IDEsICdGaWx0ZXIgNCBwcmVmZXJyZWQgbWFya2VyIG1pc21hdGNoJyksCiAgICAoT0xE
+          X0RFRkFVTFRfTUFSS0VSIG5vdCBpbiBpbml0LCAnb2xkIEZpbHRlciAzIHByZWZlcnJlZCBtYXJr
+          ZXIgc3RpbGwgcHJlc2VudCcpLAogICAgKGxvY2FsLmNvdW50KCdleHRlcm4gIGN2YXJfdCAgKnJf
+          Zm9yY2VTdW5TcGVlZDsnKSA9PSAxLCAncl9mb3JjZVN1blNwZWVkIGV4dGVybiBtaXNtYXRjaCcp
+          LAogICAgKGxvY2FsLmNvdW50KCdleHRlcm4gIGN2YXJfdCAgKnJfZm9yY2VTdW5UaW1lOycpID09
+          IDEsICdyX2ZvcmNlU3VuVGltZSBleHRlcm4gbWlzbWF0Y2gnKSwKICAgIChsb2NhbC5jb3VudCgn
+          ZXh0ZXJuICBjdmFyX3QgICpyX2ZvcmNlU3VuUGF1c2U7JykgPT0gMSwgJ3JfZm9yY2VTdW5QYXVz
+          ZSBleHRlcm4gbWlzbWF0Y2gnKSwKXQpmb3Igb2ssIG1lc3NhZ2UgaW4gY2hlY2tzOgogICAgaWYg
+          bm90IG9rOgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQobWVzc2FnZSkKCndyaXRlX3ByZXNlcnZp
+          bmdfZW9sKFRSX01BSU4sIG1haW4sIG1haW5fZW9sKQp3cml0ZV9wcmVzZXJ2aW5nX2VvbChUUl9J
+          TklULCBpbml0LCBpbml0X2VvbCkKd3JpdGVfcHJlc2VydmluZ19lb2woVFJfTE9DQUwsIGxvY2Fs
+          LCBsb2NhbF9lb2wpCnByaW50KCdBcHBsaWVkIFNVTi01QSBjb250cm9sbGVkIHJfZm9yY2VTdW4g
+          MiBjbG9jayArIHByZWZlcnJlZCBGaWx0ZXIgNCBkZWZhdWx0JykK
+          PATCHER_B64
+          base64 -d sun5a-patcher.b64 > apply_rend2_sun_5a_controlled_forcesun2_sp.py
+          chmod +x apply_rend2_sun_5a_controlled_forcesun2_sp.py
+          actual_patcher_sha="$(sha256sum apply_rend2_sun_5a_controlled_forcesun2_sp.py | awk '{print $1}')"
+          [[ "$actual_patcher_sha" = "$PATCHER_SHA256" ]] || { echo "::error::SUN-5A patcher SHA mismatch" >&2; exit 1; }
+          python3 -m py_compile apply_rend2_sun_5a_controlled_forcesun2_sp.py
+          python3 apply_rend2_sun_5a_controlled_forcesun2_sp.py source
+          git -C source diff --check
+
+          cat > expected-sun5a-files.txt <<'EOF_FILES'
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          SP/code/rend2/tr_main.c
+          EOF_FILES
+          LC_ALL=C sort -o expected-sun5a-files.txt expected-sun5a-files.txt
+          git -C source diff --name-only "$BASE_COMMIT" | LC_ALL=C sort > actual-sun5a-files.txt
+          diff -u expected-sun5a-files.txt actual-sun5a-files.txt
+
+          grep -Fq 'REND2_SUN_5A_CONTROLLED_DYNAMIC_SUN_CLOCK' source/SP/code/rend2/tr_main.c
+          grep -Fq 'static double s_forceSunClockPhase = 0.0;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'float manualPhase = r_forceSunTime->value;' source/SP/code/rend2/tr_main.c
+          grep -Fq 's_forceSunClockPhase += ((double)deltaMsec / (double)scale) * r_forceSunSpeed->value;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'if (!r_forceSunPause->integer && r_forceSunSpeed->value > 0.0f)' source/SP/code/rend2/tr_main.c
+          grep -Fq 'angle = (float)(s_forceSunClockPhase * M_PI);' source/SP/code/rend2/tr_main.c
+
+          grep -Fq 'r_forceSunSpeed = ri.Cvar_Get( "r_forceSunSpeed", "0.05", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_forceSunTime = ri.Cvar_Get( "r_forceSunTime", "-1.0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_forceSunPause = ri.Cvar_Get( "r_forceSunPause", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER4' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "4", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'extern  cvar_t  *r_forceSunSpeed;' source/SP/code/rend2/tr_local.h
+          grep -Fq 'extern  cvar_t  *r_forceSunTime;' source/SP/code/rend2/tr_local.h
+          grep -Fq 'extern  cvar_t  *r_forceSunPause;' source/SP/code/rend2/tr_local.h
+
+          # Filter 4 stability stays intact.
+          grep -Fq 'REND2_SUN_3C2_FIXED_CASCADE_BASIS_FILTER4' source/SP/code/rend2/tr_main.c
+          grep -Fq 'qboolean fixedCascadeBasis = (r_shadowFilter->integer >= 4 && level != 3);' source/SP/code/rend2/tr_main.c
+          test "$(grep -Fc 'if (level == 3 || lightViewIndependentOfCameraView || fixedCascadeBasis)' source/SP/code/rend2/tr_main.c)" -eq 2
+          grep -Fq 'if (lightViewIndependentOfCameraView || (r_shadowFilter->integer >= 3 && level != 3))' source/SP/code/rend2/tr_main.c
+
+          # SUN-5A MUST NOT tune brightness yet. Preserve the legacy hard-coded curve for the next isolated experiment.
+          test "$(grep -Fc 'lightCol[2] = CLAMP(sin(angle) * 2.0f, 0.0f, 1.0f) * 2.0f;' source/SP/code/rend2/tr_main.c)" -eq 1
+          test "$(grep -Fc 'VectorScale4(lightCol, 0.2f, tr.refdef.sunAmbCol);' source/SP/code/rend2/tr_main.c)" -eq 1
+
+          # Shader/filter/fog/dlight/scene lighting plumbing stays byte-identical.
+          sha256sum -c sun5a-protected-files.sha256
+
+          git -C source diff --binary "$BASE_COMMIT" -- \
+            SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h SP/code/rend2/tr_main.c \
+            > rend2-sun-5a-controlled-forcesun2-sp.patch
+          test -s rend2-sun-5a-controlled-forcesun2-sp.patch
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-5a-controlled-forcesun2-sp.patch"
+
+          git -C source diff --binary "$UPSTREAM_SHA" \
+            > rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch
+          test -s rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch
+          grep -Fq 'REND2_SUN_3C2_FIXED_CASCADE_BASIS_FILTER4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch
+          grep -Fq 'REND2_SUN_5A_CONTROLLED_DYNAMIC_SUN_CLOCK' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch
+          ! grep -Fq 'REND2_SUN_4A' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch
+
+          sha256sum rend2-sun-5a-controlled-forcesun2-sp.patch > rend2-sun-5a-controlled-forcesun2-sp.patch.sha256
+          sha256sum rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch > rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch.sha256
+
+      - name: Replay SUN-5A delta from exact SUN-3C2 baseline
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-5A replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf sun5a-replay
+          git clone --no-hardlinks source sun5a-replay >/dev/null
+          git -C sun5a-replay reset --hard "$BASE_COMMIT" >/dev/null
+          git -C sun5a-replay clean -fdx
+          git -C sun5a-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-5a-controlled-forcesun2-sp.patch"
+          git -C sun5a-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-5a-controlled-forcesun2-sp.patch"
+          git -C sun5a-replay diff --check
+          git -C sun5a-replay diff --name-only "$BASE_COMMIT" | LC_ALL=C sort > replay-sun5a-files.txt
+          diff -u expected-sun5a-files.txt replay-sun5a-files.txt
+          cmp source/SP/code/rend2/tr_main.c sun5a-replay/SP/code/rend2/tr_main.c
+          cmp source/SP/code/rend2/tr_init.c sun5a-replay/SP/code/rend2/tr_init.c
+          cmp source/SP/code/rend2/tr_local.h sun5a-replay/SP/code/rend2/tr_local.h
+          git -C sun5a-replay apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-5a-controlled-forcesun2-sp.patch"
+          echo "SUN-5A exact three-file delta replay PASS"
+
+      - name: Build SP-only Windows x64 SUN-5A experiment
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify build and package minimal SUN-5A runtime artifact
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-5A packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          DLL="$SP_OUT/renderer_sp_rend2_x64.dll"
+          test -s "$DLL" || { echo "::error::Missing renderer_sp_rend2_x64.dll" >&2; exit 1; }
+          test ! -d source/MP/build || { echo "::error::MP build directory exists" >&2; exit 1; }
+
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/docs"
+          install -m 0644 "$DLL" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 rend2-sun-5a-controlled-forcesun2-sp.patch "$STAGE/docs/rend2-sun-5a-controlled-forcesun2-sp.patch"
+          install -m 0644 rend2-sun-5a-controlled-forcesun2-sp.patch.sha256 "$STAGE/docs/rend2-sun-5a-controlled-forcesun2-sp.patch.sha256"
+          install -m 0644 rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch"
+          install -m 0644 rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch.sha256 "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch.sha256"
+          install -m 0755 apply_rend2_sun_5a_controlled_forcesun2_sp.py "$STAGE/docs/apply_rend2_sun_5a_controlled_forcesun2_sp.py"
+
+          cat > "$STAGE/README_SUN_5A_TEST.txt" <<'TXT'
+          SUN-5A - Controlled r_forceSun 2 clock
+          =======================================
+
+          Accepted baseline:
+            SUN-3C2
+            r_sunlightMode 1
+            r_shadowFilter 4 (now preferred branch default)
+
+          Rejected SUN-4A is NOT included.
+
+          SUN-5A changes only the r_forceSun 2 time source/control layer.
+          The legacy dynamic-sun brightness and ambient equations are intentionally
+          unchanged for a clean follow-up brightness experiment.
+
+          New live cvars (NO vid_restart required):
+            r_forceSunSpeed
+              automatic daylight-arc speed multiplier
+              1.0 = legacy rate (sunrise-to-sunset in 32.768 seconds)
+              default candidate = 0.05 (~10.9 minutes sunrise-to-sunset)
+
+            r_forceSunTime
+              -1.0 = automatic clock
+               0.0 = sunrise
+               0.25 = morning
+               0.50 = noon
+               0.75 = afternoon
+               1.0 = sunset
+              Setting a manual value freezes the phase at that exact position.
+              Returning to -1 resumes automatic motion from the manual position.
+
+            r_forceSunPause
+              0 = run automatic clock
+              1 = freeze current automatic phase
+
+          Required sunlight profile:
+            seta r_sunlightMode 1
+            seta r_shadowFilter 4
+            seta r_forceSun 2
+
+          Fast movement verification:
+            r_forceSunTime -1
+            r_forceSunPause 0
+            r_forceSunSpeed 0.20
+
+          Preferred slower candidate:
+            r_forceSunSpeed 0.05
+
+          Pause test:
+            r_forceSunPause 1
+            move/rotate camera and verify the sun direction itself no longer advances
+            r_forceSunPause 0
+
+          Manual-position test:
+            r_forceSunTime 0.00
+            r_forceSunTime 0.25
+            r_forceSunTime 0.50
+            r_forceSunTime 0.75
+            r_forceSunTime 1.00
+            r_forceSunTime -1
+
+          Important:
+            SUN-5A intentionally retains the old hard-coded lightCol max=2.0 and
+            sunAmbCol=lightCol*0.2. Do NOT judge that as the final lighting model.
+            Record noon/morning screenshots; SUN-5B will isolate brightness/tint/
+            ambient normalization after SUN-5A motion controls are confirmed.
+          TXT
+
+          cat > "$STAGE/docs/SUN_5A_BUILD_INFO.txt" <<EOF
+          workflow_revision=SUN-5A-controlled-forceSun2-clock
+          upstream_sha=$UPSTREAM_SHA
+          source_of_truth=exact_successful_SUN-3C2_cumulative_patch
+          base_run_id=$BASE_RUN_ID
+          base_artifact_id=$BASE_ARTIFACT_ID
+          base_artifact_name=$BASE_ARTIFACT_NAME
+          base_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          base_commit=$BASE_COMMIT
+          rejected_sun4a=EXCLUDED
+          preferred_branch_default_r_shadowFilter=4
+          r_sunlightMode_preferred=1
+          r_forceSunSpeed_default=0.05
+          r_forceSunTime_default=-1.0
+          r_forceSunPause_default=0
+          legacy_forceSun2_brightness_curve=PRESERVED_FOR_SUN5B_AB
+          legacy_forceSun2_max_lightCol=2.0
+          legacy_forceSun2_sunAmbCol_scale=0.2
+          shadowmask_shader_changes=NONE
+          lightall_shader_changes=NONE
+          cascade_split_changes=NONE
+          filter4_changes=NONE
+          fog_changes=NONE
+          dlight_changes=NONE
+          player_shadow_changes=NONE
+          source_delta_files=SP/code/rend2/tr_init.c,SP/code/rend2/tr_local.h,SP/code/rend2/tr_main.c
+          package_type=MINIMAL_RENDERER_DLL_EXPERIMENT
+          EOF
+
+          test -s "$STAGE/renderer_sp_rend2_x64.dll"
+          test -s "$STAGE/README_SUN_5A_TEST.txt"
+          test -s "$STAGE/docs/SUN_5A_BUILD_INFO.txt"
+          if find "$STAGE" -type f -iname '*.bat' -print -quit | grep -q .; then echo "::error::BAT unexpectedly packaged" >&2; exit 1; fi
+
+          ( cd "$STAGE"; find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload minimal SUN-5A experiment artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
