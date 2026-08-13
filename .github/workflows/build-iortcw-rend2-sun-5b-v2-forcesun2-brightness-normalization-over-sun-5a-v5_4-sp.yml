@@ -1,0 +1,585 @@
+name: Build ioRTCW Rend2 SUN-5B v2 forceSun2 Brightness Normalization over SUN-5A SP-only Windows x64
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "rend2-sun-5b-v2-forcesun2-brightness-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP-only SUN-5B v2 forceSun2 brightness normalization A/B
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      BASE_RELEASE_BASENAME: "iortcw-rend2-sun-5a-controlled-forcesun2-over-sun-3c2-v5_4-sp-windows-x64"
+      BASE_EXPECTED_CUMULATIVE_SHA256: "82468e9d1a6a8918e83f2f34e741d135c54fde3acc5f36f211c2bb4544168641"
+      RELEASE_BASENAME: "iortcw-rend2-sun-5b-v2-forcesun2-brightness-normalization-over-sun-5a-v5_4-sp-windows-x64"
+      PATCHER_SHA256: "11239e2400e2734c40e449333cde050e3b35dc43bcc3cae3f5b7a22ee1f36ab3"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Prerequisite step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+          python3 --version
+
+      - name: Recover exact successful SUN-5A production artifact
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-5A recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > all-artifacts.tsv
+          
+          python3 - <<'PY_SELECT_BASE' > base-selected.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['BASE_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('all-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created, aid, rid, name = parts
+              if name.startswith(prefix):
+                  rows.append((created, aid, rid, name))
+          if not rows:
+              raise SystemExit('No retained SUN-5A artifact with prefix %r' % prefix)
+          rows.sort(key=lambda x: x[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT_BASE
+          
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < base-selected.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed SUN-5A artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected SUN-5A run is not successful: $run_conclusion" >&2; exit 1; }
+          
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir base-artifact
+          base_zip="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip" -print -quit)"
+          base_sha="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_sha" && -s "$base_sha" ]] || { echo "::error::SUN-5A ZIP/SHA missing" >&2; exit 1; }
+          expected="$(awk 'NF {print $1; exit}' "$base_sha")"
+          actual="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ && "$actual" = "$expected" ]] || { echo "::error::SUN-5A ZIP SHA mismatch" >&2; exit 1; }
+          unzip -q "$base_zip" -d base-release
+          
+          BASE_STAGE="$GITHUB_WORKSPACE/base-release/$BASE_RELEASE_BASENAME"
+          BASE_CUMULATIVE="$BASE_STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sp.patch"
+          [[ -d "$BASE_STAGE" && -s "$BASE_CUMULATIVE" && -s "$BASE_STAGE/renderer_sp_rend2_x64.dll" ]] || { echo "::error::SUN-5A stage/cumulative/runtime DLL missing" >&2; exit 1; }
+          cumulative_sha="$(sha256sum "$BASE_CUMULATIVE" | awk '{print $1}')"
+          [[ "$cumulative_sha" = "$BASE_EXPECTED_CUMULATIVE_SHA256" ]] || { echo "::error::Wrong SUN-5A cumulative SHA: $cumulative_sha" >&2; exit 1; }
+          
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_VISUAL_UPGRADE' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_3C2_FIXED_CASCADE_BASIS_FILTER4' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_5A_CONTROLLED_DYNAMIC_SUN_CLOCK' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER4' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SUN_4A' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SUN_5B_FORCE_SUN2_BRIGHTNESS_NORMALIZATION' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' "$BASE_CUMULATIVE"
+          
+          echo "BASE_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE=$BASE_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE_SHA256=$cumulative_sha" >> "$GITHUB_ENV"
+          echo "Recovered exact successful SUN-5A artifact $artifact_name run=$run_id cumulative_sha=$cumulative_sha"
+
+      - name: Reconstruct and audit exact SUN-5A production source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-5A source reconstruction/audit failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git init source
+          git -C source config core.autocrlf false
+          git -C source config core.eol lf
+          git -C source remote add origin "$UPSTREAM_REPO"
+          git -C source fetch --depth 1 origin "$UPSTREAM_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]] || { echo "::error::Upstream SHA mismatch" >&2; exit 1; }
+          
+          git -C source apply --check --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source diff --check
+          git -C source apply --check --reverse --whitespace=nowarn "$BASE_CUMULATIVE"
+          
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_3C2_FIXED_CASCADE_BASIS_FILTER4' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_5A_CONTROLLED_DYNAMIC_SUN_CLOCK' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER4' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "4", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          ! grep -Fq 'REND2_SUN_4A' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'REND2_SUN_4A' source/SP/code/rend2/tr_shade.c
+          
+          # Accepted SUN-5A runtime controls must be present exactly before SUN-5B.
+          grep -Fq 'r_forceSunSpeed = ri.Cvar_Get( "r_forceSunSpeed", "0.05", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_forceSunTime = ri.Cvar_Get( "r_forceSunTime", "-1.0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_forceSunPause = ri.Cvar_Get( "r_forceSunPause", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'static double s_forceSunClockPhase = 0.0;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'angle = (float)(s_forceSunClockPhase * M_PI);' source/SP/code/rend2/tr_main.c
+          
+          # SUN-5A brightness baseline: still legacy white plateau and legacy 0.2 ambient multiplier.
+          test "$(grep -Fc 'lightCol[2] = CLAMP(sin(angle) * 2.0f, 0.0f, 1.0f) * 2.0f;' source/SP/code/rend2/tr_main.c)" -eq 1
+          test "$(grep -Fc 'VectorScale4(lightCol, 0.2f, tr.refdef.sunAmbCol);' source/SP/code/rend2/tr_main.c)" -eq 1
+          ! grep -Fq 'r_forceSunBrightnessMode' source/SP/code/rend2/tr_init.c
+          ! grep -Fq 'REND2_SUN_5B_FORCE_SUN2_BRIGHTNESS_NORMALIZATION' source/SP/code/rend2/tr_main.c
+          
+          git -C source config user.name "DarkWolf CI"
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source add -A
+          git -C source commit -m "Accepted SUN-5A production baseline for SUN-5B" >/dev/null
+          BASE_COMMIT="$(git -C source rev-parse HEAD)"
+          echo "BASE_COMMIT=$BASE_COMMIT" >> "$GITHUB_ENV"
+          
+          # SUN-5B is renderer-C-only: protect all shader, fog, dynamic-light and scene plumbing.
+          sha256sum \
+            source/SP/code/rend2/glsl/lightall_fp.glsl \
+            source/SP/code/rend2/glsl/lightall_vp.glsl \
+            source/SP/code/rend2/glsl/shadowmask_fp.glsl \
+            source/SP/code/rend2/tr_glsl.c \
+            source/SP/code/rend2/tr_shade.c \
+            source/SP/code/rend2/tr_backend.c \
+            source/SP/code/rend2/tr_scene.c \
+            source/SP/code/rend2/tr_shader.c \
+            > sun5b-protected-files.sha256
+          
+          echo "Exact SUN-5A production source audit PASS"
+
+      - name: Apply SUN-5B v2 forceSun2 brightness normalization A/B
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-5B patch failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          
+          cat > sun5b-patcher.b64 <<'PATCHER_B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKaW1wb3J0IHN5
+          cwoKUk9PVCA9IFBhdGgoc3lzLmFyZ3ZbMV0pIGlmIGxlbihzeXMuYXJndikgPiAxIGVsc2UgUGF0
+          aCgnLicpClRSX01BSU4gPSBST09UIC8gJ1NQL2NvZGUvcmVuZDIvdHJfbWFpbi5jJwpUUl9JTklU
+          ID0gUk9PVCAvICdTUC9jb2RlL3JlbmQyL3RyX2luaXQuYycKVFJfTE9DQUwgPSBST09UIC8gJ1NQ
+          L2NvZGUvcmVuZDIvdHJfbG9jYWwuaCcKCk1BSU5fTUFSS0VSID0gJ1JFTkQyX1NVTl81Ql9GT1JD
+          RV9TVU4yX0JSSUdIVE5FU1NfTk9STUFMSVpBVElPTicKQ1ZBUl9NQVJLRVIgPSAnUkVORDJfU1VO
+          XzVCX0JSSUdIVE5FU1NfTU9ERV9DVkFSJwpTVU41QV9NQVJLRVIgPSAnUkVORDJfU1VOXzVBX0NP
+          TlRST0xMRURfRFlOQU1JQ19TVU5fQ0xPQ0snCkZJTFRFUjRfTUFSS0VSID0gJ1JFTkQyX1NVTl8z
+          QzJfRklYRURfQ0FTQ0FERV9CQVNJU19GSUxURVI0JwoKCmRlZiByZWFkX25vcm1hbGl6ZWQocGF0
+          aDogUGF0aCk6CiAgICByYXcgPSBwYXRoLnJlYWRfYnl0ZXMoKQogICAgZW9sID0gJ1xyXG4nIGlm
+          IGInXHJcbicgaW4gcmF3IGVsc2UgJ1xuJwogICAgdGV4dCA9IHJhdy5kZWNvZGUoJ3V0Zi04Jyku
+          cmVwbGFjZSgnXHJcbicsICdcbicpLnJlcGxhY2UoJ1xyJywgJ1xuJykKICAgIHJldHVybiB0ZXh0
+          LCBlb2wKCgpkZWYgd3JpdGVfcHJlc2VydmluZ19lb2wocGF0aDogUGF0aCwgdGV4dDogc3RyLCBl
+          b2w6IHN0cik6CiAgICBpZiBlb2wgIT0gJ1xuJzoKICAgICAgICB0ZXh0ID0gdGV4dC5yZXBsYWNl
+          KCdcbicsIGVvbCkKICAgIHBhdGgud3JpdGVfYnl0ZXModGV4dC5lbmNvZGUoJ3V0Zi04JykpCgoK
+          ZGVmIHJlcGxhY2Vfb25jZSh0ZXh0OiBzdHIsIG9sZDogc3RyLCBuZXc6IHN0ciwgbGFiZWw6IHN0
+          cik6CiAgICBjb3VudCA9IHRleHQuY291bnQob2xkKQogICAgaWYgY291bnQgIT0gMToKICAgICAg
+          ICByYWlzZSBTeXN0ZW1FeGl0KGYne2xhYmVsfTogZXhwZWN0ZWQgZXhhY3RseSBvbmUgb2xkIGJs
+          b2NrLCBmb3VuZCB7Y291bnR9JykKICAgIHJldHVybiB0ZXh0LnJlcGxhY2Uob2xkLCBuZXcsIDEp
+          CgoKbWFpbiwgbWFpbl9lb2wgPSByZWFkX25vcm1hbGl6ZWQoVFJfTUFJTikKaW5pdCwgaW5pdF9l
+          b2wgPSByZWFkX25vcm1hbGl6ZWQoVFJfSU5JVCkKbG9jYWwsIGxvY2FsX2VvbCA9IHJlYWRfbm9y
+          bWFsaXplZChUUl9MT0NBTCkKCmFscmVhZHkgPSBbCiAgICBNQUlOX01BUktFUiBpbiBtYWluLAog
+          ICAgQ1ZBUl9NQVJLRVIgaW4gaW5pdCwKICAgICdjdmFyX3QgICpyX2ZvcmNlU3VuQnJpZ2h0bmVz
+          c01vZGU7JyBpbiBpbml0LAogICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9mb3JjZVN1bkJyaWdodG5l
+          c3NNb2RlOycgaW4gbG9jYWwsCl0KaWYgYW55KGFscmVhZHkpOgogICAgaWYgYWxsKGFscmVhZHkp
+          OgogICAgICAgIHJlcXVpcmVkID0gWwogICAgICAgICAgICAncl9mb3JjZVN1bkJyaWdodG5lc3NN
+          b2RlID0gcmkuQ3Zhcl9HZXQoICJyX2ZvcmNlU3VuQnJpZ2h0bmVzc01vZGUiLCAiMSIsIENWQVJf
+          QVJDSElWRSApOycsCiAgICAgICAgICAgICdmbG9hdCBkYXlsaWdodCA9IENMQU1QKHNpbihhbmds
+          ZSksIDAuMGYsIDEuMGYpOycsCiAgICAgICAgICAgICdmbG9hdCBkeW5hbWljQW1iaWVudEZsb29y
+          ID0gMS4wZiAtIGRheWxpZ2h0ICogKDEuMGYgLSBhbWJpZW50Rmxvb3IpOycsCiAgICAgICAgICAg
+          ICdWZWN0b3JTY2FsZSh0ci5zdW5MaWdodCwgbWFwU2NhbGUgKiByX2ZvcmNlU3VuTGlnaHRTY2Fs
+          ZS0+dmFsdWUgKiBkYXlsaWdodCwgbGlnaHRDb2wpOycsCiAgICAgICAgICAgICdpZiAoIXJfZm9y
+          Y2VTdW5CcmlnaHRuZXNzTW9kZS0+aW50ZWdlciknLAogICAgICAgIF0KICAgICAgICBpZiBhbGwo
+          eCBpbiBpbml0ICsgbWFpbiBmb3IgeCBpbiByZXF1aXJlZCk6CiAgICAgICAgICAgIHByaW50KCdT
+          VU4tNUIgYWxyZWFkeSBhcHBsaWVkJykKICAgICAgICAgICAgcmFpc2UgU3lzdGVtRXhpdCgwKQog
+          ICAgcmFpc2UgU3lzdGVtRXhpdCgnU1VOLTVCIHBhcnRpYWwvaW5jb25zaXN0ZW50IGFwcGxpY2F0
+          aW9uIGRldGVjdGVkJykKCmlmIFNVTjVBX01BUktFUiBub3QgaW4gbWFpbjoKICAgIHJhaXNlIFN5
+          c3RlbUV4aXQoJ1NVTi01QSBhY2NlcHRlZCBjbG9jayBtYXJrZXIgaXMgbWlzc2luZyBmcm9tIHRy
+          X21haW4uYycpCmlmIEZJTFRFUjRfTUFSS0VSIG5vdCBpbiBtYWluOgogICAgcmFpc2UgU3lzdGVt
+          RXhpdCgnU1VOLTNDMiBGaWx0ZXIgNCBtYXJrZXIgaXMgbWlzc2luZyBmcm9tIHRyX21haW4uYycp
+          CmlmICdSRU5EMl9TVU5fQlJBTkNIX1BSRUZFUlJFRF9TSEFET1dGSUxURVI0JyBub3QgaW4gaW5p
+          dDoKICAgIHJhaXNlIFN5c3RlbUV4aXQoJ1ByZWZlcnJlZCBGaWx0ZXIgNCBkZWZhdWx0IG1hcmtl
+          ciBpcyBtaXNzaW5nIGZyb20gdHJfaW5pdC5jJykKaWYgJ3Jfc2hhZG93RmlsdGVyID0gcmkuQ3Zh
+          cl9HZXQoICJyX3NoYWRvd0ZpbHRlciIsICI0IiwgQ1ZBUl9BUkNISVZFIHwgQ1ZBUl9MQVRDSCAp
+          Oycgbm90IGluIGluaXQ6CiAgICByYWlzZSBTeXN0ZW1FeGl0KCdQcmVmZXJyZWQgRmlsdGVyIDQg
+          ZGVmYXVsdCB2YWx1ZSBpcyBtaXNzaW5nIGZyb20gdHJfaW5pdC5jJykKaWYgJ1JFTkQyX1NVTl80
+          QScgaW4gbWFpbiBvciAnUkVORDJfU1VOXzRBJyBpbiBpbml0IG9yICdSRU5EMl9TVU5fNEEnIGlu
+          IGxvY2FsOgogICAgcmFpc2UgU3lzdGVtRXhpdCgnUmVqZWN0ZWQgU1VOLTRBIHVuZXhwZWN0ZWRs
+          eSBwcmVzZW50JykKCm9sZF9pbml0X2RlY2wgPSAnJydjdmFyX3QgICpyX2ZvcmNlU3VuU3BlZWQ7
+          XG5jdmFyX3QgICpyX2ZvcmNlU3VuVGltZTtcbmN2YXJfdCAgKnJfZm9yY2VTdW5QYXVzZTtcbmN2
+          YXJfdCAgKnJfZm9yY2VTdW5MaWdodFNjYWxlOycnJwpuZXdfaW5pdF9kZWNsID0gJycnY3Zhcl90
+          ICAqcl9mb3JjZVN1blNwZWVkO1xuY3Zhcl90ICAqcl9mb3JjZVN1blRpbWU7XG5jdmFyX3QgICpy
+          X2ZvcmNlU3VuUGF1c2U7XG4vLyBSRU5EMl9TVU5fNUJfQlJJR0hUTkVTU19NT0RFX0NWQVI6IDAg
+          PSBhY2NlcHRlZCBTVU4tNUEgbGVnYWN5IGJyaWdodG5lc3MsIDEgPSBub3JtYWxpemVkIG1hcC1h
+          d2FyZSBkYXlsaWdodC5cbmN2YXJfdCAgKnJfZm9yY2VTdW5CcmlnaHRuZXNzTW9kZTtcbmN2YXJf
+          dCAgKnJfZm9yY2VTdW5MaWdodFNjYWxlOycnJwppbml0ID0gcmVwbGFjZV9vbmNlKGluaXQsIG9s
+          ZF9pbml0X2RlY2wsIG5ld19pbml0X2RlY2wsICd0cl9pbml0LmMgZGVjbGFyYXRpb24nKQoKb2xk
+          X2luaXRfcmVnID0gJycnXHRyX2ZvcmNlU3VuU3BlZWQgPSByaS5DdmFyX0dldCggInJfZm9yY2VT
+          dW5TcGVlZCIsICIwLjA1IiwgQ1ZBUl9BUkNISVZFICk7XG5cdHJfZm9yY2VTdW5UaW1lID0gcmku
+          Q3Zhcl9HZXQoICJyX2ZvcmNlU3VuVGltZSIsICItMS4wIiwgQ1ZBUl9BUkNISVZFICk7XG5cdHJf
+          Zm9yY2VTdW5QYXVzZSA9IHJpLkN2YXJfR2V0KCAicl9mb3JjZVN1blBhdXNlIiwgIjAiLCBDVkFS
+          X0FSQ0hJVkUgKTtcblx0cmkuQ3Zhcl9DaGVja1JhbmdlKCByX2ZvcmNlU3VuU3BlZWQsIDAuMGYs
+          IDEwLjBmLCBxZmFsc2UgKTtcblx0cmkuQ3Zhcl9DaGVja1JhbmdlKCByX2ZvcmNlU3VuVGltZSwg
+          LTEuMGYsIDEuMGYsIHFmYWxzZSApO1xuXHRyaS5DdmFyX0NoZWNrUmFuZ2UoIHJfZm9yY2VTdW5Q
+          YXVzZSwgMCwgMSwgcXRydWUgKTtcblx0cl9mb3JjZVN1bkxpZ2h0U2NhbGUgPSByaS5DdmFyX0dl
+          dCggInJfZm9yY2VTdW5MaWdodFNjYWxlIiwgIjEuMCIsIENWQVJfQ0hFQVQgKTsnJycKbmV3X2lu
+          aXRfcmVnID0gJycnXHRyX2ZvcmNlU3VuU3BlZWQgPSByaS5DdmFyX0dldCggInJfZm9yY2VTdW5T
+          cGVlZCIsICIwLjA1IiwgQ1ZBUl9BUkNISVZFICk7XG5cdHJfZm9yY2VTdW5UaW1lID0gcmkuQ3Zh
+          cl9HZXQoICJyX2ZvcmNlU3VuVGltZSIsICItMS4wIiwgQ1ZBUl9BUkNISVZFICk7XG5cdHJfZm9y
+          Y2VTdW5QYXVzZSA9IHJpLkN2YXJfR2V0KCAicl9mb3JjZVN1blBhdXNlIiwgIjAiLCBDVkFSX0FS
+          Q0hJVkUgKTtcblx0Ly8gUkVORDJfU1VOXzVCX0JSSUdIVE5FU1NfTU9ERV9DVkFSOiBsaXZlIEEv
+          QiBzd2l0Y2gsIG5vIHZpZF9yZXN0YXJ0IHJlcXVpcmVkLlxuXHRyX2ZvcmNlU3VuQnJpZ2h0bmVz
+          c01vZGUgPSByaS5DdmFyX0dldCggInJfZm9yY2VTdW5CcmlnaHRuZXNzTW9kZSIsICIxIiwgQ1ZB
+          Ul9BUkNISVZFICk7XG5cdHJpLkN2YXJfQ2hlY2tSYW5nZSggcl9mb3JjZVN1blNwZWVkLCAwLjBm
+          LCAxMC4wZiwgcWZhbHNlICk7XG5cdHJpLkN2YXJfQ2hlY2tSYW5nZSggcl9mb3JjZVN1blRpbWUs
+          IC0xLjBmLCAxLjBmLCBxZmFsc2UgKTtcblx0cmkuQ3Zhcl9DaGVja1JhbmdlKCByX2ZvcmNlU3Vu
+          UGF1c2UsIDAsIDEsIHF0cnVlICk7XG5cdHJpLkN2YXJfQ2hlY2tSYW5nZSggcl9mb3JjZVN1bkJy
+          aWdodG5lc3NNb2RlLCAwLCAxLCBxdHJ1ZSApO1xuXHRyX2ZvcmNlU3VuTGlnaHRTY2FsZSA9IHJp
+          LkN2YXJfR2V0KCAicl9mb3JjZVN1bkxpZ2h0U2NhbGUiLCAiMS4wIiwgQ1ZBUl9DSEVBVCApOycn
+          Jwppbml0ID0gcmVwbGFjZV9vbmNlKGluaXQsIG9sZF9pbml0X3JlZywgbmV3X2luaXRfcmVnLCAn
+          dHJfaW5pdC5jIHJlZ2lzdHJhdGlvbicpCgpvbGRfbG9jYWwgPSAnJydleHRlcm4gIGN2YXJfdCAg
+          KnJfZm9yY2VTdW5TcGVlZDtcbmV4dGVybiAgY3Zhcl90ICAqcl9mb3JjZVN1blRpbWU7XG5leHRl
+          cm4gIGN2YXJfdCAgKnJfZm9yY2VTdW5QYXVzZTtcbmV4dGVybiAgY3Zhcl90ICAqcl9mb3JjZVN1
+          bkxpZ2h0U2NhbGU7JycnCm5ld19sb2NhbCA9ICcnJ2V4dGVybiAgY3Zhcl90ICAqcl9mb3JjZVN1
+          blNwZWVkO1xuZXh0ZXJuICBjdmFyX3QgICpyX2ZvcmNlU3VuVGltZTtcbmV4dGVybiAgY3Zhcl90
+          ICAqcl9mb3JjZVN1blBhdXNlO1xuZXh0ZXJuICBjdmFyX3QgICpyX2ZvcmNlU3VuQnJpZ2h0bmVz
+          c01vZGU7XG5leHRlcm4gIGN2YXJfdCAgKnJfZm9yY2VTdW5MaWdodFNjYWxlOycnJwpsb2NhbCA9
+          IHJlcGxhY2Vfb25jZShsb2NhbCwgb2xkX2xvY2FsLCBuZXdfbG9jYWwsICd0cl9sb2NhbC5oIGV4
+          dGVybicpCgpvbGRfYnJpZ2h0bmVzcyA9ICcnJ1x0XHQvLyBTVU4tNUEgaW50ZW50aW9uYWxseSBw
+          cmVzZXJ2ZXMgdGhlIGxlZ2FjeSBmb3JjZVN1biAyIGJyaWdodG5lc3MgY3VydmUgZm9yIGlzb2xh
+          dGVkIEEvQiB0ZXN0aW5nLlxuXHRcdGlmICgxKSAvLygoZmQtPnRpbWUgJSAoc2NhbGUgKiAyKSkg
+          PCBzY2FsZSlcblx0XHR7XG5cdFx0XHRsaWdodENvbFswXSA9IFxuXHRcdFx0bGlnaHRDb2xbMV0g
+          PSBcblx0XHRcdGxpZ2h0Q29sWzJdID0gQ0xBTVAoc2luKGFuZ2xlKSAqIDIuMGYsIDAuMGYsIDEu
+          MGYpICogMi4wZjtcblx0XHRcdGxpZ2h0Q29sWzNdID0gMS4wZjtcblx0XHR9XG5cdFx0ZWxzZVxu
+          XHRcdHtcblx0XHRcdGxpZ2h0Q29sWzBdID0gXG5cdFx0XHRsaWdodENvbFsxXSA9IFxuXHRcdFx0
+          bGlnaHRDb2xbMl0gPSBDTEFNUChzaW4oYW5nbGUpICogMi4wZiAqIDAuMWYsIDAuMGYsIDAuMWYp
+          O1xuXHRcdFx0bGlnaHRDb2xbM10gPSAxLjBmO1xuXHRcdH1cblxuXHRcdFZlY3RvckNvcHk0KGxp
+          Z2h0RGlyLCB0ci5yZWZkZWYuc3VuRGlyKTtcblx0XHRWZWN0b3JDb3B5NChsaWdodENvbCwgdHIu
+          cmVmZGVmLnN1bkNvbCk7XG5cdFx0VmVjdG9yU2NhbGU0KGxpZ2h0Q29sLCAwLjJmLCB0ci5yZWZk
+          ZWYuc3VuQW1iQ29sKTsnJycKCm5ld19icmlnaHRuZXNzID0gJycnXHRcdC8vIFJFTkQyX1NVTl81
+          Ql9GT1JDRV9TVU4yX0JSSUdIVE5FU1NfTk9STUFMSVpBVElPTlxuXHRcdC8vIE1vZGUgMCBwcmVz
+          ZXJ2ZXMgdGhlIGFjY2VwdGVkIFNVTi01QSBvdXRwdXQgZXhhY3RseSBmb3IgcnVudGltZSBBL0Iu
+          XG5cdFx0Ly8gTW9kZSAxIHJlbW92ZXMgdGhlIGhhcmQtY29kZWQgd2hpdGUgMC4uMiBwbGF0ZWF1
+          LCBmb2xsb3dzIHRoZSBtYXAgc3VuIGNvbG9yL2ludGVuc2l0eSxcblx0XHQvLyBob25vcnMgcl9m
+          b3JjZVN1bkxpZ2h0U2NhbGUvcl9mb3JjZVN1bkFtYmllbnRTY2FsZSwgYW5kIGZhZGVzIE1PREUg
+          MSBzaGFkb3cgbW9kdWxhdGlvblxuXHRcdC8vIGJhY2sgdG8gbmV1dHJhbCBhcyB0aGUgc3VuIGFw
+          cHJvYWNoZXMgdGhlIGhvcml6b24uIERpcmVjdGlvbi9vcmllbnRhdGlvbiBpcyB1bmNoYW5nZWQg
+          aGVyZS5cblx0XHRpZiAoIXJfZm9yY2VTdW5CcmlnaHRuZXNzTW9kZS0+aW50ZWdlcilcblx0XHR7
+          XG5cdFx0XHRpZiAoMSkgLy8oKGZkLT50aW1lICUgKHNjYWxlICogMikpIDwgc2NhbGUpXG5cdFx0
+          XHR7XG5cdFx0XHRcdGxpZ2h0Q29sWzBdID1cblx0XHRcdFx0bGlnaHRDb2xbMV0gPVxuXHRcdFx0
+          XHRsaWdodENvbFsyXSA9IENMQU1QKHNpbihhbmdsZSkgKiAyLjBmLCAwLjBmLCAxLjBmKSAqIDIu
+          MGY7XG5cdFx0XHRcdGxpZ2h0Q29sWzNdID0gMS4wZjtcblx0XHRcdH1cblx0XHRcdGVsc2Vcblx0
+          XHRcdHtcblx0XHRcdFx0bGlnaHRDb2xbMF0gPVxuXHRcdFx0XHRsaWdodENvbFsxXSA9XG5cdFx0
+          XHRcdGxpZ2h0Q29sWzJdID0gQ0xBTVAoc2luKGFuZ2xlKSAqIDIuMGYgKiAwLjFmLCAwLjBmLCAw
+          LjFmKTtcblx0XHRcdFx0bGlnaHRDb2xbM10gPSAxLjBmO1xuXHRcdFx0fVxuXG5cdFx0XHRWZWN0
+          b3JTY2FsZTQobGlnaHRDb2wsIDAuMmYsIHRyLnJlZmRlZi5zdW5BbWJDb2wpO1xuXHRcdH1cblx0
+          XHRlbHNlXG5cdFx0e1xuXHRcdFx0ZmxvYXQgZGF5bGlnaHQgPSBDTEFNUChzaW4oYW5nbGUpLCAw
+          LjBmLCAxLjBmKTtcblx0XHRcdGZsb2F0IG1hcFNjYWxlID0gKDEgPDwgcl9tYXBPdmVyQnJpZ2h0
+          Qml0cy0+aW50ZWdlcikgLyAyNTUuMGY7XG5cdFx0XHRmbG9hdCBtYXBTdW5FbmVyZ3kgPSBEb3RQ
+          cm9kdWN0KHRyLnN1bkxpZ2h0LCB0ci5zdW5MaWdodCk7XG5cblx0XHRcdGlmIChtYXBTdW5FbmVy
+          Z3kgPiAwLjAwMDAwMWYpXG5cdFx0XHR7XG5cdFx0XHRcdFZlY3RvclNjYWxlKHRyLnN1bkxpZ2h0
+          LCBtYXBTY2FsZSAqIHJfZm9yY2VTdW5MaWdodFNjYWxlLT52YWx1ZSAqIGRheWxpZ2h0LCBsaWdo
+          dENvbCk7XG5cdFx0XHR9XG5cdFx0XHRlbHNlXG5cdFx0XHR7XG5cdFx0XHRcdC8vIFByZXNlcnZl
+          IGZvcmNlU3VuIHVzZWZ1bG5lc3Mgb24gbWFwcyB3aXRob3V0IGEgcGFyc2VkIHEzbWFwL3EzZ2wy
+          IHN1bi5cblx0XHRcdFx0VmVjdG9yU2V0KGxpZ2h0Q29sLFxuXHRcdFx0XHRcdHJfZm9yY2VTdW5M
+          aWdodFNjYWxlLT52YWx1ZSAqIGRheWxpZ2h0LFxuXHRcdFx0XHRcdHJfZm9yY2VTdW5MaWdodFNj
+          YWxlLT52YWx1ZSAqIGRheWxpZ2h0LFxuXHRcdFx0XHRcdHJfZm9yY2VTdW5MaWdodFNjYWxlLT52
+          YWx1ZSAqIGRheWxpZ2h0KTtcblx0XHRcdH1cblx0XHRcdGxpZ2h0Q29sWzNdID0gMS4wZjtcblxu
+          XHRcdFx0aWYgKHJfc3VubGlnaHRNb2RlLT5pbnRlZ2VyID09IDEpXG5cdFx0XHR7XG5cdFx0XHRc
+          dGZsb2F0IGFtYmllbnRGbG9vciA9IENMQU1QKHJfZm9yY2VTdW5BbWJpZW50U2NhbGUtPnZhbHVl
+          LCAwLjBmLCAxLjBmKTtcblx0XHRcdFx0ZmxvYXQgZHluYW1pY0FtYmllbnRGbG9vciA9IDEuMGYg
+          LSBkYXlsaWdodCAqICgxLjBmIC0gYW1iaWVudEZsb29yKTtcblxuXHRcdFx0XHR0ci5yZWZkZWYu
+          c3VuQW1iQ29sWzBdID1cblx0XHRcdFx0dHIucmVmZGVmLnN1bkFtYkNvbFsxXSA9XG5cdFx0XHRc
+          dHRyLnJlZmRlZi5zdW5BbWJDb2xbMl0gPSBkeW5hbWljQW1iaWVudEZsb29yO1xuXHRcdFx0XHR0
+          ci5yZWZkZWYuc3VuQW1iQ29sWzNdID0gMS4wZjtcblx0XHRcdH1cblx0XHRcdGVsc2UgaWYgKG1h
+          cFN1bkVuZXJneSA+IDAuMDAwMDAxZilcblx0XHRcdHtcblx0XHRcdFx0VmVjdG9yU2NhbGUodHIu
+          c3VuTGlnaHQsIG1hcFNjYWxlICogcl9mb3JjZVN1bkFtYmllbnRTY2FsZS0+dmFsdWUgKiBkYXls
+          aWdodCwgdHIucmVmZGVmLnN1bkFtYkNvbCk7XG5cdFx0XHRcdHRyLnJlZmRlZi5zdW5BbWJDb2xb
+          M10gPSAxLjBmO1xuXHRcdFx0fVxuXHRcdFx0ZWxzZVxuXHRcdFx0e1xuXHRcdFx0XHRWZWN0b3JT
+          ZXQodHIucmVmZGVmLnN1bkFtYkNvbCxcblx0XHRcdFx0XHRyX2ZvcmNlU3VuQW1iaWVudFNjYWxl
+          LT52YWx1ZSAqIGRheWxpZ2h0LFxuXHRcdFx0XHRcdHJfZm9yY2VTdW5BbWJpZW50U2NhbGUtPnZh
+          bHVlICogZGF5bGlnaHQsXG5cdFx0XHRcdFx0cl9mb3JjZVN1bkFtYmllbnRTY2FsZS0+dmFsdWUg
+          KiBkYXlsaWdodCk7XG5cdFx0XHRcdHRyLnJlZmRlZi5zdW5BbWJDb2xbM10gPSAxLjBmO1xuXHRc
+          dFx0fVxuXHRcdH1cblxuXHRcdFZlY3RvckNvcHk0KGxpZ2h0RGlyLCB0ci5yZWZkZWYuc3VuRGly
+          KTtcblx0XHRWZWN0b3JDb3B5NChsaWdodENvbCwgdHIucmVmZGVmLnN1bkNvbCk7JycnCm1haW4g
+          PSByZXBsYWNlX29uY2UobWFpbiwgb2xkX2JyaWdodG5lc3MsIG5ld19icmlnaHRuZXNzLCAndHJf
+          bWFpbi5jIFNVTi01QSBicmlnaHRuZXNzIGJsb2NrJykKCmNoZWNrcyA9IFsKICAgIChtYWluLmNv
+          dW50KE1BSU5fTUFSS0VSKSA9PSAxLCAnU1VOLTVCIG1haW4gbWFya2VyIGNvdW50IG1pc21hdGNo
+          JyksCiAgICAoaW5pdC5jb3VudChDVkFSX01BUktFUikgPT0gMiwgJ1NVTi01QiBjdmFyIG1hcmtl
+          ciBjb3VudCBtaXNtYXRjaCcpLAogICAgKGluaXQuY291bnQoJ2N2YXJfdCAgKnJfZm9yY2VTdW5C
+          cmlnaHRuZXNzTW9kZTsnKSA9PSAxLCAnYnJpZ2h0bmVzcyBjdmFyIGRlY2xhcmF0aW9uIG1pc21h
+          dGNoJyksCiAgICAobG9jYWwuY291bnQoJ2V4dGVybiAgY3Zhcl90ICAqcl9mb3JjZVN1bkJyaWdo
+          dG5lc3NNb2RlOycpID09IDEsICdicmlnaHRuZXNzIGN2YXIgZXh0ZXJuIG1pc21hdGNoJyksCiAg
+          ICAobWFpbi5jb3VudCgnaWYgKCFyX2ZvcmNlU3VuQnJpZ2h0bmVzc01vZGUtPmludGVnZXIpJykg
+          PT0gMSwgJ2JyaWdodG5lc3MgQS9CIGJyYW5jaCBtaXNtYXRjaCcpLAogICAgKG1haW4uY291bnQo
+          J2xpZ2h0Q29sWzJdID0gQ0xBTVAoc2luKGFuZ2xlKSAqIDIuMGYsIDAuMGYsIDEuMGYpICogMi4w
+          ZjsnKSA9PSAxLCAnbGVnYWN5IGJyaWdodG5lc3MgcmVmZXJlbmNlIG11c3QgcmVtYWluIGV4YWN0
+          bHkgb25jZScpLAogICAgKG1haW4uY291bnQoJ1ZlY3RvclNjYWxlNChsaWdodENvbCwgMC4yZiwg
+          dHIucmVmZGVmLnN1bkFtYkNvbCk7JykgPT0gMSwgJ2xlZ2FjeSBhbWJpZW50IHJlZmVyZW5jZSBt
+          dXN0IHJlbWFpbiBleGFjdGx5IG9uY2UnKSwKICAgIChtYWluLmNvdW50KCdmbG9hdCBkYXlsaWdo
+          dCA9IENMQU1QKHNpbihhbmdsZSksIDAuMGYsIDEuMGYpOycpID09IDEsICdub3JtYWxpemVkIGRh
+          eWxpZ2h0IGN1cnZlIG1pc21hdGNoJyksCiAgICAobWFpbi5jb3VudCgnZmxvYXQgZHluYW1pY0Ft
+          YmllbnRGbG9vciA9IDEuMGYgLSBkYXlsaWdodCAqICgxLjBmIC0gYW1iaWVudEZsb29yKTsnKSA9
+          PSAxLCAnTU9ERSAxIGFtYmllbnQgbmV1dHJhbGl6YXRpb24gbWlzbWF0Y2gnKSwKICAgIChTVU41
+          QV9NQVJLRVIgaW4gbWFpbiwgJ1NVTi01QSBtYXJrZXIgbG9zdCcpLAogICAgKEZJTFRFUjRfTUFS
+          S0VSIGluIG1haW4sICdGaWx0ZXIgNCBtYXJrZXIgbG9zdCcpLApdCmZvciBvaywgbWVzc2FnZSBp
+          biBjaGVja3M6CiAgICBpZiBub3Qgb2s6CiAgICAgICAgcmFpc2UgU3lzdGVtRXhpdChtZXNzYWdl
+          KQoKd3JpdGVfcHJlc2VydmluZ19lb2woVFJfTUFJTiwgbWFpbiwgbWFpbl9lb2wpCndyaXRlX3By
+          ZXNlcnZpbmdfZW9sKFRSX0lOSVQsIGluaXQsIGluaXRfZW9sKQp3cml0ZV9wcmVzZXJ2aW5nX2Vv
+          bChUUl9MT0NBTCwgbG9jYWwsIGxvY2FsX2VvbCkKcHJpbnQoJ0FwcGxpZWQgU1VOLTVCIGZvcmNl
+          U3VuMiBicmlnaHRuZXNzIG5vcm1hbGl6YXRpb24gQS9CJykK
+          PATCHER_B64
+          base64 -d sun5b-patcher.b64 > apply_rend2_sun_5b_forcesun2_brightness_normalization_sp.py
+          chmod +x apply_rend2_sun_5b_forcesun2_brightness_normalization_sp.py
+          actual_patcher_sha="$(sha256sum apply_rend2_sun_5b_forcesun2_brightness_normalization_sp.py | awk '{print $1}')"
+          [[ "$actual_patcher_sha" = "$PATCHER_SHA256" ]] || { echo "::error::SUN-5B patcher SHA mismatch" >&2; exit 1; }
+          python3 -m py_compile apply_rend2_sun_5b_forcesun2_brightness_normalization_sp.py
+          python3 apply_rend2_sun_5b_forcesun2_brightness_normalization_sp.py source
+          git -C source diff --check
+          
+          cat > expected-sun5b-files.txt <<'EOF_FILES'
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          SP/code/rend2/tr_main.c
+          EOF_FILES
+          LC_ALL=C sort -o expected-sun5b-files.txt expected-sun5b-files.txt
+          git -C source diff --name-only "$BASE_COMMIT" | LC_ALL=C sort > actual-sun5b-files.txt
+          diff -u expected-sun5b-files.txt actual-sun5b-files.txt
+          
+          grep -Fq 'REND2_SUN_5B_FORCE_SUN2_BRIGHTNESS_NORMALIZATION' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_5B_BRIGHTNESS_MODE_CVAR' source/SP/code/rend2/tr_init.c
+          grep -Fq 'cvar_t  *r_forceSunBrightnessMode;' source/SP/code/rend2/tr_init.c
+          grep -Fq 'extern  cvar_t  *r_forceSunBrightnessMode;' source/SP/code/rend2/tr_local.h
+          grep -Fq 'r_forceSunBrightnessMode = ri.Cvar_Get( "r_forceSunBrightnessMode", "1", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'ri.Cvar_CheckRange( r_forceSunBrightnessMode, 0, 1, qtrue );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'if (!r_forceSunBrightnessMode->integer)' source/SP/code/rend2/tr_main.c
+          grep -Fq 'float daylight = CLAMP(sin(angle), 0.0f, 1.0f);' source/SP/code/rend2/tr_main.c
+          grep -Fq 'float mapScale = (1 << r_mapOverBrightBits->integer) / 255.0f;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'VectorScale(tr.sunLight, mapScale * r_forceSunLightScale->value * daylight, lightCol);' source/SP/code/rend2/tr_main.c
+          grep -Fq 'float dynamicAmbientFloor = 1.0f - daylight * (1.0f - ambientFloor);' source/SP/code/rend2/tr_main.c
+          
+          # The exact accepted SUN-5A legacy output remains available as mode 0 for clean A/B.
+          test "$(grep -Fc 'lightCol[2] = CLAMP(sin(angle) * 2.0f, 0.0f, 1.0f) * 2.0f;' source/SP/code/rend2/tr_main.c)" -eq 1
+          test "$(grep -Fc 'VectorScale4(lightCol, 0.2f, tr.refdef.sunAmbCol);' source/SP/code/rend2/tr_main.c)" -eq 1
+          
+          # Accepted clock + Filter 4 stay intact.
+          grep -Fq 'REND2_SUN_5A_CONTROLLED_DYNAMIC_SUN_CLOCK' source/SP/code/rend2/tr_main.c
+          grep -Fq 'static double s_forceSunClockPhase = 0.0;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'angle = (float)(s_forceSunClockPhase * M_PI);' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_3C2_FIXED_CASCADE_BASIS_FILTER4' source/SP/code/rend2/tr_main.c
+          grep -Fq 'qboolean fixedCascadeBasis = (r_shadowFilter->integer >= 4 && level != 3);' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER4' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "4", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          
+          # No SUN-5B shader/fog/dlight/scene edits.
+          sha256sum -c sun5b-protected-files.sha256
+          
+          git -C source diff --binary "$BASE_COMMIT" -- \
+            SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h SP/code/rend2/tr_main.c \
+            > rend2-sun-5b-forcesun2-brightness-normalization-sp.patch
+          test -s rend2-sun-5b-forcesun2-brightness-normalization-sp.patch
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-5b-forcesun2-brightness-normalization-sp.patch"
+          
+          git -C source diff --binary "$UPSTREAM_SHA" \
+            > rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch
+          test -s rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch
+          grep -Fq 'REND2_SUN_3C2_FIXED_CASCADE_BASIS_FILTER4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch
+          grep -Fq 'REND2_SUN_5A_CONTROLLED_DYNAMIC_SUN_CLOCK' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch
+          grep -Fq 'REND2_SUN_5B_FORCE_SUN2_BRIGHTNESS_NORMALIZATION' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch
+          ! grep -Fq 'REND2_SUN_4A' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch
+          
+          sha256sum rend2-sun-5b-forcesun2-brightness-normalization-sp.patch > rend2-sun-5b-forcesun2-brightness-normalization-sp.patch.sha256
+          sha256sum rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch > rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch.sha256
+
+      - name: Replay SUN-5B delta from exact SUN-5A baseline
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-5B replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf sun5b-replay
+          git clone --no-hardlinks source sun5b-replay >/dev/null
+          git -C sun5b-replay reset --hard "$BASE_COMMIT" >/dev/null
+          git -C sun5b-replay clean -fdx
+          git -C sun5b-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-5b-forcesun2-brightness-normalization-sp.patch"
+          git -C sun5b-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-5b-forcesun2-brightness-normalization-sp.patch"
+          git -C sun5b-replay diff --check
+          git -C sun5b-replay diff --name-only "$BASE_COMMIT" | LC_ALL=C sort > replay-sun5b-files.txt
+          diff -u expected-sun5b-files.txt replay-sun5b-files.txt
+          cmp source/SP/code/rend2/tr_main.c sun5b-replay/SP/code/rend2/tr_main.c
+          cmp source/SP/code/rend2/tr_init.c sun5b-replay/SP/code/rend2/tr_init.c
+          cmp source/SP/code/rend2/tr_local.h sun5b-replay/SP/code/rend2/tr_local.h
+          git -C sun5b-replay apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-5b-forcesun2-brightness-normalization-sp.patch"
+          echo "SUN-5B exact three-file delta replay PASS"
+
+      - name: Build SP-only Windows x64 SUN-5B v2 experiment
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify build and package minimal SUN-5B v2 runtime artifact
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-5B packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          DLL="$SP_OUT/renderer_sp_rend2_x64.dll"
+          test -s "$DLL" || { echo "::error::Missing renderer_sp_rend2_x64.dll" >&2; exit 1; }
+          test ! -d source/MP/build || { echo "::error::MP build directory exists" >&2; exit 1; }
+          
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/docs"
+          install -m 0644 "$DLL" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 rend2-sun-5b-forcesun2-brightness-normalization-sp.patch "$STAGE/docs/rend2-sun-5b-forcesun2-brightness-normalization-sp.patch"
+          install -m 0644 rend2-sun-5b-forcesun2-brightness-normalization-sp.patch.sha256 "$STAGE/docs/rend2-sun-5b-forcesun2-brightness-normalization-sp.patch.sha256"
+          install -m 0644 rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch"
+          install -m 0644 rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch.sha256 "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sun-5a-sun-5b-sp.patch.sha256"
+          install -m 0755 apply_rend2_sun_5b_forcesun2_brightness_normalization_sp.py "$STAGE/docs/apply_rend2_sun_5b_forcesun2_brightness_normalization_sp.py"
+          
+          cat > "$STAGE/README_SUN_5B_TEST.txt" <<'TXT'
+          SUN-5B - r_forceSun 2 brightness normalization A/B
+          =====================================================
+          
+          Production baseline included:
+            SUN-5A accepted controlled dynamic-sun clock
+            r_sunlightMode 1 preferred
+            r_shadowFilter 4 preferred/default
+            SUN-R0 / SUN-R0.1 / WOLFFOG-R0 retained
+            rejected SUN-4A is NOT included
+          
+          SUN-5B changes only forceSun2 light/ambient intensity semantics and adds one live A/B cvar.
+          It does NOT change the SUN-5A clock, sun direction/orientation, cascade splits, Filter 4,
+          PCF, shaders, point-light shadows, player/NPC caster paths, or Wolf fog.
+          
+          New live cvar (NO vid_restart required):
+            r_forceSunBrightnessMode 0
+              exact accepted SUN-5A legacy brightness reference:
+              hard-coded white light curve with max lightCol 2.0 and sunAmbCol=lightCol*0.2
+          
+            r_forceSunBrightnessMode 1
+              SUN-5B candidate/default:
+              - daylight factor = sin(current sun phase), without the old 2.0 plateau
+              - map q3map/q3gl2 sun color/intensity is retained when available
+              - r_forceSunLightScale controls primary sun strength again
+              - MODE 1 r_forceSunAmbientScale is the noon shadow-floor target
+              - near sunrise/sunset the MODE 1 shadow modulation fades back toward neutral (1.0)
+              - maps without a parsed sun use a neutral-white fallback so forceSun remains useful
+          
+          Controlled A/B test at identical noon position:
+            seta r_sunlightMode 1
+            seta r_shadowFilter 4
+            seta r_forceSun 2
+            r_forceSunTime 0.50
+          
+            A: r_forceSunBrightnessMode 0
+            B: r_forceSunBrightnessMode 1
+          
+          Also compare fixed morning/afternoon:
+            r_forceSunTime 0.25
+            r_forceSunTime 0.75
+          
+          Keep r_forceSunLightScale and r_forceSunAmbientScale identical between A and B.
+          Recommended starting values are the existing defaults:
+            r_forceSunLightScale 1.0
+            r_forceSunAmbientScale 0.5
+          
+          SUN-5B does not yet modify the hard-coded forceSun2 trajectory/orientation.
+          A later source step can make the dynamic arc map-oriented and normalize its direction vector.
+          TXT
+          
+          cat > "$STAGE/docs/SUN_5B_BUILD_INFO.txt" <<EOF
+          workflow_revision=SUN-5B-v2-forceSun2-brightness-normalization-ci-whitespace-fix
+          upstream_sha=$UPSTREAM_SHA
+          source_of_truth=exact_successful_SUN-5A_cumulative_patch
+          base_run_id=$BASE_RUN_ID
+          base_artifact_id=$BASE_ARTIFACT_ID
+          base_artifact_name=$BASE_ARTIFACT_NAME
+          base_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          base_commit=$BASE_COMMIT
+          sun5a_status=ACCEPTED_PRODUCTION_COMPONENT
+          rejected_sun4a=EXCLUDED
+          preferred_branch_default_r_shadowFilter=4
+          r_sunlightMode_preferred=1
+          r_forceSunBrightnessMode_default=1
+          brightness_mode0=SUN5A_LEGACY_REFERENCE
+          brightness_mode1=MAP_AWARE_NORMALIZED_DAYLIGHT
+          forceSun2_direction_changes=NONE
+          forceSun2_clock_changes=NONE
+          shadowmask_shader_changes=NONE
+          lightall_shader_changes=NONE
+          cascade_split_changes=NONE
+          filter4_changes=NONE
+          fog_changes=NONE
+          dlight_changes=NONE
+          player_shadow_changes=NONE
+          source_delta_files=SP/code/rend2/tr_init.c,SP/code/rend2/tr_local.h,SP/code/rend2/tr_main.c
+          package_type=MINIMAL_RENDERER_DLL_EXPERIMENT
+          EOF
+          
+          test -s "$STAGE/renderer_sp_rend2_x64.dll"
+          test -s "$STAGE/README_SUN_5B_TEST.txt"
+          test -s "$STAGE/docs/SUN_5B_BUILD_INFO.txt"
+          if find "$STAGE" -type f -iname '*.bat' -print -quit | grep -q .; then echo "::error::BAT unexpectedly packaged" >&2; exit 1; fi
+          
+          ( cd "$STAGE"; find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload minimal SUN-5B v2 experiment artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
