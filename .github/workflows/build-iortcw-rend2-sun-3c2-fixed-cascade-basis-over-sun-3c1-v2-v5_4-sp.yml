@@ -1,0 +1,456 @@
+name: Build ioRTCW Rend2 SUN-3C2 Fixed Cascade Basis over SUN-3C1 v2 SP-only Windows x64
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "rend2-sun-3c2-fixed-cascade-basis-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP-only SUN-3C2 cascade boundary stability experiment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      BASE_RELEASE_BASENAME: "iortcw-rend2-sun-3c1-v2-cascade-texel-stabilization-over-preproduction-v5_4-sp-windows-x64"
+      BASE_EXPECTED_CUMULATIVE_SHA256: "e784575d8e01ee96cdbd172426fa8191b2a7c3f078ddd1b809f9064f5e51d0f6"
+      RELEASE_BASENAME: "iortcw-rend2-sun-3c2-fixed-cascade-basis-over-sun-3c1-v2-v5_4-sp-windows-x64"
+      PATCHER_SHA256: "8cd1ab47776beefeb89189295b929de3416c2eb1b62ea6bbb8904176027d99c9"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Prerequisite step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+          python3 --version
+
+      - name: Recover exact successful SUN-3C1 v2 artifact
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-3C1 v2 recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > all-artifacts.tsv
+
+          python3 - <<'PY_SELECT_BASE' > base-selected.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['BASE_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('all-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created, aid, rid, name = parts
+              if name.startswith(prefix):
+                  rows.append((created, aid, rid, name))
+          if not rows:
+              raise SystemExit('No retained SUN-3C1 v2 artifact with prefix %r' % prefix)
+          rows.sort(key=lambda x: x[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT_BASE
+
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < base-selected.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed SUN-3C1 v2 artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected SUN-3C1 v2 run is not successful: $run_conclusion" >&2; exit 1; }
+
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir base-artifact
+          base_zip="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip" -print -quit)"
+          base_sha="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_sha" && -s "$base_sha" ]] || { echo "::error::SUN-3C1 v2 ZIP/SHA missing" >&2; exit 1; }
+          expected="$(awk 'NF {print $1; exit}' "$base_sha")"
+          actual="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ && "$actual" = "$expected" ]] || { echo "::error::SUN-3C1 v2 ZIP SHA mismatch" >&2; exit 1; }
+          unzip -q "$base_zip" -d base-release
+
+          BASE_STAGE="$GITHUB_WORKSPACE/base-release/$BASE_RELEASE_BASENAME"
+          BASE_CUMULATIVE="$BASE_STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sp.patch"
+          [[ -d "$BASE_STAGE" && -s "$BASE_CUMULATIVE" && -s "$BASE_STAGE/renderer_sp_rend2_x64.dll" ]] || { echo "::error::SUN-3C1 v2 stage/cumulative/runtime DLL missing" >&2; exit 1; }
+          cumulative_sha="$(sha256sum "$BASE_CUMULATIVE" | awk '{print $1}')"
+          [[ "$cumulative_sha" = "$BASE_EXPECTED_CUMULATIVE_SHA256" ]] || { echo "::error::Wrong SUN-3C1 v2 cumulative SHA: $cumulative_sha" >&2; exit 1; }
+
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_VISUAL_UPGRADE' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SUN_4A' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SUN_3C2_FIXED_CASCADE_BASIS_FILTER4' "$BASE_CUMULATIVE"
+
+          echo "BASE_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE=$BASE_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE_SHA256=$cumulative_sha" >> "$GITHUB_ENV"
+          echo "Recovered exact successful SUN-3C1 v2 artifact $artifact_name run=$run_id cumulative_sha=$cumulative_sha"
+
+      - name: Reconstruct and audit exact SUN-3C1 v2 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Source reconstruction/audit failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git init source
+          git -C source config core.autocrlf false
+          git -C source config core.eol lf
+          git -C source remote add origin "$UPSTREAM_REPO"
+          git -C source fetch --depth 1 origin "$UPSTREAM_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]] || { echo "::error::Upstream SHA mismatch" >&2; exit 1; }
+
+          git -C source apply --check --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source diff --check
+          git -C source apply --check --reverse --whitespace=nowarn "$BASE_CUMULATIVE"
+
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'REND2_SUN_4A' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'REND2_SUN_4A' source/SP/code/rend2/tr_shade.c
+
+          # SUN-3C1 v2 accepted behavior: Filter 3 is same 13-tap PCF plus texel snapping.
+          grep -Fq 'REND2_VISUAL_UPGRADE' source/SP/code/rend2/glsl/shadowmask_fp.glsl
+          grep -Fq '// 13 taps, weighted toward the centre.  Total weight: 36.' source/SP/code/rend2/glsl/shadowmask_fp.glsl
+          grep -Fq 'float cascadeBlend(const vec4 shadowpos)' source/SP/code/rend2/glsl/shadowmask_fp.glsl
+          grep -Fq 'if (r_shadowFilter->integer >= 2)' source/SP/code/rend2/tr_glsl.c
+          grep -Fq 'if (lightViewIndependentOfCameraView || (r_shadowFilter->integer >= 3 && level != 3))' source/SP/code/rend2/tr_main.c
+
+          # Before SUN-3C2, levels 0-2 still choose their light-space up vector from camera axes.
+          grep -Fq 'qboolean lightViewIndependentOfCameraView = qfalse;' source/SP/code/rend2/tr_main.c
+          test "$(grep -Fc 'if (level == 3 || lightViewIndependentOfCameraView)' source/SP/code/rend2/tr_main.c)" -eq 2
+          grep -Fq 'VectorAdd(fd->viewaxis[0], fd->viewaxis[1], lightViewAxis[2]);' source/SP/code/rend2/tr_main.c
+          grep -Fq 'VectorCopy(fd->viewaxis[2], lightViewAxis[2]);' source/SP/code/rend2/tr_main.c
+          grep -Fq 'r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "1", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+
+          git -C source config user.name "DarkWolf CI"
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source add -A
+          git -C source commit -m "Accepted SUN-3C1 v2 baseline for SUN-3C2" >/dev/null
+          BASE_COMMIT="$(git -C source rev-parse HEAD)"
+          echo "BASE_COMMIT=$BASE_COMMIT" >> "$GITHUB_ENV"
+
+          sha256sum \
+            source/SP/code/rend2/glsl/shadowmask_fp.glsl \
+            source/SP/code/rend2/tr_glsl.c \
+            source/SP/code/rend2/tr_shade.c \
+            source/SP/code/rend2/tr_backend.c \
+            source/SP/code/rend2/tr_shader.c \
+            > sun3c2-protected-files.sha256
+          echo "Exact SUN-3C1 v2 source audit PASS"
+
+      - name: Apply SUN-3C2 fixed cascade basis A/B and preferred Filter 3 default
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-3C2 patch failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+
+          cat > sun3c2-patcher.b64 <<'PATCHER_B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKaW1wb3J0IHN5
+          cwoKUk9PVCA9IFBhdGgoc3lzLmFyZ3ZbMV0pIGlmIGxlbihzeXMuYXJndikgPiAxIGVsc2UgUGF0
+          aCgnLicpClRSX01BSU4gPSBST09UIC8gJ1NQL2NvZGUvcmVuZDIvdHJfbWFpbi5jJwpUUl9JTklU
+          ID0gUk9PVCAvICdTUC9jb2RlL3JlbmQyL3RyX2luaXQuYycKCk1BSU5fTUFSS0VSID0gJ1JFTkQy
+          X1NVTl8zQzJfRklYRURfQ0FTQ0FERV9CQVNJU19GSUxURVI0JwpERUZBVUxUX01BUktFUiA9ICdS
+          RU5EMl9TVU5fQlJBTkNIX1BSRUZFUlJFRF9TSEFET1dGSUxURVIzJwpTVU4zQzFfTUFSS0VSID0g
+          J1JFTkQyX1NVTl8zQzFfVjJfQ0FTQ0FERV9URVhFTF9TVEFCSUxJWkFUSU9OX0ZJTFRFUjMnCgoK
+          ZGVmIHJlYWRfbm9ybWFsaXplZChwYXRoOiBQYXRoKToKICAgIHJhdyA9IHBhdGgucmVhZF9ieXRl
+          cygpCiAgICBlb2wgPSAnXHJcbicgaWYgYidcclxuJyBpbiByYXcgZWxzZSAnXG4nCiAgICB0ZXh0
+          ID0gcmF3LmRlY29kZSgndXRmLTgnKS5yZXBsYWNlKCdcclxuJywgJ1xuJykucmVwbGFjZSgnXHIn
+          LCAnXG4nKQogICAgcmV0dXJuIHRleHQsIGVvbAoKCmRlZiB3cml0ZV9wcmVzZXJ2aW5nX2VvbChw
+          YXRoOiBQYXRoLCB0ZXh0OiBzdHIsIGVvbDogc3RyKToKICAgIGlmIGVvbCAhPSAnXG4nOgogICAg
+          ICAgIHRleHQgPSB0ZXh0LnJlcGxhY2UoJ1xuJywgZW9sKQogICAgcGF0aC53cml0ZV9ieXRlcyh0
+          ZXh0LmVuY29kZSgndXRmLTgnKSkKCgptYWluLCBtYWluX2VvbCA9IHJlYWRfbm9ybWFsaXplZChU
+          Ul9NQUlOKQppbml0LCBpbml0X2VvbCA9IHJlYWRfbm9ybWFsaXplZChUUl9JTklUKQoKaWYgTUFJ
+          Tl9NQVJLRVIgaW4gbWFpbiBvciBERUZBVUxUX01BUktFUiBpbiBpbml0OgogICAgaWYgTUFJTl9N
+          QVJLRVIgaW4gbWFpbiBhbmQgREVGQVVMVF9NQVJLRVIgaW4gaW5pdDoKICAgICAgICByZXF1aXJl
+          ZCA9IFsKICAgICAgICAgICAgJ3Fib29sZWFuIGZpeGVkQ2FzY2FkZUJhc2lzID0gKHJfc2hhZG93
+          RmlsdGVyLT5pbnRlZ2VyID49IDQgJiYgbGV2ZWwgIT0gMyk7JywKICAgICAgICAgICAgJ2lmIChs
+          ZXZlbCA9PSAzIHx8IGxpZ2h0Vmlld0luZGVwZW5kZW50T2ZDYW1lcmFWaWV3IHx8IGZpeGVkQ2Fz
+          Y2FkZUJhc2lzKScsCiAgICAgICAgICAgICdyX3NoYWRvd0ZpbHRlciA9IHJpLkN2YXJfR2V0KCAi
+          cl9zaGFkb3dGaWx0ZXIiLCAiMyIsIENWQVJfQVJDSElWRSB8IENWQVJfTEFUQ0ggKTsnLAogICAg
+          ICAgIF0KICAgICAgICBpZiBhbGwoKHIgaW4gbWFpbikgaWYgJ2ZpeGVkQ2FzY2FkZScgaW4gciBv
+          ciByLnN0YXJ0c3dpdGgoJ2lmIChsZXZlbCcpIGVsc2UgKHIgaW4gaW5pdCkgZm9yIHIgaW4gcmVx
+          dWlyZWQpOgogICAgICAgICAgICBwcmludCgnU1VOLTNDMiBhbHJlYWR5IGFwcGxpZWQnKQogICAg
+          ICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KDApCiAgICByYWlzZSBTeXN0ZW1FeGl0KCdQYXJ0aWFs
+          IFNVTi0zQzIgbWFya2VyIHN0YXRlIGRldGVjdGVkOyByZWZ1c2luZyB0byBwYXRjaCcpCgppZiBT
+          VU4zQzFfTUFSS0VSIG5vdCBpbiBtYWluOgogICAgcmFpc2UgU3lzdGVtRXhpdCgnU1VOLTNDMSB2
+          MiBtYXJrZXIgbWlzc2luZyBmcm9tIHRyX21haW4uYzsgd3JvbmcgYmFzZWxpbmUnKQoKb2xkX2Rl
+          Y2wgPSAnXHRxYm9vbGVhbiBsaWdodFZpZXdJbmRlcGVuZGVudE9mQ2FtZXJhVmlldyA9IHFmYWxz
+          ZTtcbicKbmV3X2RlY2wgPSAoCiAgICAnXHRxYm9vbGVhbiBsaWdodFZpZXdJbmRlcGVuZGVudE9m
+          Q2FtZXJhVmlldyA9IHFmYWxzZTtcbicKICAgICdcdC8vICcgKyBNQUlOX01BUktFUiArICc6IEZp
+          bHRlciA0IGtlZXBzIEZpbHRlciAzIFBDRiArIHRleGVsIHNuYXBwaW5nLFxuJwogICAgJ1x0Ly8g
+          YnV0IGZpeGVzIHRoZSBzdW5saWdodCBjYXNjYWRlIGxpZ2h0LXNwYWNlIGJhc2lzIHRvIHdvcmxk
+          IGF4ZXMgZm9yIGxldmVscyAwLTIuXG4nCiAgICAnXHQvLyBUaGlzIGlzb2xhdGVzIGNhbWVyYS1y
+          b3RhdGlvbi1kcml2ZW4gY2FzY2FkZSBzd2ltbWluZyB3aXRob3V0IGNoYW5naW5nIHNwbGl0cyBv
+          ciBQQ0YuXG4nCiAgICAnXHRxYm9vbGVhbiBmaXhlZENhc2NhZGVCYXNpcyA9IChyX3NoYWRvd0Zp
+          bHRlci0+aW50ZWdlciA+PSA0ICYmIGxldmVsICE9IDMpO1xuJwopCmlmIG1haW4uY291bnQob2xk
+          X2RlY2wpICE9IDE6CiAgICByYWlzZSBTeXN0ZW1FeGl0KGYnRXhwZWN0ZWQgZXhhY3RseSBvbmUg
+          bGlnaHRWaWV3SW5kZXBlbmRlbnRPZkNhbWVyYVZpZXcgZGVjbGFyYXRpb24sIGZvdW5kIHttYWlu
+          LmNvdW50KG9sZF9kZWNsKX0nKQptYWluID0gbWFpbi5yZXBsYWNlKG9sZF9kZWNsLCBuZXdfZGVj
+          bCwgMSkKCm9sZF9heGlzID0gJ1x0aWYgKGxldmVsID09IDMgfHwgbGlnaHRWaWV3SW5kZXBlbmRl
+          bnRPZkNhbWVyYVZpZXcpXG4nCm5ld19heGlzID0gJ1x0aWYgKGxldmVsID09IDMgfHwgbGlnaHRW
+          aWV3SW5kZXBlbmRlbnRPZkNhbWVyYVZpZXcgfHwgZml4ZWRDYXNjYWRlQmFzaXMpXG4nCmNvdW50
+          X2F4aXMgPSBtYWluLmNvdW50KG9sZF9heGlzKQppZiBjb3VudF9heGlzICE9IDI6CiAgICByYWlz
+          ZSBTeXN0ZW1FeGl0KGYnRXhwZWN0ZWQgZXhhY3RseSB0d28gY2FtZXJhLWRlcGVuZGVudCBjYXNj
+          YWRlLWF4aXMgY29uZGl0aW9ucywgZm91bmQge2NvdW50X2F4aXN9JykKbWFpbiA9IG1haW4ucmVw
+          bGFjZShvbGRfYXhpcywgbmV3X2F4aXMpCgpzbmFwID0gJ2lmIChsaWdodFZpZXdJbmRlcGVuZGVu
+          dE9mQ2FtZXJhVmlldyB8fCAocl9zaGFkb3dGaWx0ZXItPmludGVnZXIgPj0gMyAmJiBsZXZlbCAh
+          PSAzKSknCmlmIG1haW4uY291bnQoc25hcCkgIT0gMToKICAgIHJhaXNlIFN5c3RlbUV4aXQoJ1NV
+          Ti0zQzEgdjIgdGV4ZWwtc25hcCBjb25kaXRpb24gbWlzc2luZyBvciBkdXBsaWNhdGVkJykKCm9s
+          ZF9kZWZhdWx0ID0gJ1x0cl9zaGFkb3dGaWx0ZXIgPSByaS5DdmFyX0dldCggInJfc2hhZG93Rmls
+          dGVyIiwgIjEiLCBDVkFSX0FSQ0hJVkUgfCBDVkFSX0xBVENIICk7XG4nCm5ld19kZWZhdWx0ID0g
+          KAogICAgJ1x0Ly8gJyArIERFRkFVTFRfTUFSS0VSICsgJzogU1VOLTNDMSB2MiBGaWx0ZXIgMyBp
+          cyB0aGUgcHJlZmVycmVkIHN1bmxpZ2h0IGJyYW5jaCBkZWZhdWx0LlxuJwogICAgJ1x0cl9zaGFk
+          b3dGaWx0ZXIgPSByaS5DdmFyX0dldCggInJfc2hhZG93RmlsdGVyIiwgIjMiLCBDVkFSX0FSQ0hJ
+          VkUgfCBDVkFSX0xBVENIICk7XG4nCikKaWYgaW5pdC5jb3VudChvbGRfZGVmYXVsdCkgIT0gMToK
+          ICAgIHJhaXNlIFN5c3RlbUV4aXQoZidFeHBlY3RlZCBleGFjdGx5IG9uZSB1cHN0cmVhbSByX3No
+          YWRvd0ZpbHRlciBkZWZhdWx0PTEgbGluZSwgZm91bmQge2luaXQuY291bnQob2xkX2RlZmF1bHQp
+          fScpCmluaXQgPSBpbml0LnJlcGxhY2Uob2xkX2RlZmF1bHQsIG5ld19kZWZhdWx0LCAxKQoKaWYg
+          bWFpbi5jb3VudChNQUlOX01BUktFUikgIT0gMToKICAgIHJhaXNlIFN5c3RlbUV4aXQoJ1NVTi0z
+          QzIgbWFya2VyIGNvdW50IG1pc21hdGNoIGFmdGVyIHBhdGNoJykKaWYgbWFpbi5jb3VudCgnaWYg
+          KGxldmVsID09IDMgfHwgbGlnaHRWaWV3SW5kZXBlbmRlbnRPZkNhbWVyYVZpZXcgfHwgZml4ZWRD
+          YXNjYWRlQmFzaXMpJykgIT0gMjoKICAgIHJhaXNlIFN5c3RlbUV4aXQoJ1NVTi0zQzIgYXhpcyBj
+          b25kaXRpb24gY291bnQgbWlzbWF0Y2ggYWZ0ZXIgcGF0Y2gnKQppZiBpbml0LmNvdW50KERFRkFV
+          TFRfTUFSS0VSKSAhPSAxOgogICAgcmFpc2UgU3lzdGVtRXhpdCgnUHJlZmVycmVkIEZpbHRlciAz
+          IGRlZmF1bHQgbWFya2VyIGNvdW50IG1pc21hdGNoIGFmdGVyIHBhdGNoJykKCndyaXRlX3ByZXNl
+          cnZpbmdfZW9sKFRSX01BSU4sIG1haW4sIG1haW5fZW9sKQp3cml0ZV9wcmVzZXJ2aW5nX2VvbChU
+          Ul9JTklULCBpbml0LCBpbml0X2VvbCkKcHJpbnQoJ0FwcGxpZWQgU1VOLTNDMiBmaXhlZCBjYXNj
+          YWRlIGJhc2lzICsgcHJlZmVycmVkIEZpbHRlciAzIGRlZmF1bHQnKQo=
+          PATCHER_B64
+          base64 -d sun3c2-patcher.b64 > apply_rend2_sun_3c2_fixed_cascade_basis_sp.py
+          chmod +x apply_rend2_sun_3c2_fixed_cascade_basis_sp.py
+          actual_patcher_sha="$(sha256sum apply_rend2_sun_3c2_fixed_cascade_basis_sp.py | awk '{print $1}')"
+          [[ "$actual_patcher_sha" = "$PATCHER_SHA256" ]] || { echo "::error::SUN-3C2 patcher SHA mismatch" >&2; exit 1; }
+          python3 -m py_compile apply_rend2_sun_3c2_fixed_cascade_basis_sp.py
+          python3 apply_rend2_sun_3c2_fixed_cascade_basis_sp.py source
+          git -C source diff --check
+
+          cat > expected-sun3c2-files.txt <<'EOF_FILES'
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_main.c
+          EOF_FILES
+          LC_ALL=C sort -o expected-sun3c2-files.txt expected-sun3c2-files.txt
+          git -C source diff --name-only "$BASE_COMMIT" | LC_ALL=C sort > actual-sun3c2-files.txt
+          diff -u expected-sun3c2-files.txt actual-sun3c2-files.txt
+
+          grep -Fq 'REND2_SUN_3C2_FIXED_CASCADE_BASIS_FILTER4' source/SP/code/rend2/tr_main.c
+          grep -Fq 'qboolean fixedCascadeBasis = (r_shadowFilter->integer >= 4 && level != 3);' source/SP/code/rend2/tr_main.c
+          test "$(grep -Fc 'if (level == 3 || lightViewIndependentOfCameraView || fixedCascadeBasis)' source/SP/code/rend2/tr_main.c)" -eq 2
+          grep -Fq 'if (lightViewIndependentOfCameraView || (r_shadowFilter->integer >= 3 && level != 3))' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER3' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "3", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+
+          # The PCF kernel, existing cascade cross-fade, WOLFFOG, SUN-R0 and dynamic-light code stay byte-identical.
+          sha256sum -c sun3c2-protected-files.sha256
+
+          git -C source diff --binary "$BASE_COMMIT" -- \
+            SP/code/rend2/tr_init.c SP/code/rend2/tr_main.c \
+            > rend2-sun-3c2-fixed-cascade-basis-sp.patch
+          test -s rend2-sun-3c2-fixed-cascade-basis-sp.patch
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-3c2-fixed-cascade-basis-sp.patch"
+
+          git -C source diff --binary "$UPSTREAM_SHA" \
+            > rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch
+          test -s rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch
+          grep -Fq 'REND2_SUN_3C2_FIXED_CASCADE_BASIS_FILTER4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER3' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch
+          ! grep -Fq 'REND2_SUN_4A' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch
+
+          sha256sum rend2-sun-3c2-fixed-cascade-basis-sp.patch > rend2-sun-3c2-fixed-cascade-basis-sp.patch.sha256
+          sha256sum rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch > rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch.sha256
+
+      - name: Replay SUN-3C2 delta from exact SUN-3C1 v2 baseline
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-3C2 replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf sun3c2-replay
+          git clone --no-hardlinks source sun3c2-replay >/dev/null
+          git -C sun3c2-replay reset --hard "$BASE_COMMIT" >/dev/null
+          git -C sun3c2-replay clean -fdx
+          git -C sun3c2-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-3c2-fixed-cascade-basis-sp.patch"
+          git -C sun3c2-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-3c2-fixed-cascade-basis-sp.patch"
+          git -C sun3c2-replay diff --check
+          git -C sun3c2-replay diff --name-only "$BASE_COMMIT" | LC_ALL=C sort > replay-sun3c2-files.txt
+          diff -u expected-sun3c2-files.txt replay-sun3c2-files.txt
+          cmp source/SP/code/rend2/tr_main.c sun3c2-replay/SP/code/rend2/tr_main.c
+          cmp source/SP/code/rend2/tr_init.c sun3c2-replay/SP/code/rend2/tr_init.c
+          git -C sun3c2-replay apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-3c2-fixed-cascade-basis-sp.patch"
+          echo "SUN-3C2 exact two-file delta replay PASS"
+
+      - name: Build SP-only Windows x64 SUN-3C2 experiment
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify build and package minimal SUN-3C2 runtime artifact
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-3C2 packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          DLL="$SP_OUT/renderer_sp_rend2_x64.dll"
+          test -s "$DLL" || { echo "::error::Missing renderer_sp_rend2_x64.dll" >&2; exit 1; }
+          test ! -d source/MP/build || { echo "::error::MP build directory exists" >&2; exit 1; }
+
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/docs"
+          install -m 0644 "$DLL" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 rend2-sun-3c2-fixed-cascade-basis-sp.patch "$STAGE/docs/rend2-sun-3c2-fixed-cascade-basis-sp.patch"
+          install -m 0644 rend2-sun-3c2-fixed-cascade-basis-sp.patch.sha256 "$STAGE/docs/rend2-sun-3c2-fixed-cascade-basis-sp.patch.sha256"
+          install -m 0644 rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch"
+          install -m 0644 rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch.sha256 "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-3c2-sp.patch.sha256"
+          install -m 0755 apply_rend2_sun_3c2_fixed_cascade_basis_sp.py "$STAGE/docs/apply_rend2_sun_3c2_fixed_cascade_basis_sp.py"
+
+          cat > "$STAGE/README_SUN_3C2_TEST.txt" <<'TXT'
+          SUN-3C2 - Cascade Transition / Boundary Stability
+          ==================================================
+
+          Accepted baseline:
+            successful SUN-3C1 v2
+            r_sunlightMode 1
+            preferred r_shadowFilter 3
+
+          Rejected SUN-4A is NOT included.
+
+          What Filter 3 already does:
+            - accepted stable 13-tap symmetric PCF
+            - existing REND2_VISUAL_UPGRADE cascade cross-fade
+            - SUN-3C1 v2 texel-grid snapping for cascades 0-2
+
+          New Filter 4 experiment:
+            - keeps exactly the same PCF and texel snapping as Filter 3
+            - keeps the same cascade split distances and cross-fade shader
+            - changes only the light-space orientation for camera cascades 0-2:
+              uses a stable world-axis basis instead of rotating the cascade basis
+              with camera forward/up/left
+
+          The branch default is now r_shadowFilter 3. Existing archived configs can
+          override the default, so set the test values explicitly.
+
+          Test A - accepted preferred baseline:
+            seta r_sunlightMode 1
+            seta r_shadowFilter 3
+            vid_restart
+
+          Test B - fixed cascade basis:
+            seta r_sunlightMode 1
+            seta r_shadowFilter 4
+            vid_restart
+
+          Keep unchanged:
+            r_forceSun 1
+            r_sunShadows 1
+            r_shadowBlur 0
+            r_shadowMapSize 1024
+            r_shadowCascadeZNear 8
+            r_shadowCascadeZFar 1024
+            r_shadowCascadeZBias 0
+
+          Test both:
+            1. slow lateral movement beside long rail/chair/NPC shadows
+            2. slow camera yaw left/right while standing still
+            3. movement across an area where shadow sharpness/position changes
+
+          Positive signal:
+            Filter 4 reduces rotation/swimming and makes cascade transitions less
+            noticeable without losing thin casters or adding clipping/popping.
+
+          Reject Filter 4 if:
+            shadows lose useful resolution, become visibly worse, clip, pop, or show
+            any regression versus Filter 3. Filter 3 remains the preferred fallback.
+          TXT
+
+          cat > "$STAGE/docs/SUN_3C2_BUILD_INFO.txt" <<EOF
+          workflow_revision=SUN-3C2-fixed-cascade-basis
+          upstream_sha=$UPSTREAM_SHA
+          source_of_truth=exact_successful_SUN-3C1-v2_cumulative_patch
+          base_run_id=$BASE_RUN_ID
+          base_artifact_id=$BASE_ARTIFACT_ID
+          base_artifact_name=$BASE_ARTIFACT_NAME
+          base_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          base_commit=$BASE_COMMIT
+          rejected_sun4a=EXCLUDED
+          preferred_branch_default_r_shadowFilter=3
+          filter3=ACCEPTED_13TAP_PCF_PLUS_TEXEL_SNAP
+          filter4=SAME_FILTER3_PLUS_FIXED_WORLD_AXIS_CASCADE_BASIS_0_2
+          existing_cascade_crossfade=PRESERVED_BYTE_IDENTICAL
+          shadowmask_shader_changes=NONE
+          cascade_split_changes=NONE
+          shadow_map_size_changes=NONE
+          intensity_changes=NONE
+          forceSun_changes=NONE
+          fog_changes=NONE
+          dlight_changes=NONE
+          player_shadow_changes=NONE
+          source_delta_files=SP/code/rend2/tr_init.c,SP/code/rend2/tr_main.c
+          package_type=MINIMAL_RENDERER_DLL_EXPERIMENT
+          EOF
+
+          test -s "$STAGE/renderer_sp_rend2_x64.dll"
+          test -s "$STAGE/README_SUN_3C2_TEST.txt"
+          test -s "$STAGE/docs/SUN_3C2_BUILD_INFO.txt"
+          if find "$STAGE" -type f -iname '*.bat' -print -quit | grep -q .; then echo "::error::BAT unexpectedly packaged" >&2; exit 1; fi
+
+          ( cd "$STAGE"; find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload minimal SUN-3C2 experiment artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
