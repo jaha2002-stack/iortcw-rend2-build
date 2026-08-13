@@ -1,0 +1,465 @@
+name: Build ioRTCW Rend2 SUN-4A Indoor Sun Leakage World-Caster A/B over SUN-3C1 v2 SP-only Windows x64
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "rend2-sun-4a-indoor-world-caster-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP-only SUN-4A over exact successful SUN-3C1 v2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      SUN3C1_BASE_BASENAME: "iortcw-rend2-sun-3c1-v2-cascade-texel-stabilization-over-preproduction-v5_4-sp-windows-x64"
+      SUN3C1_EXPECTED_CUMULATIVE_SHA256: "e784575d8e01ee96cdbd172426fa8191b2a7c3f078ddd1b809f9064f5e51d0f6"
+      RELEASE_BASENAME: "iortcw-rend2-sun-4a-indoor-world-caster-twosided-over-sun-3c1-v2-v5_4-sp-windows-x64"
+      PATCHER_SHA256: "900e845ff2ba59bb7938cdfcf4f30ace322d28f1376f8d084826f96c17c7d1aa"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Prerequisite step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+          python3 --version
+
+      - name: Recover exact successful SUN-3C1 v2 artifact
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-3C1 v2 recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf sun3c1-artifact sun3c1-release
+          mkdir -p sun3c1-artifact sun3c1-release
+
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > all-artifacts.tsv
+
+          python3 - <<'PY_SELECT_BASE' > sun3c1-selected.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['SUN3C1_BASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('all-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created, aid, rid, name = parts
+              if name.startswith(prefix):
+                  rows.append((created, aid, rid, name))
+          if not rows:
+              raise SystemExit('No retained successful SUN-3C1 v2 artifact with prefix %r' % prefix)
+          rows.sort(key=lambda x: x[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT_BASE
+
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < sun3c1-selected.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed SUN-3C1 artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected SUN-3C1 run is not successful: $run_conclusion" >&2; exit 1; }
+
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir sun3c1-artifact
+          base_zip="$(find sun3c1-artifact -type f -name "$SUN3C1_BASE_BASENAME.zip" -print -quit)"
+          base_sha="$(find sun3c1-artifact -type f -name "$SUN3C1_BASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_sha" && -s "$base_sha" ]] || { echo "::error::SUN-3C1 ZIP/SHA missing" >&2; exit 1; }
+          expected="$(awk 'NF {print $1; exit}' "$base_sha")"
+          actual="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ && "$actual" = "$expected" ]] || { echo "::error::SUN-3C1 ZIP SHA mismatch" >&2; exit 1; }
+          unzip -q "$base_zip" -d sun3c1-release
+
+          BASE_STAGE="$GITHUB_WORKSPACE/sun3c1-release/$SUN3C1_BASE_BASENAME"
+          BASE_CUMULATIVE="$BASE_STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sp.patch"
+          [[ -d "$BASE_STAGE" && -s "$BASE_CUMULATIVE" && -s "$BASE_STAGE/renderer_sp_rend2_x64.dll" ]] || { echo "::error::SUN-3C1 stage/cumulative/runtime DLL missing" >&2; exit 1; }
+          cumulative_sha="$(sha256sum "$BASE_CUMULATIVE" | awk '{print $1}')"
+          [[ "$cumulative_sha" = "$SUN3C1_EXPECTED_CUMULATIVE_SHA256" ]] || { echo "::error::Wrong SUN-3C1 cumulative SHA: $cumulative_sha" >&2; exit 1; }
+
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_VISUAL_UPGRADE' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SUN_4A_INDOOR_WORLD_CASTER_TWOSIDED' "$BASE_CUMULATIVE"
+
+          echo "BASE_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE=$BASE_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE_SHA256=$cumulative_sha" >> "$GITHUB_ENV"
+          echo "Recovered exact successful SUN-3C1 v2 artifact $artifact_name run=$run_id cumulative_sha=$cumulative_sha"
+
+      - name: Reconstruct and audit exact SUN-3C1 v2 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Source reconstruction/audit failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git init source
+          git -C source config core.autocrlf false
+          git -C source config core.eol lf
+          git -C source remote add origin "$UPSTREAM_REPO"
+          git -C source fetch --depth 1 origin "$UPSTREAM_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]] || { echo "::error::Upstream SHA mismatch" >&2; exit 1; }
+
+          git -C source apply --check --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source diff --check
+          git -C source apply --check --reverse --whitespace=nowarn "$BASE_CUMULATIVE"
+
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' source/SP/code/rend2/tr_main.c
+          grep -Fq 'if (lightViewIndependentOfCameraView || (r_shadowFilter->integer >= 3 && level != 3))' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_VISUAL_UPGRADE' source/SP/code/rend2/glsl/shadowmask_fp.glsl
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' source/SP/code/rend2/tr_shader.c
+
+          # SUN-4A exact anchors: current accepted branch still uses the legacy one-sided depth culling.
+          grep -Fq 'cvar_t  *r_sunShadows;' source/SP/code/rend2/tr_init.c
+          grep -Fq 'extern  cvar_t  *r_sunShadows;' source/SP/code/rend2/tr_local.h
+          grep -Fq 'r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "1", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'if (input->shader->cullType == CT_TWO_SIDED)' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'if ( backEnd.viewParms.flags & VPF_DEPTHSHADOW )' source/SP/code/rend2/tr_shade.c
+          ! grep -Fq 'r_sunShadowTwoSided' source/SP/code/rend2/tr_init.c
+          ! grep -Fq 'REND2_SUN_4A_INDOOR_WORLD_CASTER_TWOSIDED' source/SP/code/rend2/tr_shade.c
+
+          git -C source config user.name "DarkWolf CI"
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source add -A
+          git -C source commit -m "Accepted SUN-3C1 v2 baseline for SUN-4A" >/dev/null
+          ACCEPTED_COMMIT="$(git -C source rev-parse HEAD)"
+          echo "ACCEPTED_COMMIT=$ACCEPTED_COMMIT" >> "$GITHUB_ENV"
+
+          # Files outside the intended SUN-4A delta are protected byte-for-byte.
+          sha256sum \
+            source/SP/code/rend2/tr_main.c \
+            source/SP/code/rend2/tr_backend.c \
+            source/SP/code/rend2/tr_glsl.c \
+            source/SP/code/rend2/glsl/shadowmask_fp.glsl \
+            source/SP/code/rend2/glsl/lightall_fp.glsl \
+            > accepted-sun4a-guard-files.sha256
+          echo "Exact SUN-3C1 v2 source audit PASS"
+
+      - name: Apply SUN-4A indoor world-caster two-sided A/B and adopt Filter 3
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-4A patch failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+
+          cat > sun4a-patcher.b64 <<'PATCHER_B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKaW1wb3J0IHN5
+          cwoKUk9PVCA9IFBhdGgoc3lzLmFyZ3ZbMV0pIGlmIGxlbihzeXMuYXJndikgPiAxIGVsc2UgUGF0
+          aCgnLicpClRSX0lOSVQgPSBST09UIC8gJ1NQL2NvZGUvcmVuZDIvdHJfaW5pdC5jJwpUUl9MT0NB
+          TCA9IFJPT1QgLyAnU1AvY29kZS9yZW5kMi90cl9sb2NhbC5oJwpUUl9TSEFERSA9IFJPT1QgLyAn
+          U1AvY29kZS9yZW5kMi90cl9zaGFkZS5jJwpNQVJLRVIgPSAnUkVORDJfU1VOXzRBX0lORE9PUl9X
+          T1JMRF9DQVNURVJfVFdPU0lERUQnCgoKZGVmIHJlYWRfbm9ybShwYXRoOiBQYXRoKToKICAgIHJh
+          dyA9IHBhdGgucmVhZF9ieXRlcygpCiAgICBlb2wgPSAnXHJcbicgaWYgYidcclxuJyBpbiByYXcg
+          ZWxzZSAnXG4nCiAgICB0ZXh0ID0gcmF3LmRlY29kZSgndXRmLTgnKS5yZXBsYWNlKCdcclxuJywg
+          J1xuJykucmVwbGFjZSgnXHInLCAnXG4nKQogICAgcmV0dXJuIHRleHQsIGVvbAoKCmRlZiB3cml0
+          ZV9lb2wocGF0aDogUGF0aCwgdGV4dDogc3RyLCBlb2w6IHN0cik6CiAgICBpZiBlb2wgIT0gJ1xu
+          JzoKICAgICAgICB0ZXh0ID0gdGV4dC5yZXBsYWNlKCdcbicsIGVvbCkKICAgIHBhdGgud3JpdGVf
+          Ynl0ZXModGV4dC5lbmNvZGUoJ3V0Zi04JykpCgoKZGVmIHJlcGxhY2Vfb25jZSh0ZXh0OiBzdHIs
+          IG9sZDogc3RyLCBuZXc6IHN0ciwgbGFiZWw6IHN0cik6CiAgICBjb3VudCA9IHRleHQuY291bnQo
+          b2xkKQogICAgaWYgY291bnQgIT0gMToKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KGYne2xhYmVs
+          fTogZXhwZWN0ZWQgZXhhY3RseSBvbmUgYW5jaG9yLCBmb3VuZCB7Y291bnR9JykKICAgIHJldHVy
+          biB0ZXh0LnJlcGxhY2Uob2xkLCBuZXcsIDEpCgoKaW5pdF90ZXh0LCBpbml0X2VvbCA9IHJlYWRf
+          bm9ybShUUl9JTklUKQpsb2NhbF90ZXh0LCBsb2NhbF9lb2wgPSByZWFkX25vcm0oVFJfTE9DQUwp
+          CnNoYWRlX3RleHQsIHNoYWRlX2VvbCA9IHJlYWRfbm9ybShUUl9TSEFERSkKCmlmIE1BUktFUiBp
+          biBpbml0X3RleHQgb3IgTUFSS0VSIGluIGxvY2FsX3RleHQgb3IgTUFSS0VSIGluIHNoYWRlX3Rl
+          eHQ6CiAgICByZXF1aXJlZCA9IFsKICAgICAgICAnY3Zhcl90ICAqcl9zdW5TaGFkb3dUd29TaWRl
+          ZDsnLAogICAgICAgICdleHRlcm4gIGN2YXJfdCAgKnJfc3VuU2hhZG93VHdvU2lkZWQ7JywKICAg
+          ICAgICAncl9zdW5TaGFkb3dUd29TaWRlZCA9IHJpLkN2YXJfR2V0KCAicl9zdW5TaGFkb3dUd29T
+          aWRlZCIsICIwIiwgQ1ZBUl9BUkNISVZFICk7JywKICAgICAgICAncl9zaGFkb3dGaWx0ZXIgPSBy
+          aS5DdmFyX0dldCggInJfc2hhZG93RmlsdGVyIiwgIjMiLCBDVkFSX0FSQ0hJVkUgfCBDVkFSX0xB
+          VENIICk7JywKICAgICAgICAncWJvb2xlYW4gc3VuU2hhZG93V29ybGRUd29TaWRlZCcsCiAgICBd
+          CiAgICBjb21iaW5lZCA9IGluaXRfdGV4dCArIGxvY2FsX3RleHQgKyBzaGFkZV90ZXh0CiAgICBt
+          aXNzaW5nID0gW3ggZm9yIHggaW4gcmVxdWlyZWQgaWYgeCBub3QgaW4gY29tYmluZWRdCiAgICBp
+          ZiBtaXNzaW5nOgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoJ1NVTi00QSBtYXJrZXIgZXhpc3Rz
+          IGJ1dCBwYXRjaCBpcyBpbmNvbXBsZXRlOiAnICsgJywgJy5qb2luKG1pc3NpbmcpKQogICAgcHJp
+          bnQoJ1NVTi00QSBhbHJlYWR5IGFwcGxpZWQnKQogICAgcmFpc2UgU3lzdGVtRXhpdCgwKQoKIyBB
+          ZG9wdCBTVU4tM0MxIHYyIEIgYXMgdGhlIHByZWZlcnJlZC9kZWZhdWx0IHN1bmxpZ2h0LWZpbHRl
+          ciBicmFuY2ggdmFsdWUuCmluaXRfdGV4dCA9IHJlcGxhY2Vfb25jZSgKICAgIGluaXRfdGV4dCwK
+          ICAgICdjdmFyX3QgICpyX3N1blNoYWRvd3M7XG5jdmFyX3QgICpyX3NoYWRvd0ZpbHRlcjtcbics
+          CiAgICAnY3Zhcl90ICAqcl9zdW5TaGFkb3dzO1xuJwogICAgJ2N2YXJfdCAgKnJfc3VuU2hhZG93
+          VHdvU2lkZWQ7IC8vICcgKyBNQVJLRVIgKyAnXG4nCiAgICAnY3Zhcl90ICAqcl9zaGFkb3dGaWx0
+          ZXI7XG4nLAogICAgJ3RyX2luaXQgZGVjbGFyYXRpb24nKQoKaW5pdF90ZXh0ID0gcmVwbGFjZV9v
+          bmNlKAogICAgaW5pdF90ZXh0LAogICAgJ1x0cl9zdW5TaGFkb3dzID0gcmkuQ3Zhcl9HZXQoICJy
+          X3N1blNoYWRvd3MiLCAiMSIsIENWQVJfQVJDSElWRSB8IENWQVJfTEFUQ0ggKTtcbicKICAgICdc
+          dHJfc2hhZG93RmlsdGVyID0gcmkuQ3Zhcl9HZXQoICJyX3NoYWRvd0ZpbHRlciIsICIxIiwgQ1ZB
+          Ul9BUkNISVZFIHwgQ1ZBUl9MQVRDSCApO1xuJywKICAgICdcdHJfc3VuU2hhZG93cyA9IHJpLkN2
+          YXJfR2V0KCAicl9zdW5TaGFkb3dzIiwgIjEiLCBDVkFSX0FSQ0hJVkUgfCBDVkFSX0xBVENIICk7
+          XG4nCiAgICAnXHRyX3N1blNoYWRvd1R3b1NpZGVkID0gcmkuQ3Zhcl9HZXQoICJyX3N1blNoYWRv
+          d1R3b1NpZGVkIiwgIjAiLCBDVkFSX0FSQ0hJVkUgKTsgLy8gJyArIE1BUktFUiArICdcbicKICAg
+          ICdcdHJfc2hhZG93RmlsdGVyID0gcmkuQ3Zhcl9HZXQoICJyX3NoYWRvd0ZpbHRlciIsICIzIiwg
+          Q1ZBUl9BUkNISVZFIHwgQ1ZBUl9MQVRDSCApO1xuJywKICAgICd0cl9pbml0IHJlZ2lzdHJhdGlv
+          bi9kZWZhdWx0JykKCmxvY2FsX3RleHQgPSByZXBsYWNlX29uY2UoCiAgICBsb2NhbF90ZXh0LAog
+          ICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9zdW5TaGFkb3dzO1xuZXh0ZXJuICBjdmFyX3QgICpyX3No
+          YWRvd0ZpbHRlcjtcbicsCiAgICAnZXh0ZXJuICBjdmFyX3QgICpyX3N1blNoYWRvd3M7XG4nCiAg
+          ICAnZXh0ZXJuICBjdmFyX3QgICpyX3N1blNoYWRvd1R3b1NpZGVkOyAvLyAnICsgTUFSS0VSICsg
+          J1xuJwogICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9zaGFkb3dGaWx0ZXI7XG4nLAogICAgJ3RyX2xv
+          Y2FsIGV4dGVybicpCgpvbGRfY3VsbCA9ICcnJ1x0Ly9cblx0Ly8gc2V0IGZhY2UgY3VsbGluZyBh
+          cHByb3ByaWF0ZWx5XG5cdC8vXG5cdGlmIChpbnB1dC0+c2hhZGVyLT5jdWxsVHlwZSA9PSBDVF9U
+          V09fU0lERUQpXG5cdHtcblx0XHRHTF9DdWxsKCBDVF9UV09fU0lERUQgKTtcblx0fVxuJycnCm5l
+          d19jdWxsID0gJycnXHQvL1xuXHQvLyBzZXQgZmFjZSBjdWxsaW5nIGFwcHJvcHJpYXRlbHlcblx0
+          Ly9cblx0Ly8gUkVORDJfU1VOXzRBX0lORE9PUl9XT1JMRF9DQVNURVJfVFdPU0lERUQ6XG5cdC8v
+          IERpYWdub3N0aWMvcXVhbGl0eSBBL0IgZm9yIFJUQ1cgaW5kb29yIHN1biBsZWFrYWdlLiAgT25s
+          eSB3b3JsZCBnZW9tZXRyeVxuXHQvLyBpbiB0aGUgb3J0aG9ncmFwaGljIHN1bmxpZ2h0IGRlcHRo
+          IGNhc2NhZGVzIGJlY29tZXMgdHdvLXNpZGVkOyBwb2ludC1saWdodFxuXHQvLyBjdWJlbWFwIHNo
+          YWRvd3MsIHByb2plY3RlZCBzaGFkb3dzIGFuZCBhbmltYXRlZCBlbnRpdHkgY2FzdGVycyBrZWVw
+          IHRoZVxuXHQvLyBhY2NlcHRlZCBTVU4tUjAvU1VOLVIwLjEgY3VsbGluZyBwYXRoLlxuXHRxYm9v
+          bGVhbiBzdW5TaGFkb3dXb3JsZFR3b1NpZGVkID0gcl9zdW5TaGFkb3dUd29TaWRlZC0+aW50ZWdl
+          ciAhPSAwXG5cdFx0JiYgKGJhY2tFbmQudmlld1Bhcm1zLmZsYWdzICYgVlBGX0RFUFRIU0hBRE9X
+          KVxuXHRcdCYmIChiYWNrRW5kLnZpZXdQYXJtcy5mbGFncyAmIFZQRl9PUlRIT0dSQVBISUMpXG5c
+          dFx0JiYgIShiYWNrRW5kLnZpZXdQYXJtcy5mbGFncyAmIFZQRl9TSEFET1dNQVApXG5cdFx0JiYg
+          YmFja0VuZC5jdXJyZW50RW50aXR5ID09ICZ0ci53b3JsZEVudGl0eTtcblxuXHRpZiAoaW5wdXQt
+          PnNoYWRlci0+Y3VsbFR5cGUgPT0gQ1RfVFdPX1NJREVEIHx8IHN1blNoYWRvd1dvcmxkVHdvU2lk
+          ZWQpXG5cdHtcblx0XHRHTF9DdWxsKCBDVF9UV09fU0lERUQgKTtcblx0fVxuJycnCnNoYWRlX3Rl
+          eHQgPSByZXBsYWNlX29uY2Uoc2hhZGVfdGV4dCwgb2xkX2N1bGwsIG5ld19jdWxsLCAndHJfc2hh
+          ZGUgY3VsbGluZyBibG9jaycpCgojIEludmFyaWFudHMuCmlmIGluaXRfdGV4dC5jb3VudChNQVJL
+          RVIpICE9IDI6CiAgICByYWlzZSBTeXN0ZW1FeGl0KCd0cl9pbml0IFNVTi00QSBtYXJrZXIgY291
+          bnQgbWlzbWF0Y2gnKQppZiBsb2NhbF90ZXh0LmNvdW50KE1BUktFUikgIT0gMToKICAgIHJhaXNl
+          IFN5c3RlbUV4aXQoJ3RyX2xvY2FsIFNVTi00QSBtYXJrZXIgY291bnQgbWlzbWF0Y2gnKQppZiBz
+          aGFkZV90ZXh0LmNvdW50KE1BUktFUikgIT0gMToKICAgIHJhaXNlIFN5c3RlbUV4aXQoJ3RyX3No
+          YWRlIFNVTi00QSBtYXJrZXIgY291bnQgbWlzbWF0Y2gnKQppZiAncl9zaGFkb3dGaWx0ZXIgPSBy
+          aS5DdmFyX0dldCggInJfc2hhZG93RmlsdGVyIiwgIjMiLCBDVkFSX0FSQ0hJVkUgfCBDVkFSX0xB
+          VENIICk7JyBub3QgaW4gaW5pdF90ZXh0OgogICAgcmFpc2UgU3lzdGVtRXhpdCgncHJlZmVycmVk
+          IHJfc2hhZG93RmlsdGVyIDMgZGVmYXVsdCBtaXNzaW5nJykKaWYgJ2JhY2tFbmQuY3VycmVudEVu
+          dGl0eSA9PSAmdHIud29ybGRFbnRpdHk7JyBub3QgaW4gc2hhZGVfdGV4dDoKICAgIHJhaXNlIFN5
+          c3RlbUV4aXQoJ3dvcmxkLW9ubHkgY2FzdGVyIGd1YXJkIG1pc3NpbmcnKQppZiAnJiYgKGJhY2tF
+          bmQudmlld1Bhcm1zLmZsYWdzICYgVlBGX09SVEhPR1JBUEhJQyknIG5vdCBpbiBzaGFkZV90ZXh0
+          OgogICAgcmFpc2UgU3lzdGVtRXhpdCgnc3VuIG9ydGhvZ3JhcGhpYyBndWFyZCBtaXNzaW5nJykK
+          aWYgJyYmICEoYmFja0VuZC52aWV3UGFybXMuZmxhZ3MgJiBWUEZfU0hBRE9XTUFQKScgbm90IGlu
+          IHNoYWRlX3RleHQ6CiAgICByYWlzZSBTeXN0ZW1FeGl0KCdwb2ludC1saWdodCBpc29sYXRpb24g
+          Z3VhcmQgbWlzc2luZycpCgp3cml0ZV9lb2woVFJfSU5JVCwgaW5pdF90ZXh0LCBpbml0X2VvbCkK
+          d3JpdGVfZW9sKFRSX0xPQ0FMLCBsb2NhbF90ZXh0LCBsb2NhbF9lb2wpCndyaXRlX2VvbChUUl9T
+          SEFERSwgc2hhZGVfdGV4dCwgc2hhZGVfZW9sKQpwcmludCgnQXBwbGllZCBTVU4tNEEgaW5kb29y
+          IHdvcmxkLWNhc3RlciB0d28tc2lkZWQgQS9CIGFuZCBhZG9wdGVkIHJfc2hhZG93RmlsdGVyIDMg
+          ZGVmYXVsdCcpCg==
+          PATCHER_B64
+          base64 -d sun4a-patcher.b64 > apply_rend2_sun_4a_indoor_world_caster_twosided_sp.py
+          chmod +x apply_rend2_sun_4a_indoor_world_caster_twosided_sp.py
+          actual_patcher_sha="$(sha256sum apply_rend2_sun_4a_indoor_world_caster_twosided_sp.py | awk '{print $1}')"
+          [[ "$actual_patcher_sha" = "$PATCHER_SHA256" ]] || { echo "::error::SUN-4A patcher SHA mismatch" >&2; exit 1; }
+          python3 -m py_compile apply_rend2_sun_4a_indoor_world_caster_twosided_sp.py
+          python3 apply_rend2_sun_4a_indoor_world_caster_twosided_sp.py source
+          git -C source diff --check
+
+          cat > expected-sun4a-files.txt <<'EOF_EXPECTED'
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          SP/code/rend2/tr_shade.c
+          EOF_EXPECTED
+          LC_ALL=C sort -o expected-sun4a-files.txt expected-sun4a-files.txt
+          git -C source diff --name-only "$ACCEPTED_COMMIT" | LC_ALL=C sort > actual-sun4a-files.txt
+          diff -u expected-sun4a-files.txt actual-sun4a-files.txt
+
+          grep -Fq 'REND2_SUN_4A_INDOOR_WORLD_CASTER_TWOSIDED' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'r_sunShadowTwoSided = ri.Cvar_Get( "r_sunShadowTwoSided", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'extern  cvar_t  *r_sunShadowTwoSided;' source/SP/code/rend2/tr_local.h
+          grep -Fq 'r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "3", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq '&& (backEnd.viewParms.flags & VPF_ORTHOGRAPHIC)' source/SP/code/rend2/tr_shade.c
+          grep -Fq '&& !(backEnd.viewParms.flags & VPF_SHADOWMAP)' source/SP/code/rend2/tr_shade.c
+          grep -Fq '&& backEnd.currentEntity == &tr.worldEntity;' source/SP/code/rend2/tr_shade.c
+
+          # Accepted SUN-3C1 v2 and all non-SUN-4A critical renderer paths are untouched.
+          sha256sum -c accepted-sun4a-guard-files.sha256
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' source/SP/code/rend2/tr_main.c
+
+          git -C source diff --binary "$ACCEPTED_COMMIT" -- \
+            SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h SP/code/rend2/tr_shade.c \
+            > rend2-sun-4a-indoor-world-caster-twosided-sp.patch
+          test -s rend2-sun-4a-indoor-world-caster-twosided-sp.patch
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-4a-indoor-world-caster-twosided-sp.patch"
+
+          git -C source diff --binary "$UPSTREAM_SHA" > rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch
+          test -s rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch
+          grep -Fq 'REND2_SUN_3C1_V2_CASCADE_TEXEL_STABILIZATION_FILTER3' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch
+          grep -Fq 'REND2_SUN_4A_INDOOR_WORLD_CASTER_TWOSIDED' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch
+
+          sha256sum rend2-sun-4a-indoor-world-caster-twosided-sp.patch > rend2-sun-4a-indoor-world-caster-twosided-sp.patch.sha256
+          sha256sum rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch > rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch.sha256
+
+      - name: Replay SUN-4A delta from exact SUN-3C1 v2 baseline
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-4A replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf sun4a-replay
+          git clone --no-hardlinks source sun4a-replay >/dev/null
+          git -C sun4a-replay reset --hard "$ACCEPTED_COMMIT" >/dev/null
+          git -C sun4a-replay clean -fdx
+          git -C sun4a-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-4a-indoor-world-caster-twosided-sp.patch"
+          git -C sun4a-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-4a-indoor-world-caster-twosided-sp.patch"
+          git -C sun4a-replay diff --check
+          git -C sun4a-replay diff --name-only "$ACCEPTED_COMMIT" | LC_ALL=C sort > replay-sun4a-files.txt
+          diff -u expected-sun4a-files.txt replay-sun4a-files.txt
+          cmp source/SP/code/rend2/tr_init.c sun4a-replay/SP/code/rend2/tr_init.c
+          cmp source/SP/code/rend2/tr_local.h sun4a-replay/SP/code/rend2/tr_local.h
+          cmp source/SP/code/rend2/tr_shade.c sun4a-replay/SP/code/rend2/tr_shade.c
+          git -C sun4a-replay apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/rend2-sun-4a-indoor-world-caster-twosided-sp.patch"
+          echo "SUN-4A exact three-file delta replay PASS"
+
+      - name: Build SP-only Windows x64 SUN-4A experiment
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify build and package minimal SUN-4A runtime artifact
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::SUN-4A packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          DLL="$SP_OUT/renderer_sp_rend2_x64.dll"
+          test -s "$DLL" || { echo "::error::Missing renderer_sp_rend2_x64.dll" >&2; exit 1; }
+          test ! -d source/MP/build || { echo "::error::MP build directory exists" >&2; exit 1; }
+
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/docs"
+          install -m 0644 "$DLL" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 rend2-sun-4a-indoor-world-caster-twosided-sp.patch "$STAGE/docs/rend2-sun-4a-indoor-world-caster-twosided-sp.patch"
+          install -m 0644 rend2-sun-4a-indoor-world-caster-twosided-sp.patch.sha256 "$STAGE/docs/rend2-sun-4a-indoor-world-caster-twosided-sp.patch.sha256"
+          install -m 0644 rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch"
+          install -m 0644 rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch.sha256 "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sun-3c1-v2-sun-4a-sp.patch.sha256"
+          install -m 0755 apply_rend2_sun_4a_indoor_world_caster_twosided_sp.py "$STAGE/docs/apply_rend2_sun_4a_indoor_world_caster_twosided_sp.py"
+
+          cat > "$STAGE/README_SUN_4A_TEST.txt" <<'TXT'
+          SUN-4A - Indoor Sun Leakage / World-Caster Two-Sided A/B
+          ========================================================
+
+          BASELINE
+          --------
+          Exact successful SUN-3C1 v2 is the source of truth.
+          SUN-R0, SUN-R0.1, WOLFFOG-R0 and SUN-3C1 v2 are preserved.
+          The rejected SKY-R0 no-mip experiment is not included.
+
+          SUN-3C1 v2 B ADOPTION
+          ---------------------
+          r_shadowFilter 3 is now the preferred/default value for this sunlight branch.
+          This keeps the accepted 13-tap FILTER2 PCF and enables the SUN-3C1 v2 camera-cascade texel snap.
+          Temporal stability is improved but NOT considered fully solved.
+
+          SUN-4A HYPOTHESIS
+          -----------------
+          Rend2 flips face culling in depth-shadow views. Some RTCW structural world
+          surfaces may therefore fail to occlude sunlight from one orientation. SUN-4A
+          tests whether rendering WORLD GEOMETRY two-sided in orthographic sun cascades
+          reduces indoor leakage. Animated entities, NPC/player casters, point-light
+          cubemap shadows and projected shadows keep their accepted culling path.
+
+          New runtime cvar:
+            r_sunShadowTwoSided 0  = accepted SUN-3C1 v2 world-caster culling (A)
+            r_sunShadowTwoSided 1  = two-sided WORLD casters in sun cascades only (B)
+
+          No vid_restart is needed when toggling r_sunShadowTwoSided itself.
+          For a clean test first ensure the preferred filter is active:
+
+            seta r_sunlightMode 1
+            seta r_shadowFilter 3
+            vid_restart
+
+          Then test the SAME indoor/outdoor locations:
+
+            r_sunShadowTwoSided 0
+            // capture A
+
+            r_sunShadowTwoSided 1
+            // capture B
+
+          Primary acceptance signal:
+            - sunlight/shadow leakage in a closed room becomes clearly weaker or disappears;
+            - legitimate sunlight through real windows/doors remains;
+            - outdoor rail/grate/door/NPC/player shadows remain intact;
+            - no new widespread acne, dark patches, popping or material regressions.
+
+          If B makes no meaningful indoor difference, SUN-4A is rejected and the next
+          experiment should target per-surface/outdoor sunlight eligibility instead of culling.
+          TXT
+
+          cat > "$STAGE/docs/SUN_4A_BUILD_INFO.txt" <<EOF
+          workflow_revision=SUN-4A-indoor-world-caster-twosided
+          upstream_sha=$UPSTREAM_SHA
+          source_of_truth=exact_successful_SUN-3C1-v2_cumulative_patch
+          base_run_id=$BASE_RUN_ID
+          base_artifact_id=$BASE_ARTIFACT_ID
+          base_artifact_name=$BASE_ARTIFACT_NAME
+          base_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          accepted_commit=$ACCEPTED_COMMIT
+          preferred_sunlight_mode=1
+          preferred_shadow_filter=3
+          temporal_stability_status=IMPROVED_NOT_CLOSED
+          new_cvar=r_sunShadowTwoSided
+          cvar_default=0
+          experiment_A=r_sunShadowTwoSided_0
+          experiment_B=r_sunShadowTwoSided_1
+          sun_caster_scope=world_geometry_only_orthographic_depthshadow_not_vpf_shadowmap
+          source_delta_files=SP/code/rend2/tr_init.c,SP/code/rend2/tr_local.h,SP/code/rend2/tr_shade.c
+          shadowmask_shader_changes=NONE
+          cascade_matrix_changes=NONE_BEYOND_ACCEPTED_SUN3C1_V2
+          dlight_changes=NONE
+          player_npc_shadow_logic_changes=NONE
+          fog_changes=NONE
+          package_type=MINIMAL_RENDERER_DLL_EXPERIMENT
+          EOF
+
+          test -s "$STAGE/renderer_sp_rend2_x64.dll"
+          test -s "$STAGE/README_SUN_4A_TEST.txt"
+          test -s "$STAGE/docs/SUN_4A_BUILD_INFO.txt"
+          if find "$STAGE" -type f -iname '*.bat' -print -quit | grep -q .; then echo "::error::BAT unexpectedly packaged" >&2; exit 1; fi
+
+          ( cd "$STAGE"; find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload minimal SUN-4A experiment artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
