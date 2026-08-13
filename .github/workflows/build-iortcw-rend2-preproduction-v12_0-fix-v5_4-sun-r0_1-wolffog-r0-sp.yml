@@ -1,0 +1,404 @@
+name: Build ioRTCW Rend2 PREPRODUCTION V12.0 Fix V5.4 + SUN-R0.1 + WOLFFOG-R0 SP-only Windows x64
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "rend2-preproduction-v5_4-sun-r0_1-wolffog-r0-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP-only full preproduction release from accepted WOLFFOG-R0 lineage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      WOLFFOG_RELEASE_BASENAME: "iortcw-rend2-sky-r1-wolffog-r0-sky-fog-priority-over-sun-r0_1-v5_4-sp-windows-x64"
+      V54_RELEASE_BASENAME: "iortcw-rend2-final-production-v12_0-fix-v5_4-player-shadow-character-picmip-sp-windows-x64"
+      RELEASE_BASENAME: "iortcw-rend2-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sp-windows-x64"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Shell step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+
+      - name: Recover exact latest successful WOLFFOG-R0 artifact
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::WOLFFOG-R0 recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf wolffog-artifact wolffog-release
+          mkdir -p wolffog-artifact wolffog-release
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > all-artifacts.tsv
+          python3 - <<'PY_SELECT_WOLFFOG' > wolffog-selected.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['WOLFFOG_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('all-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created, aid, rid, name = parts
+              if name.startswith(prefix):
+                  rows.append((created, aid, rid, name))
+          if not rows:
+              raise SystemExit('No retained successful-candidate WOLFFOG-R0 artifact with prefix %r. Run WOLFFOG-R0 in this repository first.' % prefix)
+          rows.sort(key=lambda x: x[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT_WOLFFOG
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < wolffog-selected.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed WOLFFOG-R0 artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected WOLFFOG-R0 run is not successful: $run_conclusion" >&2; exit 1; }
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir wolffog-artifact
+          wolffog_zip="$(find wolffog-artifact -type f -name "$WOLFFOG_RELEASE_BASENAME.zip" -print -quit)"
+          wolffog_sha="$(find wolffog-artifact -type f -name "$WOLFFOG_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$wolffog_zip" && -s "$wolffog_zip" && -n "$wolffog_sha" && -s "$wolffog_sha" ]] || { echo "::error::WOLFFOG-R0 ZIP/SHA missing" >&2; find wolffog-artifact -type f -print >&2; exit 1; }
+          expected="$(awk 'NF {print $1; exit}' "$wolffog_sha")"
+          actual="$(sha256sum "$wolffog_zip" | awk '{print $1}')"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ && "$actual" = "$expected" ]] || { echo "::error::WOLFFOG-R0 ZIP SHA mismatch expected=$expected actual=$actual" >&2; exit 1; }
+          unzip -q "$wolffog_zip" -d wolffog-release
+          WOLFFOG_STAGE="$GITHUB_WORKSPACE/wolffog-release/$WOLFFOG_RELEASE_BASENAME"
+          WOLFFOG_CUMULATIVE="$WOLFFOG_STAGE/docs/rend2-cumulative-production-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sp.patch"
+          WOLFFOG_DELTA="$WOLFFOG_STAGE/docs/rend2-wolffog-r0-sky-fog-priority-sp.patch"
+          WOLFFOG_PATCHER="$WOLFFOG_STAGE/docs/apply_rend2_wolffog_r0_sky_fog_priority_sp.py"
+          [[ -d "$WOLFFOG_STAGE" && -s "$WOLFFOG_CUMULATIVE" && -s "$WOLFFOG_DELTA" && -s "$WOLFFOG_PATCHER" && -s "$WOLFFOG_STAGE/renderer_sp_rend2_x64.dll" ]] || { echo "::error::WOLFFOG-R0 stage/cumulative/delta/patcher/runtime DLL missing" >&2; exit 1; }
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' "$WOLFFOG_CUMULATIVE"
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' "$WOLFFOG_CUMULATIVE"
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' "$WOLFFOG_CUMULATIVE"
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_STAGE' "$WOLFFOG_CUMULATIVE"
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' "$WOLFFOG_CUMULATIVE"
+          echo "WOLFFOG_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "WOLFFOG_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "WOLFFOG_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "WOLFFOG_STAGE=$WOLFFOG_STAGE" >> "$GITHUB_ENV"
+          echo "WOLFFOG_CUMULATIVE=$WOLFFOG_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "WOLFFOG_DELTA=$WOLFFOG_DELTA" >> "$GITHUB_ENV"
+          echo "WOLFFOG_PATCHER=$WOLFFOG_PATCHER" >> "$GITHUB_ENV"
+          echo "WOLFFOG_CUMULATIVE_SHA256=$(sha256sum "$WOLFFOG_CUMULATIVE" | awk '{print $1}')" >> "$GITHUB_ENV"
+          echo "Recovered exact successful WOLFFOG-R0 artifact $artifact_name run=$run_id zip_sha=$actual"
+
+      - name: Recover exact successful V5.4 full release shell
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::V5.4 full release recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf v54-artifact v54-release
+          mkdir -p v54-artifact v54-release
+          python3 - <<'PY_SELECT_V54' > v54-selected.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['V54_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('all-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created, aid, rid, name = parts
+              if name.startswith(prefix):
+                  rows.append((created, aid, rid, name))
+          if not rows:
+              raise SystemExit('No retained V5.4 FINAL v2 artifact with prefix %r. Run/retain V5.4 FINAL v2 in this repository.' % prefix)
+          rows.sort(key=lambda x: x[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT_V54
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < v54-selected.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed V5.4 artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected V5.4 run is not successful: $run_conclusion" >&2; exit 1; }
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir v54-artifact
+          v54_zip="$(find v54-artifact -type f -name "$V54_RELEASE_BASENAME.zip" -print -quit)"
+          v54_sha="$(find v54-artifact -type f -name "$V54_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$v54_zip" && -s "$v54_zip" && -n "$v54_sha" && -s "$v54_sha" ]] || { echo "::error::V5.4 ZIP/SHA missing" >&2; find v54-artifact -type f -print >&2; exit 1; }
+          expected="$(awk 'NF {print $1; exit}' "$v54_sha")"
+          actual="$(sha256sum "$v54_zip" | awk '{print $1}')"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ && "$actual" = "$expected" ]] || { echo "::error::V5.4 ZIP SHA mismatch expected=$expected actual=$actual" >&2; exit 1; }
+          unzip -q "$v54_zip" -d v54-release
+          V54_STAGE="$GITHUB_WORKSPACE/v54-release/$V54_RELEASE_BASENAME"
+          [[ -d "$V54_STAGE" ]] || { echo "::error::V5.4 stage missing" >&2; exit 1; }
+          for f in ioWolfSP.x64.exe renderer_sp_opengl1_x64.dll renderer_sp_rend2_x64.dll main/cgame_sp_x64.dll main/qagame_sp_x64.dll main/ui_sp_x64.dll; do
+            test -s "$V54_STAGE/$f" || { echo "::error::V5.4 full shell missing $f" >&2; exit 1; }
+          done
+          test -s "$V54_STAGE/docs/rend2-cumulative-production-v12_0-fix-v5_4-final-sp.patch"
+          echo "V54_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "V54_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "V54_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "V54_STAGE=$V54_STAGE" >> "$GITHUB_ENV"
+          echo "Recovered exact successful V5.4 full shell $artifact_name run=$run_id zip_sha=$actual"
+
+      - name: Reconstruct exact accepted preproduction source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Accepted source reconstruction failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git init source
+          git -C source config core.autocrlf false
+          git -C source config core.eol lf
+          git -C source remote add origin "$UPSTREAM_REPO"
+          git -C source fetch --depth 1 origin "$UPSTREAM_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]] || { echo "::error::Upstream SHA mismatch" >&2; exit 1; }
+          git -C source apply --check --whitespace=nowarn "$WOLFFOG_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$WOLFFOG_CUMULATIVE"
+          git -C source diff --check
+          git -C source apply --check --reverse --whitespace=nowarn "$WOLFFOG_CUMULATIVE"
+
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_STAGE' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'r_dlightPlayerShadow = ri.Cvar_Get( "r_dlightPlayerShadow", "1", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' source/SP/code/rend2/tr_shader.c
+
+          python3 - <<'PY_POLICY'
+          from pathlib import Path
+          def norm(path):
+              return Path(path).read_text(encoding='utf-8', errors='strict').replace('\r\n','\n').replace('\r','\n')
+          shade = norm('source/SP/code/rend2/tr_shade.c')
+          main = norm('source/SP/code/rend2/tr_main.c')
+          init = norm('source/SP/code/rend2/tr_init.c')
+          shader = norm('source/SP/code/rend2/tr_shader.c')
+          backend = norm('source/SP/code/rend2/tr_backend.c')
+          assert shade.count('REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS') == 1
+          assert shade.count('REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_STAGE') == 1
+          assert shade.count('REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4') >= 1
+          assert 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' in backend
+          assert 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' in main
+          assert 'VPF_SHADOWMAP | VPF_DEPTHSHADOW' in main
+          assert 'r_dlightPlayerShadow = ri.Cvar_Get( "r_dlightPlayerShadow", "1", CVAR_ARCHIVE );' in init
+          assert 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' not in shader
+          assert shade.count('else if ( skyboxportal && backEnd.refdef.rdflags & RDF_SKYBOXPORTAL ) {') == 2
+          print('Accepted lineage PASS: V5.4 + SUN-R0 + SUN-R0.1 + WOLFFOG-R0 present; rejected SKY-R0 absent.')
+          PY_POLICY
+
+          git -C source diff --name-only "$UPSTREAM_SHA" | LC_ALL=C sort > accepted-source-files.txt
+          test -s accepted-source-files.txt
+          cp "$WOLFFOG_CUMULATIVE" accepted-cumulative.patch
+          sha256sum accepted-cumulative.patch > accepted-cumulative.patch.sha256
+
+      - name: Replay accepted cumulative patch and compare exact changed files
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Accepted cumulative replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf accepted-replay
+          cp -a source accepted-replay
+          git -C accepted-replay reset --hard "$UPSTREAM_SHA"
+          git -C accepted-replay clean -fdx
+          git -C accepted-replay apply --check --whitespace=nowarn "$WOLFFOG_CUMULATIVE"
+          git -C accepted-replay apply --whitespace=nowarn "$WOLFFOG_CUMULATIVE"
+          git -C accepted-replay diff --check
+          git -C accepted-replay diff --name-only "$UPSTREAM_SHA" | LC_ALL=C sort > replay-source-files.txt
+          diff -u accepted-source-files.txt replay-source-files.txt
+          while IFS= read -r f; do
+            [[ -n "$f" ]] || continue
+            cmp "source/$f" "accepted-replay/$f"
+          done < accepted-source-files.txt
+          echo "Exact cumulative replay PASS for $(wc -l < accepted-source-files.txt) changed source files."
+
+      - name: Build complete SP-only Windows x64 from accepted source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify exact complete SP build outputs
+        run: |
+          set -Eeuo pipefail
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          required=("$SP_OUT/ioWolfSP.x64.exe" "$SP_OUT/renderer_sp_opengl1_x64.dll" "$SP_OUT/renderer_sp_rend2_x64.dll" "$SP_OUT/main/cgame_sp_x64.dll" "$SP_OUT/main/qagame_sp_x64.dll" "$SP_OUT/main/ui_sp_x64.dll")
+          for f in "${required[@]}"; do test -s "$f" || { echo "::error::Missing $f" >&2; exit 1; }; done
+          test ! -d source/MP/build || { echo "::error::MP build directory exists" >&2; exit 1; }
+
+      - name: Package complete preproduction NO-BAT release
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Preproduction packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE"
+
+          # Start from the exact successful V5.4 full release shell so all already-approved
+          # non-binary files/layout are preserved, then replace every rebuilt SP binary.
+          cp -a "$V54_STAGE/." "$STAGE/"
+          rm -f "$STAGE/SHA256SUMS.txt" "$STAGE/README_V12_0_FIX_V5_4_FINAL_RU.txt"
+          find "$STAGE" -type f -iname '*.bat' -delete
+
+          install -m 0755 "$SP_OUT/ioWolfSP.x64.exe" "$STAGE/ioWolfSP.x64.exe"
+          install -m 0644 "$SP_OUT/renderer_sp_opengl1_x64.dll" "$STAGE/renderer_sp_opengl1_x64.dll"
+          install -m 0644 "$SP_OUT/renderer_sp_rend2_x64.dll" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 "$SP_OUT/main/cgame_sp_x64.dll" "$STAGE/main/cgame_sp_x64.dll"
+          install -m 0644 "$SP_OUT/main/qagame_sp_x64.dll" "$STAGE/main/qagame_sp_x64.dll"
+          install -m 0644 "$SP_OUT/main/ui_sp_x64.dll" "$STAGE/main/ui_sp_x64.dll"
+
+          mkdir -p "$STAGE/docs"
+          install -m 0644 "$WOLFFOG_CUMULATIVE" "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sp.patch"
+          install -m 0644 "$WOLFFOG_DELTA" "$STAGE/docs/rend2-wolffog-r0-sky-fog-priority-sp.patch"
+          install -m 0755 "$WOLFFOG_PATCHER" "$STAGE/docs/apply_rend2_wolffog_r0_sky_fog_priority_sp.py"
+
+          cat > "$STAGE/README_PREPRODUCTION_SUN_R0_1_WOLFFOG_R0.txt" <<'TXT'
+          DarkWolf/ioRTCW Rend2 PREPRODUCTION - V5.4 + SUN-R0.1 + WOLFFOG-R0
+          ===================================================================
+
+          Purpose
+          -------
+          Full SP-only Windows x64 checkpoint before continuing r_sunlightMode 1/2 work.
+
+          Accepted lineage included
+          -------------------------
+          1. V12.0 Fix V5.4 FINAL v2 base.
+          2. SUN-R0 DepthShadow Isolation Restore.
+             - Restores the original sunlight depth-shadow path.
+             - Grates, fences and thin rails cast sunlight shadows again.
+             - NPC sunlight shadows remain working.
+          3. SUN-R0.1 Local Player Shadow Control Restore.
+             - r_dlightPlayerShadow 0 removes only the local player's real shadow participation.
+             - r_dlightPlayerShadow 1 keeps local-player shadows enabled.
+             - If sun and a lamp both illuminate the player, two independent real shadows are expected.
+          4. SKY-R1 / WOLFFOG-R0 RTCW Sky Fog Priority Restore.
+             - Keeps r_wolffog 1 enabled.
+             - Removes the tested Y-shaped sky seams by preserving FOG_SKY priority for sky views.
+             - World/level fog remains enabled, including fog-heavy maps such as tram.
+
+          Explicitly NOT included
+          -----------------------
+          - Rejected SKY-R0 outerbox no-mip experiment.
+          - New sunlight quality, intensity, cascade, bias or exposure tuning.
+          - Startup cvar overrides.
+
+          Important runtime notes
+          -----------------------
+          r_wolffog 1 is the intended production setting for this checkpoint.
+          r_dlightPlayerShadow 1 is the default archived setting.
+          r_dlightShadowStrength 0.88 remains the existing dynamic-light shadow strength baseline.
+
+          Acceptance already observed before this full packaging workflow
+          --------------------------------------------------------------
+          - WOLFFOG-R0 with r_wolffog 1: sky seam removed while RTCW fog remains.
+          - SUN-R0: grate/rail sunlight shadows restored.
+          - SUN-R0.1: local-player shadow toggle works without removing NPC/grate sunlight shadows.
+          - Sun + lamp can correctly produce two separate shadows from two light sources.
+
+          This workflow recompiles the complete SP binary set from the accepted cumulative source
+          and packages a full NO-BAT release for local archival/regression testing.
+          TXT
+
+          cat > "$STAGE/docs/PREPRODUCTION_BUILD_INFO.txt" <<EOF
+          workflow_revision=PREPRODUCTION-v12.0-fix-v5.4-sun-r0_1-wolffog-r0-full-sp
+          upstream_sha=$UPSTREAM_SHA
+          source_of_truth=exact_successful_WOLFFOG_R0_cumulative_patch
+          wolffog_run_id=$WOLFFOG_RUN_ID
+          wolffog_artifact_id=$WOLFFOG_ARTIFACT_ID
+          wolffog_artifact_name=$WOLFFOG_ARTIFACT_NAME
+          wolffog_cumulative_sha256=$WOLFFOG_CUMULATIVE_SHA256
+          v54_full_shell_run_id=$V54_RUN_ID
+          v54_full_shell_artifact_id=$V54_ARTIFACT_ID
+          v54_full_shell_artifact_name=$V54_ARTIFACT_NAME
+          sun_r0=ACCEPTED_RUNTIME
+          sun_r0_1=ACCEPTED_RUNTIME
+          wolffog_r0=ACCEPTED_RUNTIME
+          rejected_sky_r0_no_mip=NOT_INCLUDED
+          player_shadow_control=r_dlightPlayerShadow_0_1
+          player_shadow_scope=VPF_SHADOWMAP_plus_VPF_DEPTHSHADOW_for_local_RF_THIRD_PERSON_guard
+          wolf_fog_setting=r_wolffog_1_intended
+          sky_fog_priority=RDF_DRAWINGSKY_FOG_SKY_else_portal_else_current
+          sunlight_quality_changes=NONE_AFTER_SUN_R0_RESTORE
+          sunlight_intensity_changes=NONE
+          startup_overrides=NONE
+          package_type=FULL_SP_ONLY_WINDOWS_X64_NO_BAT
+          rebuilt_binaries=ioWolfSP.x64.exe,renderer_sp_opengl1_x64.dll,renderer_sp_rend2_x64.dll,main/cgame_sp_x64.dll,main/qagame_sp_x64.dll,main/ui_sp_x64.dll
+          next_stage=r_sunlightMode_1_2_quality_and_behavior
+          EOF
+
+          cat > "$STAGE/docs/REGRESSION_CHECKLIST.txt" <<'TXT'
+          PREPRODUCTION REGRESSION CHECKLIST
+          ==================================
+          [ ] r_wolffog 1: no Y-shaped sky seams in the known test scene.
+          [ ] tram: heavy RTCW fog still present and visually correct.
+          [ ] sunlight: grate door casts structured shadow.
+          [ ] sunlight: tower/fence rails cast separate thin shadows.
+          [ ] Assault/open sunlight: NPC sunlight shadows remain.
+          [ ] r_dlightPlayerShadow 0: local-player shadow disappears only for local player.
+          [ ] r_dlightPlayerShadow 1: local-player real shadows return.
+          [ ] sun + lamp: two physically separate shadows are allowed/expected.
+          [ ] dynamic point-light shadows remain functional.
+          [ ] character picmip behavior from V5.4 remains functional.
+          [ ] no unexpected FPS regression versus accepted checkpoints.
+          TXT
+
+          for f in ioWolfSP.x64.exe renderer_sp_opengl1_x64.dll renderer_sp_rend2_x64.dll main/cgame_sp_x64.dll main/qagame_sp_x64.dll main/ui_sp_x64.dll; do
+            test -s "$STAGE/$f" || { echo "::error::Preproduction release missing $f" >&2; exit 1; }
+          done
+          test -s "$STAGE/README_PREPRODUCTION_SUN_R0_1_WOLFFOG_R0.txt"
+          test -s "$STAGE/docs/PREPRODUCTION_BUILD_INFO.txt"
+          test -s "$STAGE/docs/REGRESSION_CHECKLIST.txt"
+          test -s "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sp.patch"
+          test -s "$STAGE/docs/rend2-wolffog-r0-sky-fog-priority-sp.patch"
+          test -s "$STAGE/docs/apply_rend2_wolffog_r0_sky_fog_priority_sp.py"
+          if find "$STAGE" -type f -iname '*.bat' -print -quit | grep -q .; then echo "::error::BAT found in preproduction NO-BAT release" >&2; exit 1; fi
+          if test -e "$STAGE/main/static_promote_user_overrides.txt"; then echo "::error::User override file must not be packaged" >&2; exit 1; fi
+          if test -e "$STAGE/main/static_promote_synthetic_lights.txt"; then echo "::error::Synthetic user file must not be packaged" >&2; exit 1; fi
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sp.patch"
+          grep -Fq 'REND2_SUN_R0_DEPTHSHADOW_ISOLATION_V5_4' "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sp.patch"
+          grep -Fq 'REND2_SUN_R0_1_LOCAL_PLAYER_SHADOW_CONTROL_V5_4' "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sp.patch"
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_FOGPASS' "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sp.patch"
+          grep -Fq 'REND2_WOLFFOG_R0_SKY_FOG_PRIORITY_V5_4_STAGE' "$STAGE/docs/rend2-cumulative-preproduction-v12_0-fix-v5_4-sun-r0_1-wolffog-r0-sp.patch"
+
+          ( cd "$STAGE"; find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload complete preproduction release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
