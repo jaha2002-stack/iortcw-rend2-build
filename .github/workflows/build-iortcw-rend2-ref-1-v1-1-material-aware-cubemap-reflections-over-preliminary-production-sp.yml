@@ -1,0 +1,575 @@
+name: Build ioRTCW Rend2 REF-1 v1.1 Material-Aware Cubemap Reflections SP-only Windows x64
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "rend2-ref-1-v1-1-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP-only REF-1 v1.1 over Preliminary Production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      BASE_RELEASE_BASENAME: "iortcw-rend2-preliminary-production-sun-5c-mat0-v2-4-mat1-v2-sp-windows-x64"
+      BASE_CUMULATIVE_NAME: "rend2-cumulative-preliminary-production-sun5c-mat0-v2-4-mat1-v2-sp.patch"
+      BASE_BUILD_INFO_NAME: "PRELIMINARY_PRODUCTION_BUILD_INFO.txt"
+      EXPECTED_PRELIMINARY_SUN5C_SHA256: "887849da3d3e6291087e5a7c9c5174b9376a401a1bb5527d41420923d9810121"
+      EXPECTED_MAT1V2_PATCHER_SHA256: "b7f0f4ded001f2ff5a39091fc49c5bd7f6b42443817d07b028904e167f9cf16a"
+      EXPECTED_PRODUCTION_PATCHER_SHA256: "51fcb2977ad227f4e2395c4024bf3c19e2d8ed68e22c3f6e000327d5ac486049"
+      REF1_PATCHER_SHA256: "1a622d126f88db9aeab5db436af73106524b137444caa03d3aa54741319daeb8"
+      RELEASE_BASENAME: "iortcw-rend2-ref-1-v1-1-material-aware-cubemap-reflections-over-preliminary-production-sp-windows-x64"
+      REF1_DELTA_NAME: "rend2-ref-1-v1-1-material-aware-cubemap-reflections-sp.patch"
+      REF1_CUMULATIVE_NAME: "rend2-cumulative-preliminary-production-ref-1-v1-1-material-aware-cubemap-reflections-sp.patch"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Prerequisite step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+          python3 --version
+
+      - name: Recover exact successful Preliminary Production checkpoint
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Preliminary Production artifact recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > all-artifacts.tsv
+
+          python3 - <<'PY_SELECT_BASE' > base-selected.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['BASE_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('all-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created, aid, rid, name = parts
+              if name.startswith(prefix):
+                  rows.append((created, aid, rid, name))
+          if not rows:
+              raise SystemExit('No retained Preliminary Production artifact with prefix %r' % prefix)
+          rows.sort(key=lambda x: x[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT_BASE
+
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < base-selected.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed base artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected base run is not successful: $run_conclusion" >&2; exit 1; }
+
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir base-artifact
+          base_zip="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip" -print -quit)"
+          base_zip_sha="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_zip_sha" && -s "$base_zip_sha" ]] || { echo "::error::Base ZIP/SHA missing" >&2; find base-artifact -type f -print >&2; exit 1; }
+          expected_zip_sha="$(awk 'NF {print $1; exit}' "$base_zip_sha")"
+          actual_zip_sha="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected_zip_sha" =~ ^[0-9a-fA-F]{64}$ && "$actual_zip_sha" = "$expected_zip_sha" ]] || { echo "::error::Base ZIP SHA mismatch" >&2; exit 1; }
+
+          unzip -q "$base_zip" -d base-release
+          BASE_STAGE="$GITHUB_WORKSPACE/base-release/$BASE_RELEASE_BASENAME"
+          BASE_CUMULATIVE="$BASE_STAGE/docs/$BASE_CUMULATIVE_NAME"
+          BASE_CUMULATIVE_SHA_FILE="$BASE_CUMULATIVE.sha256"
+          BASE_BUILD_INFO="$BASE_STAGE/docs/$BASE_BUILD_INFO_NAME"
+          [[ -d "$BASE_STAGE" && -s "$BASE_STAGE/renderer_sp_rend2_x64.dll" && -s "$BASE_CUMULATIVE" && -s "$BASE_CUMULATIVE_SHA_FILE" && -s "$BASE_BUILD_INFO" ]] || { echo "::error::Base runtime/cumulative/build-info files missing" >&2; exit 1; }
+          expected_cumulative_sha="$(awk 'NF {print $1; exit}' "$BASE_CUMULATIVE_SHA_FILE")"
+          actual_cumulative_sha="$(sha256sum "$BASE_CUMULATIVE" | awk '{print $1}')"
+          [[ "$expected_cumulative_sha" =~ ^[0-9a-fA-F]{64}$ && "$actual_cumulative_sha" = "$expected_cumulative_sha" ]] || { echo "::error::Base cumulative SHA mismatch" >&2; exit 1; }
+
+          grep -Fq "upstream_sha=$UPSTREAM_SHA" "$BASE_BUILD_INFO"
+          grep -Fq "expected_preliminary_sun5c_sha256=$EXPECTED_PRELIMINARY_SUN5C_SHA256" "$BASE_BUILD_INFO"
+          grep -Fq "expected_mat1v2_patcher_sha256=$EXPECTED_MAT1V2_PATCHER_SHA256" "$BASE_BUILD_INFO"
+          grep -Fq "production_patcher_sha256=$EXPECTED_PRODUCTION_PATCHER_SHA256" "$BASE_BUILD_INFO"
+          grep -Fq 'material_aware_default=1' "$BASE_BUILD_INFO"
+          grep -Fq 'class_mask_default=10' "$BASE_BUILD_INFO"
+          grep -Fq 'classic_mineral_specular=0.015' "$BASE_BUILD_INFO"
+          grep -Fq 'classic_mineral_roughness=0.95' "$BASE_BUILD_INFO"
+          grep -Fq 'classic_metal_specular=0.14' "$BASE_BUILD_INFO"
+          grep -Fq 'classic_metal_roughness=0.45' "$BASE_BUILD_INFO"
+          grep -Fq 'pbr_mineral_metallic=0.00' "$BASE_BUILD_INFO"
+          grep -Fq 'pbr_metal_metallic=0.55' "$BASE_BUILD_INFO"
+          grep -Fq 'mat0_classifier_frozen=YES' "$BASE_BUILD_INFO"
+          grep -Fq 'glsl_brdf_math_changed=NO' "$BASE_BUILD_INFO"
+          grep -Fq 'REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_PRELIMINARY_PRODUCTION_SUN5C_MAT0V24_MAT1V2' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SUN_4A' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' "$BASE_CUMULATIVE"
+
+          echo "BASE_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE=$BASE_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE_SHA256=$actual_cumulative_sha" >> "$GITHUB_ENV"
+          echo "BASE_ZIP_SHA256=$actual_zip_sha" >> "$GITHUB_ENV"
+          echo "Recovered exact successful Preliminary Production base: $artifact_name run=$run_id cumulative_sha=$actual_cumulative_sha"
+
+      - name: Reconstruct and freeze exact Preliminary Production source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Base source reconstruction failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git clone --no-checkout --filter=blob:none "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source config user.email "darkwolf-ref1@local.invalid"
+          git -C source config user.name "DarkWolf REF-1 Builder"
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]]
+
+          git -C source apply --check --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source diff --check
+          git -C source apply --check --reverse --whitespace=nowarn "$BASE_CUMULATIVE"
+
+          grep -Fq 'REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER4' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "4", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION' source/SP/code/rend2/tr_shader.c
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_PRELIMINARY_PRODUCTION_SUN5C_MAT0V24_MAT1V2' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialAwareFallback = ri.Cvar_Get( "r_materialAwareFallback", "1", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackClassMask = ri.Cvar_Get( "r_materialFallbackClassMask", "10", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMineralRoughness = ri.Cvar_Get( "r_materialFallbackMineralRoughness", "0.95", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMetalRoughness = ri.Cvar_Get( "r_materialFallbackMetalRoughness", "0.45", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMetalMetallic = ri.Cvar_Get( "r_materialFallbackMetalMetallic", "0.55", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'enableTextures[3] = (r_cubeMapping->integer && !(tr.viewParms.flags & VPF_NOCUBEMAPS) && input->cubemapIndex) ? 1.0f : 0.0f;' source/SP/code/rend2/tr_shade.c
+          ! grep -R -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' source/SP/code/rend2
+          ! grep -R -Fq 'REND2_REF_1_V1_1_ROBUST_ANCHOR_FIX' source/SP/code/rend2
+          ! grep -R -Fq 'REND2_SUN_4A' source/SP/code/rend2
+
+          git -C source add -A
+          git -C source commit -m "Freeze accepted Preliminary Production SUN-5C MAT-0 v2.4 MAT-1 v2 base"
+          echo "REF1_BASE_COMMIT=$(git -C source rev-parse HEAD)" >> "$GITHUB_ENV"
+          [[ -z "$(git -C source status --porcelain)" ]]
+
+      - name: Apply REF-1 v1.1 Material-Aware Cubemap Reflections
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::REF-1 v1.1 application failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          cat > ref1-patcher.b64 <<'REF1_B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKaW1wb3J0IHN5
+          cwoKTUFSS0VSID0gJ1JFTkQyX1JFRl8xX1YxX01BVEVSSUFMX0FXQVJFX0NVQkVNQVBfUkVGTEVD
+          VElPTlMnCkZJWF9NQVJLRVIgPSAnUkVORDJfUkVGXzFfVjFfMV9ST0JVU1RfQU5DSE9SX0ZJWCcK
+          CgpkZWYgbm9ybV9saW5lKGxpbmU6IHN0cikgLT4gc3RyOgogICAgcmV0dXJuIGxpbmUuc3RyaXAo
+          KQoKCmRlZiBpbnNlcnRfYWZ0ZXJfdW5pcXVlX2xpbmUodGV4dDogc3RyLCBhbmNob3JfbGluZTog
+          c3RyLCBibG9jazogc3RyLCBsYWJlbDogc3RyKSAtPiBzdHI6CiAgICBsaW5lcyA9IHRleHQuc3Bs
+          aXRsaW5lcyhrZWVwZW5kcz1UcnVlKQogICAgbWF0Y2hlcyA9IFtpIGZvciBpLCBsaW5lIGluIGVu
+          dW1lcmF0ZShsaW5lcykgaWYgbm9ybV9saW5lKGxpbmUpID09IGFuY2hvcl9saW5lXQogICAgaWYg
+          bGVuKG1hdGNoZXMpICE9IDE6CiAgICAgICAgcmFpc2UgU3lzdGVtRXhpdChmJ3tsYWJlbH06IGV4
+          cGVjdGVkIGV4YWN0bHkgb25lIHNlbWFudGljIGxpbmUgYW5jaG9yLCBmb3VuZCB7bGVuKG1hdGNo
+          ZXMpfScpCiAgICBpID0gbWF0Y2hlc1swXQogICAgbmV3bGluZSA9ICdcbicgaWYgbGluZXNbaV0u
+          ZW5kc3dpdGgoJ1xuJykgZWxzZSAnJwogICAgaWYgbmV3bGluZSA9PSAnJzoKICAgICAgICBsaW5l
+          c1tpXSArPSAnXG4nCiAgICBpbnNlcnRpb24gPSBibG9jawogICAgaWYgbm90IGluc2VydGlvbi5l
+          bmRzd2l0aCgnXG4nKToKICAgICAgICBpbnNlcnRpb24gKz0gJ1xuJwogICAgbGluZXMuaW5zZXJ0
+          KGkgKyAxLCBpbnNlcnRpb24pCiAgICByZXR1cm4gJycuam9pbihsaW5lcykKCgpkZWYgcmVwbGFj
+          ZV91bmlxdWVfY3ViZW1hcF9nYXRlKHRleHQ6IHN0cikgLT4gc3RyOgogICAgbGluZXMgPSB0ZXh0
+          LnNwbGl0bGluZXMoa2VlcGVuZHM9VHJ1ZSkKICAgIG1hdGNoZXMgPSBbXQogICAgZm9yIGksIGxp
+          bmUgaW4gZW51bWVyYXRlKGxpbmVzKToKICAgICAgICBzID0gbGluZS5zdHJpcCgpCiAgICAgICAg
+          aWYgKHMuc3RhcnRzd2l0aCgnZW5hYmxlVGV4dHVyZXNbM10gPSAoJykgYW5kCiAgICAgICAgICAg
+          ICAgICAncl9jdWJlTWFwcGluZy0+aW50ZWdlcicgaW4gcyBhbmQKICAgICAgICAgICAgICAgICdW
+          UEZfTk9DVUJFTUFQUycgaW4gcyBhbmQKICAgICAgICAgICAgICAgICdpbnB1dC0+Y3ViZW1hcElu
+          ZGV4JyBpbiBzIGFuZAogICAgICAgICAgICAgICAgJz8gMS4wZiA6IDAuMGY7JyBpbiBzKToKICAg
+          ICAgICAgICAgbWF0Y2hlcy5hcHBlbmQoaSkKICAgIGlmIGxlbihtYXRjaGVzKSAhPSAxOgogICAg
+          ICAgIHJhaXNlIFN5c3RlbUV4aXQoZid0cl9zaGFkZS5jIFJFRi0xIGN1YmVtYXAgZ2F0ZTogZXhw
+          ZWN0ZWQgZXhhY3RseSBvbmUgc2VtYW50aWMgYW5jaG9yLCBmb3VuZCB7bGVuKG1hdGNoZXMpfScp
+          CiAgICBpID0gbWF0Y2hlc1swXQogICAgbGluZSA9IGxpbmVzW2ldCiAgICBpbmRlbnQgPSBsaW5l
+          WzpsZW4obGluZSkgLSBsZW4obGluZS5sc3RyaXAoKSldCiAgICBsaW5lc1tpOmkrMV0gPSBbCiAg
+          ICAgICAgaW5kZW50ICsgJy8vICcgKyBNQVJLRVIgKyAnOiBwcmVzZXJ2ZSB0aGUgdmFuaWxsYSBj
+          dWJlbWFwIGdhdGUsIHRoZW4gc2NhbGUgb25seSBlbGlnaWJsZSBmYWxsYmFjayBjbGFzc2VzLlxu
+          JywKICAgICAgICBpbmRlbnQgKyAnZW5hYmxlVGV4dHVyZXNbM10gPSAocl9jdWJlTWFwcGluZy0+
+          aW50ZWdlciAmJiAhKHRyLnZpZXdQYXJtcy5mbGFncyAmIFZQRl9OT0NVQkVNQVBTKSAmJiBpbnB1
+          dC0+Y3ViZW1hcEluZGV4KVxuJywKICAgICAgICBpbmRlbnQgKyAnXHQ/IFJfUmVmMVJlZmxlY3Rp
+          b25TY2FsZShwU3RhZ2UpIDogMC4wZjtcbicsCiAgICBdCiAgICByZXR1cm4gJycuam9pbihsaW5l
+          cykKCgpkZWYgcGF0Y2hfZmlsZShyb290OiBQYXRoLCByZWw6IHN0ciwgZnVuYykgLT4gTm9uZToK
+          ICAgIHBhdGggPSByb290IC8gcmVsCiAgICBpZiBub3QgcGF0aC5pc19maWxlKCk6CiAgICAgICAg
+          cmFpc2UgU3lzdGVtRXhpdChmJ21pc3Npbmcge3BhdGh9JykKICAgIHRleHQgPSBwYXRoLnJlYWRf
+          dGV4dChlbmNvZGluZz0ndXRmLTgnKQogICAgaWYgTUFSS0VSIGluIHRleHQgb3IgRklYX01BUktF
+          UiBpbiB0ZXh0OgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoZid7cmVsfTogUkVGLTEgYWxyZWFk
+          eSBhcHBsaWVkJykKICAgIG5ld190ZXh0ID0gZnVuYyh0ZXh0KQogICAgaWYgbmV3X3RleHQgPT0g
+          dGV4dDoKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KGYne3JlbH06IG5vIGNoYW5nZXMgcHJvZHVj
+          ZWQnKQogICAgcGF0aC53cml0ZV90ZXh0KG5ld190ZXh0LCBlbmNvZGluZz0ndXRmLTgnLCBuZXds
+          aW5lPSdcbicpCgoKZGVmIHBhdGNoX2luaXQodGV4dDogc3RyKSAtPiBzdHI6CiAgICBkZWNsYXJh
+          dGlvbnMgPSAoCiAgICAgICAgJy8vICcgKyBNQVJLRVIgKyAnXG4nCiAgICAgICAgJy8vICcgKyBG
+          SVhfTUFSS0VSICsgJzogc2VtYW50aWMtbGluZSBhbmNob3JzIHJlcGxhY2UgdGhlIGZhaWxlZCB2
+          MSBhZGphY2VuY3kgYW5jaG9yLlxuJwogICAgICAgICdjdmFyX3QgICpyX21hdGVyaWFsQXdhcmVS
+          ZWZsZWN0aW9ucztcbicKICAgICAgICAnY3Zhcl90ICAqcl9tYXRlcmlhbFJlZmxlY3Rpb25DbGFz
+          c01hc2s7XG4nCiAgICAgICAgJ2N2YXJfdCAgKnJfbWF0ZXJpYWxSZWZsZWN0aW9uVW5rbm93blNj
+          YWxlO1xuJwogICAgICAgICdjdmFyX3QgICpyX21hdGVyaWFsUmVmbGVjdGlvbk1pbmVyYWxTY2Fs
+          ZTtcbicKICAgICAgICAnY3Zhcl90ICAqcl9tYXRlcmlhbFJlZmxlY3Rpb25Xb29kU2NhbGU7XG4n
+          CiAgICAgICAgJ2N2YXJfdCAgKnJfbWF0ZXJpYWxSZWZsZWN0aW9uTWV0YWxTY2FsZTtcbicKICAg
+          ICAgICAnY3Zhcl90ICAqcl9tYXRlcmlhbFJlZmxlY3Rpb25HbGFzc1NjYWxlO1xuJwogICAgICAg
+          ICdjdmFyX3QgICpyX21hdGVyaWFsUmVmbGVjdGlvbk9yZ2FuaWNTY2FsZTtcbicKICAgICAgICAn
+          Y3Zhcl90ICAqcl9tYXRlcmlhbFJlZmxlY3Rpb25Tbm93U2NhbGU7XG4nCiAgICAgICAgJ2N2YXJf
+          dCAgKnJfbWF0ZXJpYWxSZWZsZWN0aW9uRmFicmljU2NhbGU7XG4nCiAgICAgICAgJ2N2YXJfdCAg
+          KnJfbWF0ZXJpYWxSZWZsZWN0aW9uQ2VyYW1pY1NjYWxlO1xuJwogICAgICAgICdjdmFyX3QgICpy
+          X21hdGVyaWFsUmVmbGVjdGlvbk1heDsnCiAgICApCiAgICB0ZXh0ID0gaW5zZXJ0X2FmdGVyX3Vu
+          aXF1ZV9saW5lKAogICAgICAgIHRleHQsCiAgICAgICAgJ2N2YXJfdCAgKnJfbWF0ZXJpYWxGYWxs
+          YmFja0NlcmFtaWNNZXRhbGxpYzsnLAogICAgICAgIGRlY2xhcmF0aW9ucywKICAgICAgICAndHJf
+          aW5pdC5jIFJFRi0xIGN2YXIgZGVjbGFyYXRpb25zJykKCiAgICByZWdpc3RyYXRpb24gPSAoCiAg
+          ICAgICAgJ1xuXHQvLyAnICsgTUFSS0VSICsgJ1xuJwogICAgICAgICdcdC8vIE9GRiBpcyBhIHN0
+          cmljdCB2YW5pbGxhLWN1YmVtYXAgQS9CIGJhc2VsaW5lLiBPbmx5IGVuYWJsZWQgZmFsbGJhY2sg
+          Y2xhc3NlcyBhcmUgc2NhbGVkLlxuJwogICAgICAgICdcdHJfbWF0ZXJpYWxBd2FyZVJlZmxlY3Rp
+          b25zID0gcmkuQ3Zhcl9HZXQoICJyX21hdGVyaWFsQXdhcmVSZWZsZWN0aW9ucyIsICIwIiwgQ1ZB
+          Ul9BUkNISVZFIHwgQ1ZBUl9MQVRDSCApO1xuJwogICAgICAgICdcdHJpLkN2YXJfQ2hlY2tSYW5n
+          ZSggcl9tYXRlcmlhbEF3YXJlUmVmbGVjdGlvbnMsIDAsIDEsIHF0cnVlICk7XG4nCiAgICAgICAg
+          J1x0cl9tYXRlcmlhbFJlZmxlY3Rpb25DbGFzc01hc2sgPSByaS5DdmFyX0dldCggInJfbWF0ZXJp
+          YWxSZWZsZWN0aW9uQ2xhc3NNYXNrIiwgIjEwIiwgQ1ZBUl9BUkNISVZFIHwgQ1ZBUl9MQVRDSCAp
+          O1xuJwogICAgICAgICdcdHJpLkN2YXJfQ2hlY2tSYW5nZSggcl9tYXRlcmlhbFJlZmxlY3Rpb25D
+          bGFzc01hc2ssIDAsIDUxMSwgcXRydWUgKTtcbicKICAgICAgICAnXHRyX21hdGVyaWFsUmVmbGVj
+          dGlvblVua25vd25TY2FsZSA9IHJpLkN2YXJfR2V0KCAicl9tYXRlcmlhbFJlZmxlY3Rpb25Vbmtu
+          b3duU2NhbGUiLCAiMC4xMCIsIENWQVJfQVJDSElWRSB8IENWQVJfTEFUQ0ggKTtcbicKICAgICAg
+          ICAnXHRyX21hdGVyaWFsUmVmbGVjdGlvbk1pbmVyYWxTY2FsZSA9IHJpLkN2YXJfR2V0KCAicl9t
+          YXRlcmlhbFJlZmxlY3Rpb25NaW5lcmFsU2NhbGUiLCAiMC4wNSIsIENWQVJfQVJDSElWRSB8IENW
+          QVJfTEFUQ0ggKTtcbicKICAgICAgICAnXHRyX21hdGVyaWFsUmVmbGVjdGlvbldvb2RTY2FsZSA9
+          IHJpLkN2YXJfR2V0KCAicl9tYXRlcmlhbFJlZmxlY3Rpb25Xb29kU2NhbGUiLCAiMC4xMCIsIENW
+          QVJfQVJDSElWRSB8IENWQVJfTEFUQ0ggKTtcbicKICAgICAgICAnXHRyX21hdGVyaWFsUmVmbGVj
+          dGlvbk1ldGFsU2NhbGUgPSByaS5DdmFyX0dldCggInJfbWF0ZXJpYWxSZWZsZWN0aW9uTWV0YWxT
+          Y2FsZSIsICIwLjYwIiwgQ1ZBUl9BUkNISVZFIHwgQ1ZBUl9MQVRDSCApO1xuJwogICAgICAgICdc
+          dHJfbWF0ZXJpYWxSZWZsZWN0aW9uR2xhc3NTY2FsZSA9IHJpLkN2YXJfR2V0KCAicl9tYXRlcmlh
+          bFJlZmxlY3Rpb25HbGFzc1NjYWxlIiwgIjAuNzAiLCBDVkFSX0FSQ0hJVkUgfCBDVkFSX0xBVENI
+          ICk7XG4nCiAgICAgICAgJ1x0cl9tYXRlcmlhbFJlZmxlY3Rpb25PcmdhbmljU2NhbGUgPSByaS5D
+          dmFyX0dldCggInJfbWF0ZXJpYWxSZWZsZWN0aW9uT3JnYW5pY1NjYWxlIiwgIjAuMDUiLCBDVkFS
+          X0FSQ0hJVkUgfCBDVkFSX0xBVENIICk7XG4nCiAgICAgICAgJ1x0cl9tYXRlcmlhbFJlZmxlY3Rp
+          b25Tbm93U2NhbGUgPSByaS5DdmFyX0dldCggInJfbWF0ZXJpYWxSZWZsZWN0aW9uU25vd1NjYWxl
+          IiwgIjAuMDgiLCBDVkFSX0FSQ0hJVkUgfCBDVkFSX0xBVENIICk7XG4nCiAgICAgICAgJ1x0cl9t
+          YXRlcmlhbFJlZmxlY3Rpb25GYWJyaWNTY2FsZSA9IHJpLkN2YXJfR2V0KCAicl9tYXRlcmlhbFJl
+          ZmxlY3Rpb25GYWJyaWNTY2FsZSIsICIwLjAzIiwgQ1ZBUl9BUkNISVZFIHwgQ1ZBUl9MQVRDSCAp
+          O1xuJwogICAgICAgICdcdHJfbWF0ZXJpYWxSZWZsZWN0aW9uQ2VyYW1pY1NjYWxlID0gcmkuQ3Zh
+          cl9HZXQoICJyX21hdGVyaWFsUmVmbGVjdGlvbkNlcmFtaWNTY2FsZSIsICIwLjIwIiwgQ1ZBUl9B
+          UkNISVZFIHwgQ1ZBUl9MQVRDSCApO1xuJwogICAgICAgICdcdHJfbWF0ZXJpYWxSZWZsZWN0aW9u
+          TWF4ID0gcmkuQ3Zhcl9HZXQoICJyX21hdGVyaWFsUmVmbGVjdGlvbk1heCIsICIwLjc1IiwgQ1ZB
+          Ul9BUkNISVZFIHwgQ1ZBUl9MQVRDSCApO1xuJwogICAgICAgICdcdHJpLkN2YXJfQ2hlY2tSYW5n
+          ZSggcl9tYXRlcmlhbFJlZmxlY3Rpb25Vbmtub3duU2NhbGUsIDAuMGYsIDEuMGYsIHFmYWxzZSAp
+          O1xuJwogICAgICAgICdcdHJpLkN2YXJfQ2hlY2tSYW5nZSggcl9tYXRlcmlhbFJlZmxlY3Rpb25N
+          aW5lcmFsU2NhbGUsIDAuMGYsIDEuMGYsIHFmYWxzZSApO1xuJwogICAgICAgICdcdHJpLkN2YXJf
+          Q2hlY2tSYW5nZSggcl9tYXRlcmlhbFJlZmxlY3Rpb25Xb29kU2NhbGUsIDAuMGYsIDEuMGYsIHFm
+          YWxzZSApO1xuJwogICAgICAgICdcdHJpLkN2YXJfQ2hlY2tSYW5nZSggcl9tYXRlcmlhbFJlZmxl
+          Y3Rpb25NZXRhbFNjYWxlLCAwLjBmLCAxLjBmLCBxZmFsc2UgKTtcbicKICAgICAgICAnXHRyaS5D
+          dmFyX0NoZWNrUmFuZ2UoIHJfbWF0ZXJpYWxSZWZsZWN0aW9uR2xhc3NTY2FsZSwgMC4wZiwgMS4w
+          ZiwgcWZhbHNlICk7XG4nCiAgICAgICAgJ1x0cmkuQ3Zhcl9DaGVja1JhbmdlKCByX21hdGVyaWFs
+          UmVmbGVjdGlvbk9yZ2FuaWNTY2FsZSwgMC4wZiwgMS4wZiwgcWZhbHNlICk7XG4nCiAgICAgICAg
+          J1x0cmkuQ3Zhcl9DaGVja1JhbmdlKCByX21hdGVyaWFsUmVmbGVjdGlvblNub3dTY2FsZSwgMC4w
+          ZiwgMS4wZiwgcWZhbHNlICk7XG4nCiAgICAgICAgJ1x0cmkuQ3Zhcl9DaGVja1JhbmdlKCByX21h
+          dGVyaWFsUmVmbGVjdGlvbkZhYnJpY1NjYWxlLCAwLjBmLCAxLjBmLCBxZmFsc2UgKTtcbicKICAg
+          ICAgICAnXHRyaS5DdmFyX0NoZWNrUmFuZ2UoIHJfbWF0ZXJpYWxSZWZsZWN0aW9uQ2VyYW1pY1Nj
+          YWxlLCAwLjBmLCAxLjBmLCBxZmFsc2UgKTtcbicKICAgICAgICAnXHRyaS5DdmFyX0NoZWNrUmFu
+          Z2UoIHJfbWF0ZXJpYWxSZWZsZWN0aW9uTWF4LCAwLjBmLCAxLjBmLCBxZmFsc2UgKTsnCiAgICAp
+          CiAgICB0ZXh0ID0gaW5zZXJ0X2FmdGVyX3VuaXF1ZV9saW5lKAogICAgICAgIHRleHQsCiAgICAg
+          ICAgJ3JpLkN2YXJfQ2hlY2tSYW5nZSggcl9tYXRlcmlhbEZhbGxiYWNrQ2VyYW1pY01ldGFsbGlj
+          LCAwLjBmLCAxLjBmLCBxZmFsc2UgKTsnLAogICAgICAgIHJlZ2lzdHJhdGlvbiwKICAgICAgICAn
+          dHJfaW5pdC5jIFJFRi0xIGN2YXIgcmVnaXN0cmF0aW9uJykKICAgIHJldHVybiB0ZXh0CgoKZGVm
+          IHBhdGNoX2xvY2FsKHRleHQ6IHN0cikgLT4gc3RyOgogICAgZXh0ZXJucyA9ICgKICAgICAgICAn
+          Ly8gJyArIE1BUktFUiArICdcbicKICAgICAgICAnLy8gJyArIEZJWF9NQVJLRVIgKyAnXG4nCiAg
+          ICAgICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9tYXRlcmlhbEF3YXJlUmVmbGVjdGlvbnM7XG4nCiAg
+          ICAgICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9tYXRlcmlhbFJlZmxlY3Rpb25DbGFzc01hc2s7XG4n
+          CiAgICAgICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9tYXRlcmlhbFJlZmxlY3Rpb25Vbmtub3duU2Nh
+          bGU7XG4nCiAgICAgICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9tYXRlcmlhbFJlZmxlY3Rpb25NaW5l
+          cmFsU2NhbGU7XG4nCiAgICAgICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9tYXRlcmlhbFJlZmxlY3Rp
+          b25Xb29kU2NhbGU7XG4nCiAgICAgICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9tYXRlcmlhbFJlZmxl
+          Y3Rpb25NZXRhbFNjYWxlO1xuJwogICAgICAgICdleHRlcm4gIGN2YXJfdCAgKnJfbWF0ZXJpYWxS
+          ZWZsZWN0aW9uR2xhc3NTY2FsZTtcbicKICAgICAgICAnZXh0ZXJuICBjdmFyX3QgICpyX21hdGVy
+          aWFsUmVmbGVjdGlvbk9yZ2FuaWNTY2FsZTtcbicKICAgICAgICAnZXh0ZXJuICBjdmFyX3QgICpy
+          X21hdGVyaWFsUmVmbGVjdGlvblNub3dTY2FsZTtcbicKICAgICAgICAnZXh0ZXJuICBjdmFyX3Qg
+          ICpyX21hdGVyaWFsUmVmbGVjdGlvbkZhYnJpY1NjYWxlO1xuJwogICAgICAgICdleHRlcm4gIGN2
+          YXJfdCAgKnJfbWF0ZXJpYWxSZWZsZWN0aW9uQ2VyYW1pY1NjYWxlO1xuJwogICAgICAgICdleHRl
+          cm4gIGN2YXJfdCAgKnJfbWF0ZXJpYWxSZWZsZWN0aW9uTWF4OycKICAgICkKICAgIHJldHVybiBp
+          bnNlcnRfYWZ0ZXJfdW5pcXVlX2xpbmUoCiAgICAgICAgdGV4dCwKICAgICAgICAnZXh0ZXJuICBj
+          dmFyX3QgICpyX21hdGVyaWFsRmFsbGJhY2tDZXJhbWljTWV0YWxsaWM7JywKICAgICAgICBleHRl
+          cm5zLAogICAgICAgICd0cl9sb2NhbC5oIFJFRi0xIGN2YXIgZXh0ZXJucycpCgoKZGVmIHBhdGNo
+          X3NoYWRlKHRleHQ6IHN0cikgLT4gc3RyOgogICAgaGVscGVyID0gcicnJy8vIFJFTkQyX1JFRl8x
+          X1YxX01BVEVSSUFMX0FXQVJFX0NVQkVNQVBfUkVGTEVDVElPTlMKLy8gUkVORDJfUkVGXzFfVjFf
+          MV9ST0JVU1RfQU5DSE9SX0ZJWAovLyBTY2FsZSBvbmx5IFJlbmQyJ3MgZXhpc3RpbmcgY3ViZW1h
+          cCBjb250cmlidXRpb24uIE5vIEdMU0wvQlJERi9jdWJlbWFwIGNhcHR1cmUgbWF0aCBpcyBjaGFu
+          Z2VkLgovLyBFeHBsaWNpdC9hdXRvL2xlZ2FjeS9hdXRob3IgbWF0ZXJpYWwgcmVzcG9uc2UgcmVt
+          YWlucyBhdCB2YW5pbGxhIGN1YmVtYXAgc2NhbGUgMS4wLgpzdGF0aWMgcWJvb2xlYW4gUl9SZWYx
+          UmVmbGVjdGlvbkVsaWdpYmxlKGNvbnN0IHNoYWRlclN0YWdlX3QgKnBTdGFnZSkKewoJaW50IGNs
+          YXNzQml0OwoKCWlmICghcFN0YWdlIHx8IHBTdGFnZS0+Z2xzbFNoYWRlckdyb3VwICE9IHRyLmxp
+          Z2h0YWxsU2hhZGVyKQoJCXJldHVybiBxZmFsc2U7CglpZiAoIXJfbWF0ZXJpYWxBd2FyZVJlZmxl
+          Y3Rpb25zIHx8ICFyX21hdGVyaWFsQXdhcmVSZWZsZWN0aW9ucy0+aW50ZWdlciB8fAoJCSFyX21h
+          dGVyaWFsUmVmbGVjdGlvbkNsYXNzTWFzaykKCQlyZXR1cm4gcWZhbHNlOwoJaWYgKHBTdGFnZS0+
+          bWF0ZXJpYWxTcGVjdWxhclNvdXJjZSAhPSBNQVREQkdfU1BFQ19GQUxMQkFDSyB8fCBwU3RhZ2Ut
+          Pm1hdGVyaWFsRXhwbGljaXRSZXNwb25zZSkKCQlyZXR1cm4gcWZhbHNlOwoJaWYgKHBTdGFnZS0+
+          bWF0ZXJpYWxIZXVyaXN0aWNDbGFzcyA+IE1BVERCR19DTEFTU19DRVJBTUlDKQoJCXJldHVybiBx
+          ZmFsc2U7CgoJY2xhc3NCaXQgPSAxIDw8IHBTdGFnZS0+bWF0ZXJpYWxIZXVyaXN0aWNDbGFzczsK
+          CXJldHVybiAocl9tYXRlcmlhbFJlZmxlY3Rpb25DbGFzc01hc2stPmludGVnZXIgJiBjbGFzc0Jp
+          dCkgPyBxdHJ1ZSA6IHFmYWxzZTsKfQoKc3RhdGljIGZsb2F0IFJfUmVmMUNsYXNzUmVmbGVjdGlv
+          blNjYWxlKGJ5dGUgbWF0ZXJpYWxDbGFzcykKewoJc3dpdGNoIChtYXRlcmlhbENsYXNzKQoJewoJ
+          CWNhc2UgTUFUREJHX0NMQVNTX01JTkVSQUw6IHJldHVybiByX21hdGVyaWFsUmVmbGVjdGlvbk1p
+          bmVyYWxTY2FsZS0+dmFsdWU7CgkJY2FzZSBNQVREQkdfQ0xBU1NfV09PRDogcmV0dXJuIHJfbWF0
+          ZXJpYWxSZWZsZWN0aW9uV29vZFNjYWxlLT52YWx1ZTsKCQljYXNlIE1BVERCR19DTEFTU19NRVRB
+          TDogcmV0dXJuIHJfbWF0ZXJpYWxSZWZsZWN0aW9uTWV0YWxTY2FsZS0+dmFsdWU7CgkJY2FzZSBN
+          QVREQkdfQ0xBU1NfR0xBU1M6IHJldHVybiByX21hdGVyaWFsUmVmbGVjdGlvbkdsYXNzU2NhbGUt
+          PnZhbHVlOwoJCWNhc2UgTUFUREJHX0NMQVNTX09SR0FOSUM6IHJldHVybiByX21hdGVyaWFsUmVm
+          bGVjdGlvbk9yZ2FuaWNTY2FsZS0+dmFsdWU7CgkJY2FzZSBNQVREQkdfQ0xBU1NfU05PVzogcmV0
+          dXJuIHJfbWF0ZXJpYWxSZWZsZWN0aW9uU25vd1NjYWxlLT52YWx1ZTsKCQljYXNlIE1BVERCR19D
+          TEFTU19GQUJSSUM6IHJldHVybiByX21hdGVyaWFsUmVmbGVjdGlvbkZhYnJpY1NjYWxlLT52YWx1
+          ZTsKCQljYXNlIE1BVERCR19DTEFTU19DRVJBTUlDOiByZXR1cm4gcl9tYXRlcmlhbFJlZmxlY3Rp
+          b25DZXJhbWljU2NhbGUtPnZhbHVlOwoJCWNhc2UgTUFUREJHX0NMQVNTX1VOS05PV046CgkJZGVm
+          YXVsdDogcmV0dXJuIHJfbWF0ZXJpYWxSZWZsZWN0aW9uVW5rbm93blNjYWxlLT52YWx1ZTsKCX0K
+          fQoKc3RhdGljIGZsb2F0IFJfUmVmMVJlZmxlY3Rpb25TY2FsZShjb25zdCBzaGFkZXJTdGFnZV90
+          ICpwU3RhZ2UpCnsKCWZsb2F0IHNjYWxlOwoJZmxvYXQgbWF4U2NhbGU7CgoJaWYgKCFSX1JlZjFS
+          ZWZsZWN0aW9uRWxpZ2libGUocFN0YWdlKSkKCQlyZXR1cm4gMS4wZjsKCglzY2FsZSA9IENMQU1Q
+          KFJfUmVmMUNsYXNzUmVmbGVjdGlvblNjYWxlKHBTdGFnZS0+bWF0ZXJpYWxIZXVyaXN0aWNDbGFz
+          cyksIDAuMGYsIDEuMGYpOwoJbWF4U2NhbGUgPSByX21hdGVyaWFsUmVmbGVjdGlvbk1heCA/IENM
+          QU1QKHJfbWF0ZXJpYWxSZWZsZWN0aW9uTWF4LT52YWx1ZSwgMC4wZiwgMS4wZikgOiAxLjBmOwoJ
+          aWYgKHNjYWxlID4gbWF4U2NhbGUpCgkJc2NhbGUgPSBtYXhTY2FsZTsKCXJldHVybiBzY2FsZTsK
+          fQonJycKICAgIHRleHQgPSBpbnNlcnRfYWZ0ZXJfdW5pcXVlX2xpbmUodGV4dCwgJyNpbmNsdWRl
+          ICJ0cl9sb2NhbC5oIicsICdcbicgKyBoZWxwZXIsICd0cl9zaGFkZS5jIFJFRi0xIGhlbHBlciBp
+          bnNlcnRpb24nKQogICAgcmV0dXJuIHJlcGxhY2VfdW5pcXVlX2N1YmVtYXBfZ2F0ZSh0ZXh0KQoK
+          CmRlZiBtYWluKCkgLT4gTm9uZToKICAgIHJvb3QgPSBQYXRoKHN5cy5hcmd2WzFdIGlmIGxlbihz
+          eXMuYXJndikgPiAxIGVsc2UgJy4nKQogICAgcGF0Y2hfZmlsZShyb290LCAnU1AvY29kZS9yZW5k
+          Mi90cl9pbml0LmMnLCBwYXRjaF9pbml0KQogICAgcGF0Y2hfZmlsZShyb290LCAnU1AvY29kZS9y
+          ZW5kMi90cl9sb2NhbC5oJywgcGF0Y2hfbG9jYWwpCiAgICBwYXRjaF9maWxlKHJvb3QsICdTUC9j
+          b2RlL3JlbmQyL3RyX3NoYWRlLmMnLCBwYXRjaF9zaGFkZSkKICAgIHByaW50KCdSRUYtMSB2MS4x
+          IE1hdGVyaWFsLUF3YXJlIEN1YmVtYXAgUmVmbGVjdGlvbnMgYXBwbGllZCBzdWNjZXNzZnVsbHkg
+          b3ZlciBQcmVsaW1pbmFyeSBQcm9kdWN0aW9uLicpCgoKaWYgX19uYW1lX18gPT0gJ19fbWFpbl9f
+          JzoKICAgIG1haW4oKQo=
+          REF1_B64
+          base64 -d ref1-patcher.b64 > apply_rend2_ref_1_v1_1_material_aware_cubemap_reflections_sp.py
+          actual_patcher_sha="$(sha256sum apply_rend2_ref_1_v1_1_material_aware_cubemap_reflections_sp.py | awk '{print $1}')"
+          [[ "$actual_patcher_sha" = "$REF1_PATCHER_SHA256" ]] || { echo "::error::REF-1 patcher SHA mismatch: $actual_patcher_sha" >&2; exit 1; }
+          python3 -m py_compile apply_rend2_ref_1_v1_1_material_aware_cubemap_reflections_sp.py
+          python3 apply_rend2_ref_1_v1_1_material_aware_cubemap_reflections_sp.py source
+          git -C source diff --check
+
+          grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' source/SP/code/rend2/tr_local.h
+          grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'REND2_REF_1_V1_1_ROBUST_ANCHOR_FIX' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_REF_1_V1_1_ROBUST_ANCHOR_FIX' source/SP/code/rend2/tr_local.h
+          grep -Fq 'REND2_REF_1_V1_1_ROBUST_ANCHOR_FIX' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'r_materialAwareReflections = ri.Cvar_Get( "r_materialAwareReflections", "0", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialReflectionClassMask = ri.Cvar_Get( "r_materialReflectionClassMask", "10", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialReflectionMineralScale = ri.Cvar_Get( "r_materialReflectionMineralScale", "0.05", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialReflectionMetalScale = ri.Cvar_Get( "r_materialReflectionMetalScale", "0.60", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialReflectionMax = ri.Cvar_Get( "r_materialReflectionMax", "0.75", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq '? R_Ref1ReflectionScale(pStage) : 0.0f;' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'pStage->materialSpecularSource != MATDBG_SPEC_FALLBACK || pStage->materialExplicitResponse' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'r_materialAwareFallback = ri.Cvar_Get( "r_materialAwareFallback", "1", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackClassMask = ri.Cvar_Get( "r_materialFallbackClassMask", "10", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          ! grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' source/SP/code/rend2/glsl/lightall_fp.glsl
+
+          git -C source diff --name-only HEAD | LC_ALL=C sort > ref1-files.txt
+          printf '%s\n' \
+            'SP/code/rend2/tr_init.c' \
+            'SP/code/rend2/tr_local.h' \
+            'SP/code/rend2/tr_shade.c' | LC_ALL=C sort > ref1-expected-files.txt
+          diff -u ref1-expected-files.txt ref1-files.txt
+
+          git -C source diff --binary HEAD > "$REF1_DELTA_NAME"
+          test -s "$REF1_DELTA_NAME"
+          grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' "$REF1_DELTA_NAME"
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$REF1_DELTA_NAME"
+
+          git -C source diff --binary "$UPSTREAM_SHA" > "$REF1_CUMULATIVE_NAME"
+          test -s "$REF1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC' "$REF1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION' "$REF1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' "$REF1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_PRELIMINARY_PRODUCTION_SUN5C_MAT0V24_MAT1V2' "$REF1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' "$REF1_CUMULATIVE_NAME"
+          ! grep -Fq 'REND2_SUN_4A' "$REF1_CUMULATIVE_NAME"
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' "$REF1_CUMULATIVE_NAME"
+
+          rm -rf ref1-replay
+          cp -a source ref1-replay
+          git -C ref1-replay reset --hard HEAD
+          [[ "$(git -C ref1-replay rev-parse HEAD)" = "$REF1_BASE_COMMIT" ]]
+          git -C ref1-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/$REF1_DELTA_NAME"
+          git -C ref1-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/$REF1_DELTA_NAME"
+          git -C ref1-replay diff --check
+          cmp source/SP/code/rend2/tr_init.c ref1-replay/SP/code/rend2/tr_init.c
+          cmp source/SP/code/rend2/tr_local.h ref1-replay/SP/code/rend2/tr_local.h
+          cmp source/SP/code/rend2/tr_shade.c ref1-replay/SP/code/rend2/tr_shade.c
+          git -C ref1-replay apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$REF1_DELTA_NAME"
+          echo "REF-1 v1.1 exact three-file delta replay PASS"
+
+      - name: Build SP-only Windows x64 REF-1 v1.1 renderer
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::REF-1 v1.1 MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify and package REF-1 v1.1 experiment
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::REF-1 v1.1 packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          test -s "$SP_OUT/renderer_sp_rend2_x64.dll" || { echo "::error::Missing renderer_sp_rend2_x64.dll" >&2; exit 1; }
+          test ! -d source/MP/build || { echo "::error::MP build directory exists" >&2; exit 1; }
+
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/docs"
+          install -m 0644 "$SP_OUT/renderer_sp_rend2_x64.dll" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 "$REF1_DELTA_NAME" "$STAGE/docs/$REF1_DELTA_NAME"
+          install -m 0644 "$REF1_CUMULATIVE_NAME" "$STAGE/docs/$REF1_CUMULATIVE_NAME"
+          install -m 0644 apply_rend2_ref_1_v1_1_material_aware_cubemap_reflections_sp.py "$STAGE/docs/apply_rend2_ref_1_v1_1_material_aware_cubemap_reflections_sp.py"
+          sha256sum "$STAGE/docs/$REF1_DELTA_NAME" > "$STAGE/docs/$REF1_DELTA_NAME.sha256"
+          sha256sum "$STAGE/docs/$REF1_CUMULATIVE_NAME" > "$STAGE/docs/$REF1_CUMULATIVE_NAME.sha256"
+
+          cat > "$STAGE/README_REF_1_V1_1_RU.txt" <<'README'
+          DarkWolf/ioRTCW Rend2 - REF-1 v1.1 Material-Aware Cubemap Reflections
+          ==================================================================
+
+          BASE
+          ----
+          Exact successful Preliminary Production checkpoint:
+          SUN-5C + Filter 4 + MAT-0 v2.4 + MAT-1 v2.
+
+          PURPOSE
+          -------
+          REF-1 v1.1 does not create a new reflection renderer. It scales the existing Rend2
+          cubemap contribution per MAT-0 material class while preserving the existing
+          LightAll BRDF and existing cubemap generation/assignment code.
+          v1.1 fixes only the failed v1 source-anchor application; reflection behavior is unchanged.
+
+          DEFAULT TEST STATE
+          ------------------
+          r_materialAwareReflections = 0  (strict vanilla-cubemap A/B baseline)
+          r_materialReflectionClassMask = 10  (MINERAL + METAL)
+          r_materialReflectionMineralScale = 0.05
+          r_materialReflectionMetalScale = 0.60
+          r_materialReflectionMax = 0.75
+
+          ELIGIBILITY
+          -----------
+          REF-1 affects only LightAll stages that are true fallback materials:
+          specsrc=0 and explicitresp=0 and whose class bit is enabled.
+          Explicit specularMap, auto *_s, legacy environment and explicit author response
+          remain at vanilla cubemap scale 1.0.
+
+          IMPORTANT
+          ---------
+          r_cubeMapping must be 1 and the surface must have an assigned cubemap probe.
+          REF-1 v1.1 intentionally leaves MATTRACE unchanged; validate with controlled visual A/B.
+
+          NOT CHANGED
+          -----------
+          GLSL/BRDF formulas; cubemap capture/generation/selection; MAT-0 classifier;
+          MAT-1 specular/roughness/metallic presets; normal/parallax mapping; SUN-5C;
+          Filter 4; fog; dynamic/static lights; shadows.
+          README
+
+          cat > "$STAGE/REF_1_V1_1_TEST_PROFILE.cfg" <<'CFG'
+          // REF-1 v1.1 test profile. r_cubeMapping and REF cvars are latched: use vid_restart.
+          seta r_materialDebug 0
+          seta r_pbr 1
+          seta r_cubeMapping 1
+          seta r_materialAwareFallback 1
+          seta r_materialFallbackClassMask 10
+          seta r_materialAwareReflections 1
+          seta r_materialReflectionClassMask 10
+          seta r_materialReflectionMineralScale 0.05
+          seta r_materialReflectionMetalScale 0.60
+          seta r_materialReflectionMax 0.75
+          CFG
+
+          cat > "$STAGE/docs/REF_1_V1_1_BUILD_INFO.txt" <<EOF
+          release=DarkWolf ioRTCW Rend2 REF-1 v1.1 Material-Aware Cubemap Reflections
+          upstream_sha=$UPSTREAM_SHA
+          source_base=exact successful Preliminary Production artifact
+          base_run_id=$BASE_RUN_ID
+          base_artifact_id=$BASE_ARTIFACT_ID
+          base_artifact_name=$BASE_ARTIFACT_NAME
+          base_zip_sha256=$BASE_ZIP_SHA256
+          base_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          expected_preliminary_sun5c_sha256=$EXPECTED_PRELIMINARY_SUN5C_SHA256
+          expected_mat1v2_patcher_sha256=$EXPECTED_MAT1V2_PATCHER_SHA256
+          expected_production_patcher_sha256=$EXPECTED_PRODUCTION_PATCHER_SHA256
+          ref1_patcher_sha256=$REF1_PATCHER_SHA256
+          ref1_source_delta=SP/code/rend2/tr_init.c,SP/code/rend2/tr_local.h,SP/code/rend2/tr_shade.c
+          ref1_anchor_fix=v1.1_semantic_line_anchors
+          ref1_mattrace_changed=NO
+          ref1_default_enable=0
+          reflection_class_mask_default=10
+          mineral_reflection_scale=0.05
+          metal_reflection_scale=0.60
+          reflection_max=0.75
+          vanilla_off_scale=1.0
+          fallback_only=YES
+          explicit_specular_map_preserved=YES
+          auto_suffix_specular_preserved=YES
+          legacy_environment_preserved=YES
+          explicit_author_response_preserved=YES
+          requires_r_cubemapping_for_visible_effect=YES
+          glsl_brdf_math_changed=NO
+          cubemap_generation_changed=NO
+          cubemap_probe_assignment_changed=NO
+          mat0_classifier_changed=NO
+          mat1_material_presets_changed=NO
+          accepted_sunlight_filter4_changed=NO
+          accepted_dlights_shadows_changed=NO
+          rejected_sun4a_included=NO
+          rejected_sky_r0_included=NO
+          package_type=MINIMAL_RENDERER_DLL_PLUS_REPRODUCIBILITY_DOCS
+          EOF
+
+          test -s "$STAGE/renderer_sp_rend2_x64.dll"
+          grep -Fq 'ref1_default_enable=0' "$STAGE/docs/REF_1_V1_1_BUILD_INFO.txt"
+          grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' "$STAGE/docs/$REF1_DELTA_NAME"
+          grep -Fq 'REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC' "$STAGE/docs/$REF1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_PRELIMINARY_PRODUCTION_SUN5C_MAT0V24_MAT1V2' "$STAGE/docs/$REF1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' "$STAGE/docs/$REF1_CUMULATIVE_NAME"
+          if find "$STAGE" -type f -iname '*.bat' -print -quit | grep -q .; then echo "::error::BAT found in REF-1 package" >&2; exit 1; fi
+
+          ( cd "$STAGE"; find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload REF-1 v1.1 artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
