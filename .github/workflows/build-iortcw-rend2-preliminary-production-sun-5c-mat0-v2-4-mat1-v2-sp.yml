@@ -1,0 +1,432 @@
+name: Build ioRTCW Rend2 Preliminary Production SUN-5C MAT-0 v2.4 MAT-1 v2 SP-only Windows x64
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "rend2-preliminary-production-mat1-v2-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 SP-only Preliminary Production after accepted MAT-1 v2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      MAT1V2_RELEASE_BASENAME: "iortcw-rend2-mat-1-v2-pbr-aware-class-fallback-over-mat-0-v2-4-sp-windows-x64"
+      MAT1V2_CUMULATIVE_NAME: "rend2-cumulative-preliminary-sun5c-mat0-v2-4-mat1-v2-pbr-aware-class-fallback-sp.patch"
+      MAT1V2_BUILD_INFO_NAME: "MAT_1_V2_BUILD_INFO.txt"
+      EXPECTED_PRELIMINARY_SUN5C_SHA256: "887849da3d3e6291087e5a7c9c5174b9376a401a1bb5527d41420923d9810121"
+      EXPECTED_MAT1V2_PATCHER_SHA256: "b7f0f4ded001f2ff5a39091fc49c5bd7f6b42443817d07b028904e167f9cf16a"
+      PRODUCTION_PATCHER_SHA256: "51fcb2977ad227f4e2395c4024bf3c19e2d8ed68e22c3f6e000327d5ac486049"
+      RELEASE_BASENAME: "iortcw-rend2-preliminary-production-sun-5c-mat0-v2-4-mat1-v2-sp-windows-x64"
+      PROD_DELTA_NAME: "rend2-preliminary-production-promote-mat1-v2-defaults-sp.patch"
+      PROD_CUMULATIVE_NAME: "rend2-cumulative-preliminary-production-sun5c-mat0-v2-4-mat1-v2-sp.patch"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Prerequisite step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+          python3 --version
+
+      - name: Recover exact successful MAT-1 v2 artifact
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::MAT-1 v2 artifact recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf mat1v2-artifact mat1v2-release
+          mkdir -p mat1v2-artifact mat1v2-release
+
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > all-artifacts.tsv
+
+          python3 - <<'PY_SELECT_MAT1V2' > mat1v2-selected.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['MAT1V2_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('all-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('	')
+              if len(parts) != 4:
+                  continue
+              created, aid, rid, name = parts
+              if name.startswith(prefix):
+                  rows.append((created, aid, rid, name))
+          if not rows:
+              raise SystemExit('No retained MAT-1 v2 artifact with prefix %r' % prefix)
+          rows.sort(key=lambda x: x[0], reverse=True)
+          print('	'.join(rows[0]))
+          PY_SELECT_MAT1V2
+
+          IFS=$'	' read -r artifact_created artifact_id run_id artifact_name < mat1v2-selected.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed MAT-1 v2 artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected MAT-1 v2 run is not successful: $run_conclusion" >&2; exit 1; }
+
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir mat1v2-artifact
+          base_zip="$(find mat1v2-artifact -type f -name "$MAT1V2_RELEASE_BASENAME.zip" -print -quit)"
+          base_zip_sha="$(find mat1v2-artifact -type f -name "$MAT1V2_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_zip_sha" && -s "$base_zip_sha" ]] || { echo "::error::MAT-1 v2 ZIP/SHA missing" >&2; find mat1v2-artifact -type f -print >&2; exit 1; }
+          expected_zip_sha="$(awk 'NF {print $1; exit}' "$base_zip_sha")"
+          actual_zip_sha="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected_zip_sha" =~ ^[0-9a-fA-F]{64}$ && "$actual_zip_sha" = "$expected_zip_sha" ]] || { echo "::error::MAT-1 v2 ZIP SHA mismatch" >&2; exit 1; }
+
+          unzip -q "$base_zip" -d mat1v2-release
+          MAT1V2_STAGE="$GITHUB_WORKSPACE/mat1v2-release/$MAT1V2_RELEASE_BASENAME"
+          MAT1V2_CUMULATIVE="$MAT1V2_STAGE/docs/$MAT1V2_CUMULATIVE_NAME"
+          MAT1V2_CUMULATIVE_SHA_FILE="$MAT1V2_CUMULATIVE.sha256"
+          MAT1V2_BUILD_INFO="$MAT1V2_STAGE/docs/$MAT1V2_BUILD_INFO_NAME"
+          [[ -d "$MAT1V2_STAGE" && -s "$MAT1V2_STAGE/renderer_sp_rend2_x64.dll" && -s "$MAT1V2_CUMULATIVE" && -s "$MAT1V2_CUMULATIVE_SHA_FILE" && -s "$MAT1V2_BUILD_INFO" ]] || { echo "::error::MAT-1 v2 runtime/cumulative/build-info files missing" >&2; exit 1; }
+          expected_cumulative_sha="$(awk 'NF {print $1; exit}' "$MAT1V2_CUMULATIVE_SHA_FILE")"
+          actual_cumulative_sha="$(sha256sum "$MAT1V2_CUMULATIVE" | awk '{print $1}')"
+          [[ "$expected_cumulative_sha" =~ ^[0-9a-fA-F]{64}$ && "$actual_cumulative_sha" = "$expected_cumulative_sha" ]] || { echo "::error::MAT-1 v2 cumulative SHA mismatch" >&2; exit 1; }
+
+          grep -Fq "expected_preliminary_cumulative_sha256=$EXPECTED_PRELIMINARY_SUN5C_SHA256" "$MAT1V2_BUILD_INFO"
+          grep -Fq "mat1v2_patcher_sha256=$EXPECTED_MAT1V2_PATCHER_SHA256" "$MAT1V2_BUILD_INFO"
+          grep -Fq 'default_enable=0' "$MAT1V2_BUILD_INFO"
+          grep -Fq 'class_mask_default=10' "$MAT1V2_BUILD_INFO"
+          grep -Fq 'classic_mineral_specular=0.015' "$MAT1V2_BUILD_INFO"
+          grep -Fq 'classic_mineral_roughness=0.95' "$MAT1V2_BUILD_INFO"
+          grep -Fq 'classic_metal_specular=0.14' "$MAT1V2_BUILD_INFO"
+          grep -Fq 'classic_metal_roughness=0.45' "$MAT1V2_BUILD_INFO"
+          grep -Fq 'pbr_mineral_metallic=0.00' "$MAT1V2_BUILD_INFO"
+          grep -Fq 'pbr_metal_metallic=0.55' "$MAT1V2_BUILD_INFO"
+          grep -Fq 'pbr_path_supported=YES' "$MAT1V2_BUILD_INFO"
+          grep -Fq 'REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC' "$MAT1V2_CUMULATIVE"
+          grep -Fq 'REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION' "$MAT1V2_CUMULATIVE"
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' "$MAT1V2_CUMULATIVE"
+          ! grep -Fq 'REND2_PRELIMINARY_PRODUCTION_SUN5C_MAT0V24_MAT1V2' "$MAT1V2_CUMULATIVE"
+          ! grep -Fq 'REND2_SUN_4A' "$MAT1V2_CUMULATIVE"
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' "$MAT1V2_CUMULATIVE"
+
+          echo "MAT1V2_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "MAT1V2_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "MAT1V2_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "MAT1V2_CUMULATIVE=$MAT1V2_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "MAT1V2_CUMULATIVE_SHA256=$actual_cumulative_sha" >> "$GITHUB_ENV"
+          echo "MAT1V2_ZIP_SHA256=$actual_zip_sha" >> "$GITHUB_ENV"
+          echo "Recovered exact successful MAT-1 v2 base: $artifact_name run=$run_id cumulative_sha=$actual_cumulative_sha"
+
+      - name: Reconstruct accepted MAT-1 v2 source and freeze production base
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::MAT-1 v2 source reconstruction failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git init source
+          git -C source config core.autocrlf false
+          git -C source config core.eol lf
+          git -C source config user.name "DarkWolf CI"
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source remote add origin "$UPSTREAM_REPO"
+          git -C source fetch --depth 1 origin "$UPSTREAM_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]] || { echo "::error::Upstream SHA mismatch" >&2; exit 1; }
+
+          git -C source apply --check --whitespace=nowarn "$MAT1V2_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$MAT1V2_CUMULATIVE"
+          git -C source diff --check
+          git -C source apply --check --reverse --whitespace=nowarn "$MAT1V2_CUMULATIVE"
+
+          grep -Fq 'REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER4' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "4", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION' source/SP/code/rend2/tr_shader.c
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' source/SP/code/rend2/tr_local.h
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' source/SP/code/rend2/tr_shader.c
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'r_materialAwareFallback = ri.Cvar_Get( "r_materialAwareFallback", "0", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackClassMask = ri.Cvar_Get( "r_materialFallbackClassMask", "10", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMineralSpecular = ri.Cvar_Get( "r_materialFallbackMineralSpecular", "0.015", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMineralRoughness = ri.Cvar_Get( "r_materialFallbackMineralRoughness", "0.95", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMineralMetallic = ri.Cvar_Get( "r_materialFallbackMineralMetallic", "0.00", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMetalSpecular = ri.Cvar_Get( "r_materialFallbackMetalSpecular", "0.14", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMetalRoughness = ri.Cvar_Get( "r_materialFallbackMetalRoughness", "0.45", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMetalMetallic = ri.Cvar_Get( "r_materialFallbackMetalMetallic", "0.55", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_pbr = ri.Cvar_Get("r_pbr", "0", CVAR_ARCHIVE | CVAR_LATCH);' source/SP/code/rend2/tr_init.c
+          grep -Fq 'R_Mat1ApplyFallbackPreset(diffuse);' source/SP/code/rend2/tr_shader.c
+          grep -Fq 'diffuse->materialSpecularSource != MATDBG_SPEC_FALLBACK || diffuse->materialExplicitResponse' source/SP/code/rend2/tr_shader.c
+          grep -Fq 'VectorSet4(diffuse->specularScale, encodedGloss, metallic, 1.0f, 1.0f);' source/SP/code/rend2/tr_shader.c
+          grep -Fq 'VectorSet4(diffuse->specularScale, specular, specular, specular, encodedGloss);' source/SP/code/rend2/tr_shader.c
+          grep -Fq 'specsrc=%u explicitresp=%u mat1=%u pbr=%u' source/SP/code/rend2/tr_shade.c
+          ! grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' source/SP/code/rend2/glsl/lightall_fp.glsl
+          ! grep -R -Fq 'REND2_SUN_4A' source/SP/code/rend2
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' source/SP/code/rend2/tr_shader.c
+
+          git -C source add -A
+          git -C source commit -m "Freeze accepted runtime-tested SUN-5C MAT-0 v2.4 MAT-1 v2 base"
+          echo "MAT1V2_BASE_COMMIT=$(git -C source rev-parse HEAD)" >> "$GITHUB_ENV"
+          [[ -z "$(git -C source status --porcelain)" ]]
+          echo "Accepted MAT-1 v2 source frozen at $(git -C source rev-parse HEAD)"
+
+      - name: Promote accepted MAT-1 v2 defaults to preliminary production
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Production defaults promotion failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          cat > production-patcher.b64 <<'PRODUCTION_B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKaW1wb3J0IHN5
+          cwoKTUFSS0VSID0gJ1JFTkQyX1BSRUxJTUlOQVJZX1BST0RVQ1RJT05fU1VONUNfTUFUMFYyNF9N
+          QVQxVjInCgoKZGVmIHJlcGxhY2Vfb25jZSh0ZXh0OiBzdHIsIG9sZDogc3RyLCBuZXc6IHN0ciwg
+          bGFiZWw6IHN0cikgLT4gc3RyOgogICAgY291bnQgPSB0ZXh0LmNvdW50KG9sZCkKICAgIGlmIGNv
+          dW50ICE9IDE6CiAgICAgICAgcmFpc2UgU3lzdGVtRXhpdChmJ3tsYWJlbH06IGV4cGVjdGVkIGV4
+          YWN0bHkgb25lIGFuY2hvciwgZm91bmQge2NvdW50fScpCiAgICByZXR1cm4gdGV4dC5yZXBsYWNl
+          KG9sZCwgbmV3LCAxKQoKCmRlZiBtYWluKCkgLT4gTm9uZToKICAgIHJvb3QgPSBQYXRoKHN5cy5h
+          cmd2WzFdIGlmIGxlbihzeXMuYXJndikgPiAxIGVsc2UgJy4nKQogICAgcGF0aCA9IHJvb3QgLyAn
+          U1AvY29kZS9yZW5kMi90cl9pbml0LmMnCiAgICBpZiBub3QgcGF0aC5pc19maWxlKCk6CiAgICAg
+          ICAgcmFpc2UgU3lzdGVtRXhpdChmJ21pc3Npbmcge3BhdGh9JykKICAgIHRleHQgPSBwYXRoLnJl
+          YWRfdGV4dChlbmNvZGluZz0ndXRmLTgnKQogICAgaWYgTUFSS0VSIGluIHRleHQ6CiAgICAgICAg
+          cmFpc2UgU3lzdGVtRXhpdCgncHJlbGltaW5hcnkgcHJvZHVjdGlvbiBkZWZhdWx0cyBhbHJlYWR5
+          IGFwcGxpZWQnKQoKICAgIG9sZCA9ICdyX21hdGVyaWFsQXdhcmVGYWxsYmFjayA9IHJpLkN2YXJf
+          R2V0KCAicl9tYXRlcmlhbEF3YXJlRmFsbGJhY2siLCAiMCIsIENWQVJfQVJDSElWRSB8IENWQVJf
+          TEFUQ0ggKTsnCiAgICBuZXcgPSAoCiAgICAgICAgJy8vICcgKyBNQVJLRVIgKyAnOiBhY2NlcHRl
+          ZCBNQVQtMSB2MiBNSU5FUkFML01FVEFMIGZhbGxiYWNrIGlzIHByb2R1Y3Rpb24tZW5hYmxlZCBi
+          eSBkZWZhdWx0LlxuJwogICAgICAgICdcdHJfbWF0ZXJpYWxBd2FyZUZhbGxiYWNrID0gcmkuQ3Zh
+          cl9HZXQoICJyX21hdGVyaWFsQXdhcmVGYWxsYmFjayIsICIxIiwgQ1ZBUl9BUkNISVZFIHwgQ1ZB
+          Ul9MQVRDSCApOycKICAgICkKICAgIHRleHQgPSByZXBsYWNlX29uY2UodGV4dCwgJ1x0JyArIG9s
+          ZCwgJ1x0JyArIG5ldywgJ3RyX2luaXQuYyBtYXRlcmlhbCBhd2FyZW5lc3MgZGVmYXVsdCBwcm9t
+          b3Rpb24nKQogICAgcGF0aC53cml0ZV90ZXh0KHRleHQsIGVuY29kaW5nPSd1dGYtOCcsIG5ld2xp
+          bmU9J1xuJykKICAgIHByaW50KCdQcmVsaW1pbmFyeSBwcm9kdWN0aW9uIE1BVC0xIHYyIGRlZmF1
+          bHRzIHByb21vdGVkIHN1Y2Nlc3NmdWxseS4nKQoKCmlmIF9fbmFtZV9fID09ICdfX21haW5fXyc6
+          CiAgICBtYWluKCkK
+          PRODUCTION_B64
+          base64 -d production-patcher.b64 > apply_rend2_preliminary_production_mat1_v2_defaults_sp.py
+          actual_patcher_sha="$(sha256sum apply_rend2_preliminary_production_mat1_v2_defaults_sp.py | awk '{print $1}')"
+          [[ "$actual_patcher_sha" = "$PRODUCTION_PATCHER_SHA256" ]] || { echo "::error::Production patcher SHA mismatch: $actual_patcher_sha" >&2; exit 1; }
+          python3 -m py_compile apply_rend2_preliminary_production_mat1_v2_defaults_sp.py
+          python3 apply_rend2_preliminary_production_mat1_v2_defaults_sp.py source
+          git -C source diff --check
+
+          grep -Fq 'REND2_PRELIMINARY_PRODUCTION_SUN5C_MAT0V24_MAT1V2' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialAwareFallback = ri.Cvar_Get( "r_materialAwareFallback", "1", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          ! grep -Fq 'r_materialAwareFallback = ri.Cvar_Get( "r_materialAwareFallback", "0", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackClassMask = ri.Cvar_Get( "r_materialFallbackClassMask", "10", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMineralSpecular = ri.Cvar_Get( "r_materialFallbackMineralSpecular", "0.015", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMineralRoughness = ri.Cvar_Get( "r_materialFallbackMineralRoughness", "0.95", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMineralMetallic = ri.Cvar_Get( "r_materialFallbackMineralMetallic", "0.00", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMetalSpecular = ri.Cvar_Get( "r_materialFallbackMetalSpecular", "0.14", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMetalRoughness = ri.Cvar_Get( "r_materialFallbackMetalRoughness", "0.45", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackMetalMetallic = ri.Cvar_Get( "r_materialFallbackMetalMetallic", "0.55", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          # PBR remains user-controlled. This checkpoint enables Material Awareness, not global experimental PBR.
+          grep -Fq 'r_pbr = ri.Cvar_Get("r_pbr", "0", CVAR_ARCHIVE | CVAR_LATCH);' source/SP/code/rend2/tr_init.c
+
+          git -C source diff --name-only HEAD | LC_ALL=C sort > production-files.txt
+          printf '%s\n' 'SP/code/rend2/tr_init.c' > production-expected-files.txt
+          diff -u production-expected-files.txt production-files.txt
+
+          git -C source diff --binary HEAD > "$PROD_DELTA_NAME"
+          test -s "$PROD_DELTA_NAME"
+          grep -Fq 'REND2_PRELIMINARY_PRODUCTION_SUN5C_MAT0V24_MAT1V2' "$PROD_DELTA_NAME"
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$PROD_DELTA_NAME"
+
+          git -C source diff --binary "$UPSTREAM_SHA" > "$PROD_CUMULATIVE_NAME"
+          test -s "$PROD_CUMULATIVE_NAME"
+          grep -Fq 'REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC' "$PROD_CUMULATIVE_NAME"
+          grep -Fq 'REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION' "$PROD_CUMULATIVE_NAME"
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' "$PROD_CUMULATIVE_NAME"
+          grep -Fq 'REND2_PRELIMINARY_PRODUCTION_SUN5C_MAT0V24_MAT1V2' "$PROD_CUMULATIVE_NAME"
+          ! grep -Fq 'REND2_SUN_4A' "$PROD_CUMULATIVE_NAME"
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' "$PROD_CUMULATIVE_NAME"
+
+          rm -rf production-replay
+          cp -a source production-replay
+          git -C production-replay reset --hard HEAD
+          [[ "$(git -C production-replay rev-parse HEAD)" = "$MAT1V2_BASE_COMMIT" ]]
+          git -C production-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/$PROD_DELTA_NAME"
+          git -C production-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/$PROD_DELTA_NAME"
+          git -C production-replay diff --check
+          cmp source/SP/code/rend2/tr_init.c production-replay/SP/code/rend2/tr_init.c
+          git -C production-replay apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$PROD_DELTA_NAME"
+          echo "Production one-file delta replay PASS"
+
+      - name: Build SP-only Windows x64 preliminary production renderer
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Preliminary production MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify and package preliminary production checkpoint
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Preliminary production packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          test -s "$SP_OUT/renderer_sp_rend2_x64.dll" || { echo "::error::Missing renderer_sp_rend2_x64.dll" >&2; exit 1; }
+          test ! -d source/MP/build || { echo "::error::MP build directory exists" >&2; exit 1; }
+
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/docs"
+          install -m 0644 "$SP_OUT/renderer_sp_rend2_x64.dll" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 "$PROD_DELTA_NAME" "$STAGE/docs/$PROD_DELTA_NAME"
+          install -m 0644 "$PROD_CUMULATIVE_NAME" "$STAGE/docs/$PROD_CUMULATIVE_NAME"
+          install -m 0644 apply_rend2_preliminary_production_mat1_v2_defaults_sp.py "$STAGE/docs/apply_rend2_preliminary_production_mat1_v2_defaults_sp.py"
+          sha256sum "$STAGE/docs/$PROD_DELTA_NAME" > "$STAGE/docs/$PROD_DELTA_NAME.sha256"
+          sha256sum "$STAGE/docs/$PROD_CUMULATIVE_NAME" > "$STAGE/docs/$PROD_CUMULATIVE_NAME.sha256"
+
+          cat > "$STAGE/README_PRELIMINARY_PRODUCTION_RU.txt" <<'README'
+          DarkWolf/ioRTCW Rend2 - Preliminary Production Checkpoint
+          =========================================================
+
+          ACCEPTED LINEAGE
+          ----------------
+          SUN-5C + Filter 4 + accepted sunlight/fog/dlight/static-light lineage
+          + MAT-0 v2.4 Classifier Correction
+          + MAT-1 v2 PBR-Aware Class Fallback.
+
+          This is a preliminary production checkpoint, not a new experiment.
+          The only source delta over the already runtime-tested MAT-1 v2 build is
+          promotion of r_materialAwareFallback default from 0 to 1.
+
+          PRODUCTION MATERIAL DEFAULTS
+          ----------------------------
+          r_materialAwareFallback = 1
+          r_materialFallbackClassMask = 10  (MINERAL + METAL only)
+
+          Classic r_pbr 0 fallback:
+            MINERAL specular 0.015 / roughness 0.95
+            METAL   specular 0.14  / roughness 0.45
+
+          PBR r_pbr 1 fallback:
+            MINERAL metallic 0.00 / roughness 0.95
+            METAL   metallic 0.55 / roughness 0.45
+
+          r_pbr itself is NOT forced on by the renderer. Its upstream default remains 0.
+          If the user's archived config has r_pbr 1, MAT-1 v2 automatically uses its PBR
+          encoding; with r_pbr 0 it automatically uses the accepted classic encoding.
+
+          PROTECTION POLICY
+          -----------------
+          Material Awareness changes only true fallback LightAll stages (specsrc=0) whose
+          class bit is enabled and which do not contain an explicit author response.
+          Explicit specularMap, auto *_s, legacy environment mapping and explicit
+          specularReflectance/specularExponent/gloss/roughness/specularScale are preserved.
+
+          NOT CHANGED
+          -----------
+          GLSL/BRDF formulas, cubemap implementation, normal/parallax implementation,
+          SUN-5C, Filter 4, WOLFFOG, sunlight/shadows, dynamic/static lights and Lamp/PVS.
+          MAT-0 classifier remains frozen at v2.4.
+
+          SCOPE
+          -----
+          Only MINERAL and METAL are production-enabled through mask 10 because these are
+          the two classes visually validated in runtime. Other class cvars remain available
+          but their class bits are off by default.
+          README
+
+          cat > "$STAGE/PRELIMINARY_PRODUCTION_MATERIAL_PROFILE.cfg" <<'CFG'
+          // DarkWolf preliminary production Material Awareness profile.
+          // r_pbr is intentionally not forced here; keep the user's chosen 0/1 mode.
+          seta r_materialAwareFallback 1
+          seta r_materialFallbackClassMask 10
+          seta r_materialFallbackMineralSpecular 0.015
+          seta r_materialFallbackMineralRoughness 0.95
+          seta r_materialFallbackMineralMetallic 0.00
+          seta r_materialFallbackMetalSpecular 0.14
+          seta r_materialFallbackMetalRoughness 0.45
+          seta r_materialFallbackMetalMetallic 0.55
+          CFG
+
+          cat > "$STAGE/docs/PRELIMINARY_PRODUCTION_BUILD_INFO.txt" <<EOF
+          release=DarkWolf ioRTCW Rend2 Preliminary Production SUN-5C MAT-0 v2.4 MAT-1 v2
+          upstream_sha=$UPSTREAM_SHA
+          source_base=exact successful MAT-1 v2 artifact
+          mat1v2_base_run_id=$MAT1V2_RUN_ID
+          mat1v2_base_artifact_id=$MAT1V2_ARTIFACT_ID
+          mat1v2_base_artifact_name=$MAT1V2_ARTIFACT_NAME
+          mat1v2_base_zip_sha256=$MAT1V2_ZIP_SHA256
+          mat1v2_base_cumulative_sha256=$MAT1V2_CUMULATIVE_SHA256
+          expected_preliminary_sun5c_sha256=$EXPECTED_PRELIMINARY_SUN5C_SHA256
+          expected_mat1v2_patcher_sha256=$EXPECTED_MAT1V2_PATCHER_SHA256
+          production_patcher_sha256=$PRODUCTION_PATCHER_SHA256
+          production_delta=SP/code/rend2/tr_init.c
+          material_aware_default=1
+          class_mask_default=10
+          classic_mineral_specular=0.015
+          classic_mineral_roughness=0.95
+          classic_metal_specular=0.14
+          classic_metal_roughness=0.45
+          pbr_mineral_metallic=0.00
+          pbr_mineral_roughness=0.95
+          pbr_metal_metallic=0.55
+          pbr_metal_roughness=0.45
+          pbr_global_default_changed=NO
+          fallback_only=YES
+          explicit_specular_map_preserved=YES
+          auto_suffix_specular_preserved=YES
+          legacy_environment_preserved=YES
+          explicit_author_response_preserved=YES
+          mat0_classifier_frozen=YES
+          glsl_brdf_math_changed=NO
+          cubemap_code_changed=NO
+          normal_parallax_code_changed=NO
+          accepted_sunlight_filter4_changed=NO
+          accepted_dlights_lamp_pvs_changed=NO
+          rejected_sun4a_included=NO
+          rejected_sky_r0_included=NO
+          runtime_acceptance=USER_CONFIRMED_2026-08-14
+          next_step=FREEZE_CHECKPOINT_AND_CONTINUE_MAIN_PLAN
+          package_type=MINIMAL_RENDERER_DLL_PLUS_REPRODUCIBILITY_DOCS
+          EOF
+
+          test -s "$STAGE/renderer_sp_rend2_x64.dll"
+          grep -Fq 'material_aware_default=1' "$STAGE/docs/PRELIMINARY_PRODUCTION_BUILD_INFO.txt"
+          grep -Fq 'REND2_PRELIMINARY_PRODUCTION_SUN5C_MAT0V24_MAT1V2' "$STAGE/docs/$PROD_DELTA_NAME"
+          grep -Fq 'REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC' "$STAGE/docs/$PROD_CUMULATIVE_NAME"
+          grep -Fq 'REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION' "$STAGE/docs/$PROD_CUMULATIVE_NAME"
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' "$STAGE/docs/$PROD_CUMULATIVE_NAME"
+          grep -Fq 'REND2_PRELIMINARY_PRODUCTION_SUN5C_MAT0V24_MAT1V2' "$STAGE/docs/$PROD_CUMULATIVE_NAME"
+          if find "$STAGE" -type f -iname '*.bat' -print -quit | grep -q .; then echo "::error::BAT found in preliminary production package" >&2; exit 1; fi
+
+          ( cd "$STAGE"; find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload preliminary production checkpoint artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
