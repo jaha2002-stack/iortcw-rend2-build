@@ -1,0 +1,689 @@
+name: Build ioRTCW Rend2 GI-1 v1.2 Cubemap Diffuse Indirect SP Windows x64
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "rend2-gi-1-v1-2-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: GI-1 v1.2 Cubemap Diffuse Indirect scope-aware-anchor diagnostic renderer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      BASE_RELEASE_BASENAME: "iortcw-rend2-full-preliminary-production-sun5c-mat0-v2-4-mat1-v2-ref1-v1-1-sp-windows-x64"
+      BASE_CUMULATIVE_NAME: "rend2-cumulative-full-preliminary-production-sun5c-mat0-v2-4-mat1-v2-ref1-v1-1-sp.patch"
+      BASE_BUILD_INFO_NAME: "FULL_PRELIMINARY_PRODUCTION_BUILD_INFO.txt"
+      EXPECTED_PRELIMINARY_SUN5C_SHA256: "887849da3d3e6291087e5a7c9c5174b9376a401a1bb5527d41420923d9810121"
+      EXPECTED_MAT1V2_PATCHER_SHA256: "b7f0f4ded001f2ff5a39091fc49c5bd7f6b42443817d07b028904e167f9cf16a"
+      EXPECTED_REF1_PATCHER_SHA256: "1a622d126f88db9aeab5db436af73106524b137444caa03d3aa54741319daeb8"
+      EXPECTED_FULL_PROD_PATCHER_SHA256: "f37c1a0ef1bb67e54d10dc3f1f5de80793bd1394863d1e0d719f7d13b2c873fd"
+      GI1_PATCHER_SHA256: "04113c95db550fee6b5e47951184ed19f7a45d870cbede46de5ddfb980515123"
+      RELEASE_BASENAME: "iortcw-rend2-gi-1-v1-2-cubemap-diffuse-indirect-over-full-preliminary-production-sp-windows-x64"
+      GI1_DELTA_NAME: "rend2-gi-1-v1-2-cubemap-diffuse-indirect-sp.patch"
+      GI1_CUMULATIVE_NAME: "rend2-cumulative-full-preliminary-production-gi-1-v1-2-cubemap-diffuse-indirect-sp.patch"
+
+    steps:
+      - name: Install exact SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Prerequisite step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+          python3 --version
+
+      - name: Recover exact successful Full Preliminary Production checkpoint
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Full preliminary artifact recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > all-artifacts.tsv
+
+          python3 - <<'PY_SELECT_BASE' > base-selected.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['BASE_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('all-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created, aid, rid, name = parts
+              if name.startswith(prefix):
+                  rows.append((created, aid, rid, name))
+          if not rows:
+              raise SystemExit('No retained full preliminary artifact with prefix %r' % prefix)
+          rows.sort(key=lambda x: x[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT_BASE
+
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < base-selected.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed base artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected base run is not successful: $run_conclusion" >&2; exit 1; }
+
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir base-artifact
+          base_zip="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip" -print -quit)"
+          base_zip_sha="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_zip_sha" && -s "$base_zip_sha" ]] || { echo "::error::Base ZIP/SHA missing" >&2; find base-artifact -type f -print >&2; exit 1; }
+          expected_zip_sha="$(awk 'NF {print $1; exit}' "$base_zip_sha")"
+          actual_zip_sha="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected_zip_sha" =~ ^[0-9a-fA-F]{64}$ && "$actual_zip_sha" = "$expected_zip_sha" ]] || { echo "::error::Base ZIP SHA mismatch" >&2; exit 1; }
+
+          unzip -q "$base_zip" -d base-release
+          BASE_STAGE="$GITHUB_WORKSPACE/base-release/$BASE_RELEASE_BASENAME"
+          BASE_CUMULATIVE="$BASE_STAGE/docs/$BASE_CUMULATIVE_NAME"
+          BASE_CUMULATIVE_SHA_FILE="$BASE_CUMULATIVE.sha256"
+          BASE_BUILD_INFO="$BASE_STAGE/docs/$BASE_BUILD_INFO_NAME"
+          [[ -d "$BASE_STAGE" && -s "$BASE_STAGE/renderer_sp_rend2_x64.dll" && -s "$BASE_CUMULATIVE" && -s "$BASE_CUMULATIVE_SHA_FILE" && -s "$BASE_BUILD_INFO" ]] || { echo "::error::Base runtime/cumulative/build-info files missing" >&2; exit 1; }
+          expected_cumulative_sha="$(awk 'NF {print $1; exit}' "$BASE_CUMULATIVE_SHA_FILE")"
+          actual_cumulative_sha="$(sha256sum "$BASE_CUMULATIVE" | awk '{print $1}')"
+          [[ "$expected_cumulative_sha" =~ ^[0-9a-fA-F]{64}$ && "$actual_cumulative_sha" = "$expected_cumulative_sha" ]] || { echo "::error::Base cumulative SHA mismatch" >&2; exit 1; }
+
+          grep -Fq "upstream_sha=$UPSTREAM_SHA" "$BASE_BUILD_INFO"
+          grep -Fq "expected_preliminary_sun5c_sha256=$EXPECTED_PRELIMINARY_SUN5C_SHA256" "$BASE_BUILD_INFO"
+          grep -Fq "expected_mat1v2_patcher_sha256=$EXPECTED_MAT1V2_PATCHER_SHA256" "$BASE_BUILD_INFO"
+          grep -Fq "expected_ref1_patcher_sha256=$EXPECTED_REF1_PATCHER_SHA256" "$BASE_BUILD_INFO"
+          grep -Fq "full_production_patcher_sha256=$EXPECTED_FULL_PROD_PATCHER_SHA256" "$BASE_BUILD_INFO"
+          grep -Fq 'material_aware_default=1' "$BASE_BUILD_INFO"
+          grep -Fq 'material_class_mask_default=10' "$BASE_BUILD_INFO"
+          grep -Fq 'reflection_aware_default=1' "$BASE_BUILD_INFO"
+          grep -Fq 'reflection_class_mask_default=10' "$BASE_BUILD_INFO"
+          grep -Fq 'mineral_reflection_scale=0.05' "$BASE_BUILD_INFO"
+          grep -Fq 'metal_reflection_scale=0.60' "$BASE_BUILD_INFO"
+          grep -Fq 'reflection_max=0.75' "$BASE_BUILD_INFO"
+          grep -Fq 'mat0_classifier_frozen=YES' "$BASE_BUILD_INFO"
+          grep -Fq 'mat1_presets_frozen=YES' "$BASE_BUILD_INFO"
+          grep -Fq 'ref1_policy_frozen=YES' "$BASE_BUILD_INFO"
+          grep -Fq 'runtime_acceptance=USER_CONFIRMED_2026-08-14' "$BASE_BUILD_INFO"
+          grep -Fq 'next_stage=GI_INDIRECT_LIGHTING' "$BASE_BUILD_INFO"
+
+          grep -Fq 'REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_REF_1_V1_1_ROBUST_ANCHOR_FIX' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_FULL_PRELIMINARY_PRODUCTION_REF1_V1_1_ACCEPTED' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_GI_1_V1_CUBEMAP_DIFFUSE_INDIRECT' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SUN_4A' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' "$BASE_CUMULATIVE"
+
+          echo "BASE_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE=$BASE_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE_SHA256=$actual_cumulative_sha" >> "$GITHUB_ENV"
+          echo "BASE_ZIP_SHA256=$actual_zip_sha" >> "$GITHUB_ENV"
+          echo "Recovered exact full preliminary base: $artifact_name run=$run_id cumulative_sha=$actual_cumulative_sha"
+
+      - name: Reconstruct and freeze exact accepted Full Preliminary Production source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Base source reconstruction failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git clone --no-checkout --filter=blob:none "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source config user.email "darkwolf-gi1@local.invalid"
+          git -C source config user.name "DarkWolf GI-1 Builder"
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]]
+
+          git -C source apply --check --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source diff --check
+          git -C source apply --check --reverse --whitespace=nowarn "$BASE_CUMULATIVE"
+
+          grep -Fq 'REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER4' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_shadowFilter = ri.Cvar_Get( "r_shadowFilter", "4", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION' source/SP/code/rend2/tr_shader.c
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_REF_1_V1_1_ROBUST_ANCHOR_FIX' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_FULL_PRELIMINARY_PRODUCTION_REF1_V1_1_ACCEPTED' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialAwareFallback = ri.Cvar_Get( "r_materialAwareFallback", "1", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialFallbackClassMask = ri.Cvar_Get( "r_materialFallbackClassMask", "10", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialAwareReflections = ri.Cvar_Get( "r_materialAwareReflections", "1", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialReflectionClassMask = ri.Cvar_Get( "r_materialReflectionClassMask", "10", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialReflectionMineralScale = ri.Cvar_Get( "r_materialReflectionMineralScale", "0.05", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialReflectionMetalScale = ri.Cvar_Get( "r_materialReflectionMetalScale", "0.60", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialReflectionMax = ri.Cvar_Get( "r_materialReflectionMax", "0.75", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq '? R_Ref1ReflectionScale(pStage) : 0.0f;' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'r_pbr = ri.Cvar_Get("r_pbr", "0", CVAR_ARCHIVE | CVAR_LATCH);' source/SP/code/rend2/tr_init.c
+          ! grep -R -Fq 'REND2_GI_1_V1_CUBEMAP_DIFFUSE_INDIRECT' source/SP/code/rend2
+          ! grep -R -Fq 'REND2_SUN_4A' source/SP/code/rend2
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' source/SP/code/rend2/tr_shader.c
+
+          git -C source add -A
+          git -C source commit -m "Freeze accepted Full Preliminary Production source"
+          echo "FULL_PRELIM_BASE_COMMIT=$(git -C source rev-parse HEAD)" >> "$GITHUB_ENV"
+          [[ -z "$(git -C source status --porcelain)" ]]
+
+      - name: Apply GI-1 v1.2 Cubemap Diffuse Indirect patch
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::GI-1 v1.2 application failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          cat > gi1-patcher.b64 <<'GI1_B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKaW1wb3J0IHN5
+          cwoKTUFSS0VSID0gJ1JFTkQyX0dJXzFfVjFfQ1VCRU1BUF9ESUZGVVNFX0lORElSRUNUJwpGSVhf
+          TUFSS0VSID0gJ1JFTkQyX0dJXzFfVjFfMl9TQ09QRV9BV0FSRV9BTkNIT1JfRklYJwoKCmRlZiBu
+          b3JtX2xpbmUobGluZTogc3RyKSAtPiBzdHI6CiAgICByZXR1cm4gbGluZS5zdHJpcCgpCgoKZGVm
+          IGluc2VydF9hZnRlcl91bmlxdWVfbGluZSh0ZXh0OiBzdHIsIGFuY2hvcl9saW5lOiBzdHIsIGJs
+          b2NrOiBzdHIsIGxhYmVsOiBzdHIpIC0+IHN0cjoKICAgIGxpbmVzID0gdGV4dC5zcGxpdGxpbmVz
+          KGtlZXBlbmRzPVRydWUpCiAgICBtYXRjaGVzID0gW2kgZm9yIGksIGxpbmUgaW4gZW51bWVyYXRl
+          KGxpbmVzKSBpZiBub3JtX2xpbmUobGluZSkgPT0gYW5jaG9yX2xpbmVdCiAgICBpZiBsZW4obWF0
+          Y2hlcykgIT0gMToKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KGYne2xhYmVsfTogZXhwZWN0ZWQg
+          ZXhhY3RseSBvbmUgc2VtYW50aWMgbGluZSBhbmNob3IsIGZvdW5kIHtsZW4obWF0Y2hlcyl9JykK
+          ICAgIGkgPSBtYXRjaGVzWzBdCiAgICBpZiBub3QgbGluZXNbaV0uZW5kc3dpdGgoJ1xuJyk6CiAg
+          ICAgICAgbGluZXNbaV0gKz0gJ1xuJwogICAgaW5zZXJ0aW9uID0gYmxvY2sgaWYgYmxvY2suZW5k
+          c3dpdGgoJ1xuJykgZWxzZSBibG9jayArICdcbicKICAgIGxpbmVzLmluc2VydChpICsgMSwgaW5z
+          ZXJ0aW9uKQogICAgcmV0dXJuICcnLmpvaW4obGluZXMpCgoKZGVmIHNlbWFudGljX2xpbmUobGlu
+          ZTogc3RyKSAtPiBzdHI6CiAgICByZXR1cm4gJyAnLmpvaW4obGluZS5zdHJpcCgpLnNwbGl0KCkp
+          CgoKZGVmIGluc2VydF9hZnRlcl91bmlxdWVfbGluZV9pbl9zY29wZSh0ZXh0OiBzdHIsIHNjb3Bl
+          X3N0YXJ0X2xpbmU6IHN0ciwgc2NvcGVfZW5kX2xpbmU6IHN0ciwKICAgICAgICAgICAgICAgICAg
+          ICAgICAgICAgICAgICAgICAgICBhbmNob3JfbGluZTogc3RyLCBibG9jazogc3RyLCBsYWJlbDog
+          c3RyKSAtPiBzdHI6CiAgICBsaW5lcyA9IHRleHQuc3BsaXRsaW5lcyhrZWVwZW5kcz1UcnVlKQog
+          ICAgc3RhcnRfa2V5ID0gc2VtYW50aWNfbGluZShzY29wZV9zdGFydF9saW5lKQogICAgZW5kX2tl
+          eSA9IHNlbWFudGljX2xpbmUoc2NvcGVfZW5kX2xpbmUpCiAgICBhbmNob3Jfa2V5ID0gc2VtYW50
+          aWNfbGluZShhbmNob3JfbGluZSkKICAgIHN0YXJ0cyA9IFtpIGZvciBpLCBsaW5lIGluIGVudW1l
+          cmF0ZShsaW5lcykgaWYgc2VtYW50aWNfbGluZShsaW5lKSA9PSBzdGFydF9rZXldCiAgICBpZiBs
+          ZW4oc3RhcnRzKSAhPSAxOgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoZid7bGFiZWx9OiBleHBl
+          Y3RlZCBleGFjdGx5IG9uZSBzY29wZSBzdGFydCwgZm91bmQge2xlbihzdGFydHMpfScpCiAgICBz
+          dGFydCA9IHN0YXJ0c1swXQogICAgZW5kcyA9IFtpIGZvciBpIGluIHJhbmdlKHN0YXJ0ICsgMSwg
+          bGVuKGxpbmVzKSkgaWYgc2VtYW50aWNfbGluZShsaW5lc1tpXSkgPT0gZW5kX2tleV0KICAgIGlm
+          IG5vdCBlbmRzOgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoZid7bGFiZWx9OiBzY29wZSBlbmQg
+          bm90IGZvdW5kIGFmdGVyIHNjb3BlIHN0YXJ0JykKICAgIGVuZCA9IGVuZHNbMF0KICAgIG1hdGNo
+          ZXMgPSBbaSBmb3IgaSBpbiByYW5nZShzdGFydCArIDEsIGVuZCkgaWYgc2VtYW50aWNfbGluZShs
+          aW5lc1tpXSkgPT0gYW5jaG9yX2tleV0KICAgIGlmIGxlbihtYXRjaGVzKSAhPSAxOgogICAgICAg
+          IGdsb2JhbF9jb3VudCA9IHN1bSgxIGZvciBsaW5lIGluIGxpbmVzIGlmIHNlbWFudGljX2xpbmUo
+          bGluZSkgPT0gYW5jaG9yX2tleSkKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KGYne2xhYmVsfTog
+          ZXhwZWN0ZWQgZXhhY3RseSBvbmUgYW5jaG9yIGluc2lkZSBMaWdodEFsbCBzY29wZSwgZm91bmQg
+          e2xlbihtYXRjaGVzKX07IGdsb2JhbCBtYXRjaGVzPXtnbG9iYWxfY291bnR9JykKICAgIGkgPSBt
+          YXRjaGVzWzBdCiAgICBpZiBub3QgbGluZXNbaV0uZW5kc3dpdGgoJ1xuJyk6CiAgICAgICAgbGlu
+          ZXNbaV0gKz0gJ1xuJwogICAgaW5zZXJ0aW9uID0gYmxvY2sgaWYgYmxvY2suZW5kc3dpdGgoJ1xu
+          JykgZWxzZSBibG9jayArICdcbicKICAgIGxpbmVzLmluc2VydChpICsgMSwgaW5zZXJ0aW9uKQog
+          ICAgcmV0dXJuICcnLmpvaW4obGluZXMpCgoKZGVmIGluc2VydF9iZWZvcmVfdW5pcXVlX2xpbmUo
+          dGV4dDogc3RyLCBhbmNob3JfbGluZTogc3RyLCBibG9jazogc3RyLCBsYWJlbDogc3RyKSAtPiBz
+          dHI6CiAgICBsaW5lcyA9IHRleHQuc3BsaXRsaW5lcyhrZWVwZW5kcz1UcnVlKQogICAgbWF0Y2hl
+          cyA9IFtpIGZvciBpLCBsaW5lIGluIGVudW1lcmF0ZShsaW5lcykgaWYgbm9ybV9saW5lKGxpbmUp
+          ID09IGFuY2hvcl9saW5lXQogICAgaWYgbGVuKG1hdGNoZXMpICE9IDE6CiAgICAgICAgcmFpc2Ug
+          U3lzdGVtRXhpdChmJ3tsYWJlbH06IGV4cGVjdGVkIGV4YWN0bHkgb25lIHNlbWFudGljIGxpbmUg
+          YW5jaG9yLCBmb3VuZCB7bGVuKG1hdGNoZXMpfScpCiAgICBpID0gbWF0Y2hlc1swXQogICAgaW5z
+          ZXJ0aW9uID0gYmxvY2sgaWYgYmxvY2suZW5kc3dpdGgoJ1xuJykgZWxzZSBibG9jayArICdcbicK
+          ICAgIGxpbmVzLmluc2VydChpLCBpbnNlcnRpb24pCiAgICByZXR1cm4gJycuam9pbihsaW5lcykK
+          CgpkZWYgcmVwbGFjZV9vbmNlKHRleHQ6IHN0ciwgb2xkOiBzdHIsIG5ldzogc3RyLCBsYWJlbDog
+          c3RyKSAtPiBzdHI6CiAgICBjb3VudCA9IHRleHQuY291bnQob2xkKQogICAgaWYgY291bnQgIT0g
+          MToKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KGYne2xhYmVsfTogZXhwZWN0ZWQgZXhhY3RseSBv
+          bmUgYW5jaG9yLCBmb3VuZCB7Y291bnR9JykKICAgIHJldHVybiB0ZXh0LnJlcGxhY2Uob2xkLCBu
+          ZXcsIDEpCgoKZGVmIHBhdGNoX2ZpbGUocm9vdDogUGF0aCwgcmVsOiBzdHIsIGZ1bmMpIC0+IE5v
+          bmU6CiAgICBwYXRoID0gcm9vdCAvIHJlbAogICAgaWYgbm90IHBhdGguaXNfZmlsZSgpOgogICAg
+          ICAgIHJhaXNlIFN5c3RlbUV4aXQoZidtaXNzaW5nIHtwYXRofScpCiAgICB0ZXh0ID0gcGF0aC5y
+          ZWFkX3RleHQoZW5jb2Rpbmc9J3V0Zi04JykKICAgIGlmIE1BUktFUiBpbiB0ZXh0IG9yIEZJWF9N
+          QVJLRVIgaW4gdGV4dDoKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KGYne3JlbH06IEdJLTEgYWxy
+          ZWFkeSBhcHBsaWVkJykKICAgIG5ld190ZXh0ID0gZnVuYyh0ZXh0KQogICAgaWYgbmV3X3RleHQg
+          PT0gdGV4dDoKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KGYne3JlbH06IG5vIGNoYW5nZXMgcHJv
+          ZHVjZWQnKQogICAgcGF0aC53cml0ZV90ZXh0KG5ld190ZXh0LCBlbmNvZGluZz0ndXRmLTgnLCBu
+          ZXdsaW5lPSdcbicpCgoKZGVmIHBhdGNoX2luaXQodGV4dDogc3RyKSAtPiBzdHI6CiAgICBkZWNs
+          YXJhdGlvbnMgPSAoCiAgICAgICAgJy8vICcgKyBNQVJLRVIgKyAnOiBsb3ctcmlzayBkaWZmdXNl
+          IGluZGlyZWN0IGZpbGwgZnJvbSB0aGUgZXhpc3RpbmcgUmVuZDIgY3ViZW1hcCByb3VnaGVzdCBt
+          aXAuXG4nCiAgICAgICAgJ2N2YXJfdCAgKnJfaW5kaXJlY3RMaWdodGluZztcbicKICAgICAgICAn
+          Y3Zhcl90ICAqcl9pbmRpcmVjdExpZ2h0aW5nU2NhbGU7XG4nCiAgICAgICAgJ2N2YXJfdCAgKnJf
+          aW5kaXJlY3RMaWdodGluZ1NhdHVyYXRpb247XG4nCiAgICAgICAgJ2N2YXJfdCAgKnJfaW5kaXJl
+          Y3RMaWdodGluZ01heDtcbicKICAgICAgICAnY3Zhcl90ICAqcl9pbmRpcmVjdExpZ2h0aW5nRGVi
+          dWc7JwogICAgKQogICAgdGV4dCA9IGluc2VydF9hZnRlcl91bmlxdWVfbGluZSgKICAgICAgICB0
+          ZXh0LAogICAgICAgICdjdmFyX3QgICpyX21hdGVyaWFsUmVmbGVjdGlvbk1heDsnLAogICAgICAg
+          IGRlY2xhcmF0aW9ucywKICAgICAgICAndHJfaW5pdC5jIEdJLTEgY3ZhciBkZWNsYXJhdGlvbnMn
+          KQoKICAgIHJlZ2lzdHJhdGlvbiA9ICgKICAgICAgICAnXG5cdC8vICcgKyBNQVJLRVIgKyAnXG4n
+          CiAgICAgICAgJ1x0Ly8gT0ZGIGlzIHRoZSBzdHJpY3QgYWNjZXB0ZWQgcHJlbGltaW5hcnktcHJv
+          ZHVjdGlvbiBBL0IgYmFzZWxpbmUuIFRoZXNlIGFyZSB1bmlmb3Jtcywgc28gR0kgY3ZhcnMgYXJl
+          IG5vdCBsYXRjaGVkLlxuJwogICAgICAgICdcdHJfaW5kaXJlY3RMaWdodGluZyA9IHJpLkN2YXJf
+          R2V0KCAicl9pbmRpcmVjdExpZ2h0aW5nIiwgIjAiLCBDVkFSX0FSQ0hJVkUgKTtcbicKICAgICAg
+          ICAnXHRyaS5DdmFyX0NoZWNrUmFuZ2UoIHJfaW5kaXJlY3RMaWdodGluZywgMCwgMSwgcXRydWUg
+          KTtcbicKICAgICAgICAnXHRyX2luZGlyZWN0TGlnaHRpbmdTY2FsZSA9IHJpLkN2YXJfR2V0KCAi
+          cl9pbmRpcmVjdExpZ2h0aW5nU2NhbGUiLCAiMC4xOCIsIENWQVJfQVJDSElWRSApO1xuJwogICAg
+          ICAgICdcdHJpLkN2YXJfQ2hlY2tSYW5nZSggcl9pbmRpcmVjdExpZ2h0aW5nU2NhbGUsIDAuMGYs
+          IDIuMGYsIHFmYWxzZSApO1xuJwogICAgICAgICdcdHJfaW5kaXJlY3RMaWdodGluZ1NhdHVyYXRp
+          b24gPSByaS5DdmFyX0dldCggInJfaW5kaXJlY3RMaWdodGluZ1NhdHVyYXRpb24iLCAiMC42NSIs
+          IENWQVJfQVJDSElWRSApO1xuJwogICAgICAgICdcdHJpLkN2YXJfQ2hlY2tSYW5nZSggcl9pbmRp
+          cmVjdExpZ2h0aW5nU2F0dXJhdGlvbiwgMC4wZiwgMS4wZiwgcWZhbHNlICk7XG4nCiAgICAgICAg
+          J1x0cl9pbmRpcmVjdExpZ2h0aW5nTWF4ID0gcmkuQ3Zhcl9HZXQoICJyX2luZGlyZWN0TGlnaHRp
+          bmdNYXgiLCAiMC4xOCIsIENWQVJfQVJDSElWRSApO1xuJwogICAgICAgICdcdHJpLkN2YXJfQ2hl
+          Y2tSYW5nZSggcl9pbmRpcmVjdExpZ2h0aW5nTWF4LCAwLjBmLCAxLjBmLCBxZmFsc2UgKTtcbicK
+          ICAgICAgICAnXHRyX2luZGlyZWN0TGlnaHRpbmdEZWJ1ZyA9IHJpLkN2YXJfR2V0KCAicl9pbmRp
+          cmVjdExpZ2h0aW5nRGVidWciLCAiMCIsIENWQVJfQVJDSElWRSApO1xuJwogICAgICAgICdcdHJp
+          LkN2YXJfQ2hlY2tSYW5nZSggcl9pbmRpcmVjdExpZ2h0aW5nRGVidWcsIDAsIDIsIHF0cnVlICk7
+          JwogICAgKQogICAgdGV4dCA9IGluc2VydF9hZnRlcl91bmlxdWVfbGluZSgKICAgICAgICB0ZXh0
+          LAogICAgICAgICdyaS5DdmFyX0NoZWNrUmFuZ2UoIHJfbWF0ZXJpYWxSZWZsZWN0aW9uTWF4LCAw
+          LjBmLCAxLjBmLCBxZmFsc2UgKTsnLAogICAgICAgIHJlZ2lzdHJhdGlvbiwKICAgICAgICAndHJf
+          aW5pdC5jIEdJLTEgY3ZhciByZWdpc3RyYXRpb24nKQogICAgcmV0dXJuIHRleHQKCgpkZWYgcGF0
+          Y2hfbG9jYWwodGV4dDogc3RyKSAtPiBzdHI6CiAgICBleHRlcm5zID0gKAogICAgICAgICcvLyAn
+          ICsgTUFSS0VSICsgJ1xuJwogICAgICAgICdleHRlcm4gIGN2YXJfdCAgKnJfaW5kaXJlY3RMaWdo
+          dGluZztcbicKICAgICAgICAnZXh0ZXJuICBjdmFyX3QgICpyX2luZGlyZWN0TGlnaHRpbmdTY2Fs
+          ZTtcbicKICAgICAgICAnZXh0ZXJuICBjdmFyX3QgICpyX2luZGlyZWN0TGlnaHRpbmdTYXR1cmF0
+          aW9uO1xuJwogICAgICAgICdleHRlcm4gIGN2YXJfdCAgKnJfaW5kaXJlY3RMaWdodGluZ01heDtc
+          bicKICAgICAgICAnZXh0ZXJuICBjdmFyX3QgICpyX2luZGlyZWN0TGlnaHRpbmdEZWJ1ZzsnCiAg
+          ICApCiAgICB0ZXh0ID0gaW5zZXJ0X2FmdGVyX3VuaXF1ZV9saW5lKAogICAgICAgIHRleHQsCiAg
+          ICAgICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9tYXRlcmlhbFJlZmxlY3Rpb25NYXg7JywKICAgICAg
+          ICBleHRlcm5zLAogICAgICAgICd0cl9sb2NhbC5oIEdJLTEgY3ZhciBleHRlcm5zJykKICAgIHRl
+          eHQgPSBpbnNlcnRfYWZ0ZXJfdW5pcXVlX2xpbmUoCiAgICAgICAgdGV4dCwKICAgICAgICAnVU5J
+          Rk9STV9DVUJFTUFQSU5GTywnLAogICAgICAgICdcdC8vICcgKyBNQVJLRVIgKyAnXG5cdFVOSUZP
+          Uk1fSU5ESVJFQ1RMSUdIVFBBUkFNUywnLAogICAgICAgICd0cl9sb2NhbC5oIEdJLTEgdW5pZm9y
+          bSBlbnVtJykKICAgIHJldHVybiB0ZXh0CgoKZGVmIHBhdGNoX2dsc2wodGV4dDogc3RyKSAtPiBz
+          dHI6CiAgICByZXR1cm4gaW5zZXJ0X2FmdGVyX3VuaXF1ZV9saW5lKAogICAgICAgIHRleHQsCiAg
+          ICAgICAgJ3sgInVfQ3ViZU1hcEluZm8iLCBHTFNMX1ZFQzQgfSwnLAogICAgICAgICdcdC8vICcg
+          KyBNQVJLRVIgKyAnXG5cdHsgInVfSW5kaXJlY3RMaWdodFBhcmFtcyIsIEdMU0xfVkVDNCB9LCcs
+          CiAgICAgICAgJ3RyX2dsc2wuYyBHSS0xIHVuaWZvcm0gbWV0YWRhdGEnKQoKCmRlZiBwYXRjaF9z
+          aGFkZSh0ZXh0OiBzdHIpIC0+IHN0cjoKICAgIGhlbHBlciA9IHInJycvLyBSRU5EMl9HSV8xX1Yx
+          X0NVQkVNQVBfRElGRlVTRV9JTkRJUkVDVAovLyBSRU5EMl9HSV8xX1YxXzJfU0NPUEVfQVdBUkVf
+          QU5DSE9SX0ZJWAovLyB4PXNjYWxlLCB5PXNhdHVyYXRpb24sIHo9cGVyLWNoYW5uZWwgY2FwLCB3
+          PWRlYnVnIG1vZGUgKDAgY29tcG9zaXRlLCAxIGluZGlyZWN0LW9ubHksIDIgaW5kaXJlY3Qtb25s
+          eSB4NCkuCi8vIEdJIGlzIGRpc2FibGVkIHdoaWxlIGN1YmVtYXBzIHRoZW1zZWx2ZXMgYXJlIGJl
+          aW5nIHJlbmRlcmVkIHRvIGF2b2lkIGZlZWRiYWNrLgpzdGF0aWMgdm9pZCBSX0dpMUJ1aWxkSW5k
+          aXJlY3RQYXJhbXMocWJvb2xlYW4gcmVuZGVyVG9DdWJlbWFwLCBpbnQgY3ViZW1hcEluZGV4LCB2
+          ZWM0X3QgcGFyYW1zKQp7CglpbnQgZGVidWdNb2RlOwoKCVZlY3RvclNldDQocGFyYW1zLCAwLjBm
+          LCAwLjBmLCAwLjBmLCAwLjBmKTsKCWlmICghcl9pbmRpcmVjdExpZ2h0aW5nIHx8ICFyX2luZGly
+          ZWN0TGlnaHRpbmctPmludGVnZXIgfHwKCQkhcl9jdWJlTWFwcGluZyB8fCAhcl9jdWJlTWFwcGlu
+          Zy0+aW50ZWdlciB8fCByZW5kZXJUb0N1YmVtYXAgfHwgY3ViZW1hcEluZGV4IDw9IDAgfHwKCQko
+          dHIudmlld1Bhcm1zLmZsYWdzICYgVlBGX05PQ1VCRU1BUFMpKQoJCXJldHVybjsKCglwYXJhbXNb
+          MF0gPSByX2luZGlyZWN0TGlnaHRpbmdTY2FsZSA/IENMQU1QKHJfaW5kaXJlY3RMaWdodGluZ1Nj
+          YWxlLT52YWx1ZSwgMC4wZiwgMi4wZikgOiAwLjBmOwoJcGFyYW1zWzFdID0gcl9pbmRpcmVjdExp
+          Z2h0aW5nU2F0dXJhdGlvbiA/IENMQU1QKHJfaW5kaXJlY3RMaWdodGluZ1NhdHVyYXRpb24tPnZh
+          bHVlLCAwLjBmLCAxLjBmKSA6IDAuNjVmOwoJcGFyYW1zWzJdID0gcl9pbmRpcmVjdExpZ2h0aW5n
+          TWF4ID8gQ0xBTVAocl9pbmRpcmVjdExpZ2h0aW5nTWF4LT52YWx1ZSwgMC4wZiwgMS4wZikgOiAw
+          LjE4ZjsKCWRlYnVnTW9kZSA9IHJfaW5kaXJlY3RMaWdodGluZ0RlYnVnID8gcl9pbmRpcmVjdExp
+          Z2h0aW5nRGVidWctPmludGVnZXIgOiAwOwoJaWYgKGRlYnVnTW9kZSA8IDApIGRlYnVnTW9kZSA9
+          IDA7CglpZiAoZGVidWdNb2RlID4gMikgZGVidWdNb2RlID0gMjsKCXBhcmFtc1szXSA9IChmbG9h
+          dClkZWJ1Z01vZGU7Cn0KJycnCiAgICB0ZXh0ID0gaW5zZXJ0X2FmdGVyX3VuaXF1ZV9saW5lKAog
+          ICAgICAgIHRleHQsCiAgICAgICAgJyNpbmNsdWRlICJ0cl9sb2NhbC5oIicsCiAgICAgICAgJ1xu
+          JyArIGhlbHBlciwKICAgICAgICAndHJfc2hhZGUuYyBHSS0xIGhlbHBlciBpbnNlcnRpb24nKQoK
+          ICAgICMgUkVORDJfR0lfMV9WMV8yX1NDT1BFX0FXQVJFX0FOQ0hPUl9GSVgKICAgICMgVGhlIHNh
+          bWUgdW5pZm9ybSB1cGxvYWQgZXhpc3RzIGluIG11bHRpcGxlIHJlbmRlcmluZyBwYXRocy4gUmVz
+          dHJpY3QgdGhlCiAgICAjIHNlYXJjaCB0byB0aGUgbm9ybWFsIExpZ2h0QWxsIG11bHRpdGV4dHVy
+          ZSBicmFuY2gsIHRoZW4gcmVxdWlyZSBleGFjdGx5CiAgICAjIG9uZSBtYXRjaGluZyB1cGxvYWQg
+          aW5zaWRlIHRoYXQgYnJhbmNoLiBSRUYtMSByZW1haW5zIGJ5dGUtZm9yLWJ5dGUgaW50YWN0Lgog
+          ICAgdW5pZm9ybV9ibG9jayA9ICgKICAgICAgICAnXG5cdFx0XHR7XG4nCiAgICAgICAgJ1x0XHRc
+          dFx0dmVjNF90IGluZGlyZWN0UGFyYW1zO1xuJwogICAgICAgICdcdFx0XHRcdC8vICcgKyBNQVJL
+          RVIgKyAnOiBzZXBhcmF0ZSBkaWZmdXNlIEdJIGZyb20gYWNjZXB0ZWQgUkVGLTEgcmVmbGVjdGlv
+          biBzY2FsZS5cbicKICAgICAgICAnXHRcdFx0XHRSX0dpMUJ1aWxkSW5kaXJlY3RQYXJhbXMocmVu
+          ZGVyVG9DdWJlbWFwLCBpbnB1dC0+Y3ViZW1hcEluZGV4LCBpbmRpcmVjdFBhcmFtcyk7XG4nCiAg
+          ICAgICAgJ1x0XHRcdFx0R0xTTF9TZXRVbmlmb3JtVmVjNChzcCwgVU5JRk9STV9JTkRJUkVDVExJ
+          R0hUUEFSQU1TLCBpbmRpcmVjdFBhcmFtcyk7XG4nCiAgICAgICAgJ1x0XHRcdH0nCiAgICApCiAg
+          ICB0ZXh0ID0gaW5zZXJ0X2FmdGVyX3VuaXF1ZV9saW5lX2luX3Njb3BlKAogICAgICAgIHRleHQs
+          CiAgICAgICAgJ2Vsc2UgaWYgKCBwU3RhZ2UtPmdsc2xTaGFkZXJHcm91cCA9PSB0ci5saWdodGFs
+          bFNoYWRlciApJywKICAgICAgICAnZWxzZSBpZiAoIHBTdGFnZS0+YnVuZGxlWzFdLmltYWdlWzBd
+          ICE9IDAgKScsCiAgICAgICAgJ0dMU0xfU2V0VW5pZm9ybVZlYzQoc3AsIFVOSUZPUk1fRU5BQkxF
+          VEVYVFVSRVMsIGVuYWJsZVRleHR1cmVzKTsnLAogICAgICAgIHVuaWZvcm1fYmxvY2ssCiAgICAg
+          ICAgJ3RyX3NoYWRlLmMgR0ktMSBMaWdodEFsbCBzY29wZWQgZW5hYmxlLXRleHR1cmVzIHVuaWZv
+          cm0nKQoKICAgIG9sZF9mbXQgPSAoJ1x0XHQiTUFUVFJBQ0Ugc2hhZGVyPVxcIiVzXFwiIGltYWdl
+          PVxcIiVzXFwiIHBhdGg9JXMgc3VyZmFjZT0weCUwOHggc3RhZ2U9JWQgbmF0aXZlPSV1IG5hbWU9
+          JXUgc3Ryb25nPSV1IGZpbmFsPSV1IHNwZWNzcmM9JXUgZXhwbGljaXRyZXNwPSV1IG1hdDE9JXUg
+          cGJyPSV1XFxuIiwnKQogICAgbmV3X2ZtdCA9ICgnXHRcdC8vICcgKyBNQVJLRVIgKyAnOiBhcHBl
+          bmQgR0kgYWN0aXZhdGlvbiBhbmQgY3ViZW1hcCBjb3ZlcmFnZSB0byB0aGUgZXhpc3RpbmcgTUFU
+          VFJBQ0UgZGlhZ25vc3RpYy5cbicKICAgICAgICAgICAgICAgJ1x0XHQiTUFUVFJBQ0Ugc2hhZGVy
+          PVxcIiVzXFwiIGltYWdlPVxcIiVzXFwiIHBhdGg9JXMgc3VyZmFjZT0weCUwOHggc3RhZ2U9JWQg
+          bmF0aXZlPSV1IG5hbWU9JXUgc3Ryb25nPSV1IGZpbmFsPSV1IHNwZWNzcmM9JXUgZXhwbGljaXRy
+          ZXNwPSV1IG1hdDE9JXUgcGJyPSV1IGdpMT0ldSBnaWFjdGl2ZT0ldSBnaXNjYWxlPSUuM2YgZ2lz
+          YXQ9JS4zZiBnaW1heD0lLjNmIGdpZGVidWc9JXUgY3ViZWlkeD0lZCBjdWJlb249JXVcXG4iLCcp
+          CiAgICB0ZXh0ID0gcmVwbGFjZV9vbmNlKHRleHQsIG9sZF9mbXQsIG5ld19mbXQsICd0cl9zaGFk
+          ZS5jIEdJLTEgTUFUVFJBQ0UgZm9ybWF0JykKCiAgICBvbGRfYXJncyA9ICdcdFx0KHVuc2lnbmVk
+          IGludCkocl9wYnIgPyByX3Bici0+aW50ZWdlciA6IDApKTsnCiAgICBuZXdfYXJncyA9ICgKICAg
+          ICAgICAnXHRcdCh1bnNpZ25lZCBpbnQpKHJfcGJyID8gcl9wYnItPmludGVnZXIgOiAwKSxcbicK
+          ICAgICAgICAnXHRcdCh1bnNpZ25lZCBpbnQpKHJfaW5kaXJlY3RMaWdodGluZyA/IHJfaW5kaXJl
+          Y3RMaWdodGluZy0+aW50ZWdlciA6IDApLFxuJwogICAgICAgICdcdFx0KHVuc2lnbmVkIGludCko
+          KHJfaW5kaXJlY3RMaWdodGluZyAmJiByX2luZGlyZWN0TGlnaHRpbmctPmludGVnZXIgJiYgcl9j
+          dWJlTWFwcGluZyAmJiByX2N1YmVNYXBwaW5nLT5pbnRlZ2VyICYmXG4nCiAgICAgICAgJ1x0XHRc
+          dCEoYmFja0VuZC52aWV3UGFybXMuZmxhZ3MgJiBWUEZfTk9DVUJFTUFQUykgJiYgdGVzcy5jdWJl
+          bWFwSW5kZXggPiAwKSA/IDEgOiAwKSxcbicKICAgICAgICAnXHRcdHJfaW5kaXJlY3RMaWdodGlu
+          Z1NjYWxlID8gcl9pbmRpcmVjdExpZ2h0aW5nU2NhbGUtPnZhbHVlIDogMC4wZixcbicKICAgICAg
+          ICAnXHRcdHJfaW5kaXJlY3RMaWdodGluZ1NhdHVyYXRpb24gPyByX2luZGlyZWN0TGlnaHRpbmdT
+          YXR1cmF0aW9uLT52YWx1ZSA6IDAuMGYsXG4nCiAgICAgICAgJ1x0XHRyX2luZGlyZWN0TGlnaHRp
+          bmdNYXggPyByX2luZGlyZWN0TGlnaHRpbmdNYXgtPnZhbHVlIDogMC4wZixcbicKICAgICAgICAn
+          XHRcdCh1bnNpZ25lZCBpbnQpKHJfaW5kaXJlY3RMaWdodGluZ0RlYnVnID8gcl9pbmRpcmVjdExp
+          Z2h0aW5nRGVidWctPmludGVnZXIgOiAwKSxcbicKICAgICAgICAnXHRcdChpbnQpdGVzcy5jdWJl
+          bWFwSW5kZXgsXG4nCiAgICAgICAgJ1x0XHQodW5zaWduZWQgaW50KSgocl9jdWJlTWFwcGluZyAm
+          JiByX2N1YmVNYXBwaW5nLT5pbnRlZ2VyICYmICEoYmFja0VuZC52aWV3UGFybXMuZmxhZ3MgJiBW
+          UEZfTk9DVUJFTUFQUykgJiYgdGVzcy5jdWJlbWFwSW5kZXggPiAwKSA/IDEgOiAwKSk7JwogICAg
+          KQogICAgdGV4dCA9IHJlcGxhY2Vfb25jZSh0ZXh0LCBvbGRfYXJncywgbmV3X2FyZ3MsICd0cl9z
+          aGFkZS5jIEdJLTEgTUFUVFJBQ0UgYXJndW1lbnRzJykKICAgIHJldHVybiB0ZXh0CgoKZGVmIHBh
+          dGNoX2xpZ2h0YWxsKHRleHQ6IHN0cikgLT4gc3RyOgogICAgdGV4dCA9IGluc2VydF9hZnRlcl91
+          bmlxdWVfbGluZSgKICAgICAgICB0ZXh0LAogICAgICAgICd1bmlmb3JtIHZlYzQgICAgICB1X0N1
+          YmVNYXBJbmZvOycsCiAgICAgICAgJy8vICcgKyBNQVJLRVIgKyAnOiBkaWZmdXNlIGlycmFkaWFu
+          Y2UgYXBwcm94aW1hdGlvbiBmcm9tIHRoZSByb3VnaGVzdCBleGlzdGluZyBjdWJlbWFwIG1pcC5c
+          bicKICAgICAgICAndW5pZm9ybSB2ZWM0ICAgICAgdV9JbmRpcmVjdExpZ2h0UGFyYW1zOycsCiAg
+          ICAgICAgJ2xpZ2h0YWxsX2ZwLmdsc2wgR0ktMSB1bmlmb3JtJykKCiAgICB0ZXh0ID0gaW5zZXJ0
+          X2FmdGVyX3VuaXF1ZV9saW5lKAogICAgICAgIHRleHQsCiAgICAgICAgJ2Zsb2F0IE5MLCBOSCwg
+          TkUsIEVILCBhdHRlbnVhdGlvbjsnLAogICAgICAgICdcbiNpZiBkZWZpbmVkKFVTRV9DVUJFTUFQ
+          KVxuJwogICAgICAgICdcdC8vICcgKyBNQVJLRVIgKyAnOiByZXRhaW5lZCBmb3IgZGVidWctb25s
+          eSB2aXN1YWxpemF0aW9uIGFmdGVyIGFsbCBkaXJlY3QtbGlnaHQgdGVybXMgYXJlIGV2YWx1YXRl
+          ZC5cbicKICAgICAgICAnXHR2ZWMzIGluZGlyZWN0Q29udHJpYnV0aW9uID0gdmVjMygwLjApO1xu
+          JwogICAgICAgICcjZW5kaWYnLAogICAgICAgICdsaWdodGFsbF9mcC5nbHNsIEdJLTEgY29udHJp
+          YnV0aW9uIGFjY3VtdWxhdG9yJykKCiAgICBzYW1wbGVfYmxvY2sgPSByJycnCgkvLyBSRU5EMl9H
+          SV8xX1YxX0NVQkVNQVBfRElGRlVTRV9JTkRJUkVDVAoJLy8gVGhlIHJvdWdoZXN0IGN1YmVtYXAg
+          bWlwIGlzIHVzZWQgYXMgYSBjaGVhcCBsb3ctZnJlcXVlbmN5IGVudmlyb25tZW50IGlycmFkaWFu
+          Y2UgYXBwcm94aW1hdGlvbi4KCS8vIFRoaXMgaXMgbm90IHBhdGgtdHJhY2VkIEdJOiBpdCBpcyBh
+          IG9uZS1zYW1wbGUgZGlmZnVzZSBpbmRpcmVjdCBmaWxsIHRoYXQgcmV1c2VzIGV4aXN0aW5nIHBy
+          b2Jlcy4KCWlmICh1X0luZGlyZWN0TGlnaHRQYXJhbXMueCA+IDAuMCkKCXsKCQl2ZWMzIGluZGly
+          ZWN0U2FtcGxlOwoJCWZsb2F0IGluZGlyZWN0THVtYTsKCiAgI2lmIGRlZmluZWQoVVNFX0JPWF9D
+          VUJFTUFQX1BBUkFMTEFYKQoJCWluZGlyZWN0U2FtcGxlID0gaGl0Q3ViZShOICogdV9DdWJlTWFw
+          SW5mby53LCBwYXJhbGxheCwgdV9DdWJlTWFwSW5mby53d3csIFJPVUdITkVTU19NSVBTLCB1X0N1
+          YmVNYXApLnJnYjsKICAjZWxzZQoJCWluZGlyZWN0U2FtcGxlID0gdGV4dHVyZUN1YmVMb2QodV9D
+          dWJlTWFwLCBOICsgcGFyYWxsYXgsIFJPVUdITkVTU19NSVBTKS5yZ2I7CiAgI2VuZGlmCgogICAg
+          I2lmIGRlZmluZWQoVVNFX1BCUikKCQlpbmRpcmVjdFNhbXBsZSAqPSBpbmRpcmVjdFNhbXBsZTsK
+          ICAgICNlbmRpZgoKCQlpbmRpcmVjdEx1bWEgPSBkb3QoaW5kaXJlY3RTYW1wbGUsIHZlYzMoMC4y
+          MTI1LCAwLjcxNTQsIDAuMDcyMSkpOwoJCWluZGlyZWN0U2FtcGxlID0gbWl4KHZlYzMoaW5kaXJl
+          Y3RMdW1hKSwgaW5kaXJlY3RTYW1wbGUsIGNsYW1wKHVfSW5kaXJlY3RMaWdodFBhcmFtcy55LCAw
+          LjAsIDEuMCkpOwoJCWluZGlyZWN0U2FtcGxlID0gbWluKGluZGlyZWN0U2FtcGxlICogdV9JbmRp
+          cmVjdExpZ2h0UGFyYW1zLngsIHZlYzModV9JbmRpcmVjdExpZ2h0UGFyYW1zLnopKTsKCQlpbmRp
+          cmVjdENvbnRyaWJ1dGlvbiA9IGluZGlyZWN0U2FtcGxlICogZGlmZnVzZS5yZ2I7CgkJZ2xfRnJh
+          Z0NvbG9yLnJnYiArPSBpbmRpcmVjdENvbnRyaWJ1dGlvbjsKCX0KJycnCiAgICB0ZXh0ID0gaW5z
+          ZXJ0X2FmdGVyX3VuaXF1ZV9saW5lKAogICAgICAgIHRleHQsCiAgICAgICAgJ3ZlYzMgcGFyYWxs
+          YXggPSB1X0N1YmVNYXBJbmZvLnh5eiArIHVfQ3ViZU1hcEluZm8udyAqIHZpZXdEaXI7JywKICAg
+          ICAgICBzYW1wbGVfYmxvY2ssCiAgICAgICAgJ2xpZ2h0YWxsX2ZwLmdsc2wgR0ktMSBpbmRpcmVj
+          dCBzYW1wbGUnKQoKICAgIGRlYnVnX2Jsb2NrID0gcicnJwogICNpZiBkZWZpbmVkKFVTRV9DVUJF
+          TUFQKQoJLy8gUkVORDJfR0lfMV9WMV9DVUJFTUFQX0RJRkZVU0VfSU5ESVJFQ1QgZGlhZ25vc3Rp
+          YyBtb2RlczoKCS8vIDEgPSBhY3R1YWwgaW5kaXJlY3QgY29udHJpYnV0aW9uIG9ubHk7IDIgPSBj
+          b250cmlidXRpb24geDQgdG8gZXhwb3NlIHByb2JlIGNvdmVyYWdlL2xpZ2h0IGRpcmVjdGlvbi4K
+          CWlmICh1X0luZGlyZWN0TGlnaHRQYXJhbXMudyA+IDAuNSkKCXsKCQlpZiAodV9JbmRpcmVjdExp
+          Z2h0UGFyYW1zLncgPiAxLjUpCgkJCWdsX0ZyYWdDb2xvci5yZ2IgPSBtaW4oaW5kaXJlY3RDb250
+          cmlidXRpb24gKiA0LjAsIHZlYzMoMS4wKSk7CgkJZWxzZQoJCQlnbF9GcmFnQ29sb3IucmdiID0g
+          aW5kaXJlY3RDb250cmlidXRpb247Cgl9CiAgI2VuZGlmCicnJwogICAgdGV4dCA9IGluc2VydF9i
+          ZWZvcmVfdW5pcXVlX2xpbmUoCiAgICAgICAgdGV4dCwKICAgICAgICAnZ2xfRnJhZ0NvbG9yLnJn
+          YiA9IHNxcnQoZ2xfRnJhZ0NvbG9yLnJnYik7JywKICAgICAgICBkZWJ1Z19ibG9jaywKICAgICAg
+          ICAnbGlnaHRhbGxfZnAuZ2xzbCBHSS0xIGRlYnVnIG91dHB1dCcpCiAgICByZXR1cm4gdGV4dAoK
+          CmRlZiBtYWluKCkgLT4gTm9uZToKICAgIHJvb3QgPSBQYXRoKHN5cy5hcmd2WzFdIGlmIGxlbihz
+          eXMuYXJndikgPiAxIGVsc2UgJy4nKQogICAgcGF0Y2hfZmlsZShyb290LCAnU1AvY29kZS9yZW5k
+          Mi90cl9pbml0LmMnLCBwYXRjaF9pbml0KQogICAgcGF0Y2hfZmlsZShyb290LCAnU1AvY29kZS9y
+          ZW5kMi90cl9sb2NhbC5oJywgcGF0Y2hfbG9jYWwpCiAgICBwYXRjaF9maWxlKHJvb3QsICdTUC9j
+          b2RlL3JlbmQyL3RyX2dsc2wuYycsIHBhdGNoX2dsc2wpCiAgICBwYXRjaF9maWxlKHJvb3QsICdT
+          UC9jb2RlL3JlbmQyL3RyX3NoYWRlLmMnLCBwYXRjaF9zaGFkZSkKICAgIHBhdGNoX2ZpbGUocm9v
+          dCwgJ1NQL2NvZGUvcmVuZDIvZ2xzbC9saWdodGFsbF9mcC5nbHNsJywgcGF0Y2hfbGlnaHRhbGwp
+          CiAgICBwcmludCgnR0ktMSB2MS4yIFNjb3BlLUF3YXJlIEFuY2hvciBGaXg6IEN1YmVtYXAgRGlm
+          ZnVzZSBJbmRpcmVjdCBMaWdodGluZyBhcHBsaWVkIHN1Y2Nlc3NmdWxseSBvdmVyIEZ1bGwgUHJl
+          bGltaW5hcnkgUHJvZHVjdGlvbi4nKQoKCmlmIF9fbmFtZV9fID09ICdfX21haW5fXyc6CiAgICBt
+          YWluKCkK
+          GI1_B64
+          base64 -d gi1-patcher.b64 > apply_rend2_gi_1_v1_2_cubemap_diffuse_indirect_sp.py
+          actual_patcher_sha="$(sha256sum apply_rend2_gi_1_v1_2_cubemap_diffuse_indirect_sp.py | awk '{print $1}')"
+          [[ "$actual_patcher_sha" = "$GI1_PATCHER_SHA256" ]] || { echo "::error::GI-1 patcher SHA mismatch: $actual_patcher_sha" >&2; exit 1; }
+          python3 -m py_compile apply_rend2_gi_1_v1_2_cubemap_diffuse_indirect_sp.py
+          python3 - <<'PY_SCOPE_PREFLIGHT'
+          from pathlib import Path
+          import importlib.util
+          p = Path('apply_rend2_gi_1_v1_2_cubemap_diffuse_indirect_sp.py')
+          spec = importlib.util.spec_from_file_location('gi1v12', p)
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          src = Path('source/SP/code/rend2/tr_shade.c').read_text(encoding='utf-8')
+          target = 'GLSL_SetUniformVec4(sp, UNIFORM_ENABLETEXTURES, enableTextures);'
+          global_count = sum(1 for line in src.splitlines() if mod.semantic_line(line) == mod.semantic_line(target))
+          if global_count < 1:
+              raise SystemExit('GI-1 v1.2 preflight: no enable-textures upload found')
+          synthetic = ('GLSL_SetUniformVec4(sp, UNIFORM_ENABLETEXTURES, enableTextures);\n'
+                       'else if ( pStage->glslShaderGroup == tr.lightallShader )\n{\n'
+                       'GLSL_SetUniformVec4(sp, UNIFORM_ENABLETEXTURES, enableTextures);\n}\n'
+                       'else if ( pStage->bundle[1].image[0] != 0 )\n{\n}\n')
+          out = mod.insert_after_unique_line_in_scope(
+              synthetic,
+              'else if ( pStage->glslShaderGroup == tr.lightallShader )',
+              'else if ( pStage->bundle[1].image[0] != 0 )',
+              target, 'GI1_SCOPE_SENTINEL',
+              'GI-1 v1.2 synthetic two-occurrence scope test')
+          if out.count('GI1_SCOPE_SENTINEL') != 1:
+              raise SystemExit('GI-1 v1.2 preflight: scoped selector did not insert exactly once')
+          if out.find('GI1_SCOPE_SENTINEL') < out.find('else if ( pStage->glslShaderGroup == tr.lightallShader )'):
+              raise SystemExit('GI-1 v1.2 preflight: insertion landed outside LightAll scope')
+          print(f'GI-1 v1.2 scope preflight PASS: real global matches={global_count}; duplicate-outside-scope synthetic PASS')
+          PY_SCOPE_PREFLIGHT
+          python3 apply_rend2_gi_1_v1_2_cubemap_diffuse_indirect_sp.py source
+          git -C source diff --check
+
+          grep -Fq 'REND2_GI_1_V1_CUBEMAP_DIFFUSE_INDIRECT' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_GI_1_V1_CUBEMAP_DIFFUSE_INDIRECT' source/SP/code/rend2/tr_local.h
+          grep -Fq 'REND2_GI_1_V1_CUBEMAP_DIFFUSE_INDIRECT' source/SP/code/rend2/tr_glsl.c
+          grep -Fq 'REND2_GI_1_V1_CUBEMAP_DIFFUSE_INDIRECT' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'REND2_GI_1_V1_2_SCOPE_AWARE_ANCHOR_FIX' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'REND2_GI_1_V1_CUBEMAP_DIFFUSE_INDIRECT' source/SP/code/rend2/glsl/lightall_fp.glsl
+          grep -Fq 'r_indirectLighting = ri.Cvar_Get( "r_indirectLighting", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_indirectLightingScale = ri.Cvar_Get( "r_indirectLightingScale", "0.18", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_indirectLightingSaturation = ri.Cvar_Get( "r_indirectLightingSaturation", "0.65", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_indirectLightingMax = ri.Cvar_Get( "r_indirectLightingMax", "0.18", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_indirectLightingDebug = ri.Cvar_Get( "r_indirectLightingDebug", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'UNIFORM_INDIRECTLIGHTPARAMS' source/SP/code/rend2/tr_local.h
+          grep -Fq '{ "u_IndirectLightParams", GLSL_VEC4 },' source/SP/code/rend2/tr_glsl.c
+          grep -Fq 'GLSL_SetUniformVec4(sp, UNIFORM_INDIRECTLIGHTPARAMS, indirectParams);' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'textureCubeLod(u_CubeMap, N + parallax, ROUGHNESS_MIPS).rgb;' source/SP/code/rend2/glsl/lightall_fp.glsl
+          grep -Fq 'indirectContribution = indirectSample * diffuse.rgb;' source/SP/code/rend2/glsl/lightall_fp.glsl
+          grep -Fq 'gi1=%u giactive=%u giscale=%.3f gisat=%.3f gimax=%.3f gidebug=%u cubeidx=%d cubeon=%u' source/SP/code/rend2/tr_shade.c
+
+          # Frozen accepted systems must remain intact.
+          grep -Fq 'REND2_FULL_PRELIMINARY_PRODUCTION_REF1_V1_1_ACCEPTED' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialAwareFallback = ri.Cvar_Get( "r_materialAwareFallback", "1", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_materialAwareReflections = ri.Cvar_Get( "r_materialAwareReflections", "1", CVAR_ARCHIVE | CVAR_LATCH );' source/SP/code/rend2/tr_init.c
+          grep -Fq '? R_Ref1ReflectionScale(pStage) : 0.0f;' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'gl_FragColor.rgb += cubeLightColor * reflectance;' source/SP/code/rend2/glsl/lightall_fp.glsl
+
+          git -C source diff --name-only HEAD | LC_ALL=C sort > gi1-files.txt
+          cat > gi1-expected-files.txt <<'FILES'
+          SP/code/rend2/glsl/lightall_fp.glsl
+          SP/code/rend2/tr_glsl.c
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          SP/code/rend2/tr_shade.c
+          FILES
+          diff -u gi1-expected-files.txt gi1-files.txt
+
+          git -C source diff --binary HEAD > "$GI1_DELTA_NAME"
+          test -s "$GI1_DELTA_NAME"
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$GI1_DELTA_NAME"
+
+          git -C source diff --binary "$UPSTREAM_SHA" > "$GI1_CUMULATIVE_NAME"
+          test -s "$GI1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC' "$GI1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION' "$GI1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' "$GI1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' "$GI1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_FULL_PRELIMINARY_PRODUCTION_REF1_V1_1_ACCEPTED' "$GI1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_GI_1_V1_CUBEMAP_DIFFUSE_INDIRECT' "$GI1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_GI_1_V1_2_SCOPE_AWARE_ANCHOR_FIX' "$GI1_CUMULATIVE_NAME"
+          ! grep -Fq 'REND2_SUN_4A' "$GI1_CUMULATIVE_NAME"
+          ! grep -Fq 'REND2_SKY_R0_OUTERBOX_NO_MIP_V5_4' "$GI1_CUMULATIVE_NAME"
+
+      - name: Replay exact GI-1 v1.2 delta over frozen production base
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::GI-1 replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf gi1-replay
+          cp -a source gi1-replay
+          git -C gi1-replay reset --hard HEAD
+          [[ "$(git -C gi1-replay rev-parse HEAD)" = "$FULL_PRELIM_BASE_COMMIT" ]]
+          git -C gi1-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/$GI1_DELTA_NAME"
+          git -C gi1-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/$GI1_DELTA_NAME"
+          git -C gi1-replay diff --check
+          cmp source/SP/code/rend2/tr_init.c gi1-replay/SP/code/rend2/tr_init.c
+          cmp source/SP/code/rend2/tr_local.h gi1-replay/SP/code/rend2/tr_local.h
+          cmp source/SP/code/rend2/tr_glsl.c gi1-replay/SP/code/rend2/tr_glsl.c
+          cmp source/SP/code/rend2/tr_shade.c gi1-replay/SP/code/rend2/tr_shade.c
+          cmp source/SP/code/rend2/glsl/lightall_fp.glsl gi1-replay/SP/code/rend2/glsl/lightall_fp.glsl
+          git -C gi1-replay apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$GI1_DELTA_NAME"
+          echo "GI-1 v1.2 exact five-file delta replay PASS"
+
+      - name: Build SP-only Windows x64 GI-1 v1.2 renderer
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::GI-1 v1.2 MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify and package GI-1 v1.2 experiment
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::GI-1 v1.2 packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          test -s "$SP_OUT/renderer_sp_rend2_x64.dll" || { echo "::error::Missing renderer_sp_rend2_x64.dll" >&2; exit 1; }
+          test ! -d source/MP/build || { echo "::error::MP build directory exists" >&2; exit 1; }
+
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/docs"
+          install -m 0644 "$SP_OUT/renderer_sp_rend2_x64.dll" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 "$GI1_DELTA_NAME" "$STAGE/docs/$GI1_DELTA_NAME"
+          install -m 0644 "$GI1_CUMULATIVE_NAME" "$STAGE/docs/$GI1_CUMULATIVE_NAME"
+          install -m 0644 apply_rend2_gi_1_v1_2_cubemap_diffuse_indirect_sp.py "$STAGE/docs/apply_rend2_gi_1_v1_2_cubemap_diffuse_indirect_sp.py"
+          sha256sum "$STAGE/docs/$GI1_DELTA_NAME" > "$STAGE/docs/$GI1_DELTA_NAME.sha256"
+          sha256sum "$STAGE/docs/$GI1_CUMULATIVE_NAME" > "$STAGE/docs/$GI1_CUMULATIVE_NAME.sha256"
+
+          cat > "$STAGE/README_GI_1_V1_RU.txt" <<'README'
+          DarkWolf/ioRTCW Rend2 - GI-1 v1.2 Cubemap Diffuse Indirect Lighting
+          =================================================================
+
+          BASE
+          ----
+          Exact successful Full Preliminary Production checkpoint:
+          SUN-5C + Filter 4 + MAT-0 v2.4 + MAT-1 v2 + REF-1 v1.1.
+
+          PURPOSE
+          -------
+          GI-1 v1.2 is deliberately a low-risk first indirect-lighting experiment.
+          It is NOT path-traced/ray-traced GI. It reuses the roughest mip of the existing Rend2
+          cubemap as a low-frequency diffuse irradiance approximation and adds one controlled
+          indirect diffuse term to LightAll.
+
+          DEFAULT TEST STATE
+          ------------------
+          r_indirectLighting = 0       strict accepted-production A/B baseline
+          r_indirectLightingScale = 0.18
+          r_indirectLightingSaturation = 0.65
+          r_indirectLightingMax = 0.18
+          r_indirectLightingDebug = 0
+
+          DEBUG
+          -----
+          r_indirectLightingDebug 0 = normal composite
+          r_indirectLightingDebug 1 = actual indirect contribution only
+          r_indirectLightingDebug 2 = indirect contribution x4 diagnostic
+
+          REQUIREMENTS
+          ------------
+          r_cubeMapping must be 1 and the surface must have a cubemap probe.
+          GI is automatically disabled while the renderer is capturing cubemaps to avoid feedback.
+          The GI cvars are runtime uniforms and do not require vid_restart; changing r_pbr or
+          r_cubeMapping still follows their normal latched behavior.
+
+          NOT CHANGED
+          -----------
+          MAT-0 classifier, MAT-1 material presets, REF-1 reflection scale policy, cubemap capture
+          and assignment, SUN-5C, Filter 4, fog, dlights, shadows, normal/parallax mapping,
+          tone mapping, bloom, SSAO and fire/smoke/transparency.
+          README
+
+          cat > "$STAGE/GI_1_V1_TEST_PROFILE.cfg" <<'CFG'
+          seta r_materialDebug 0
+          seta r_pbr 1
+          seta r_cubeMapping 1
+          seta r_materialAwareFallback 1
+          seta r_materialFallbackClassMask 10
+          seta r_materialAwareReflections 1
+          seta r_materialReflectionClassMask 10
+          seta r_materialReflectionMineralScale 0.05
+          seta r_materialReflectionMetalScale 0.60
+          seta r_materialReflectionMax 0.75
+          seta r_indirectLighting 0
+          seta r_indirectLightingScale 0.18
+          seta r_indirectLightingSaturation 0.65
+          seta r_indirectLightingMax 0.18
+          seta r_indirectLightingDebug 0
+          CFG
+
+          {
+            echo "experiment=GI-1 v1.2 Cubemap Diffuse Indirect Lighting"
+            echo "upstream_sha=$UPSTREAM_SHA"
+            echo "source_base=exact successful Full Preliminary Production artifact"
+            echo "base_run_id=$BASE_RUN_ID"
+            echo "base_artifact_id=$BASE_ARTIFACT_ID"
+            echo "base_artifact_name=$BASE_ARTIFACT_NAME"
+            echo "base_zip_sha256=$BASE_ZIP_SHA256"
+            echo "base_cumulative_sha256=$BASE_CUMULATIVE_SHA256"
+            echo "expected_preliminary_sun5c_sha256=$EXPECTED_PRELIMINARY_SUN5C_SHA256"
+            echo "expected_mat1v2_patcher_sha256=$EXPECTED_MAT1V2_PATCHER_SHA256"
+            echo "expected_ref1_patcher_sha256=$EXPECTED_REF1_PATCHER_SHA256"
+            echo "expected_full_production_patcher_sha256=$EXPECTED_FULL_PROD_PATCHER_SHA256"
+            echo "gi1_patcher_sha256=$GI1_PATCHER_SHA256"
+            echo "gi1_default_enable=0"
+            echo "gi1_scale_default=0.18"
+            echo "gi1_saturation_default=0.65"
+            echo "gi1_max_default=0.18"
+            echo "gi1_debug_default=0"
+            echo "gi_source=existing_cubemap_roughest_mip"
+            echo "new_fbo=NO"
+            echo "temporal_accumulation=NO"
+            echo "ray_tracing=NO"
+            echo "extra_cubemap_sample_when_enabled=ONE_PER_LIGHTALL_PIXEL"
+            echo "cubemap_capture_feedback_guard=YES"
+            echo "mattrace_gi_fields=YES"
+            echo "mat0_changed=NO"
+            echo "mat1_changed=NO"
+            echo "ref1_changed=NO"
+            echo "sun5c_filter4_changed=NO"
+            echo "dlights_shadows_changed=NO"
+            echo "tone_bloom_ssao_changed=NO"
+          } > "$STAGE/docs/GI_1_V1_BUILD_INFO.txt"
+
+          grep -Fq 'gi1_default_enable=0' "$STAGE/docs/GI_1_V1_BUILD_INFO.txt"
+          grep -Fq 'REND2_GI_1_V1_CUBEMAP_DIFFUSE_INDIRECT' "$STAGE/docs/$GI1_DELTA_NAME"
+          grep -Fq 'REND2_FULL_PRELIMINARY_PRODUCTION_REF1_V1_1_ACCEPTED' "$STAGE/docs/$GI1_CUMULATIVE_NAME"
+          grep -Fq 'REND2_GI_1_V1_CUBEMAP_DIFFUSE_INDIRECT' "$STAGE/docs/$GI1_CUMULATIVE_NAME"
+
+          ( cd "$STAGE"; find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload GI-1 v1.2 diagnostic artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
