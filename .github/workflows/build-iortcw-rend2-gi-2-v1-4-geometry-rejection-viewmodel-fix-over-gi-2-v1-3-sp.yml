@@ -1,0 +1,604 @@
+name: Build ioRTCW Rend2 GI-2 v1.4 Geometry Rejection Viewmodel Fix SP Windows x64
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "rend2-gi-2-v1-4-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: GI-2 v1.4 geometry rejection and viewmodel exclusion
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      BASE_RELEASE_BASENAME: "iortcw-rend2-gi-2-v1-3-fbo-blit-vertex-fix-over-gi-2-v1-2-sp-windows-x64"
+      BASE_CUMULATIVE_NAME: "rend2-cumulative-full-preliminary-production-gi1-v1-2-gi2-v1-3-fbo-blit-vertex-fix-sp.patch"
+      BASE_BUILD_INFO_NAME: "GI_2_V1_3_BUILD_INFO.txt"
+      EXPECTED_BASE_V13_PATCHER_SHA256: "842fe8ae48060bc7aa4cae204ecc04884be5036bfeb328711df52a31607f30c7"
+      EXPECTED_V13_SSGI_VP_SHA256: "d8c315e04cff47410058f014a8daaddd0ae51c3e85de5ada688c7c0c3c381181"
+      EXPECTED_OLD_SSGI_FP_SHA256: "447335c00a2cf4f55a91296492fe2ab5fc4e378bd51e78059b6b0ca5a2e282b3"
+      EXPECTED_FIXED_SSGI_FP_SHA256: "b1292aaa8c966a10cdbfa650fc8a7b5d2731c5436d236856ed9fcd427b3cc084"
+      GI2_V14_PATCHER_SHA256: "dfc8b39e44c3a2c123477fd7f74178addfbbadad7644209fc28f716c400e6c4d"
+      RELEASE_BASENAME: "iortcw-rend2-gi-2-v1-4-geometry-rejection-viewmodel-fix-over-gi-2-v1-3-sp-windows-x64"
+      GI2_DELTA_NAME: "rend2-gi-2-v1-4-geometry-rejection-viewmodel-fix-sp.patch"
+      GI2_CUMULATIVE_NAME: "rend2-cumulative-full-preliminary-production-gi1-v1-2-gi2-v1-4-geometry-rejection-viewmodel-fix-sp.patch"
+
+    steps:
+      - name: Install exact SP cross-build and shader-validation prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Prerequisite step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git glslang-tools \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          glslangValidator --version
+          git --version
+          gh --version
+          python3 --version
+
+      - name: Recover exact successful GI-2 v1.3 runtime checkpoint
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::GI-2 v1.3 artifact recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | [.created_at, (.id|tostring), (.workflow_run.id|tostring), .name] | @tsv' \
+            > all-artifacts.tsv
+
+          python3 - <<'PY_SELECT_BASE' > base-selected.tsv
+          import os
+          from pathlib import Path
+          prefix = os.environ['BASE_RELEASE_BASENAME'] + '-'
+          rows = []
+          for raw in Path('all-artifacts.tsv').read_text(encoding='utf-8').splitlines():
+              parts = raw.split('\t')
+              if len(parts) != 4:
+                  continue
+              created, aid, rid, name = parts
+              if name.startswith(prefix):
+                  rows.append((created, aid, rid, name))
+          if not rows:
+              raise SystemExit('No retained successful GI-2 v1.3 artifact with prefix %r' % prefix)
+          rows.sort(key=lambda x: x[0], reverse=True)
+          print('\t'.join(rows[0]))
+          PY_SELECT_BASE
+
+          IFS=$'\t' read -r artifact_created artifact_id run_id artifact_name < base-selected.tsv
+          [[ -n "$artifact_id" && -n "$run_id" && -n "$artifact_name" ]] || { echo "::error::Malformed GI-2 v1.3 artifact record" >&2; exit 1; }
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '.conclusion')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Selected GI-2 v1.3 run is not successful: $run_conclusion" >&2; exit 1; }
+
+          gh run download "$run_id" --repo "$GH_REPO" --name "$artifact_name" --dir base-artifact
+          base_zip="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip" -print -quit)"
+          base_zip_sha="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_zip_sha" && -s "$base_zip_sha" ]] || { echo "::error::GI-2 v1.3 base ZIP/SHA missing" >&2; find base-artifact -type f -print >&2; exit 1; }
+          expected_zip_sha="$(awk 'NF {print $1; exit}' "$base_zip_sha")"
+          actual_zip_sha="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected_zip_sha" =~ ^[0-9a-fA-F]{64}$ && "$actual_zip_sha" = "$expected_zip_sha" ]] || { echo "::error::GI-2 v1.3 base ZIP SHA mismatch" >&2; exit 1; }
+
+          unzip -q "$base_zip" -d base-release
+          BASE_STAGE="$GITHUB_WORKSPACE/base-release/$BASE_RELEASE_BASENAME"
+          BASE_CUMULATIVE="$BASE_STAGE/docs/$BASE_CUMULATIVE_NAME"
+          BASE_CUMULATIVE_SHA_FILE="$BASE_CUMULATIVE.sha256"
+          BASE_BUILD_INFO="$BASE_STAGE/docs/$BASE_BUILD_INFO_NAME"
+          [[ -d "$BASE_STAGE" && -s "$BASE_STAGE/renderer_sp_rend2_x64.dll" && -s "$BASE_CUMULATIVE" && -s "$BASE_CUMULATIVE_SHA_FILE" && -s "$BASE_BUILD_INFO" ]] || { echo "::error::GI-2 v1.3 runtime/cumulative/build-info missing" >&2; exit 1; }
+          expected_cumulative_sha="$(awk 'NF {print $1; exit}' "$BASE_CUMULATIVE_SHA_FILE")"
+          actual_cumulative_sha="$(sha256sum "$BASE_CUMULATIVE" | awk '{print $1}')"
+          [[ "$expected_cumulative_sha" =~ ^[0-9a-fA-F]{64}$ && "$actual_cumulative_sha" = "$expected_cumulative_sha" ]] || { echo "::error::GI-2 v1.3 cumulative SHA mismatch" >&2; exit 1; }
+
+          grep -Fq "upstream_sha=$UPSTREAM_SHA" "$BASE_BUILD_INFO"
+          grep -Fq "fix_patcher_sha256=$EXPECTED_BASE_V13_PATCHER_SHA256" "$BASE_BUILD_INFO"
+          grep -Fq "fixed_ssgi_vp_sha256=$EXPECTED_V13_SSGI_VP_SHA256" "$BASE_BUILD_INFO"
+          grep -Fq 'source_delta_files=1' "$BASE_BUILD_INFO"
+          grep -Fq 'REND2_GI_2_V1_SCREEN_SPACE_LOCAL_INDIRECT' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_GI_2_V1_3_FBO_BLIT_VERTEX_FIX' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_GI_2_V1_4_GEOMETRY_REJECTION_VIEWMODEL_FIX' "$BASE_CUMULATIVE"
+
+          echo "BASE_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "BASE_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE=$BASE_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE_SHA256=$actual_cumulative_sha" >> "$GITHUB_ENV"
+          echo "BASE_ZIP_SHA256=$actual_zip_sha" >> "$GITHUB_ENV"
+          echo "Recovered exact successful GI-2 v1.3 runtime base: $artifact_name run=$run_id cumulative_sha=$actual_cumulative_sha"
+
+      - name: Reconstruct and freeze exact GI-2 v1.3 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::GI-2 v1.3 source reconstruction failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git clone --no-checkout --filter=blob:none "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source config user.email "darkwolf-gi2-v14@local.invalid"
+          git -C source config user.name "DarkWolf GI-2 v1.4 Builder"
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]]
+
+          git -C source apply --check --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source diff --check
+          git -C source apply --check --reverse --whitespace=nowarn "$BASE_CUMULATIVE"
+
+          grep -Fq 'REND2_GI_2_V1_SCREEN_SPACE_LOCAL_INDIRECT' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'REND2_GI_2_V1_3_FBO_BLIT_VERTEX_FIX' source/SP/code/rend2/glsl/ssgi_vp.glsl
+          actual_vp_sha="$(sha256sum source/SP/code/rend2/glsl/ssgi_vp.glsl | awk '{print $1}')"
+          actual_fp_sha="$(sha256sum source/SP/code/rend2/glsl/ssgi_fp.glsl | awk '{print $1}')"
+          [[ "$actual_vp_sha" = "$EXPECTED_V13_SSGI_VP_SHA256" ]] || { echo "::error::Unexpected GI-2 v1.3 ssgi_vp SHA: $actual_vp_sha" >&2; exit 1; }
+          [[ "$actual_fp_sha" = "$EXPECTED_OLD_SSGI_FP_SHA256" ]] || { echo "::error::Unexpected GI-2 v1.3 ssgi_fp SHA: $actual_fp_sha" >&2; exit 1; }
+
+          grep -Fq 'float worldDelta = abs(sampleDepth - centerDepth) * u_ViewInfo.y;' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'vec2 r = u_InvTexRes;' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'gl_Position = u_ModelViewProjectionMatrix * vec4(attr_Position, 1.0);' source/SP/code/rend2/glsl/ssgi_vp.glsl
+
+          git -C source add -A
+          git -C source commit -q -m "Freeze exact successful GI-2 v1.3 runtime base for GI-2 v1.4"
+          GI2_BASE_COMMIT="$(git -C source rev-parse HEAD)"
+          echo "GI2_BASE_COMMIT=$GI2_BASE_COMMIT" >> "$GITHUB_ENV"
+          echo "Frozen exact GI-2 v1.3 source base commit: $GI2_BASE_COMMIT"
+
+      - name: Apply GI-2 v1.4 geometry rejection and viewmodel exclusion with full preflight
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::GI-2 v1.4 application/audit failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          cat > gi2-v14-patcher.b64 <<'GI2_V14_B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKaW1wb3J0IGhh
+          c2hsaWIKaW1wb3J0IHN5cwoKTUFSS0VSID0gJ1JFTkQyX0dJXzJfVjFfNF9HRU9NRVRSWV9SRUpF
+          Q1RJT05fVklFV01PREVMX0ZJWCcKQkFTRV9NQVJLRVIgPSAnUkVORDJfR0lfMl9WMV9TQ1JFRU5f
+          U1BBQ0VfTE9DQUxfSU5ESVJFQ1QnCkVYUEVDVEVEX09MRF9TSEEyNTYgPSAnNDQ3MzM1YzAwYTJj
+          ZjRmNTVhOTEyOTY0OTJmZTJhYjVmYzRlMzc4YmQ1MWU3ODA1OWI2YjBjYTVhMmUyODJiMycKCkZJ
+          WEVEX0ZQID0gcicnJy8vIFJFTkQyX0dJXzJfVjFfU0NSRUVOX1NQQUNFX0xPQ0FMX0lORElSRUNU
+          Ci8vIFJFTkQyX0dJXzJfVjFfNF9HRU9NRVRSWV9SRUpFQ1RJT05fVklFV01PREVMX0ZJWAovLyBM
+          b2NhbCBzY3JlZW4tc3BhY2UgZGlmZnVzZSBjb2xvciBib3VuY2Ugd2l0aCBwbGFuZS1zbG9wZSBy
+          ZWplY3Rpb24sIGRpc3RhbmNlLXN0YWJsZQovLyBzYW1wbGluZyBhbmQgZXhwbGljaXQgUkZfREVQ
+          VEhIQUNLL3ZpZXdtb2RlbCByZWplY3Rpb24gZnJvbSB0aGUgZGVwdGggYnVmZmVyLgp1bmlmb3Jt
+          IHNhbXBsZXIyRCB1X1NjcmVlbkltYWdlTWFwOwp1bmlmb3JtIHNhbXBsZXIyRCB1X1NjcmVlbkRl
+          cHRoTWFwOwp1bmlmb3JtIHZlYzQgdV9WaWV3SW5mbzsgLy8geD16RmFyL3pOZWFyLCB5PXpGYXIs
+          IHo9dGFuKGZvdlgvMiksIHc9dGFuKGZvdlkvMikKdW5pZm9ybSB2ZWM0IHVfQ29sb3I7ICAgIC8v
+          IHg9c3RyZW5ndGgsIHk9c2F0dXJhdGlvbiwgej1wZXItY2hhbm5lbCBjYXAsIHc9ZGVidWcgbW9k
+          ZQp1bmlmb3JtIHZlYzIgdV9JbnZUZXhSZXM7IC8vIG5vbWluYWwgZnVsbC1yZXNvbHV0aW9uIHBp
+          eGVsIHJhZGl1cyBjb252ZXJ0ZWQgdG8gVVYgYnkgRkJPX0JsaXQKCnZhcnlpbmcgdmVjMiB2YXJf
+          U2NyZWVuVGV4OwoKZmxvYXQgU3NnaVJhd0RlcHRoKGNvbnN0IHZlYzIgdXYpCnsKCXJldHVybiB0
+          ZXh0dXJlMkQodV9TY3JlZW5EZXB0aE1hcCwgdXYpLnI7Cn0KCmZsb2F0IFNzZ2lMaW5lYXJEZXB0
+          aChjb25zdCB2ZWMyIHV2KQp7CglmbG9hdCB6RGl2VyA9IFNzZ2lSYXdEZXB0aCh1dik7CglyZXR1
+          cm4gMS4wIC8gbWl4KHVfVmlld0luZm8ueCwgMS4wLCB6RGl2Vyk7Cn0KCmZsb2F0IFNzZ2lMdW1h
+          KGNvbnN0IHZlYzMgYykKewoJcmV0dXJuIGRvdChjLCB2ZWMzKDAuMjEyNSwgMC43MTU0LCAwLjA3
+          MjEpKTsKfQoKZmxvYXQgU3NnaVZpZXdtb2RlbE1hc2soY29uc3QgdmVjMiB1dikKewoJLy8gUlRD
+          VyBSRl9ERVBUSEhBQ0svdmlld21vZGVsIHJlbmRlcmluZyBvY2N1cGllcyB0aGUgY29tcHJlc3Nl
+          ZCBuZWFyIGRlcHRoIHJhbmdlLgoJLy8gUmVqZWN0IGl0IGFzIGJvdGggYSByZWNlaXZlciBhbmQg
+          YSBkb25vciBzbyB0aGUgd2VhcG9uIG5laXRoZXIgcmVjZWl2ZXMgbm9yIGVtaXRzIFNTR0kuCglm
+          bG9hdCByYXdEZXB0aCA9IFNzZ2lSYXdEZXB0aCh1dik7CglyZXR1cm4gMS4wIC0gc21vb3Roc3Rl
+          cCgwLjI4NSwgMC4zMzUsIHJhd0RlcHRoKTsKfQoKdm9pZCBTc2dpQWNjdW11bGF0ZShjb25zdCB2
+          ZWMyIG9mZnNldCwKCWNvbnN0IGZsb2F0IGNlbnRlckRlcHRoLAoJY29uc3QgdmVjMiBkZXB0aFNs
+          b3BlLAoJY29uc3QgdmVjMyBjZW50ZXJDb2xvciwKCWlub3V0IHZlYzMgc3VtQ29sb3IsCglpbm91
+          dCBmbG9hdCBhY2NlcHRlZCkKewoJdmVjMiB1diA9IGNsYW1wKHZhcl9TY3JlZW5UZXggKyBvZmZz
+          ZXQsIHZlYzIoMC4wMDEpLCB2ZWMyKDAuOTk5KSk7CgoJLy8gRmlyc3QtcGVyc29uIFJGX0RFUFRI
+          SEFDSyBnZW9tZXRyeSBtdXN0IG5ldmVyIGJlY29tZSBhbiBpbmRpcmVjdC1saWdodCBkb25vci4K
+          CWlmIChTc2dpVmlld21vZGVsTWFzayh1dikgPiAwLjUpCgkJcmV0dXJuOwoKCWZsb2F0IHNhbXBs
+          ZURlcHRoID0gU3NnaUxpbmVhckRlcHRoKHV2KTsKCWZsb2F0IHJhd0RlbHRhV29ybGQgPSBhYnMo
+          c2FtcGxlRGVwdGggLSBjZW50ZXJEZXB0aCkgKiB1X1ZpZXdJbmZvLnk7CgoJLy8gUHJlZGljdCB0
+          aGUgZGVwdGggY2hhbmdlIG9mIHRoZSBjdXJyZW50IHBsYW5lIGF0IHRoZSBzYW1wbGUgcG9zaXRp
+          b24uCgkvLyBUaGUgcmVzaWR1YWwsIG5vdCB0aGUgcmF3IGRlcHRoIGRlbHRhLCBpcyB3aGF0IGlk
+          ZW50aWZpZXMgYW5vdGhlciBzdXJmYWNlLgoJZmxvYXQgcHJlZGljdGVkRGVsdGEgPSBkb3QoZGVw
+          dGhTbG9wZSwgb2Zmc2V0KTsKCXByZWRpY3RlZERlbHRhID0gY2xhbXAocHJlZGljdGVkRGVsdGEs
+          IC0wLjA4LCAwLjA4KTsKCWZsb2F0IGV4cGVjdGVkRGVwdGggPSBjZW50ZXJEZXB0aCArIHByZWRp
+          Y3RlZERlbHRhOwoJZmxvYXQgcmVzaWR1YWxXb3JsZCA9IGFicyhzYW1wbGVEZXB0aCAtIGV4cGVj
+          dGVkRGVwdGgpICogdV9WaWV3SW5mby55OwoKCS8vIFJlamVjdCB0aGUgc2FtZSBzbG9wZWQgd2Fs
+          bC9mbG9vciBldmVuIHdoZW4gaXRzIHJhdyBkZXB0aCBjaGFuZ2VzIHN0cm9uZ2x5IHdpdGggZGlz
+          dGFuY2UuCgkvLyBBbHNvIHJlamVjdCBmYXIgdW5yZWxhdGVkIGdlb21ldHJ5IHRvIHByZXZlbnQg
+          bGFyZ2UgYnJpZ2h0IHdhbGxzIGZyb20gZmxvb2RpbmcgdGhlIGZyYW1lLgoJZmxvYXQgc2VwYXJh
+          dGVkID0gc21vb3Roc3RlcCgwLjQ1LCAyLjUsIHJlc2lkdWFsV29ybGQpOwoJZmxvYXQgcmVzaWR1
+          YWxOZWFyID0gMS4wIC0gc21vb3Roc3RlcCgyOC4wLCA5Ni4wLCByZXNpZHVhbFdvcmxkKTsKCWZs
+          b2F0IGxvY2FsRGVwdGggPSAxLjAgLSBzbW9vdGhzdGVwKDEyOC4wLCAyODAuMCwgcmF3RGVsdGFX
+          b3JsZCk7CglmbG9hdCBnZW9tZXRyeVdlaWdodCA9IHNlcGFyYXRlZCAqIHJlc2lkdWFsTmVhciAq
+          IGxvY2FsRGVwdGg7CgoJdmVjMyBzYW1wbGVDb2xvciA9IHRleHR1cmUyRCh1X1NjcmVlbkltYWdl
+          TWFwLCB1dikucmdiOwoJZmxvYXQgY2VudGVyTHVtYSA9IFNzZ2lMdW1hKGNlbnRlckNvbG9yKTsK
+          CWZsb2F0IHNvdXJjZUx1bWEgPSBTc2dpTHVtYShzYW1wbGVDb2xvcik7CgoJLy8gT25seSBicmln
+          aHRlciBsb2NhbCBuZWlnaGJvdXJzIGRvbmF0ZSBlbmVyZ3kuIFRoZSB0aHJlc2hvbGQgaXMgaW50
+          ZW50aW9uYWxseSBzdHJpY3RlcgoJLy8gdGhhbiB2MS4zIHNvIG92ZXJleHBvc2VkIGRpc3RhbnQg
+          c3VyZmFjZXMgY2Fubm90IHdhc2ggYSByZWNlaXZlciB0aHJvdWdoIHdlYWsgbWF0Y2hlcy4KCWZs
+          b2F0IGRvbm9yID0gY2xhbXAoKHNvdXJjZUx1bWEgLSBjZW50ZXJMdW1hICogMC43MiAtIDAuMDE1
+          KSAqIDEuNDUsIDAuMCwgMS4wKTsKCWZsb2F0IHcgPSBnZW9tZXRyeVdlaWdodCAqIGRvbm9yOwoJ
+          dmVjMyB0aW50ZWQgPSBtaXgodmVjMyhzb3VyY2VMdW1hKSwgc2FtcGxlQ29sb3IsIGNsYW1wKHVf
+          Q29sb3IueSwgMC4wLCAxLjApKTsKCglzdW1Db2xvciArPSB0aW50ZWQgKiB3OwoJYWNjZXB0ZWQg
+          Kz0gZ2VvbWV0cnlXZWlnaHQ7Cn0KCnZvaWQgbWFpbigpCnsKCXZlYzMgY2VudGVyQ29sb3IgPSB0
+          ZXh0dXJlMkQodV9TY3JlZW5JbWFnZU1hcCwgdmFyX1NjcmVlblRleCkucmdiOwoJZmxvYXQgY2Vu
+          dGVyRGVwdGggPSBTc2dpTGluZWFyRGVwdGgodmFyX1NjcmVlblRleCk7CgoJLy8gRXhwbGljaXRs
+          eSBleGNsdWRlIHRoZSBmaXJzdC1wZXJzb24gd2VhcG9uL3ZpZXdtb2RlbCBmcm9tIHRoZSBTU0dJ
+          IHJlY2VpdmVyIHBhdGguCgkvLyBUaGUgbm9ybWFsIGNvbXBvc2l0ZSBpcyBhZGRpdGl2ZSwgc28g
+          d3JpdGluZyB6ZXJvIGxlYXZlcyB0aGUgb3JpZ2luYWwgd2VhcG9uIHVudG91Y2hlZC4KCWlmIChT
+          c2dpVmlld21vZGVsTWFzayh2YXJfU2NyZWVuVGV4KSA+IDAuNSkKCXsKCQlnbF9GcmFnQ29sb3Ig
+          PSB2ZWM0KDAuMCwgMC4wLCAwLjAsIDEuMCk7CgkJcmV0dXJuOwoJfQoKCS8vIEVzdGltYXRlIHRo
+          ZSBsb2NhbCBkZXB0aCBwbGFuZSBpbiBzY3JlZW4gVVYgdW5pdHMuIFRoaXMgY29tcGVuc2F0ZXMg
+          cGVyc3BlY3RpdmUgc2xvcGU6CgkvLyBhIGRpc3RhbnQgd2FsbCBjYW4gaGF2ZSBhIGxhcmdlIHJh
+          dyBkZXB0aCBkaWZmZXJlbmNlIGFjcm9zcyAzMiBwaXhlbHMgd2hpbGUgc3RpbGwgYmVpbmcKCS8v
+          IG9uZSBjb250aW51b3VzIHBsYW5lLiB2MS4zIG1pc3Rvb2sgdGhhdCBmb3IgbmVpZ2hib3VyaW5n
+          IGdlb21ldHJ5IGFuZCBvdmVyLWJyaWdodGVuZWQgaXQuCglmbG9hdCB1dkR4ID0gbWF4KGFicyhk
+          RmR4KHZhcl9TY3JlZW5UZXgueCkpLCAxLjBlLTYpOwoJZmxvYXQgdXZEeSA9IG1heChhYnMoZEZk
+          eSh2YXJfU2NyZWVuVGV4LnkpKSwgMS4wZS02KTsKCXZlYzIgZGVwdGhTbG9wZSA9IHZlYzIoZEZk
+          eChjZW50ZXJEZXB0aCkgLyB1dkR4LCBkRmR5KGNlbnRlckRlcHRoKSAvIHV2RHkpOwoKCXZlYzMg
+          c3VtQ29sb3IgPSB2ZWMzKDAuMCk7CglmbG9hdCBhY2NlcHRlZCA9IDAuMDsKCgkvLyBLZWVwIHRo
+          ZSBzYW1wbGUgZm9vdHByaW50IGFwcHJveGltYXRlbHkgbG9jYWwgaW4gd29ybGQgc3BhY2UuIEF0
+          IGRpc3RhbmNlIHRoZSB2MS4zCgkvLyBmaXhlZCAzMi1waXhlbCByYWRpdXMgY292ZXJlZCBhIG11
+          Y2ggbGFyZ2VyIHdhbGwgYXJlYSwgd2hpY2ggY2F1c2VkIGRpc3RhbmNlIHdoaXRlbmluZy4KCWZs
+          b2F0IGNlbnRlcldvcmxkID0gbWF4KGNlbnRlckRlcHRoICogdV9WaWV3SW5mby55LCAxLjApOwoJ
+          ZmxvYXQgZGlzdGFuY2VTY2FsZSA9IGNsYW1wKDk2LjAgLyBjZW50ZXJXb3JsZCwgMC4yMCwgMS4w
+          KTsKCXZlYzIgciA9IHVfSW52VGV4UmVzICogZGlzdGFuY2VTY2FsZTsKCXZlYzIgaCA9IHIgKiAw
+          LjU7CgoJU3NnaUFjY3VtdWxhdGUodmVjMiggci54LCAgMC4wKSwgY2VudGVyRGVwdGgsIGRlcHRo
+          U2xvcGUsIGNlbnRlckNvbG9yLCBzdW1Db2xvciwgYWNjZXB0ZWQpOwoJU3NnaUFjY3VtdWxhdGUo
+          dmVjMigtci54LCAgMC4wKSwgY2VudGVyRGVwdGgsIGRlcHRoU2xvcGUsIGNlbnRlckNvbG9yLCBz
+          dW1Db2xvciwgYWNjZXB0ZWQpOwoJU3NnaUFjY3VtdWxhdGUodmVjMiggMC4wLCAgci55KSwgY2Vu
+          dGVyRGVwdGgsIGRlcHRoU2xvcGUsIGNlbnRlckNvbG9yLCBzdW1Db2xvciwgYWNjZXB0ZWQpOwoJ
+          U3NnaUFjY3VtdWxhdGUodmVjMiggMC4wLCAtci55KSwgY2VudGVyRGVwdGgsIGRlcHRoU2xvcGUs
+          IGNlbnRlckNvbG9yLCBzdW1Db2xvciwgYWNjZXB0ZWQpOwoJU3NnaUFjY3VtdWxhdGUodmVjMigg
+          ci54LCAgci55KSAqIDAuNzA3MSwgY2VudGVyRGVwdGgsIGRlcHRoU2xvcGUsIGNlbnRlckNvbG9y
+          LCBzdW1Db2xvciwgYWNjZXB0ZWQpOwoJU3NnaUFjY3VtdWxhdGUodmVjMigtci54LCAgci55KSAq
+          IDAuNzA3MSwgY2VudGVyRGVwdGgsIGRlcHRoU2xvcGUsIGNlbnRlckNvbG9yLCBzdW1Db2xvciwg
+          YWNjZXB0ZWQpOwoJU3NnaUFjY3VtdWxhdGUodmVjMiggci54LCAtci55KSAqIDAuNzA3MSwgY2Vu
+          dGVyRGVwdGgsIGRlcHRoU2xvcGUsIGNlbnRlckNvbG9yLCBzdW1Db2xvciwgYWNjZXB0ZWQpOwoJ
+          U3NnaUFjY3VtdWxhdGUodmVjMigtci54LCAtci55KSAqIDAuNzA3MSwgY2VudGVyRGVwdGgsIGRl
+          cHRoU2xvcGUsIGNlbnRlckNvbG9yLCBzdW1Db2xvciwgYWNjZXB0ZWQpOwoJU3NnaUFjY3VtdWxh
+          dGUodmVjMiggaC54LCAgaC55KSwgY2VudGVyRGVwdGgsIGRlcHRoU2xvcGUsIGNlbnRlckNvbG9y
+          LCBzdW1Db2xvciwgYWNjZXB0ZWQpOwoJU3NnaUFjY3VtdWxhdGUodmVjMigtaC54LCAgaC55KSwg
+          Y2VudGVyRGVwdGgsIGRlcHRoU2xvcGUsIGNlbnRlckNvbG9yLCBzdW1Db2xvciwgYWNjZXB0ZWQp
+          OwoJU3NnaUFjY3VtdWxhdGUodmVjMiggaC54LCAtaC55KSwgY2VudGVyRGVwdGgsIGRlcHRoU2xv
+          cGUsIGNlbnRlckNvbG9yLCBzdW1Db2xvciwgYWNjZXB0ZWQpOwoJU3NnaUFjY3VtdWxhdGUodmVj
+          MigtaC54LCAtaC55KSwgY2VudGVyRGVwdGgsIGRlcHRoU2xvcGUsIGNlbnRlckNvbG9yLCBzdW1D
+          b2xvciwgYWNjZXB0ZWQpOwoKCXZlYzMgYm91bmNlID0gc3VtQ29sb3IgKiAoY2xhbXAodV9Db2xv
+          ci54LCAwLjAsIDIuMCkgLyA0LjUpOwoJYm91bmNlID0gbWluKGJvdW5jZSwgdmVjMyhjbGFtcCh1
+          X0NvbG9yLnosIDAuMCwgMS4wKSkpOwoKCWlmICh1X0NvbG9yLncgPiAyLjUpCgl7CgkJLy8gRGVi
+          dWcgMzogY29ycmVjdGVkIGdlb21ldHJ5IGFjY2VwdGFuY2UgbWFzay4gU2FtZS1wbGFuZSBhbmQg
+          dmlld21vZGVsIHJlZ2lvbnMKCQkvLyBzaG91bGQgbm93IHJlbWFpbiBzdWJzdGFudGlhbGx5IGRh
+          cmtlciB0aGFuIGluIHYxLjMuCgkJZmxvYXQgbWFzayA9IGNsYW1wKGFjY2VwdGVkIC8gNS4wLCAw
+          LjAsIDEuMCk7CgkJZ2xfRnJhZ0NvbG9yID0gdmVjNCh2ZWMzKG1hc2spLCAxLjApOwoJfQoJZWxz
+          ZSBpZiAodV9Db2xvci53ID4gMS41KQoJewoJCS8vIERlYnVnIDI6IHg0IGluZGlyZWN0LW9ubHku
+          IFRoZSBmaXJzdC1wZXJzb24gd2VhcG9uIHNob3VsZCByZW1haW4gYmxhY2sgaGVyZS4KCQlnbF9G
+          cmFnQ29sb3IgPSB2ZWM0KG1pbihib3VuY2UgKiA0LjAsIHZlYzMoMS4wKSksIDEuMCk7Cgl9Cgll
+          bHNlCgl7CgkJZ2xfRnJhZ0NvbG9yID0gdmVjNChib3VuY2UsIDEuMCk7Cgl9Cn0KJycnCgoKZGVm
+          IHNoYTI1Nl9ieXRlcyhkYXRhOiBieXRlcykgLT4gc3RyOgogICAgcmV0dXJuIGhhc2hsaWIuc2hh
+          MjU2KGRhdGEpLmhleGRpZ2VzdCgpCgoKZGVmIG1haW4oKSAtPiBOb25lOgogICAgcm9vdCA9IFBh
+          dGgoc3lzLmFyZ3ZbMV0gaWYgbGVuKHN5cy5hcmd2KSA+IDEgZWxzZSAnLicpCiAgICBwYXRoID0g
+          cm9vdCAvICdTUC9jb2RlL3JlbmQyL2dsc2wvc3NnaV9mcC5nbHNsJwogICAgaWYgbm90IHBhdGgu
+          aXNfZmlsZSgpOgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoZidtaXNzaW5nIHtwYXRofScpCgog
+          ICAgcmF3ID0gcGF0aC5yZWFkX2J5dGVzKCkKICAgIG9sZF9zaGEgPSBzaGEyNTZfYnl0ZXMocmF3
+          KQogICAgdGV4dCA9IHJhdy5kZWNvZGUoJ3V0Zi04JykKCiAgICBpZiBNQVJLRVIgaW4gdGV4dDoK
+          ICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KCdHSS0yIHYxLjQgZ2VvbWV0cnkvdmlld21vZGVsIGZp
+          eCBhbHJlYWR5IGFwcGxpZWQnKQogICAgaWYgQkFTRV9NQVJLRVIgbm90IGluIHRleHQ6CiAgICAg
+          ICAgcmFpc2UgU3lzdGVtRXhpdCgnR0ktMiB2MS40IHJlcXVpcmVzIHRoZSBHSS0yIHYxIHNjcmVl
+          bi1zcGFjZSBiYXNlIHNoYWRlciBtYXJrZXInKQogICAgaWYgb2xkX3NoYSAhPSBFWFBFQ1RFRF9P
+          TERfU0hBMjU2OgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoCiAgICAgICAgICAgICdHSS0yIHYx
+          LjQgZXhhY3QtYmFzZSBndWFyZCBmYWlsZWQgZm9yIHNzZ2lfZnAuZ2xzbDogJwogICAgICAgICAg
+          ICBmJ2V4cGVjdGVkIHtFWFBFQ1RFRF9PTERfU0hBMjU2fSwgZ290IHtvbGRfc2hhfScKICAgICAg
+          ICApCiAgICByZXF1aXJlZF9vbGQgPSBbCiAgICAgICAgJ2Zsb2F0IHdvcmxkRGVsdGEgPSBhYnMo
+          c2FtcGxlRGVwdGggLSBjZW50ZXJEZXB0aCkgKiB1X1ZpZXdJbmZvLnk7JywKICAgICAgICAnZmxv
+          YXQgc2VwYXJhdGVkID0gc21vb3Roc3RlcCgwLjc1LCA1LjAsIHdvcmxkRGVsdGEpOycsCiAgICAg
+          ICAgJ3ZlYzIgciA9IHVfSW52VGV4UmVzOycsCiAgICAgICAgJ2Zsb2F0IGRvbm9yID0gY2xhbXAo
+          KHNvdXJjZUx1bWEgLSBjZW50ZXJMdW1hICogMC41NSkgKiAxLjc1LCAwLjAsIDEuMCk7JywKICAg
+          IF0KICAgIG1pc3NpbmcgPSBbcyBmb3IgcyBpbiByZXF1aXJlZF9vbGQgaWYgcyBub3QgaW4gdGV4
+          dF0KICAgIGlmIG1pc3Npbmc6CiAgICAgICAgcmFpc2UgU3lzdGVtRXhpdCgnR0ktMiB2MS40IGtu
+          b3duLXYxLjMgc2hhZGVyIGNvbnRyYWN0IG1pc21hdGNoOiAnICsgcmVwcihtaXNzaW5nKSkKCiAg
+          ICBwYXRoLndyaXRlX3RleHQoRklYRURfRlAsIGVuY29kaW5nPSd1dGYtOCcsIG5ld2xpbmU9J1xu
+          JykKICAgIG5ld19zaGEgPSBzaGEyNTZfYnl0ZXMocGF0aC5yZWFkX2J5dGVzKCkpCiAgICBwcmlu
+          dCgnR0ktMiB2MS40IEdlb21ldHJ5IFJlamVjdGlvbiAvIExvY2FsIEJvdW5jZSBDb3JyZWN0aW9u
+          IGFwcGxpZWQgc3VjY2Vzc2Z1bGx5LicpCiAgICBwcmludChmJ3NzZ2lfZnAgb2xkX3NoYTI1Nj17
+          b2xkX3NoYX0nKQogICAgcHJpbnQoZidzc2dpX2ZwIG5ld19zaGEyNTY9e25ld19zaGF9JykKCgpp
+          ZiBfX25hbWVfXyA9PSAnX19tYWluX18nOgogICAgbWFpbigpCg==
+          GI2_V14_B64
+          base64 -d gi2-v14-patcher.b64 > apply_rend2_gi_2_v1_4_geometry_rejection_viewmodel_fix_sp.py
+          actual_patcher_sha="$(sha256sum apply_rend2_gi_2_v1_4_geometry_rejection_viewmodel_fix_sp.py | awk '{print $1}')"
+          [[ "$actual_patcher_sha" = "$GI2_V14_PATCHER_SHA256" ]] || { echo "::error::GI-2 v1.4 patcher SHA mismatch: $actual_patcher_sha" >&2; exit 1; }
+          python3 -m py_compile apply_rend2_gi_2_v1_4_geometry_rejection_viewmodel_fix_sp.py
+
+          rm -rf gi2-v14-preflight
+          cp -a source gi2-v14-preflight
+          python3 apply_rend2_gi_2_v1_4_geometry_rejection_viewmodel_fix_sp.py gi2-v14-preflight
+          git -C gi2-v14-preflight diff --check
+          git -C gi2-v14-preflight diff --name-only HEAD | LC_ALL=C sort > preflight-files.txt
+          printf '%s\n' 'SP/code/rend2/glsl/ssgi_fp.glsl' > expected-files.txt
+          diff -u expected-files.txt preflight-files.txt
+
+          fixed_preflight_sha="$(sha256sum gi2-v14-preflight/SP/code/rend2/glsl/ssgi_fp.glsl | awk '{print $1}')"
+          [[ "$fixed_preflight_sha" = "$EXPECTED_FIXED_SSGI_FP_SHA256" ]] || { echo "::error::Unexpected fixed SSGI FP SHA: $fixed_preflight_sha" >&2; exit 1; }
+
+          repeat_rc=0
+          if python3 apply_rend2_gi_2_v1_4_geometry_rejection_viewmodel_fix_sp.py gi2-v14-preflight > repeat-guard.txt 2>&1; then
+            repeat_rc=0
+          else
+            repeat_rc=$?
+          fi
+          [[ "$repeat_rc" -ne 0 ]] || { echo "::error::GI-2 v1.4 repeat guard unexpectedly allowed a second apply" >&2; exit 1; }
+          grep -Fq 'GI-2 v1.4 geometry/viewmodel fix already applied' repeat-guard.txt || { echo "::error::GI-2 v1.4 repeat guard failed for an unexpected reason" >&2; cat repeat-guard.txt >&2; exit 1; }
+          echo "GI-2 v1.4 repeat guard PASS (expected rc=$repeat_rc)"
+
+          python3 apply_rend2_gi_2_v1_4_geometry_rejection_viewmodel_fix_sp.py source
+          git -C source diff --check
+          git -C source diff --name-only HEAD | LC_ALL=C sort > gi2-v14-files.txt
+          diff -u expected-files.txt gi2-v14-files.txt
+
+          grep -Fq 'REND2_GI_2_V1_4_GEOMETRY_REJECTION_VIEWMODEL_FIX' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'predictedDelta = dot(depthSlope, offset);' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'float residualWorld = abs(sampleDepth - expectedDepth) * u_ViewInfo.y;' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'float distanceScale = clamp(96.0 / centerWorld, 0.20, 1.0);' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'float SsgiViewmodelMask' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'smoothstep(0.285, 0.335, rawDepth)' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'if (SsgiViewmodelMask(var_ScreenTex) > 0.5)' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'if (SsgiViewmodelMask(uv) > 0.5)' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          ! grep -Fq 'vec2 r = u_InvTexRes;' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          ! grep -Fq 'float separated = smoothstep(0.75, 5.0, worldDelta);' source/SP/code/rend2/glsl/ssgi_fp.glsl
+
+          fixed_source_sha="$(sha256sum source/SP/code/rend2/glsl/ssgi_fp.glsl | awk '{print $1}')"
+          [[ "$fixed_source_sha" = "$EXPECTED_FIXED_SSGI_FP_SHA256" ]]
+          unchanged_vp_sha="$(sha256sum source/SP/code/rend2/glsl/ssgi_vp.glsl | awk '{print $1}')"
+          [[ "$unchanged_vp_sha" = "$EXPECTED_V13_SSGI_VP_SHA256" ]] || { echo "::error::GI-2 v1.4 unexpectedly changed v1.3 vertex fix" >&2; exit 1; }
+
+          python3 - <<'PY_POLICY'
+          from pathlib import Path
+          fp = Path('source/SP/code/rend2/glsl/ssgi_fp.glsl').read_text(encoding='utf-8')
+          required = [
+              'vec2 depthSlope = vec2(dFdx(centerDepth) / uvDx, dFdy(centerDepth) / uvDy);',
+              'float predictedDelta = dot(depthSlope, offset);',
+              'float residualWorld = abs(sampleDepth - expectedDepth) * u_ViewInfo.y;',
+              'float distanceScale = clamp(96.0 / centerWorld, 0.20, 1.0);',
+              'return 1.0 - smoothstep(0.285, 0.335, rawDepth);',
+              'if (SsgiViewmodelMask(var_ScreenTex) > 0.5)',
+              'if (SsgiViewmodelMask(uv) > 0.5)',
+          ]
+          for item in required:
+              if item not in fp:
+                  raise SystemExit('GI-2 v1.4 policy audit missing: ' + item)
+          forbidden = [
+              'float separated = smoothstep(0.75, 5.0, worldDelta);',
+              'vec2 r = u_InvTexRes;',
+          ]
+          for item in forbidden:
+              if item in fp:
+                  raise SystemExit('GI-2 v1.4 stale v1.3 policy survived: ' + item)
+          print('GI-2 v1.4 geometry/viewmodel policy audit PASS')
+          PY_POLICY
+
+          rm -rf glsl-validate
+          mkdir -p glsl-validate
+          cat > glsl-validate/rend2-vp-header.glsl <<'GLSL_VP_HEADER'
+          #version 150
+          #define attribute in
+          #define varying out
+          #ifndef M_PI
+          #define M_PI 3.14159265358979323846
+          #endif
+          GLSL_VP_HEADER
+          cat > glsl-validate/rend2-fp-header.glsl <<'GLSL_FP_HEADER'
+          #version 150
+          #define varying in
+          out vec4 out_Color;
+          #define gl_FragColor out_Color
+          #define texture2D texture
+          #define textureCubeLod textureLod
+          #define shadow2D texture
+          #ifndef M_PI
+          #define M_PI 3.14159265358979323846
+          #endif
+          GLSL_FP_HEADER
+
+          cat glsl-validate/rend2-vp-header.glsl source/SP/code/rend2/glsl/texturecolor_vp.glsl > glsl-validate/texturecolor_vp.glsl.vert
+          cat glsl-validate/rend2-vp-header.glsl source/SP/code/rend2/glsl/ssgi_vp.glsl > glsl-validate/ssgi_vp.glsl.vert
+          cat glsl-validate/rend2-fp-header.glsl source/SP/code/rend2/glsl/ssao_fp.glsl > glsl-validate/ssao_fp.glsl.frag
+          cat glsl-validate/rend2-fp-header.glsl source/SP/code/rend2/glsl/ssgi_fp.glsl > glsl-validate/ssgi_fp.glsl.frag
+
+          glslangValidator -S vert glsl-validate/texturecolor_vp.glsl.vert
+          glslangValidator -S frag glsl-validate/ssao_fp.glsl.frag
+          echo "Rend2 stock GLSL controls PASS"
+          glslangValidator -S vert glsl-validate/ssgi_vp.glsl.vert
+          glslangValidator -S frag glsl-validate/ssgi_fp.glsl.frag
+          echo "GI-2 v1.4 wrapped GLSL validation PASS"
+
+          git -C source diff --binary HEAD > "$GI2_DELTA_NAME"
+          test -s "$GI2_DELTA_NAME"
+          grep -Fq 'REND2_GI_2_V1_4_GEOMETRY_REJECTION_VIEWMODEL_FIX' "$GI2_DELTA_NAME"
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$GI2_DELTA_NAME"
+
+          git -C source diff --binary "$UPSTREAM_SHA" > "$GI2_CUMULATIVE_NAME"
+          test -s "$GI2_CUMULATIVE_NAME"
+          grep -Fq 'REND2_GI_1_V1_CUBEMAP_DIFFUSE_INDIRECT' "$GI2_CUMULATIVE_NAME"
+          grep -Fq 'REND2_GI_2_V1_SCREEN_SPACE_LOCAL_INDIRECT' "$GI2_CUMULATIVE_NAME"
+          grep -Fq 'REND2_GI_2_V1_3_FBO_BLIT_VERTEX_FIX' "$GI2_CUMULATIVE_NAME"
+          grep -Fq 'REND2_GI_2_V1_4_GEOMETRY_REJECTION_VIEWMODEL_FIX' "$GI2_CUMULATIVE_NAME"
+          grep -Fq 'REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION' "$GI2_CUMULATIVE_NAME"
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' "$GI2_CUMULATIVE_NAME"
+          grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' "$GI2_CUMULATIVE_NAME"
+
+      - name: Replay exact one-file GI-2 v1.4 delta over frozen GI-2 v1.3 base
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::GI-2 v1.4 replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf gi2-v14-replay
+          cp -a source gi2-v14-replay
+          git -C gi2-v14-replay reset --hard HEAD
+          git -C gi2-v14-replay clean -fd
+          [[ "$(git -C gi2-v14-replay rev-parse HEAD)" = "$GI2_BASE_COMMIT" ]]
+          git -C gi2-v14-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/$GI2_DELTA_NAME"
+          git -C gi2-v14-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/$GI2_DELTA_NAME"
+          git -C gi2-v14-replay diff --check
+          cmp source/SP/code/rend2/glsl/ssgi_fp.glsl gi2-v14-replay/SP/code/rend2/glsl/ssgi_fp.glsl
+          cmp source/SP/code/rend2/glsl/ssgi_vp.glsl gi2-v14-replay/SP/code/rend2/glsl/ssgi_vp.glsl
+          git -C gi2-v14-replay apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$GI2_DELTA_NAME"
+          echo "GI-2 v1.4 exact one-file delta replay PASS"
+
+      - name: Build SP-only Windows x64 GI-2 v1.4 renderer
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::GI-2 v1.4 MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify and package GI-2 v1.4 geometry correction
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::GI-2 v1.4 packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          test -s "$SP_OUT/renderer_sp_rend2_x64.dll" || { echo "::error::Missing renderer_sp_rend2_x64.dll" >&2; exit 1; }
+          test ! -d source/MP/build || { echo "::error::MP build directory exists" >&2; exit 1; }
+
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/docs"
+          install -m 0644 "$SP_OUT/renderer_sp_rend2_x64.dll" "$STAGE/renderer_sp_rend2_x64.dll"
+          install -m 0644 "$GI2_DELTA_NAME" "$STAGE/docs/$GI2_DELTA_NAME"
+          install -m 0644 "$GI2_CUMULATIVE_NAME" "$STAGE/docs/$GI2_CUMULATIVE_NAME"
+          install -m 0644 apply_rend2_gi_2_v1_4_geometry_rejection_viewmodel_fix_sp.py "$STAGE/docs/apply_rend2_gi_2_v1_4_geometry_rejection_viewmodel_fix_sp.py"
+          install -m 0644 source/SP/code/rend2/glsl/ssgi_vp.glsl "$STAGE/docs/ssgi_vp.glsl"
+          install -m 0644 source/SP/code/rend2/glsl/ssgi_fp.glsl "$STAGE/docs/ssgi_fp.glsl"
+          sha256sum "$STAGE/docs/$GI2_DELTA_NAME" > "$STAGE/docs/$GI2_DELTA_NAME.sha256"
+          sha256sum "$STAGE/docs/$GI2_CUMULATIVE_NAME" > "$STAGE/docs/$GI2_CUMULATIVE_NAME.sha256"
+
+          cat > "$STAGE/README_GI_2_V1_4_RU.txt" <<'README'
+          DarkWolf/ioRTCW Rend2 - GI-2 v1.4 Geometry Rejection / Local Bounce Correction
+          ==============================================================================
+
+          BASE
+          ----
+          Exact successful GI-2 v1.3 runtime checkpoint.
+
+          RUNTIME PROBLEMS FIXED
+          ----------------------
+          1. The same distant wall became strongly over-bright as camera distance increased.
+          2. First-person weapon/viewmodel participated in SSGI and showed incorrect halos/energy.
+
+          CHANGES
+          -------
+          Exactly one source file changed:
+              SP/code/rend2/glsl/ssgi_fp.glsl
+
+          - Local depth-plane slope is estimated with dFdx/dFdy.
+          - Samples are judged by residual depth from the predicted plane, not raw depth delta alone.
+          - Sampling radius shrinks with receiver world distance to prevent a fixed pixel radius from
+            covering an ever-larger wall area at distance.
+          - RF_DEPTHHACK/viewmodel depth range is rejected both as SSGI receiver and donor.
+          - Donor threshold is slightly stricter to suppress distant overexposed leakage.
+
+          UNCHANGED
+          ---------
+          GI-2 v1.3 FBO/vertex fix, backend pass position, all cvars/defaults, GI-1, MAT-0,
+          MAT-1, REF-1, SUN-5C/Filter4, dlights and shadows.
+
+          TEST
+          ----
+          seta r_indirectLighting 0
+          seta r_ssgi 0
+          seta r_ssgiDebug 0
+          // screenshot near wall and far from same wall
+          seta r_ssgi 1
+          // repeat near/far screenshots
+
+          Debug checks:
+              seta r_ssgiDebug 2
+              // indirect-only x4: first-person weapon should be black/no SSGI signal
+
+              seta r_ssgiDebug 3
+              // geometry acceptance: large flat/sloped wall regions should be much darker than v1.3
+
+              seta r_ssgiDebug 0
+          README
+
+          cat > "$STAGE/GI_2_V1_4_TEST_PROFILE.cfg" <<'CFG'
+          seta r_materialDebug 0
+          seta r_pbr 1
+          seta r_cubeMapping 1
+          seta r_postProcess 1
+          seta r_depthPrepass 1
+          seta r_indirectLighting 0
+          seta r_ssgi 0
+          seta r_ssgiStrength 0.75
+          seta r_ssgiRadius 32.0
+          seta r_ssgiSaturation 0.85
+          seta r_ssgiMax 0.30
+          seta r_ssgiDebug 0
+          seta r_ssgiTrace 0
+          CFG
+
+          {
+            echo "experiment=GI-2 v1.4 Geometry Rejection / Local Bounce Correction"
+            echo "upstream_sha=$UPSTREAM_SHA"
+            echo "source_base=exact successful GI-2 v1.3 runtime artifact"
+            echo "base_run_id=$BASE_RUN_ID"
+            echo "base_artifact_id=$BASE_ARTIFACT_ID"
+            echo "base_artifact_name=$BASE_ARTIFACT_NAME"
+            echo "base_zip_sha256=$BASE_ZIP_SHA256"
+            echo "base_cumulative_sha256=$BASE_CUMULATIVE_SHA256"
+            echo "base_v13_patcher_sha256=$EXPECTED_BASE_V13_PATCHER_SHA256"
+            echo "v14_patcher_sha256=$GI2_V14_PATCHER_SHA256"
+            echo "base_ssgi_fp_sha256=$EXPECTED_OLD_SSGI_FP_SHA256"
+            echo "fixed_ssgi_fp_sha256=$EXPECTED_FIXED_SSGI_FP_SHA256"
+            echo "v13_ssgi_vp_sha256=$EXPECTED_V13_SSGI_VP_SHA256"
+            echo "source_delta_files=1"
+            echo "source_delta=SP/code/rend2/glsl/ssgi_fp.glsl"
+            echo "plane_slope_rejection=YES"
+            echo "distance_adaptive_radius=YES"
+            echo "viewmodel_receiver_rejection=YES"
+            echo "viewmodel_donor_rejection=YES"
+            echo "viewmodel_detection=RF_DEPTHHACK_DEPTH_RANGE"
+            echo "cvars_changed=NO"
+            echo "backend_changed=NO"
+            echo "vertex_shader_changed=NO"
+            echo "new_fbo=NO"
+            echo "gi1_changed=NO"
+            echo "mat0_changed=NO"
+            echo "mat1_changed=NO"
+            echo "ref1_changed=NO"
+            echo "sun5c_filter4_changed=NO"
+            echo "dlights_shadows_changed=NO"
+          } > "$STAGE/docs/GI_2_V1_4_BUILD_INFO.txt"
+
+          grep -Fq 'source_delta_files=1' "$STAGE/docs/GI_2_V1_4_BUILD_INFO.txt"
+          grep -Fq 'plane_slope_rejection=YES' "$STAGE/docs/GI_2_V1_4_BUILD_INFO.txt"
+          grep -Fq 'viewmodel_receiver_rejection=YES' "$STAGE/docs/GI_2_V1_4_BUILD_INFO.txt"
+          grep -Fq 'REND2_GI_2_V1_4_GEOMETRY_REJECTION_VIEWMODEL_FIX' "$STAGE/docs/$GI2_DELTA_NAME"
+          grep -Fq 'REND2_GI_2_V1_4_GEOMETRY_REJECTION_VIEWMODEL_FIX' "$STAGE/docs/$GI2_CUMULATIVE_NAME"
+
+          ( cd "$STAGE"; find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+
+      - name: Upload GI-2 v1.4 diagnostic artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}-${{ github.run_number }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
