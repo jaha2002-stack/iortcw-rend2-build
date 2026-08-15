@@ -1,0 +1,596 @@
+name: Build DarkWolf Rend2 Pre-Production FINAL v1.7 Full SP Windows x64-1
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "darkwolf-preproduction-final-v1-7-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: Full SP pre-production FINAL v1.7 EXE DLL Main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+
+      BASE_RUN_ID: "31874543457"
+      BASE_ARTIFACT_ID: "9244384974"
+      BASE_ARTIFACT_NAME: "iortcw-rend2-gi-2-diag-1-fringe-root-cause-matrix-over-v1-6-sp-windows-x64-1"
+      EXPECTED_BASE_RUN_HEAD_SHA: "5848253020a49335188349b694ee5a7eccafaf3a"
+      EXPECTED_BASE_ARTIFACT_DIGEST: "sha256:68e988d8481c6b569eae444fe9ef1b58ee7bd9cf07f2ca6e54bdff259e54ad72"
+      BASE_RELEASE_BASENAME: "iortcw-rend2-gi-2-diag-1-fringe-root-cause-matrix-over-v1-6-sp-windows-x64"
+      BASE_CUMULATIVE_NAME: "rend2-cumulative-full-preliminary-production-gi1-v1-2-gi2-diag-1-fringe-root-cause-matrix-sp.patch"
+      BASE_BUILD_INFO_NAME: "GI_2_DIAG_1_BUILD_INFO.txt"
+      EXPECTED_BASE_ZIP_SHA256: "1070c2c54802373f84e71cda2c44eeca84fa601902899ac20765a39d6e3a8995"
+      EXPECTED_BASE_CUMULATIVE_SHA256: "98e1dea9c678294682f981cd3f31569a2f471c2b132bcf273df77d37f1934b1f"
+      EXPECTED_BASE_RENDERER_SHA256: "462cb34d13359155bcf698af1a531e3cfa0e149e95a8fc06c582abbbddf7d776"
+      EXPECTED_BASE_DIAG1_PATCHER_SHA256: "5a71f085ee2abef397fda49d180c6f29e5e803d7465c2919b6114bab9d689df6"
+      EXPECTED_BASE_SSGI_FP_SHA256: "a7466db1cc81b6fdf64b20acad046bb340e5d97ba0c9c0f9560c248312f9bc37"
+      EXPECTED_V13_SSGI_VP_SHA256: "d8c315e04cff47410058f014a8daaddd0ae51c3e85de5ada688c7c0c3c381181"
+
+      V17_PATCHER_SHA256: "537bd3b2472f9a2ee40da32ac70b2dab7996a07c126bbac925da4dea786aa893"
+      V17_PROFILE_SHA256: "d681bd811f64b6e575a70731280c81ad2fc4cf7f17eb535b002d971aee700533"
+      V17_README_SHA256: "561a6340459b127185e8647ec23bb974767a95cd3d71e22915276154eebace88"
+      V17_TEST_PLAN_SHA256: "d115744481995b118fa240ffda145f191ea2597aa8fb43aceb474fcbd956f6da"
+      RELEASE_BASENAME: "iortcw-rend2-preproduction-final-v1-7-full-sp-windows-x64-1"
+      V17_DELTA_NAME: "rend2-gi-2-v1-7-symmetric-entity-donor-rejection-production-fringe-fix-sp.patch"
+      V17_CUMULATIVE_NAME: "rend2-cumulative-preproduction-v1-7-full-sp.patch"
+
+    steps:
+      - name: Install exact full-SP cross-build prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Prerequisite step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+          python3 --version
+
+      - name: Recover exact successful GI-2 DIAG-1 checkpoint
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::DIAG-1 artifact recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$BASE_RUN_ID" --jq '.conclusion')"
+          run_head_sha="$(gh api "repos/$GH_REPO/actions/runs/$BASE_RUN_ID" --jq '.head_sha')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Frozen DIAG-1 run is not successful: $run_conclusion" >&2; exit 1; }
+          [[ "$run_head_sha" = "$EXPECTED_BASE_RUN_HEAD_SHA" ]] || { echo "::error::Frozen DIAG-1 run head SHA mismatch: $run_head_sha" >&2; exit 1; }
+
+          artifact_name="$(gh api "repos/$GH_REPO/actions/artifacts/$BASE_ARTIFACT_ID" --jq '.name')"
+          artifact_run_id="$(gh api "repos/$GH_REPO/actions/artifacts/$BASE_ARTIFACT_ID" --jq '.workflow_run.id')"
+          artifact_expired="$(gh api "repos/$GH_REPO/actions/artifacts/$BASE_ARTIFACT_ID" --jq '.expired')"
+          artifact_digest="$(gh api "repos/$GH_REPO/actions/artifacts/$BASE_ARTIFACT_ID" --jq '.digest // ""')"
+          [[ "$artifact_name" = "$BASE_ARTIFACT_NAME" ]] || { echo "::error::Frozen DIAG-1 artifact name mismatch: $artifact_name" >&2; exit 1; }
+          [[ "$artifact_run_id" = "$BASE_RUN_ID" ]] || { echo "::error::Frozen DIAG-1 artifact run mismatch: $artifact_run_id" >&2; exit 1; }
+          [[ "$artifact_expired" = "false" ]] || { echo "::error::Frozen DIAG-1 artifact expired" >&2; exit 1; }
+          [[ "$artifact_digest" = "$EXPECTED_BASE_ARTIFACT_DIGEST" ]] || { echo "::error::Frozen DIAG-1 artifact digest mismatch: $artifact_digest" >&2; exit 1; }
+
+          gh run download "$BASE_RUN_ID" --repo "$GH_REPO" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          base_zip="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip" -print -quit)"
+          base_zip_sha="$(find base-artifact -type f -name "$BASE_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_zip_sha" && -s "$base_zip_sha" ]] || { echo "::error::DIAG-1 base ZIP/SHA missing" >&2; find base-artifact -type f -print >&2; exit 1; }
+          expected_zip_sha="$(awk 'NF {print $1; exit}' "$base_zip_sha")"
+          actual_zip_sha="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected_zip_sha" =~ ^[0-9a-fA-F]{64}$ && "$actual_zip_sha" = "$expected_zip_sha" ]] || { echo "::error::DIAG-1 ZIP SHA sidecar mismatch" >&2; exit 1; }
+          [[ "$actual_zip_sha" = "$EXPECTED_BASE_ZIP_SHA256" ]] || { echo "::error::DIAG-1 ZIP is not the frozen base: $actual_zip_sha" >&2; exit 1; }
+
+          unzip -q "$base_zip" -d base-release
+          BASE_STAGE="$GITHUB_WORKSPACE/base-release/$BASE_RELEASE_BASENAME"
+          BASE_CUMULATIVE="$BASE_STAGE/docs/$BASE_CUMULATIVE_NAME"
+          BASE_CUMULATIVE_SHA_FILE="$BASE_CUMULATIVE.sha256"
+          BASE_BUILD_INFO="$BASE_STAGE/docs/$BASE_BUILD_INFO_NAME"
+          [[ -d "$BASE_STAGE" && -s "$BASE_STAGE/renderer_sp_rend2_x64.dll" && -s "$BASE_CUMULATIVE" && -s "$BASE_CUMULATIVE_SHA_FILE" && -s "$BASE_BUILD_INFO" && -s "$BASE_STAGE/docs/ssgi_fp.glsl" && -s "$BASE_STAGE/docs/ssgi_vp.glsl" ]] || { echo "::error::DIAG-1 runtime/cumulative/build-info/shaders missing" >&2; exit 1; }
+
+          expected_cumulative_sha="$(awk 'NF {print $1; exit}' "$BASE_CUMULATIVE_SHA_FILE")"
+          actual_cumulative_sha="$(sha256sum "$BASE_CUMULATIVE" | awk '{print $1}')"
+          [[ "$expected_cumulative_sha" =~ ^[0-9a-fA-F]{64}$ && "$actual_cumulative_sha" = "$expected_cumulative_sha" ]] || { echo "::error::DIAG-1 cumulative SHA sidecar mismatch" >&2; exit 1; }
+          [[ "$actual_cumulative_sha" = "$EXPECTED_BASE_CUMULATIVE_SHA256" ]] || { echo "::error::DIAG-1 cumulative is not frozen base: $actual_cumulative_sha" >&2; exit 1; }
+          [[ "$(sha256sum "$BASE_STAGE/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$EXPECTED_BASE_RENDERER_SHA256" ]]
+          [[ "$(sha256sum "$BASE_STAGE/docs/ssgi_fp.glsl" | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_FP_SHA256" ]]
+          [[ "$(sha256sum "$BASE_STAGE/docs/ssgi_vp.glsl" | awk '{print $1}')" = "$EXPECTED_V13_SSGI_VP_SHA256" ]]
+          [[ "$(sha256sum "$BASE_STAGE/docs/apply_rend2_gi_2_diag_1_fringe_root_cause_matrix_sp.py" | awk '{print $1}')" = "$EXPECTED_BASE_DIAG1_PATCHER_SHA256" ]]
+
+          grep -Fq 'experiment=GI-2 DIAG-1 Fringe Root-Cause Matrix' "$BASE_BUILD_INFO"
+          grep -Fq "upstream_sha=$UPSTREAM_SHA" "$BASE_BUILD_INFO"
+          grep -Fq "diag1_patcher_sha256=$EXPECTED_BASE_DIAG1_PATCHER_SHA256" "$BASE_BUILD_INFO"
+          grep -Fq "diag_ssgi_fp_sha256=$EXPECTED_BASE_SSGI_FP_SHA256" "$BASE_BUILD_INFO"
+          grep -Fq 'production_defaults_changed=NO' "$BASE_BUILD_INFO"
+          grep -Fq 'REND2_GI_2_DIAG_1_FRINGE_ROOT_CAUSE_MATRIX' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_GI_2_V1_6_EDGE_AWARE_ENTITY_FRINGE_CLEANUP' "$BASE_CUMULATIVE"
+          grep -Fq 'REND2_GI_2_V1_5_SCENE_ENTITY_WORLD_MASK' "$BASE_CUMULATIVE"
+          ! grep -Fq 'REND2_GI_2_V1_7_SYMMETRIC_ENTITY_DONOR_REJECTION_PRODUCTION_FRINGE_FIX' "$BASE_CUMULATIVE"
+
+          echo "BASE_STAGE=$BASE_STAGE" >> "$GITHUB_ENV"
+          echo "BASE_BUILD_INFO=$BASE_BUILD_INFO" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE=$BASE_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE_SHA256=$actual_cumulative_sha" >> "$GITHUB_ENV"
+          echo "BASE_ZIP_SHA256=$actual_zip_sha" >> "$GITHUB_ENV"
+          echo "Recovered exact successful DIAG-1 base: run=$BASE_RUN_ID artifact=$BASE_ARTIFACT_ID cumulative_sha=$actual_cumulative_sha"
+
+      - name: Reconstruct and freeze exact DIAG-1 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::DIAG-1 source reconstruction failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git clone --no-checkout --filter=blob:none "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source config user.email "darkwolf-v17@local.invalid"
+          git -C source config user.name "DarkWolf Pre-Production v1.7 Builder"
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]]
+
+          git -C source apply --check --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source diff --check
+          git -C source apply --check --reverse --whitespace=nowarn "$BASE_CUMULATIVE"
+
+          [[ "$(sha256sum source/SP/code/rend2/glsl/ssgi_fp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_FP_SHA256" ]]
+          [[ "$(sha256sum source/SP/code/rend2/glsl/ssgi_vp.glsl | awk '{print $1}')" = "$EXPECTED_V13_SSGI_VP_SHA256" ]]
+          grep -Fq 'REND2_GI_2_DIAG_1_FRINGE_ROOT_CAUSE_MATRIX' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'REND2_GI_2_V1_6_EDGE_AWARE_ENTITY_FRINGE_CLEANUP' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'REND2_GI_2_V1_5_SCENE_ENTITY_WORLD_MASK' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'r_ssgi = ri.Cvar_Get( "r_ssgi", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_ssgiResolveMode = ri.Cvar_Get( "r_ssgiResolveMode", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_ssgiEntityGuardMode = ri.Cvar_Get( "r_ssgiEntityGuardMode", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_ssgiEntityMaskMode = ri.Cvar_Get( "r_ssgiEntityMaskMode", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION' source/SP/code/rend2/tr_shader.c
+          grep -Fq 'REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS' source/SP/code/rend2/tr_init.c
+          grep -Fq 'REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC' source/SP/code/rend2/tr_main.c
+          grep -Fq 'REND2_SUN_BRANCH_PREFERRED_SHADOWFILTER4' source/SP/code/rend2/tr_init.c
+
+          git -C source add -A
+          git -C source commit -q -m "Freeze exact successful GI-2 DIAG-1 source for v1.7 promotion"
+          V17_BASE_COMMIT="$(git -C source rev-parse HEAD)"
+          echo "V17_BASE_COMMIT=$V17_BASE_COMMIT" >> "$GITHUB_ENV"
+          [[ -z "$(git -C source status --porcelain)" ]]
+          echo "Frozen exact DIAG-1 source base commit: $V17_BASE_COMMIT"
+
+      - name: Promote GI-2 v1.7 production fringe defaults and audit exact delta
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::GI-2 v1.7 promotion/audit failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          cat > v17-patcher.b64 <<'V17_PATCHER_B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKaW1wb3J0IHJl
+          CmltcG9ydCBzeXMKCk1BUktFUiA9ICJSRU5EMl9HSV8yX1YxXzdfU1lNTUVUUklDX0VOVElUWV9E
+          T05PUl9SRUpFQ1RJT05fUFJPRFVDVElPTl9GUklOR0VfRklYIgpCQVNFX01BUktFUiA9ICJSRU5E
+          Ml9HSV8yX0RJQUdfMV9GUklOR0VfUk9PVF9DQVVTRV9NQVRSSVgiClBBVEggPSBQYXRoKCJTUC9j
+          b2RlL3JlbmQyL3RyX2luaXQuYyIpCgpHVUFSRDBfUkUgPSByZS5jb21waWxlKAogICAgcicoP20p
+          Xig/UDxpbmRlbnQ+WyBcdF0qKXJfc3NnaUVudGl0eUd1YXJkTW9kZVxzKj1ccypyaVwuQ3Zhcl9H
+          ZXRcKFxzKiJyX3NzZ2lFbnRpdHlHdWFyZE1vZGUiXHMqLFxzKiIwIlxzKixccypDVkFSX0FSQ0hJ
+          VkVccypcKTtbIFx0XSokJwopCkdVQVJEMl9SRSA9IHJlLmNvbXBpbGUoCiAgICByJyg/bSleWyBc
+          dF0qcl9zc2dpRW50aXR5R3VhcmRNb2RlXHMqPVxzKnJpXC5DdmFyX0dldFwoXHMqInJfc3NnaUVu
+          dGl0eUd1YXJkTW9kZSJccyosXHMqIjIiXHMqLFxzKkNWQVJfQVJDSElWRVxzKlwpO1sgXHRdKiQn
+          CikKUkVTT0xWRTBfUkUgPSByZS5jb21waWxlKAogICAgcicoP20pXlsgXHRdKnJfc3NnaVJlc29s
+          dmVNb2RlXHMqPVxzKnJpXC5DdmFyX0dldFwoXHMqInJfc3NnaVJlc29sdmVNb2RlIlxzKixccyoi
+          MCJccyosXHMqQ1ZBUl9BUkNISVZFXHMqXCk7WyBcdF0qJCcKKQpNQVNLMF9SRSA9IHJlLmNvbXBp
+          bGUoCiAgICByJyg/bSleWyBcdF0qcl9zc2dpRW50aXR5TWFza01vZGVccyo9XHMqcmlcLkN2YXJf
+          R2V0XChccyoicl9zc2dpRW50aXR5TWFza01vZGUiXHMqLFxzKiIwIlxzKixccypDVkFSX0FSQ0hJ
+          VkVccypcKTtbIFx0XSokJwopClNTR0kwX1JFID0gcmUuY29tcGlsZSgKICAgIHInKD9tKV5bIFx0
+          XSpyX3NzZ2lccyo9XHMqcmlcLkN2YXJfR2V0XChccyoicl9zc2dpIlxzKixccyoiMCJccyosXHMq
+          Q1ZBUl9BUkNISVZFXHMqXCk7WyBcdF0qJCcKKQoKCmRlZiBjb3VudChyeDogcmUuUGF0dGVybltz
+          dHJdLCB0ZXh0OiBzdHIpIC0+IGludDoKICAgIHJldHVybiBzdW0oMSBmb3IgXyBpbiByeC5maW5k
+          aXRlcih0ZXh0KSkKCgpkZWYgdmFsaWRhdGVfYmFzZSh0ZXh0OiBzdHIpIC0+IE5vbmU6CiAgICBp
+          ZiBCQVNFX01BUktFUiBub3QgaW4gdGV4dDoKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KGYidHJf
+          aW5pdC5jOiBtaXNzaW5nIHJlcXVpcmVkIERJQUctMSBiYXNlIG1hcmtlciB7QkFTRV9NQVJLRVJ9
+          IikKICAgIGlmIE1BUktFUiBpbiB0ZXh0OgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoIkdJLTIg
+          djEuNyBwcm9kdWN0aW9uIGZyaW5nZSBmaXggYWxyZWFkeSBhcHBsaWVkIikKICAgIGNoZWNrcyA9
+          IFsKICAgICAgICAoR1VBUkQwX1JFLCAxLCAiZW50aXR5IGd1YXJkIGRlZmF1bHQgMCIpLAogICAg
+          ICAgIChHVUFSRDJfUkUsIDAsICJlbnRpdHkgZ3VhcmQgZGVmYXVsdCAyIHByZS1leGlzdGluZyIp
+          LAogICAgICAgIChSRVNPTFZFMF9SRSwgMSwgInJlc29sdmUgZGVmYXVsdCAwIiksCiAgICAgICAg
+          KE1BU0swX1JFLCAxLCAiZW50aXR5IG1hc2sgZGVmYXVsdCAwIiksCiAgICAgICAgKFNTR0kwX1JF
+          LCAxLCAiU1NHSSBtYXN0ZXIgZW5naW5lIGRlZmF1bHQgMCIpLAogICAgXQogICAgZm9yIHJ4LCBl
+          eHBlY3RlZCwgbGFiZWwgaW4gY2hlY2tzOgogICAgICAgIGdvdCA9IGNvdW50KHJ4LCB0ZXh0KQog
+          ICAgICAgIGlmIGdvdCAhPSBleHBlY3RlZDoKICAgICAgICAgICAgcmFpc2UgU3lzdGVtRXhpdChm
+          InRyX2luaXQuYyB7bGFiZWx9OiBleHBlY3RlZCB7ZXhwZWN0ZWR9IG1hdGNoKGVzKSwgZm91bmQg
+          e2dvdH0iKQoKCmRlZiB2YWxpZGF0ZV9yZXN1bHQodGV4dDogc3RyKSAtPiBOb25lOgogICAgaWYg
+          dGV4dC5jb3VudChNQVJLRVIpICE9IDE6CiAgICAgICAgcmFpc2UgU3lzdGVtRXhpdChmInRyX2lu
+          aXQuYyByZXN1bHQ6IGV4cGVjdGVkIGV4YWN0bHkgb25lIHYxLjcgbWFya2VyLCBmb3VuZCB7dGV4
+          dC5jb3VudChNQVJLRVIpfSIpCiAgICBjaGVja3MgPSBbCiAgICAgICAgKEdVQVJEMF9SRSwgMCwg
+          Im9sZCBlbnRpdHkgZ3VhcmQgZGVmYXVsdCAwIiksCiAgICAgICAgKEdVQVJEMl9SRSwgMSwgInBy
+          b2R1Y3Rpb24gZW50aXR5IGd1YXJkIGRlZmF1bHQgMiIpLAogICAgICAgIChSRVNPTFZFMF9SRSwg
+          MSwgInJlc29sdmUgZGVmYXVsdCByZW1haW5zIDAiKSwKICAgICAgICAoTUFTSzBfUkUsIDEsICJl
+          bnRpdHkgbWFzayBkZWZhdWx0IHJlbWFpbnMgMCIpLAogICAgICAgIChTU0dJMF9SRSwgMSwgIlNT
+          R0kgbWFzdGVyIGVuZ2luZSBkZWZhdWx0IHJlbWFpbnMgMCIpLAogICAgXQogICAgZm9yIHJ4LCBl
+          eHBlY3RlZCwgbGFiZWwgaW4gY2hlY2tzOgogICAgICAgIGdvdCA9IGNvdW50KHJ4LCB0ZXh0KQog
+          ICAgICAgIGlmIGdvdCAhPSBleHBlY3RlZDoKICAgICAgICAgICAgcmFpc2UgU3lzdGVtRXhpdChm
+          InRyX2luaXQuYyByZXN1bHQge2xhYmVsfTogZXhwZWN0ZWQge2V4cGVjdGVkfSBtYXRjaChlcyks
+          IGZvdW5kIHtnb3R9IikKCgpkZWYgbWFpbigpIC0+IE5vbmU6CiAgICBhcmdzID0gc3lzLmFyZ3Zb
+          MTpdCiAgICBjaGVja19vbmx5ID0gRmFsc2UKICAgIGlmIGFyZ3MgYW5kIGFyZ3NbMF0gPT0gIi0t
+          Y2hlY2stb25seSI6CiAgICAgICAgY2hlY2tfb25seSA9IFRydWUKICAgICAgICBhcmdzID0gYXJn
+          c1sxOl0KICAgIHJvb3QgPSBQYXRoKGFyZ3NbMF0gaWYgYXJncyBlbHNlICIuIikKICAgIHBhdGgg
+          PSByb290IC8gUEFUSAogICAgaWYgbm90IHBhdGguaXNfZmlsZSgpOgogICAgICAgIHJhaXNlIFN5
+          c3RlbUV4aXQoZiJtaXNzaW5nIHtwYXRofSIpCgogICAgdGV4dCA9IHBhdGgucmVhZF90ZXh0KGVu
+          Y29kaW5nPSJ1dGYtOCIpCiAgICB2YWxpZGF0ZV9iYXNlKHRleHQpCiAgICBpZiBjaGVja19vbmx5
+          OgogICAgICAgIHByaW50KCJHSS0yIHYxLjcgcHJlZmxpZ2h0IFBBU1M6IGV4YWN0IERJQUctMSBw
+          cm9kdWN0aW9uLXByb21vdGlvbiBhbmNob3JzIGFyZSB2YWxpZC4iKQogICAgICAgIHJldHVybgoK
+          ICAgIG1hdGNoID0gR1VBUkQwX1JFLnNlYXJjaCh0ZXh0KQogICAgYXNzZXJ0IG1hdGNoIGlzIG5v
+          dCBOb25lCiAgICBpbmRlbnQgPSBtYXRjaC5ncm91cCgiaW5kZW50IikKICAgIHJlcGxhY2VtZW50
+          ID0gKAogICAgICAgIGYne2luZGVudH0vLyB7TUFSS0VSfTogRElBRy0xIHByb3ZlZCBzeW1tZXRy
+          aWMgcmVjZWl2ZXIrZG9ub3IgMi10ZXhlbCBndWFyZCByZW1vdmVzIHNjZW5lLWVudGl0eSBmcmlu
+          Z2UuXG4nCiAgICAgICAgZid7aW5kZW50fXJfc3NnaUVudGl0eUd1YXJkTW9kZSA9IHJpLkN2YXJf
+          R2V0KCAicl9zc2dpRW50aXR5R3VhcmRNb2RlIiwgIjIiLCBDVkFSX0FSQ0hJVkUgKTsnCiAgICAp
+          CiAgICB0ZXh0ID0gdGV4dFs6bWF0Y2guc3RhcnQoKV0gKyByZXBsYWNlbWVudCArIHRleHRbbWF0
+          Y2guZW5kKCk6XQogICAgdmFsaWRhdGVfcmVzdWx0KHRleHQpCiAgICBwYXRoLndyaXRlX3RleHQo
+          dGV4dCwgZW5jb2Rpbmc9InV0Zi04IiwgbmV3bGluZT0iXG4iKQogICAgcHJpbnQoIkdJLTIgdjEu
+          NyBwcm9kdWN0aW9uIGZyaW5nZSBkZWZhdWx0cyBwcm9tb3RlZCBzdWNjZXNzZnVsbHk6IHJlc29s
+          dmU9MCBndWFyZD0yIG1hc2s9MDsgU1NHSSBtYXN0ZXIgcmVtYWlucyBwcm9maWxlLWNvbnRyb2xs
+          ZWQuIikKCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgbWFpbigpCg==
+          V17_PATCHER_B64
+          base64 -d v17-patcher.b64 > apply_rend2_gi_2_v1_7_symmetric_entity_donor_rejection_production_fringe_fix_sp.py
+          [[ "$(sha256sum apply_rend2_gi_2_v1_7_symmetric_entity_donor_rejection_production_fringe_fix_sp.py | awk '{print $1}')" = "$V17_PATCHER_SHA256" ]]
+          python3 -m py_compile apply_rend2_gi_2_v1_7_symmetric_entity_donor_rejection_production_fringe_fix_sp.py
+
+          python3 apply_rend2_gi_2_v1_7_symmetric_entity_donor_rejection_production_fringe_fix_sp.py --check-only source
+          python3 apply_rend2_gi_2_v1_7_symmetric_entity_donor_rejection_production_fringe_fix_sp.py source
+          git -C source diff --check
+
+          repeat_rc=0
+          if python3 apply_rend2_gi_2_v1_7_symmetric_entity_donor_rejection_production_fringe_fix_sp.py source > v17-repeat-guard.txt 2>&1; then
+            repeat_rc=0
+          else
+            repeat_rc=$?
+          fi
+          [[ "$repeat_rc" -ne 0 ]] || { echo "::error::v1.7 repeat guard unexpectedly accepted a second application" >&2; exit 1; }
+          grep -Fq 'already applied' v17-repeat-guard.txt
+          echo "GI-2 v1.7 repeat guard PASS (expected rc=$repeat_rc)"
+
+          grep -Fq 'REND2_GI_2_V1_7_SYMMETRIC_ENTITY_DONOR_REJECTION_PRODUCTION_FRINGE_FIX' source/SP/code/rend2/tr_init.c
+          ! grep -R -Fq 'REND2_GI_2_DIAG_2' source/SP/code/rend2
+          ! grep -R -Fq 'r_ssgiWorldEdgeMode' source/SP/code/rend2
+          grep -Fq 'r_ssgiResolveMode = ri.Cvar_Get( "r_ssgiResolveMode", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_ssgiEntityGuardMode = ri.Cvar_Get( "r_ssgiEntityGuardMode", "2", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_ssgiEntityMaskMode = ri.Cvar_Get( "r_ssgiEntityMaskMode", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_ssgi = ri.Cvar_Get( "r_ssgi", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          ! grep -Fq 'r_ssgiEntityGuardMode = ri.Cvar_Get( "r_ssgiEntityGuardMode", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+
+          git -C source diff --name-only HEAD | LC_ALL=C sort > v17-files.txt
+          printf '%s\n' 'SP/code/rend2/tr_init.c' > v17-expected-files.txt
+          diff -u v17-expected-files.txt v17-files.txt
+
+          git -C source diff --binary HEAD > "$V17_DELTA_NAME"
+          test -s "$V17_DELTA_NAME"
+          grep -Fq 'REND2_GI_2_V1_7_SYMMETRIC_ENTITY_DONOR_REJECTION_PRODUCTION_FRINGE_FIX' "$V17_DELTA_NAME"
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$V17_DELTA_NAME"
+
+          git -C source diff --binary "$UPSTREAM_SHA" > "$V17_CUMULATIVE_NAME"
+          test -s "$V17_CUMULATIVE_NAME"
+          for marker in \
+            REND2_SUN_5C_MAP_ORIENTED_DYNAMIC_ARC \
+            REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION \
+            REND2_MAT_1_V2_PBR_AWARE_CLASS_FALLBACK \
+            REND2_REF_1_V1_MATERIAL_AWARE_CUBEMAP_REFLECTIONS \
+            REND2_GI_1_V1_CUBEMAP_DIFFUSE_INDIRECT \
+            REND2_GI_2_V1_SCREEN_SPACE_LOCAL_INDIRECT \
+            REND2_GI_2_V1_3_FBO_BLIT_VERTEX_FIX \
+            REND2_GI_2_V1_4_GEOMETRY_REJECTION_VIEWMODEL_FIX \
+            REND2_GI_2_V1_5_SCENE_ENTITY_WORLD_MASK \
+            REND2_GI_2_V1_6_EDGE_AWARE_ENTITY_FRINGE_CLEANUP \
+            REND2_GI_2_DIAG_1_FRINGE_ROOT_CAUSE_MATRIX \
+            REND2_GI_2_V1_7_SYMMETRIC_ENTITY_DONOR_REJECTION_PRODUCTION_FRINGE_FIX
+          do
+            grep -Fq "$marker" "$V17_CUMULATIVE_NAME"
+          done
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$V17_CUMULATIVE_NAME"
+          echo "GI-2 v1.7 exact one-file production promotion PASS"
+
+      - name: Replay exact v1.7 delta over frozen DIAG-1 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::GI-2 v1.7 replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf v17-replay
+          cp -a source v17-replay
+          git -C v17-replay reset --hard HEAD
+          [[ "$(git -C v17-replay rev-parse HEAD)" = "$V17_BASE_COMMIT" ]]
+          git -C v17-replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/$V17_DELTA_NAME"
+          git -C v17-replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/$V17_DELTA_NAME"
+          git -C v17-replay diff --check
+          cmp source/SP/code/rend2/tr_init.c v17-replay/SP/code/rend2/tr_init.c
+          git -C v17-replay apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$V17_DELTA_NAME"
+          echo "GI-2 v1.7 replay + byte comparison PASS"
+
+      - name: Build complete SP Windows x64 pre-production runtime
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Full SP MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify and package FINAL v1.7 EXE DLL Main pre-production release
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::v1.7 full runtime packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          MAIN_OUT="$SP_OUT/main"
+          test -d "$SP_OUT" || { echo "::error::Missing SP release output directory" >&2; exit 1; }
+          test -s "$SP_OUT/renderer_sp_rend2_x64.dll" || { echo "::error::Missing renderer_sp_rend2_x64.dll" >&2; exit 1; }
+          test -d "$MAIN_OUT" || { echo "::error::Missing build main directory" >&2; exit 1; }
+          test ! -d source/MP/build || { echo "::error::MP build directory exists; expected SP-only output" >&2; exit 1; }
+
+          mapfile -d '' ROOT_EXES < <(find "$SP_OUT" -maxdepth 1 -type f -iname '*.exe' -print0 | LC_ALL=C sort -z)
+          mapfile -d '' ROOT_DLLS < <(find "$SP_OUT" -maxdepth 1 -type f -iname '*.dll' -print0 | LC_ALL=C sort -z)
+          mapfile -d '' ROOT_RENDERERS < <(find "$SP_OUT" -maxdepth 1 -type f -iname 'renderer_sp_*.dll' -print0 | LC_ALL=C sort -z)
+          mapfile -d '' MAIN_FILES < <(find "$MAIN_OUT" -maxdepth 1 -type f -print0 | LC_ALL=C sort -z)
+
+          (( ${#ROOT_EXES[@]} >= 1 )) || { echo "::error::No client EXE produced by SP build" >&2; find "$SP_OUT" -maxdepth 2 -type f -print >&2; exit 1; }
+          (( ${#ROOT_DLLS[@]} >= 2 )) || { echo "::error::Expected complete root DLL set was not produced" >&2; find "$SP_OUT" -maxdepth 1 -type f -print >&2; exit 1; }
+          (( ${#ROOT_RENDERERS[@]} >= 2 )) || { echo "::error::Expected both SP renderer DLLs; found ${#ROOT_RENDERERS[@]}" >&2; printf '%s\n' "${ROOT_DLLS[@]}" >&2; exit 1; }
+          (( ${#MAIN_FILES[@]} >= 3 )) || { echo "::error::Incomplete Main runtime output" >&2; find "$MAIN_OUT" -maxdepth 2 -type f -print >&2; exit 1; }
+          find "$MAIN_OUT" -maxdepth 1 -type f -iname '*cgame*.dll' -print -quit | grep -q . || { echo "::error::Missing compiled cgame DLL in main" >&2; exit 1; }
+          find "$MAIN_OUT" -maxdepth 1 -type f -iname '*qagame*.dll' -print -quit | grep -q . || { echo "::error::Missing compiled qagame DLL in main" >&2; exit 1; }
+          find "$MAIN_OUT" -maxdepth 1 -type f -iname '*ui*.dll' -print -quit | grep -q . || { echo "::error::Missing compiled ui DLL in main" >&2; exit 1; }
+
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/Main" "$STAGE/docs"
+          for f in "${ROOT_EXES[@]}"; do install -m 0755 "$f" "$STAGE/$(basename "$f")"; done
+          for f in "${ROOT_DLLS[@]}"; do install -m 0644 "$f" "$STAGE/$(basename "$f")"; done
+          for f in "${MAIN_FILES[@]}"; do install -m 0644 "$f" "$STAGE/Main/$(basename "$f")"; done
+
+          install -m 0644 "$V17_DELTA_NAME" "$STAGE/docs/$V17_DELTA_NAME"
+          install -m 0644 "$V17_CUMULATIVE_NAME" "$STAGE/docs/$V17_CUMULATIVE_NAME"
+          install -m 0644 apply_rend2_gi_2_v1_7_symmetric_entity_donor_rejection_production_fringe_fix_sp.py "$STAGE/docs/"
+          install -m 0644 source/SP/code/rend2/glsl/ssgi_fp.glsl "$STAGE/docs/ssgi_fp.glsl"
+          install -m 0644 source/SP/code/rend2/glsl/ssgi_vp.glsl "$STAGE/docs/ssgi_vp.glsl"
+          install -m 0644 source/SP/code/rend2/tr_init.c "$STAGE/docs/tr_init_v1_7.c"
+          install -m 0644 "$BASE_BUILD_INFO" "$STAGE/docs/GI_2_DIAG_1_BASE_BUILD_INFO.txt"
+          sha256sum "$STAGE/docs/$V17_DELTA_NAME" > "$STAGE/docs/$V17_DELTA_NAME.sha256"
+          sha256sum "$STAGE/docs/$V17_CUMULATIVE_NAME" > "$STAGE/docs/$V17_CUMULATIVE_NAME.sha256"
+
+          cat > v17-profile.b64 <<'V17_PROFILE_B64'
+          Ly8gRGFya1dvbGYvaW9SVENXIFJlbmQyIFByZS1Qcm9kdWN0aW9uIEZJTkFMIHYxLjcKLy8gRnJv
+          emVuIGNoZWNrcG9pbnQ6IFNVTi01QyArIE1BVC0wIHYyLjQgKyBNQVQtMSB2MiArIFJFRi0xIHYx
+          LjEgKyBHSS0yIHYxLjcuCi8vIEdJLTIgc3RhZ2UgaXMgY2xvc2VkLiBFeGVjdXRlIGFmdGVyIG92
+          ZXJsYXlpbmcgdGhlIGZ1bGwgU1AgYnVpbGQ6Ci8vICAgZXhlYyBEQVJLV09MRl9QUkVQUk9EVUNU
+          SU9OX0ZJTkFMX1YxXzcuY2ZnCi8vIElmIGFueSBsYXRjaGVkIHJlbmRlcmVyIGN2YXJzIGNoYW5n
+          ZWQsIGZvbGxvdyB3aXRoIHZpZF9yZXN0YXJ0LgoKc2V0YSByX21hdGVyaWFsRGVidWcgMApzZXRh
+          IHJfcGJyIDEKc2V0YSByX2N1YmVNYXBwaW5nIDEKc2V0YSByX3Bvc3RQcm9jZXNzIDEKc2V0YSBy
+          X2RlcHRoUHJlcGFzcyAxCgpzZXRhIHJfc3VubGlnaHRNb2RlIDEKc2V0YSByX3NoYWRvd0ZpbHRl
+          ciA0CnNldGEgcl9mb3JjZVN1biAwCgpzZXRhIHJfbWF0ZXJpYWxBd2FyZUZhbGxiYWNrIDEKc2V0
+          YSByX21hdGVyaWFsRmFsbGJhY2tDbGFzc01hc2sgMTAKc2V0YSByX21hdGVyaWFsRmFsbGJhY2tN
+          aW5lcmFsU3BlY3VsYXIgMC4wMTUKc2V0YSByX21hdGVyaWFsRmFsbGJhY2tNaW5lcmFsUm91Z2hu
+          ZXNzIDAuOTUKc2V0YSByX21hdGVyaWFsRmFsbGJhY2tNaW5lcmFsTWV0YWxsaWMgMC4wMApzZXRh
+          IHJfbWF0ZXJpYWxGYWxsYmFja01ldGFsU3BlY3VsYXIgMC4xNApzZXRhIHJfbWF0ZXJpYWxGYWxs
+          YmFja01ldGFsUm91Z2huZXNzIDAuNDUKc2V0YSByX21hdGVyaWFsRmFsbGJhY2tNZXRhbE1ldGFs
+          bGljIDAuNTUKCnNldGEgcl9tYXRlcmlhbEF3YXJlUmVmbGVjdGlvbnMgMQpzZXRhIHJfbWF0ZXJp
+          YWxSZWZsZWN0aW9uQ2xhc3NNYXNrIDEwCnNldGEgcl9tYXRlcmlhbFJlZmxlY3Rpb25NaW5lcmFs
+          U2NhbGUgMC4wNQpzZXRhIHJfbWF0ZXJpYWxSZWZsZWN0aW9uTWV0YWxTY2FsZSAwLjYwCnNldGEg
+          cl9tYXRlcmlhbFJlZmxlY3Rpb25NYXggMC43NQoKLy8gR0ktMSByZW1haW5zIG9wdGlvbmFsIGFu
+          ZCBpcyBub3QgcGFydCBvZiB0aGUgZmluYWwgdjEuNyBwcm9kdWN0aW9uIHByb2ZpbGUuCnNldGEg
+          cl9pbmRpcmVjdExpZ2h0aW5nIDAKCi8vIEdJLTIgdjEuNyBGSU5BTCBhY2NlcHRlZCBzZXR0aW5n
+          cy4Kc2V0YSByX3NzZ2kgMQpzZXRhIHJfc3NnaVN0cmVuZ3RoIDAuNzUKc2V0YSByX3NzZ2lSYWRp
+          dXMgMzIuMApzZXRhIHJfc3NnaVNhdHVyYXRpb24gMC44NQpzZXRhIHJfc3NnaU1heCAwLjMwCnNl
+          dGEgcl9zc2dpRGVidWcgMApzZXRhIHJfc3NnaVRyYWNlIDAKc2V0YSByX3NzZ2lSZXNvbHZlTW9k
+          ZSAwCnNldGEgcl9zc2dpRW50aXR5R3VhcmRNb2RlIDIKc2V0YSByX3NzZ2lFbnRpdHlNYXNrTW9k
+          ZSAwCg==
+          V17_PROFILE_B64
+          base64 -d v17-profile.b64 > "$STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+          [[ "$(sha256sum "$STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg" | awk '{print $1}')" = "$V17_PROFILE_SHA256" ]]
+
+          cat > v17-readme.b64 <<'V17_README_B64'
+          RGFya1dvbGYvaW9SVENXIFJlbmQyIOKAlCBQcmUtUHJvZHVjdGlvbiBGSU5BTCB2MS43Cj09PT09
+          PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0KCtCh0KLQkNCi0KPQ
+          oQotLS0tLS0KR0kt0Y3RgtCw0L8g0LfQsNC60YDRi9GCLiDQrdGC0L7RgiBjaGVja3BvaW50INGE
+          0LjQutGB0LjRgNGD0LXRgiDQv9C+0YHQu9C10LTQvdGO0Y4g0L/QvtC00YLQstC10YDQttC00ZHQ
+          vdC90YPRjiBwcm9kdWN0aW9uLdC70LjQvdC40Y46CiAgU1VOLTVDICsgTUFULTAgdjIuNCArIE1B
+          VC0xIHYyICsgUkVGLTEgdjEuMSArIEdJLTIgdjEuNy4KCkdJLTIgdjEuNyDigJQg0YTQuNC90LDQ
+          u9GM0L3Ri9C1INC/0YDQuNC90Y/RgtGL0LUg0L/QsNGA0LDQvNC10YLRgNGLOgogIHJfc3NnaSAx
+          CiAgcl9zc2dpU3RyZW5ndGggMC43NQogIHJfc3NnaVJhZGl1cyAzMi4wCiAgcl9zc2dpU2F0dXJh
+          dGlvbiAwLjg1CiAgcl9zc2dpTWF4IDAuMzAKICByX3NzZ2lSZXNvbHZlTW9kZSAwCiAgcl9zc2dp
+          RW50aXR5R3VhcmRNb2RlIDIKICByX3NzZ2lFbnRpdHlNYXNrTW9kZSAwCiAgcl9zc2dpRGVidWcg
+          MAogIHJfc3NnaVRyYWNlIDAKCtCn0KLQniDQn9Ce0JTQotCS0JXQoNCW0JTQldCd0J4g0JIgUlVO
+          VElNRQotLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQotIGNvcnBzZS9OUEMg0LjRgdC60LvRjtGH
+          0LDRjtGC0YHRjyDQuNC3IFNTR0kg0LrQsNC6IG5vbi13b3JsZCByZW5kZXJlciBlbnRpdGllczsK
+          LSBmaXJzdC1wZXJzb24gd2VhcG9uINC40YHQutC70Y7Rh9GR0L07Ci0gc3ltbWV0cmljIHJlY2Vp
+          dmVyK2Rvbm9yIGVudGl0eSBndWFyZCBtb2RlIDIg0YPRgdGC0YDQsNC90Y/QtdGCINC+0YHRgtCw
+          0YLQvtGH0L3Ri9C5IGNvcnBzZSBmcmluZ2U7Ci0g0L/QvtC70LXQt9C90YvQuSDQu9C+0LrQsNC7
+          0YzQvdGL0LkgR0kg0LLQvtC30LvQtSDQv9C+0LvQsCwg0YHRgtC10L0g0Lgg0YPQs9C70L7QsiDR
+          gdC+0YXRgNCw0L3Rj9C10YLRgdGPOwotINC/0YDQtdC20L3QtdC1IGRpc3RhbmNlLWRlcGVuZGVu
+          dCB3aGl0ZW5pbmcg0YHRgtC10L3RiyDRg9GB0YLRgNCw0L3QtdC90L4g0L/RgNC10LTRi9C00YPR
+          idC10Lkg0L/RgNC40L3Rj9GC0L7QuSBHSS0yINCy0LXRgtC60L7QuTsKLSBSZXNvbHZlTW9kZSAx
+          LzIg0L3QtSDQtNCw0LvQuCDQv9C+0LvQtdC30L3QvtCz0L4g0LLQuNC30YPQsNC70YzQvdC+0LPQ
+          viDQv9GA0LXQuNC80YPRidC10YHRgtCy0LA7Ci0gRW50aXR5TWFza01vZGUgMSDQvdC1INC00LDQ
+          uyDQv9C+0LvQtdC30L3QvtCz0L4g0LLQuNC30YPQsNC70YzQvdC+0LPQviDQv9GA0LXQuNC80YPR
+          idC10YHRgtCy0LA7Ci0gRElBRy0yIFdvcmxkRWRnZU1vZGUgMS8yLzMg0L3QtSDQuNGB0L/RgNCw
+          0LLQuNC7INC90LDQsdC70Y7QtNCw0LXQvNGD0Y4g0LbRkdGB0YLQutGD0Y4g0LvQuNC90LjRjiDR
+          gdGC0LXQvdGLOwotINGA0LXRiNCw0Y7RidC40LkgQS9CIHJfc3NnaSAwINC/0YDQvtGC0LjQsiBy
+          X3NzZ2kgMSDQv9C+0LrQsNC30LDQuywg0YfRgtC+INGN0YLQsCDQu9C40L3QuNGPINGB0L7RhdGA
+          0LDQvdGP0LXRgtGB0Y8g0LHQtdC3IFNTR0kuCgrQodC70LXQtNC+0LLQsNGC0LXQu9GM0L3Qviwg
+          0LbRkdGB0YLQutCw0Y8g0LvQuNC90LjRjyDQvdCwINCz0LXQvtC80LXRgtGA0LjRh9C10YHQutC+
+          0Lkg0LPRgNCw0L3QuCDQndCVINC+0YLQvdC+0YHQuNGC0YHRjyDQuiBHSS0yLiDQntC90LAg0L/Q
+          tdGA0LXQvdC+0YHQuNGC0YHRjyDQsiDQvtGC0LTQtdC70YzQvdGL0Lkg0LHRg9C00YPRidC40Lkg
+          0LHQu9C+0LogQUEvZGVwdGgvcmFzdGVyL3NoYWRvdy1lZGdlIHF1YWxpdHkuIEdJLdC60L7QtCDR
+          gNCw0LTQuCDQvdC10ZEg0LHQvtC70YzRiNC1INC90LUg0LjQt9C80LXQvdGP0LXQvC4KCkdJLTEK
+          LS0tLQpHSS0xIEN1YmVtYXAgRGlmZnVzZSBJbmRpcmVjdCDRgtC10YXQvdC40YfQtdGB0LrQuCDQ
+          vtGB0YLQsNGR0YLRgdGPINC00L7RgdGC0YPQv9C10L0sINC90L4g0LLQuNC30YPQsNC70YzQvdC+
+          INCx0YvQuyDRgdC70LjRiNC60L7QvCDRgdC70LDQsSDQutCw0Log0L7RgdC90L7QstC90L7QuSBH
+          SS4g0JIg0Y3RgtC+0LwgcHJvZHVjdGlvbi3Qv9GA0L7RhNC40LvQtSDQvtC9INCy0YvQutC70Y7R
+          h9C10L06IHJfaW5kaXJlY3RMaWdodGluZyAwLgoK0JTQmNCQ0JPQndCe0KHQotCY0KfQldCh0JrQ
+          mNCVINCS0JXQotCa0JgKLS0tLS0tLS0tLS0tLS0tLS0tLS0tCkZpbmFsIHNvdXJjZSDRj9Cy0LvR
+          j9C10YLRgdGPINGC0L7Rh9C90L7QuSDQv9GA0LjQvdGP0YLQvtC5IHYxLjcgcHJvZHVjdGlvbiBw
+          cm9tb3Rpb24g0L/QvtCy0LXRgNGFINGD0YHQv9C10YjQvdC+0LkgRElBRy0xINCx0LDQt9GLLiDQ
+          o9C90LDRgdC70LXQtNC+0LLQsNC90L3Ri9C1IERJQUctMSBkZWJ1ZyBjdmFycyDQvNC+0LPRg9GC
+          INC+0YHRgtCw0LLQsNGC0YzRgdGPINCyIHJlbmRlcmVyINC60LDQuiDQvdC10LDQutGC0LjQstC9
+          0LDRjyDQtNC40LDQs9C90L7RgdGC0LjQutCwLCDQvdC+IHByb2R1Y3Rpb24t0L/RgNC+0YTQuNC7
+          0Ywg0LjRhSDQvdC1INCy0LrQu9GO0YfQsNC10YIuIERJQUctMiB3YWxsLWVkZ2Ug0LrQvtC0LCBy
+          X3NzZ2lXb3JsZEVkZ2VNb2RlINC4INC10LPQviDRjdC60YHQv9C10YDQuNC80LXQvdGC0LDQu9GM
+          0L3Ri9C1INGA0LXQttC40LzRiyDQsiDRjdGC0L7RgiBjaGVja3BvaW50INCd0JUg0LLRhdC+0LTR
+          j9GCLgoK0J/QkNCa0JXQogotLS0tLQpXb3JrZmxvdyDRgdC+0LHQuNGA0LDQtdGCINC/0L7Qu9C9
+          0YvQuSBTaW5nbGUgUGxheWVyIFdpbmRvd3MgeDY0IHJ1bnRpbWU6Ci0g0LrQvtGA0L3QtdCy0YvQ
+          tSBjbGllbnQgRVhFOwotINCy0YHQtSDQutC+0YDQvdC10LLRi9C1IHJ1bnRpbWUgRExMOwotINC+
+          0LHQsCBTUCByZW5kZXJlciBETEw7Ci0gTWFpbi9jZ2FtZSouZGxsOwotIE1haW4vcWFnYW1lKi5k
+          bGw7Ci0gTWFpbi91aSouZGxsOwotIE1haW4vREFSS1dPTEZfUFJFUFJPRFVDVElPTl9GSU5BTF9W
+          MV83LmNmZzsKLSByZXByb2R1Y2liaWxpdHkgZG9jcywgaW5jcmVtZW50YWwvY3VtdWxhdGl2ZSBw
+          YXRjaCDQuCBTSEEtMjU2IG1hbmlmZXN0LgoK0JrQvtC80LzQtdGA0YfQtdGB0LrQuNC1IHBhayou
+          cGszINC90LUg0LLQutC70Y7Rh9Cw0Y7RgtGB0Y8uINCQ0YDRhdC40LIg0L3QsNC60LvQsNC00YvQ
+          stCw0LXRgtGB0Y8g0L3QsCDRgdGD0YnQtdGB0YLQstGD0Y7RidGD0Y4g0LvQtdCz0LDQu9GM0L3R
+          g9GOIFJUQ1cvaW9SVENXINGD0YHRgtCw0L3QvtCy0LrRgyDRgSBnYW1lIGRhdGEuCgrQodCb0JXQ
+          lNCj0K7QqdCY0Jkg0K3QotCQ0J8KLS0tLS0tLS0tLS0tLS0tClRvbmUgTWFwcGluZyAvIEV4cG9z
+          dXJlIC8gQmxvb20uCtCf0L7RgdC70LUg0L3QtdCz0L4g0L7RgtC00LXQu9GM0L3QviDQvNC+0LbQ
+          vdC+INCy0LXRgNC90YPRgtGM0YHRjyDQuiBBQS9kZXB0aC9yYXN0ZXIvc2hhZG93LWVkZ2UgcXVh
+          bGl0eSwg0LLQutC70Y7Rh9Cw0Y8g0LbRkdGB0YLQutGD0Y4g0LPRgNCw0L3RjCDRgdGC0LXQvdGL
+          LCDRg9C20LUg0L3QtSDQt9Cw0YLRgNCw0LPQuNCy0LDRjyDQt9Cw0LzQvtGA0L7QttC10L3QvdGL
+          0LkgR0ktMiB2MS43Lgo=
+          V17_README_B64
+          base64 -d v17-readme.b64 > "$STAGE/README_PREPRODUCTION_FINAL_V1_7_RU.txt"
+          [[ "$(sha256sum "$STAGE/README_PREPRODUCTION_FINAL_V1_7_RU.txt" | awk '{print $1}')" = "$V17_README_SHA256" ]]
+
+          cat > v17-test-plan.b64 <<'V17_TEST_PLAN_B64'
+          RGFya1dvbGYgUHJlLVByb2R1Y3Rpb24gRklOQUwgdjEuNyDigJQg0LrQvtGA0L7RgtC60LjQuSBz
+          bW9rZSB0ZXN0Cj09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09
+          PT09PT09PT0KCjEuINCd0LDQu9C+0LbQuNGC0Ywg0YHQvtC00LXRgNC20LjQvNC+0LUgcmVsZWFz
+          ZSBaSVAg0L3QsCDRgtC10YHRgtC+0LLRg9GOIFJUQ1cvaW9SVENXIFNQINGD0YHRgtCw0L3QvtCy
+          0LrRgy4KMi4g0JIg0LrQvtC90YHQvtC70Lg6CiAgICAgZXhlYyBEQVJLV09MRl9QUkVQUk9EVUNU
+          SU9OX0ZJTkFMX1YxXzcuY2ZnCiAgICAgdmlkX3Jlc3RhcnQKMy4g0J/RgNC+0LLQtdGA0LjRgtGM
+          INC+0LHRi9GH0L3Rg9GOINGB0YbQtdC90YM6IHJlbmRlcmVyINGB0YLQsNGA0YLRg9C10YIg0LHQ
+          tdC3INC+0YjQuNCx0L7Quiwg0LzQsNGC0LXRgNC40LDQu9GLL1NVTi9yZWZsZWN0aW9ucyDRgdC+
+          0YXRgNCw0L3QtdC90YsuCjQuINCf0YDQvtCy0LXRgNC40YLRjCBjb3Jwc2UvTlBDOiDQv9GA0LXQ
+          ttC90LXQs9C+IFNTR0kgaGFsby9mcmluZ2Ug0LLQvtC60YDRg9CzINC80L7QtNC10LvQuCDQvdC1
+          0YIuCjUuINCf0YDQvtCy0LXRgNC40YLRjCBmaXJzdC1wZXJzb24gd2VhcG9uOiBTU0dJIGZyaW5n
+          ZSDQvtGC0YHRg9GC0YHRgtCy0YPQtdGCLgo2LiDQn9GA0L7QstC10YDQuNGC0YwgZmxvb3Ivd2Fs
+          bC9jb3JuZXI6INC70L7QutCw0LvRjNC90YvQuSBHSSDQvtGB0YLQsNGR0YLRgdGPINCy0LjQtNC4
+          0LzRi9C8Lgo3LiDQltGR0YHRgtC60YPRjiDQu9C40L3QuNGOINGB0YLQtdC90Ysg0J3QlSDRgdGH
+          0LjRgtCw0YLRjCBHSSByZWdyZXNzaW9uOiDQutC+0L3RgtGA0L7Qu9GMIHJfc3NnaSAwLzEg0YPQ
+          ttC1INC/0L7QtNGC0LLQtdGA0LTQuNC7LCDRh9GC0L4g0L7QvdCwINGB0YPRidC10YHRgtCy0YPQ
+          tdGCINCx0LXQtyBTU0dJLgo4LiDQldGB0LvQuCDQv9GD0L3QutGC0YsgM+KAkzYgUEFTUywg0YHR
+          h9C40YLQsNGC0Ywg0Y3RgtC+0YIg0LDRgNGF0LjQsiDRhNC40L3QsNC70YzQvdGL0LwgR0kvcHJl
+          LXByb2R1Y3Rpb24gY2hlY2twb2ludCDQuCDQv9C10YDQtdGF0L7QtNC40YLRjCDQuiBUb25lIE1h
+          cHBpbmcgLyBFeHBvc3VyZSAvIEJsb29tLgo=
+          V17_TEST_PLAN_B64
+          base64 -d v17-test-plan.b64 > "$STAGE/docs/PREPRODUCTION_FINAL_V1_7_SMOKE_TEST_RU.txt"
+          [[ "$(sha256sum "$STAGE/docs/PREPRODUCTION_FINAL_V1_7_SMOKE_TEST_RU.txt" | awk '{print $1}')" = "$V17_TEST_PLAN_SHA256" ]]
+
+          renderer_sha="$(sha256sum "$STAGE/renderer_sp_rend2_x64.dll" | awk '{print $1}')"
+          delta_sha="$(sha256sum "$STAGE/docs/$V17_DELTA_NAME" | awk '{print $1}')"
+          cumulative_sha="$(sha256sum "$STAGE/docs/$V17_CUMULATIVE_NAME" | awk '{print $1}')"
+          {
+            echo "release=DarkWolf ioRTCW Rend2 Full Pre-Production FINAL v1.7"
+            echo "upstream_sha=$UPSTREAM_SHA"
+            echo "source_base=exact successful runtime-tested GI-2 DIAG-1 artifact"
+            echo "base_run_id=$BASE_RUN_ID"
+            echo "base_artifact_id=$BASE_ARTIFACT_ID"
+            echo "base_artifact_name=$BASE_ARTIFACT_NAME"
+            echo "base_artifact_digest=$EXPECTED_BASE_ARTIFACT_DIGEST"
+            echo "base_zip_sha256=$BASE_ZIP_SHA256"
+            echo "base_cumulative_sha256=$BASE_CUMULATIVE_SHA256"
+            echo "base_renderer_sha256=$EXPECTED_BASE_RENDERER_SHA256"
+            echo "v17_patcher_sha256=$V17_PATCHER_SHA256"
+            echo "v17_delta_sha256=$delta_sha"
+            echo "v17_cumulative_sha256=$cumulative_sha"
+            echo "v17_renderer_sha256=$renderer_sha"
+            echo "source_delta_files=1"
+            echo "source_delta=SP/code/rend2/tr_init.c"
+            echo "ssgi_resolve_default=0"
+            echo "ssgi_entity_guard_default=2"
+            echo "ssgi_entity_mask_default=0"
+            echo "ssgi_master_engine_default=0"
+            echo "preproduction_profile_enables_ssgi=YES"
+            echo "preproduction_profile_ssgi_strength=0.75"
+            echo "preproduction_profile_ssgi_radius=32.0"
+            echo "preproduction_profile_ssgi_saturation=0.85"
+            echo "preproduction_profile_ssgi_max=0.30"
+            echo "diag1_result=SYMMETRIC_RECEIVER_DONOR_GUARD_MODE_2_CONFIRMED"
+            echo "corpse_entity_exclusion=YES_NONWORLD_RENDER_ENTITY"
+            echo "viewmodel_entity_exclusion=YES"
+            echo "entity_mask_mode_1_promoted=NO"
+            echo "bilateral_resolve_promoted=NO"
+            echo "gi_stage_status=FINAL_CLOSED"
+            echo "hard_world_edge_is_gi=NO_CONFIRMED_BY_SSGI_OFF_ON_AB"
+            echo "hard_world_edge_followup=AA_DEPTH_RASTER_SHADOW_EDGE"
+            echo "next_graphics_stage=TONE_MAPPING_EXPOSURE_BLOOM"
+            echo "gi1_changed=NO"
+            echo "mat0_mat1_ref1_sun5c_changed=NO"
+            echo "dlights_shadows_changed=NO"
+            echo "package_type=FULL_SP_RUNTIME_EXE_ALL_ROOT_DLL_MAIN_RUNTIME_PLUS_REPRODUCIBILITY_DOCS"
+            echo "root_exe_count=${#ROOT_EXES[@]}"
+            echo "root_dll_count=${#ROOT_DLLS[@]}"
+            echo "root_renderer_dll_count=${#ROOT_RENDERERS[@]}"
+            echo "main_runtime_file_count=${#MAIN_FILES[@]}"
+          } > "$STAGE/docs/PREPRODUCTION_FINAL_V1_7_BUILD_INFO.txt"
+
+          {
+            echo "ROOT EXE"
+            printf '%s\n' "${ROOT_EXES[@]}" | sed "s#^$SP_OUT/##"
+            echo
+            echo "ROOT DLL"
+            printf '%s\n' "${ROOT_DLLS[@]}" | sed "s#^$SP_OUT/##"
+            echo
+            echo "MAIN RUNTIME"
+            printf '%s\n' "${MAIN_FILES[@]}" | sed "s#^$MAIN_OUT/#Main/#"
+            echo "Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+          } > "$STAGE/docs/RUNTIME_FILE_MANIFEST.txt"
+
+          find "$STAGE" -maxdepth 1 -type f -iname '*.exe' -print -quit | grep -q .
+          test -s "$STAGE/renderer_sp_rend2_x64.dll"
+          renderer_pkg_count="$(find "$STAGE" -maxdepth 1 -type f -iname 'renderer_sp_*.dll' | wc -l)"
+          (( renderer_pkg_count >= 2 )) || { echo "::error::Packaged v1.7 is missing one of the renderer DLLs" >&2; exit 1; }
+          find "$STAGE/Main" -maxdepth 1 -type f -iname '*cgame*.dll' -print -quit | grep -q .
+          find "$STAGE/Main" -maxdepth 1 -type f -iname '*qagame*.dll' -print -quit | grep -q .
+          find "$STAGE/Main" -maxdepth 1 -type f -iname '*ui*.dll' -print -quit | grep -q .
+          test -s "$STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+          ! find "$STAGE" -type f -iname 'pak*.pk3' -print -quit | grep -q .
+          grep -Fq 'seta r_ssgiEntityGuardMode 2' "$STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+          grep -Fq 'seta r_ssgiResolveMode 0' "$STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+          grep -Fq 'seta r_ssgiEntityMaskMode 0' "$STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+          grep -Fq 'seta r_ssgi 1' "$STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+          grep -Fq 'seta r_indirectLighting 0' "$STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+          ! grep -Fq 'r_ssgiWorldEdgeMode' "$STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+          ! grep -R -Fq 'REND2_GI_2_DIAG_2' "$STAGE/docs"
+          grep -Fq 'REND2_GI_2_V1_7_SYMMETRIC_ENTITY_DONOR_REJECTION_PRODUCTION_FRINGE_FIX' "$STAGE/docs/$V17_DELTA_NAME"
+          grep -Fq 'REND2_GI_2_DIAG_1_FRINGE_ROOT_CAUSE_MATRIX' "$STAGE/docs/$V17_CUMULATIVE_NAME"
+          grep -Fq 'REND2_GI_2_V1_7_SYMMETRIC_ENTITY_DONOR_REJECTION_PRODUCTION_FRINGE_FIX' "$STAGE/docs/$V17_CUMULATIVE_NAME"
+          grep -Fq 'package_type=FULL_SP_RUNTIME_EXE_ALL_ROOT_DLL_MAIN_RUNTIME_PLUS_REPRODUCIBILITY_DOCS' "$STAGE/docs/PREPRODUCTION_FINAL_V1_7_BUILD_INFO.txt"
+          grep -Fq 'gi_stage_status=FINAL_CLOSED' "$STAGE/docs/PREPRODUCTION_FINAL_V1_7_BUILD_INFO.txt"
+          grep -Fq 'hard_world_edge_is_gi=NO_CONFIRMED_BY_SSGI_OFF_ON_AB' "$STAGE/docs/PREPRODUCTION_FINAL_V1_7_BUILD_INFO.txt"
+
+          ( cd "$STAGE"; find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+          find "$STAGE" -exec touch -h -t 200001010000 {} +
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+          echo "Packaged FINAL full SP v1.7 runtime: EXE=${#ROOT_EXES[@]} rootDLL=${#ROOT_DLLS[@]} rendererDLL=${#ROOT_RENDERERS[@]} MainFiles=${#MAIN_FILES[@]}"
+
+      - name: Upload FINAL pre-production v1.7 artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
