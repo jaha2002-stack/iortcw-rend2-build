@@ -1,0 +1,923 @@
+name: Build DarkWolf Rend2 FST-1 v1.2 Fire Smoke Range Tuning over CI FST-1 v1.1 Full SP
+
+"on":
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: "darkwolf-fst-1-v1-2-${{ github.ref }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-windows-x64:
+    name: FST-1 v1.2 Fire Smoke Range Tuning Full SP
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+
+      BASE_RUN_ID: "31934508235"
+      BASE_ARTIFACT_ID: "9260266509"
+      BASE_ARTIFACT_NAME: "iortcw-rend2-fst-1-v1-1-semantic-fire-smoke-autotest-over-final-v1-7-sp-windows-x64-1"
+      EXPECTED_BASE_RUN_HEAD_SHA: "9199f9c1d4f4174772ce0ad8eec75419127aadd8"
+      EXPECTED_BASE_ARTIFACT_DIGEST: "sha256:b38b2141be795a0ebb2e5d50c4b2db383daf2795d44e5aeec8aa8af24e0f9c06"
+      BASE_RELEASE_BASENAME: "iortcw-rend2-fst-1-v1-1-semantic-fire-smoke-autotest-over-final-v1-7-sp-windows-x64-1"
+      BASE_CUMULATIVE_NAME: "rend2-cumulative-final-v1-7-plus-fst-1-v1-1-semantic-fire-smoke-autotest-sp.patch"
+      BASE_BUILD_INFO_NAME: "FST_1_V1_1_BUILD_INFO.txt"
+      EXPECTED_BASE_ZIP_SHA256: "91e0235c37ed0be2ad231c2ac7a5a514deb3e6b67f698409ea505e30b56b8ff1"
+      EXPECTED_BASE_CUMULATIVE_SHA256: "976c1ed8ed2f0562c280d225a3873dc6bd52a5511dba24b6a5b27f6a378e7c5a"
+      EXPECTED_BASE_RENDERER_SHA256: "ad86116344983d7699f2aef341af2d28c8dd39d0535ae186dd9ce2a50b2e445e"
+      EXPECTED_BASE_PROFILE_SHA256: "d681bd811f64b6e575a70731280c81ad2fc4cf7f17eb535b002d971aee700533"
+      EXPECTED_BASE_GENERIC_FP_SHA256: "4c5b6130ccef690c66b1d5d414c85e45f7334c69d8889c83b4af8bcb7fc99c4b"
+      EXPECTED_BASE_SSGI_FP_SHA256: "a7466db1cc81b6fdf64b20acad046bb340e5d97ba0c9c0f9560c248312f9bc37"
+      EXPECTED_BASE_SSGI_VP_SHA256: "d8c315e04cff47410058f014a8daaddd0ae51c3e85de5ada688c7c0c3c381181"
+      EXPECTED_BASE_PATCHER_SHA256: "68404cbf07a3685a31935699b1443a7db14069635fb2f7b4a470480c7311ccf7"
+
+      FST_PATCHER_SHA256: "4c49d96f384e82ef922319e0d01528e7b2437ca1a0c1fb7c219ed207d4d5b9e7"
+      FST_SETUP_SHA256: "809eb28b19e3cce1f263c993070fe7d4508213d22d026675df5f22156b4b8689"
+      FST_LAUNCHER_SHA256: "5adfc82890fba7d9ac6fae60b29624f228a3e0895486d0ad0e46a3682455e403"
+      FST_README_SHA256: "233b28a63cec45bf71c96f1e27a34dfbc8643f18e1af37c02c9fc4aaab2723fe"
+      FST_MATRIX_SHA256: "9da18eef7e7909e8711c2b3e4211e54c945505f10d75c5322c38929af0047101"
+      FST_ANALYZER_SHA256: "f325c43e7b0f120b35723d5cbe0822294db5f131ea89c1d5ae0580567db692e8"
+      FST_DELTA_NAME: "rend2-fst-1-v1-2-fire-smoke-range-tuning-over-v1-1-sp.patch"
+      FST_CUMULATIVE_NAME: "rend2-cumulative-final-v1-7-plus-fst-1-v1-1-plus-v1-2-range-tuning-sp.patch"
+      RELEASE_BASENAME: "iortcw-rend2-fst-1-v1-2-fire-smoke-range-tuning-over-v1-1-sp-windows-x64-1"
+
+    steps:
+      - name: Install exact full-SP cross-build and validation prerequisites
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Prerequisite step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git glslang-tools \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 python3-yaml unzip zip
+          x86_64-w64-mingw32-gcc --version
+          git --version
+          gh --version
+          python3 --version
+          glslangValidator --version
+
+      - name: Recover exact CI-confirmed FST-1 v1.1 checkpoint
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          GH_REPO: "${{ github.repository }}"
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::FST-1 v1.1 artifact recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+
+          run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$BASE_RUN_ID" --jq '.conclusion')"
+          run_head_sha="$(gh api "repos/$GH_REPO/actions/runs/$BASE_RUN_ID" --jq '.head_sha')"
+          [[ "$run_conclusion" = "success" ]] || { echo "::error::Frozen FST-1 v1.1 run is not successful: $run_conclusion" >&2; exit 1; }
+          [[ "$run_head_sha" = "$EXPECTED_BASE_RUN_HEAD_SHA" ]] || { echo "::error::FST-1 v1.1 run head SHA mismatch: $run_head_sha" >&2; exit 1; }
+
+          artifact_name="$(gh api "repos/$GH_REPO/actions/artifacts/$BASE_ARTIFACT_ID" --jq '.name')"
+          artifact_run_id="$(gh api "repos/$GH_REPO/actions/artifacts/$BASE_ARTIFACT_ID" --jq '.workflow_run.id')"
+          artifact_expired="$(gh api "repos/$GH_REPO/actions/artifacts/$BASE_ARTIFACT_ID" --jq '.expired')"
+          artifact_digest="$(gh api "repos/$GH_REPO/actions/artifacts/$BASE_ARTIFACT_ID" --jq '.digest // ""')"
+          [[ "$artifact_name" = "$BASE_ARTIFACT_NAME" ]] || { echo "::error::FST-1 v1.1 artifact name mismatch: $artifact_name" >&2; exit 1; }
+          [[ "$artifact_run_id" = "$BASE_RUN_ID" ]] || { echo "::error::FST-1 v1.1 artifact run mismatch: $artifact_run_id" >&2; exit 1; }
+          [[ "$artifact_expired" = "false" ]] || { echo "::error::FST-1 v1.1 artifact expired" >&2; exit 1; }
+          [[ "$artifact_digest" = "$EXPECTED_BASE_ARTIFACT_DIGEST" ]] || { echo "::error::FST-1 v1.1 artifact digest mismatch: $artifact_digest" >&2; exit 1; }
+
+          gh run download "$BASE_RUN_ID" --repo "$GH_REPO" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          base_zip="$(find base-artifact -maxdepth 2 -type f -name "$BASE_RELEASE_BASENAME.zip" -print -quit)"
+          base_zip_sha="$(find base-artifact -maxdepth 2 -type f -name "$BASE_RELEASE_BASENAME.zip.sha256" -print -quit)"
+          [[ -n "$base_zip" && -s "$base_zip" && -n "$base_zip_sha" && -s "$base_zip_sha" ]] || { echo "::error::FST-1 v1.1 base ZIP/SHA missing" >&2; find base-artifact -type f -print >&2; exit 1; }
+          expected_zip_sha="$(awk 'NF {print $1; exit}' "$base_zip_sha")"
+          actual_zip_sha="$(sha256sum "$base_zip" | awk '{print $1}')"
+          [[ "$expected_zip_sha" =~ ^[0-9a-fA-F]{64}$ && "$actual_zip_sha" = "$expected_zip_sha" ]] || { echo "::error::FST-1 v1.1 ZIP SHA sidecar mismatch" >&2; exit 1; }
+          [[ "$actual_zip_sha" = "$EXPECTED_BASE_ZIP_SHA256" ]] || { echo "::error::FST-1 v1.1 ZIP is not frozen base: $actual_zip_sha" >&2; exit 1; }
+
+          unzip -q "$base_zip" -d base-release
+          BASE_STAGE="$GITHUB_WORKSPACE/base-release/$BASE_RELEASE_BASENAME"
+          BASE_CUMULATIVE="$BASE_STAGE/docs/$BASE_CUMULATIVE_NAME"
+          BASE_BUILD_INFO="$BASE_STAGE/docs/$BASE_BUILD_INFO_NAME"
+          BASE_PROFILE="$BASE_STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+          [[ -d "$BASE_STAGE" && -s "$BASE_STAGE/renderer_sp_rend2_x64.dll" && -s "$BASE_CUMULATIVE" && -s "$BASE_BUILD_INFO" && -s "$BASE_PROFILE" ]] || { echo "::error::FST-1 v1.1 reproducibility payload missing" >&2; exit 1; }
+          [[ "$(sha256sum "$BASE_CUMULATIVE" | awk '{print $1}')" = "$EXPECTED_BASE_CUMULATIVE_SHA256" ]]
+          [[ "$(sha256sum "$BASE_STAGE/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$EXPECTED_BASE_RENDERER_SHA256" ]]
+          [[ "$(sha256sum "$BASE_PROFILE" | awk '{print $1}')" = "$EXPECTED_BASE_PROFILE_SHA256" ]]
+          [[ "$(sha256sum "$BASE_STAGE/docs/generic_fp_fst1_v1_1.glsl" | awk '{print $1}')" = "$EXPECTED_BASE_GENERIC_FP_SHA256" ]]
+          [[ "$(sha256sum "$BASE_STAGE/docs/ssgi_fp_frozen.glsl" | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_FP_SHA256" ]]
+          [[ "$(sha256sum "$BASE_STAGE/docs/ssgi_vp_frozen.glsl" | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_VP_SHA256" ]]
+          [[ "$(sha256sum "$BASE_STAGE/docs/apply_rend2_fst_1_v1_1_semantic_fire_smoke_autotest_sp.py" | awk '{print $1}')" = "$EXPECTED_BASE_PATCHER_SHA256" ]]
+          grep -Fq 'release=DarkWolf ioRTCW Rend2 FST-1 v1.1 Semantic Fire Smoke AutoTest' "$BASE_BUILD_INFO"
+          grep -Fq 'experiment_status=TEST_ONLY_NOT_PRODUCTION_PROMOTED' "$BASE_BUILD_INFO"
+          grep -Fq 'classifier=SEMANTIC_SHADER_WHITELIST' "$BASE_BUILD_INFO"
+          grep -Fq 'fst_cumulative_sha256=976c1ed8ed2f0562c280d225a3873dc6bd52a5511dba24b6a5b27f6a378e7c5a' "$BASE_BUILD_INFO"
+
+          echo "BASE_STAGE=$BASE_STAGE" >> "$GITHUB_ENV"
+          echo "BASE_CUMULATIVE=$BASE_CUMULATIVE" >> "$GITHUB_ENV"
+          echo "BASE_BUILD_INFO=$BASE_BUILD_INFO" >> "$GITHUB_ENV"
+          echo "BASE_PROFILE=$BASE_PROFILE" >> "$GITHUB_ENV"
+          echo "BASE_ZIP_SHA256=$actual_zip_sha" >> "$GITHUB_ENV"
+          echo "Recovered exact CI-confirmed FST-1 v1.1: run=$BASE_RUN_ID artifact=$BASE_ARTIFACT_ID zip_sha=$actual_zip_sha"
+
+      - name: Reconstruct and freeze exact FST-1 v1.1 source
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::FST-1 v1.1 source reconstruction failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          rm -rf source
+          git clone --no-checkout --filter=blob:none "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source config user.email "darkwolf-fst12@local.invalid"
+          git -C source config user.name "DarkWolf FST-1.2 Builder"
+          [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]]
+
+          git -C source apply --check --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source apply --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C source diff --check
+          git -C source apply --check --reverse --whitespace=nowarn "$BASE_CUMULATIVE"
+
+          grep -Fq 'REND2_FST_1_V1_1_SEMANTIC_FIRE_SMOKE_AUTOTEST' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'R_FST1ShaderClassByName' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'r_softParticleRange = ri.Cvar_Get( "r_softParticleRange", "24.0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          ! grep -R -Fq 'REND2_FST_1_V1_2_FIRE_SMOKE_RANGE_TUNING' source/SP/code/rend2
+          [[ "$(sha256sum source/SP/code/rend2/glsl/generic_fp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_GENERIC_FP_SHA256" ]]
+          [[ "$(sha256sum source/SP/code/rend2/glsl/ssgi_fp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_FP_SHA256" ]]
+          [[ "$(sha256sum source/SP/code/rend2/glsl/ssgi_vp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_VP_SHA256" ]]
+
+          git -C source add -A
+          git -C source commit -q -m "Freeze exact CI-confirmed FST-1 v1.1 source for v1.2 tuning"
+          FST12_BASE_COMMIT="$(git -C source rev-parse HEAD)"
+          echo "FST12_BASE_COMMIT=$FST12_BASE_COMMIT" >> "$GITHUB_ENV"
+          [[ -z "$(git -C source status --porcelain)" ]]
+          echo "Frozen FST-1 v1.1 base commit: $FST12_BASE_COMMIT"
+
+      - name: Materialize and verify embedded FST-1 v1.2 BuildKit
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::FST-1 v1.2 BuildKit materialization failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          cat > fst12-patcher.b64 <<'FST12_PATCHER_B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwppbXBvcnQgYXJncGFyc2UKaW1wb3J0IHBhdGhsaWIKaW1w
+          b3J0IHN5cwoKTUFSS0VSID0gIlJFTkQyX0ZTVF8xX1YxXzJfRklSRV9TTU9LRV9SQU5HRV9UVU5J
+          TkciCkJBU0VfTUFSS0VSID0gIlJFTkQyX0ZTVF8xX1YxXzFfU0VNQU5USUNfRklSRV9TTU9LRV9B
+          VVRPVEVTVCIKRklMRVMgPSB7CiAgICAiaW5pdCI6IHBhdGhsaWIuUGF0aCgiU1AvY29kZS9yZW5k
+          Mi90cl9pbml0LmMiKSwKICAgICJsb2NhbCI6IHBhdGhsaWIuUGF0aCgiU1AvY29kZS9yZW5kMi90
+          cl9sb2NhbC5oIiksCiAgICAic2hhZGUiOiBwYXRobGliLlBhdGgoIlNQL2NvZGUvcmVuZDIvdHJf
+          c2hhZGUuYyIpLAp9CgpjbGFzcyBQYXRjaEVycm9yKFJ1bnRpbWVFcnJvcik6CiAgICBwYXNzCgoK
+          ZGVmIHJlYWRfdGV4dChwYXRoKToKICAgIGlmIG5vdCBwYXRoLmlzX2ZpbGUoKToKICAgICAgICBy
+          YWlzZSBQYXRjaEVycm9yKGYibWlzc2luZyByZXF1aXJlZCBmaWxlOiB7cGF0aH0iKQogICAgZGF0
+          YSA9IHBhdGgucmVhZF9ieXRlcygpCiAgICBpZiBiIlxyXG4iIGluIGRhdGE6CiAgICAgICAgcmFp
+          c2UgUGF0Y2hFcnJvcihmIkNSTEYgc291cmNlIGlzIG5vdCBhY2NlcHRlZCBmb3IgZGV0ZXJtaW5p
+          c3RpYyBwYXRjaGluZzoge3BhdGh9IikKICAgIHJldHVybiBkYXRhLmRlY29kZSgidXRmLTgiKQoK
+          CmRlZiB3cml0ZV90ZXh0KHBhdGgsIHRleHQpOgogICAgcGF0aC53cml0ZV9ieXRlcyh0ZXh0LmVu
+          Y29kZSgidXRmLTgiKSkKCgpkZWYgbXVzdF9jb250YWluKHRleHQsIG5lZWRsZSwgbGFiZWwpOgog
+          ICAgaWYgbmVlZGxlIG5vdCBpbiB0ZXh0OgogICAgICAgIHJhaXNlIFBhdGNoRXJyb3IoZiJtaXNz
+          aW5nIGFuY2hvci9jb250cmFjdCB7bGFiZWx9OiB7bmVlZGxlIXJ9IikKCgpkZWYgbXVzdF9ub3Rf
+          Y29udGFpbih0ZXh0LCBuZWVkbGUsIGxhYmVsKToKICAgIGlmIG5lZWRsZSBpbiB0ZXh0OgogICAg
+          ICAgIHJhaXNlIFBhdGNoRXJyb3IoZiJyZXBlYXQtYXBwbHkgZ3VhcmQgaGl0IHtsYWJlbH06IHtu
+          ZWVkbGUhcn0iKQoKCmRlZiByZXBsYWNlX29uY2UodGV4dCwgb2xkLCBuZXcsIGxhYmVsKToKICAg
+          IGNvdW50ID0gdGV4dC5jb3VudChvbGQpCiAgICBpZiBjb3VudCAhPSAxOgogICAgICAgIHJhaXNl
+          IFBhdGNoRXJyb3IoZiJ7bGFiZWx9OiBleHBlY3RlZCBleGFjdGx5IG9uZSBhbmNob3IsIGZvdW5k
+          IHtjb3VudH06IHtvbGQhcn0iKQogICAgcmV0dXJuIHRleHQucmVwbGFjZShvbGQsIG5ldywgMSkK
+          CgpkZWYgZnVuY3Rpb25fc2xpY2UodGV4dCwgc2lnbmF0dXJlLCBsYWJlbCk6CiAgICBwb3MgPSB0
+          ZXh0LmZpbmQoc2lnbmF0dXJlKQogICAgaWYgcG9zIDwgMDoKICAgICAgICByYWlzZSBQYXRjaEVy
+          cm9yKGYie2xhYmVsfTogZnVuY3Rpb24gc2lnbmF0dXJlIG5vdCBmb3VuZDoge3NpZ25hdHVyZSFy
+          fSIpCiAgICBpZiB0ZXh0LmZpbmQoc2lnbmF0dXJlLCBwb3MgKyAxKSA+PSAwOgogICAgICAgIHJh
+          aXNlIFBhdGNoRXJyb3IoZiJ7bGFiZWx9OiBmdW5jdGlvbiBzaWduYXR1cmUgaXMgbm90IHVuaXF1
+          ZToge3NpZ25hdHVyZSFyfSIpCiAgICBicmFjZSA9IHRleHQuZmluZCgieyIsIHBvcyArIGxlbihz
+          aWduYXR1cmUpKQogICAgaWYgYnJhY2UgPCAwOgogICAgICAgIHJhaXNlIFBhdGNoRXJyb3IoZiJ7
+          bGFiZWx9OiBmdW5jdGlvbiBvcGVuaW5nIGJyYWNlIG5vdCBmb3VuZCIpCiAgICBkZXB0aCA9IDAK
+          ICAgIGluX3N0ciA9IEZhbHNlCiAgICBpbl9jaHIgPSBGYWxzZQogICAgaW5fbGluZSA9IEZhbHNl
+          CiAgICBpbl9ibG9jayA9IEZhbHNlCiAgICBlc2MgPSBGYWxzZQogICAgaSA9IGJyYWNlCiAgICB3
+          aGlsZSBpIDwgbGVuKHRleHQpOgogICAgICAgIGMgPSB0ZXh0W2ldCiAgICAgICAgbiA9IHRleHRb
+          aSArIDFdIGlmIGkgKyAxIDwgbGVuKHRleHQpIGVsc2UgIiIKICAgICAgICBpZiBpbl9saW5lOgog
+          ICAgICAgICAgICBpZiBjID09ICJcbiI6CiAgICAgICAgICAgICAgICBpbl9saW5lID0gRmFsc2UK
+          ICAgICAgICAgICAgaSArPSAxCiAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgaWYgaW5fYmxv
+          Y2s6CiAgICAgICAgICAgIGlmIGMgPT0gIioiIGFuZCBuID09ICIvIjoKICAgICAgICAgICAgICAg
+          IGluX2Jsb2NrID0gRmFsc2UKICAgICAgICAgICAgICAgIGkgKz0gMgogICAgICAgICAgICBlbHNl
+          OgogICAgICAgICAgICAgICAgaSArPSAxCiAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgaWYg
+          aW5fc3RyOgogICAgICAgICAgICBpZiBlc2M6CiAgICAgICAgICAgICAgICBlc2MgPSBGYWxzZQog
+          ICAgICAgICAgICBlbGlmIGMgPT0gIlxcIjoKICAgICAgICAgICAgICAgIGVzYyA9IFRydWUKICAg
+          ICAgICAgICAgZWxpZiBjID09ICciJzoKICAgICAgICAgICAgICAgIGluX3N0ciA9IEZhbHNlCiAg
+          ICAgICAgICAgIGkgKz0gMQogICAgICAgICAgICBjb250aW51ZQogICAgICAgIGlmIGluX2NocjoK
+          ICAgICAgICAgICAgaWYgZXNjOgogICAgICAgICAgICAgICAgZXNjID0gRmFsc2UKICAgICAgICAg
+          ICAgZWxpZiBjID09ICJcXCI6CiAgICAgICAgICAgICAgICBlc2MgPSBUcnVlCiAgICAgICAgICAg
+          IGVsaWYgYyA9PSAiJyI6CiAgICAgICAgICAgICAgICBpbl9jaHIgPSBGYWxzZQogICAgICAgICAg
+          ICBpICs9IDEKICAgICAgICAgICAgY29udGludWUKICAgICAgICBpZiBjID09ICIvIiBhbmQgbiA9
+          PSAiLyI6CiAgICAgICAgICAgIGluX2xpbmUgPSBUcnVlCiAgICAgICAgICAgIGkgKz0gMgogICAg
+          ICAgICAgICBjb250aW51ZQogICAgICAgIGlmIGMgPT0gIi8iIGFuZCBuID09ICIqIjoKICAgICAg
+          ICAgICAgaW5fYmxvY2sgPSBUcnVlCiAgICAgICAgICAgIGkgKz0gMgogICAgICAgICAgICBjb250
+          aW51ZQogICAgICAgIGlmIGMgPT0gJyInOgogICAgICAgICAgICBpbl9zdHIgPSBUcnVlCiAgICAg
+          ICAgICAgIGkgKz0gMQogICAgICAgICAgICBjb250aW51ZQogICAgICAgIGlmIGMgPT0gIiciOgog
+          ICAgICAgICAgICBpbl9jaHIgPSBUcnVlCiAgICAgICAgICAgIGkgKz0gMQogICAgICAgICAgICBj
+          b250aW51ZQogICAgICAgIGlmIGMgPT0gInsiOgogICAgICAgICAgICBkZXB0aCArPSAxCiAgICAg
+          ICAgZWxpZiBjID09ICJ9IjoKICAgICAgICAgICAgZGVwdGggLT0gMQogICAgICAgICAgICBpZiBk
+          ZXB0aCA9PSAwOgogICAgICAgICAgICAgICAgcmV0dXJuIHBvcywgaSArIDEKICAgICAgICBpICs9
+          IDEKICAgIHJhaXNlIFBhdGNoRXJyb3IoZiJ7bGFiZWx9OiB1bnRlcm1pbmF0ZWQgZnVuY3Rpb24i
+          KQoKCmRlZiByZXBsYWNlX2Z1bmN0aW9uKHRleHQsIHNpZ25hdHVyZSwgcmVwbGFjZW1lbnQsIGxh
+          YmVsKToKICAgIHN0YXJ0LCBlbmQgPSBmdW5jdGlvbl9zbGljZSh0ZXh0LCBzaWduYXR1cmUsIGxh
+          YmVsKQogICAgcmV0dXJuIHRleHRbOnN0YXJ0XSArIHJlcGxhY2VtZW50ICsgdGV4dFtlbmQ6XQoK
+          CmRlZiB2YWxpZGF0ZV9iYXNlKHRleHRzKToKICAgIGZvciBrZXksIHRleHQgaW4gdGV4dHMuaXRl
+          bXMoKToKICAgICAgICBtdXN0X2NvbnRhaW4odGV4dCwgQkFTRV9NQVJLRVIsIGYie2tleX0gdjEu
+          MSBiYXNlIG1hcmtlciIpCiAgICAgICAgbXVzdF9ub3RfY29udGFpbih0ZXh0LCBNQVJLRVIsIGYi
+          e2tleX0gdjEuMiByZXBlYXQgZ3VhcmQiKQogICAgbXVzdF9jb250YWluKHRleHRzWyJpbml0Il0s
+          ICdjdmFyX3QgICpyX3NvZnRQYXJ0aWNsZVJhbmdlOycsICJ2MS4xIGxlZ2FjeSByYW5nZSBkZWNs
+          YXJhdGlvbiIpCiAgICBtdXN0X2NvbnRhaW4odGV4dHNbImluaXQiXSwgJ3Jfc29mdFBhcnRpY2xl
+          UmFuZ2UgPSByaS5DdmFyX0dldCggInJfc29mdFBhcnRpY2xlUmFuZ2UiLCAiMjQuMCIsIENWQVJf
+          QVJDSElWRSApOycsICJ2MS4xIGxlZ2FjeSByYW5nZSByZWdpc3RyYXRpb24iKQogICAgbXVzdF9j
+          b250YWluKHRleHRzWyJpbml0Il0sICdyaS5DbWRfQWRkQ29tbWFuZCggImZzdDFfdGVzdCIsIFJf
+          RlNUMVRlc3RfZiApOycsICJ2MS4xIHRlc3QgY29tbWFuZCIpCiAgICBtdXN0X2NvbnRhaW4odGV4
+          dHNbInNoYWRlIl0sICdzdGF0aWMgaW50IFJfRlNUMVNoYWRlckNsYXNzQnlOYW1lKGNvbnN0IGNo
+          YXIgKm5hbWUpJywgInNlbWFudGljIGNsYXNzaWZpZXIiKQogICAgbXVzdF9jb250YWluKHRleHRz
+          WyJzaGFkZSJdLCAnUl9GU1QxTmFtZVByZWZpeChuYW1lLCAidGV4dHVyZXMvc2Z4L3hmbGFtZTIi
+          KScsICJmaXJlIHNlbWFudGljIGFuY2hvciIpCiAgICBtdXN0X2NvbnRhaW4odGV4dHNbInNoYWRl
+          Il0sICdSX0ZTVDFOYW1lUHJlZml4KG5hbWUsICJzbW9rZVB1ZmZibGFjayIpJywgInNtb2tlIHNl
+          bWFudGljIGFuY2hvciIpCiAgICBtdXN0X2NvbnRhaW4odGV4dHNbInNoYWRlIl0sICdyYW5nZSA9
+          IHJfc29mdFBhcnRpY2xlUmFuZ2UgPyBDb21fQ2xhbXAoMS4wZiwgMTI4LjBmLCByX3NvZnRQYXJ0
+          aWNsZVJhbmdlLT52YWx1ZSkgOiAyNC4wZjsnLCAidjEuMSBzaGFyZWQgcmFuZ2UiKQoKCmRlZiBw
+          YXRjaF9pbml0KHRleHQpOgogICAgdGV4dCA9IHJlcGxhY2Vfb25jZSgKICAgICAgICB0ZXh0LAog
+          ICAgICAgICdjdmFyX3QgICpyX3NvZnRQYXJ0aWNsZVJhbmdlO1xuJywKICAgICAgICAnY3Zhcl90
+          ICAqcl9zb2Z0UGFydGljbGVSYW5nZTtcbicKICAgICAgICAnLy8gUkVORDJfRlNUXzFfVjFfMl9G
+          SVJFX1NNT0tFX1JBTkdFX1RVTklOR1xuJwogICAgICAgICdjdmFyX3QgICpyX3NvZnRQYXJ0aWNs
+          ZVNtb2tlUmFuZ2U7XG4nCiAgICAgICAgJ2N2YXJfdCAgKnJfc29mdFBhcnRpY2xlRmlyZVJhbmdl
+          O1xuJywKICAgICAgICAidHJfaW5pdCByYW5nZSBkZWNsYXJhdGlvbnMiLAogICAgKQogICAgdGV4
+          dCA9IHJlcGxhY2Vfb25jZSgKICAgICAgICB0ZXh0LAogICAgICAgICdcdHJfc29mdFBhcnRpY2xl
+          UmFuZ2UgPSByaS5DdmFyX0dldCggInJfc29mdFBhcnRpY2xlUmFuZ2UiLCAiMjQuMCIsIENWQVJf
+          QVJDSElWRSApO1xuJwogICAgICAgICdcdHJpLkN2YXJfQ2hlY2tSYW5nZSggcl9zb2Z0UGFydGlj
+          bGVSYW5nZSwgMS4wZiwgMTI4LjBmLCBxZmFsc2UgKTtcbicsCiAgICAgICAgJ1x0cl9zb2Z0UGFy
+          dGljbGVSYW5nZSA9IHJpLkN2YXJfR2V0KCAicl9zb2Z0UGFydGljbGVSYW5nZSIsICIyNC4wIiwg
+          Q1ZBUl9BUkNISVZFICk7XG4nCiAgICAgICAgJ1x0cmkuQ3Zhcl9DaGVja1JhbmdlKCByX3NvZnRQ
+          YXJ0aWNsZVJhbmdlLCAxLjBmLCAxMjguMGYsIHFmYWxzZSApO1xuJwogICAgICAgICdcdC8vIFJF
+          TkQyX0ZTVF8xX1YxXzJfRklSRV9TTU9LRV9SQU5HRV9UVU5JTkdcbicKICAgICAgICAnXHRyX3Nv
+          ZnRQYXJ0aWNsZVNtb2tlUmFuZ2UgPSByaS5DdmFyX0dldCggInJfc29mdFBhcnRpY2xlU21va2VS
+          YW5nZSIsICIyNC4wIiwgQ1ZBUl9BUkNISVZFICk7XG4nCiAgICAgICAgJ1x0cmkuQ3Zhcl9DaGVj
+          a1JhbmdlKCByX3NvZnRQYXJ0aWNsZVNtb2tlUmFuZ2UsIDEuMGYsIDEyOC4wZiwgcWZhbHNlICk7
+          XG4nCiAgICAgICAgJ1x0cl9zb2Z0UGFydGljbGVGaXJlUmFuZ2UgPSByaS5DdmFyX0dldCggInJf
+          c29mdFBhcnRpY2xlRmlyZVJhbmdlIiwgIjI0LjAiLCBDVkFSX0FSQ0hJVkUgKTtcbicKICAgICAg
+          ICAnXHRyaS5DdmFyX0NoZWNrUmFuZ2UoIHJfc29mdFBhcnRpY2xlRmlyZVJhbmdlLCAxLjBmLCAx
+          MjguMGYsIHFmYWxzZSApO1xuJywKICAgICAgICAidHJfaW5pdCByYW5nZSByZWdpc3RyYXRpb25z
+          IiwKICAgICkKICAgIHRleHQgPSByZXBsYWNlX29uY2UoCiAgICAgICAgdGV4dCwKICAgICAgICAn
+          XHRyaS5DbWRfQWRkQ29tbWFuZCggImZzdDFfdGVzdCIsIFJfRlNUMVRlc3RfZiApO1xuJywKICAg
+          ICAgICAnXHRyaS5DbWRfQWRkQ29tbWFuZCggImZzdDFfdGVzdCIsIFJfRlNUMVRlc3RfZiApO1xu
+          JwogICAgICAgICdcdC8vIFJFTkQyX0ZTVF8xX1YxXzJfRklSRV9TTU9LRV9SQU5HRV9UVU5JTkdc
+          bicKICAgICAgICAnXHRyaS5DbWRfQWRkQ29tbWFuZCggImZzdDEyX3Ntb2tlX3Rlc3QiLCBSX0ZT
+          VDEyU21va2VUZXN0X2YgKTtcbicKICAgICAgICAnXHRyaS5DbWRfQWRkQ29tbWFuZCggImZzdDEy
+          X2ZpcmVfdGVzdCIsIFJfRlNUMTJGaXJlVGVzdF9mICk7XG4nLAogICAgICAgICJ0cl9pbml0IGFk
+          ZCB0dW5pbmcgY29tbWFuZHMiLAogICAgKQogICAgdGV4dCA9IHJlcGxhY2Vfb25jZSgKICAgICAg
+          ICB0ZXh0LAogICAgICAgICdcdHJpLkNtZF9SZW1vdmVDb21tYW5kKCAiZnN0MV90ZXN0IiApO1xu
+          JywKICAgICAgICAnXHRyaS5DbWRfUmVtb3ZlQ29tbWFuZCggImZzdDFfdGVzdCIgKTtcbicKICAg
+          ICAgICAnXHQvLyBSRU5EMl9GU1RfMV9WMV8yX0ZJUkVfU01PS0VfUkFOR0VfVFVOSU5HXG4nCiAg
+          ICAgICAgJ1x0cmkuQ21kX1JlbW92ZUNvbW1hbmQoICJmc3QxMl9zbW9rZV90ZXN0IiApO1xuJwog
+          ICAgICAgICdcdHJpLkNtZF9SZW1vdmVDb21tYW5kKCAiZnN0MTJfZmlyZV90ZXN0IiApO1xuJywK
+          ICAgICAgICAidHJfaW5pdCByZW1vdmUgdHVuaW5nIGNvbW1hbmRzIiwKICAgICkKICAgIHJldHVy
+          biB0ZXh0CgoKZGVmIHBhdGNoX2xvY2FsKHRleHQpOgogICAgdGV4dCA9IHJlcGxhY2Vfb25jZSgK
+          ICAgICAgICB0ZXh0LAogICAgICAgICdleHRlcm4gIGN2YXJfdCAgKnJfc29mdFBhcnRpY2xlUmFu
+          Z2U7XG4nLAogICAgICAgICdleHRlcm4gIGN2YXJfdCAgKnJfc29mdFBhcnRpY2xlUmFuZ2U7XG4n
+          CiAgICAgICAgJy8vIFJFTkQyX0ZTVF8xX1YxXzJfRklSRV9TTU9LRV9SQU5HRV9UVU5JTkdcbicK
+          ICAgICAgICAnZXh0ZXJuICBjdmFyX3QgICpyX3NvZnRQYXJ0aWNsZVNtb2tlUmFuZ2U7XG4nCiAg
+          ICAgICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9zb2Z0UGFydGljbGVGaXJlUmFuZ2U7XG4nLAogICAg
+          ICAgICJ0cl9sb2NhbCByYW5nZSBleHRlcm5zIiwKICAgICkKICAgIHRleHQgPSByZXBsYWNlX29u
+          Y2UoCiAgICAgICAgdGV4dCwKICAgICAgICAndm9pZCBSX0ZTVDFUZXN0X2Yodm9pZCk7XG4nLAog
+          ICAgICAgICd2b2lkIFJfRlNUMVRlc3RfZih2b2lkKTtcbicKICAgICAgICAnLy8gUkVORDJfRlNU
+          XzFfVjFfMl9GSVJFX1NNT0tFX1JBTkdFX1RVTklOR1xuJwogICAgICAgICd2b2lkIFJfRlNUMTJT
+          bW9rZVRlc3RfZih2b2lkKTtcbicKICAgICAgICAndm9pZCBSX0ZTVDEyRmlyZVRlc3RfZih2b2lk
+          KTtcbicsCiAgICAgICAgInRyX2xvY2FsIHR1bmluZyBwcm90b3R5cGVzIiwKICAgICkKICAgIHJl
+          dHVybiB0ZXh0CgoKUkVTRVRfRk4gPSByJycndm9pZCBSX0ZTVDFSZXNldF9mKHZvaWQpCnsKCUNv
+          bV9NZW1zZXQoJmZzdDFTdGF0cywgMCwgc2l6ZW9mKGZzdDFTdGF0cykpOwoJZnN0MVN0YXRzLnN0
+          YXJ0RnJhbWUgPSB0ci5mcmFtZUNvdW50OwoJZnN0MVN0YXRzLnN0YXJ0TXNlYyA9IHJpLk1pbGxp
+          c2Vjb25kcygpOwoJZnN0MURlcHRoUmVhZHlGcmFtZSA9IC0xOwoJcmkuUHJpbnRmKFBSSU5UX0FM
+          TCwgIkZTVDF8UkVTRVR8dj0xLjJ8dGVzdD0lc3xmcmFtZT0lZHxzb2Z0PSVkfG1hc2s9JWR8ZGJn
+          PSVkXG4iLAoJCWZzdDEyVGVzdEtpbmQsIHRyLmZyYW1lQ291bnQsCgkJcl9zb2Z0UGFydGljbGVz
+          ID8gcl9zb2Z0UGFydGljbGVzLT5pbnRlZ2VyIDogMCwKCQlyX3NvZnRQYXJ0aWNsZUNsYXNzTWFz
+          ayA/IHJfc29mdFBhcnRpY2xlQ2xhc3NNYXNrLT5pbnRlZ2VyIDogMCwKCQlyX3NvZnRQYXJ0aWNs
+          ZURlYnVnID8gcl9zb2Z0UGFydGljbGVEZWJ1Zy0+aW50ZWdlciA6IDApOwoJcmkuUHJpbnRmKFBS
+          SU5UX0FMTCwgIkZTVDF8UkFOR0VTfHNtb2tlPSUuMWZ8ZmlyZT0lLjFmfGxlZ2FjeT0lLjFmfGRl
+          cHRocHJlPSVkXG4iLAoJCXJfc29mdFBhcnRpY2xlU21va2VSYW5nZSA/IHJfc29mdFBhcnRpY2xl
+          U21va2VSYW5nZS0+dmFsdWUgOiAyNC4wZiwKCQlyX3NvZnRQYXJ0aWNsZUZpcmVSYW5nZSA/IHJf
+          c29mdFBhcnRpY2xlRmlyZVJhbmdlLT52YWx1ZSA6IDI0LjBmLAoJCXJfc29mdFBhcnRpY2xlUmFu
+          Z2UgPyByX3NvZnRQYXJ0aWNsZVJhbmdlLT52YWx1ZSA6IDI0LjBmLAoJCXJfZGVwdGhQcmVwYXNz
+          ID8gcl9kZXB0aFByZXBhc3MtPmludGVnZXIgOiAwKTsKfScnJwoKU05BUFNIT1RfRk4gPSByJycn
+          dm9pZCBSX0ZTVDFTbmFwc2hvdF9mKHZvaWQpCnsKCWNvbnN0IGNoYXIgKmxhYmVsID0gcmkuQ21k
+          X0FyZ2MoKSA+IDEgPyByaS5DbWRfQXJndigxKSA6ICJTTkFQU0hPVCI7Cgljb25zdCBjaGFyICpz
+          dGF0dXM7CglpbnQgY29kZTsKCWludCBub3cgPSByaS5NaWxsaXNlY29uZHMoKTsKCWludCBlbGFw
+          c2VkID0gbm93IC0gZnN0MVN0YXRzLnN0YXJ0TXNlYzsKCWludCBmcmFtZXMgPSB0ci5mcmFtZUNv
+          dW50IC0gZnN0MVN0YXRzLnN0YXJ0RnJhbWU7CglmbG9hdCBmcHM7CglpbnQgaTsKCWlmIChlbGFw
+          c2VkIDwgMSkgZWxhcHNlZCA9IDE7CglpZiAoZnJhbWVzIDwgMCkgZnJhbWVzID0gMDsKCWZwcyA9
+          IChmbG9hdClmcmFtZXMgKiAxMDAwLjBmIC8gKGZsb2F0KWVsYXBzZWQ7CgoJaWYgKGZzdDFTdGF0
+          cy5lbGlnaWJsZVN0YWdlcyA9PSAwKQoJewoJCWlmICgoZnN0MVN0YXRzLnNtb2tlU3RhZ2VzIHx8
+          IGZzdDFTdGF0cy5maXJlU3RhZ2VzKSAmJiBmc3QxU3RhdHMudW5zdXBwb3J0ZWRCbGVuZDFTdGFn
+          ZXMpCgkJCXN0YXR1cyA9ICJGQUlMX1VOU1VQUE9SVEVEX1NFTUFOVElDX0JMRU5EIjsKCQllbHNl
+          CgkJCXN0YXR1cyA9ICJJTkNPTkNMVVNJVkVfTk9fVEFSR0VUX0NMQVNTIjsKCX0KCWVsc2UgaWYg
+          KCFRX3N0cmljbXAobGFiZWwsICJPRkYiKSkKCXsKCQlpZiAocl9zb2Z0UGFydGljbGVzICYmIHJf
+          c29mdFBhcnRpY2xlcy0+aW50ZWdlcikKCQkJc3RhdHVzID0gIkZBSUxfT0ZGX1RPR0dMRV9OT1Rf
+          WkVSTyI7CgkJZWxzZSBpZiAoZnN0MVN0YXRzLmFjdGl2ZVN0YWdlcyAhPSAwKQoJCQlzdGF0dXMg
+          PSAiRkFJTF9PRkZfTEVBSyI7CgkJZWxzZQoJCQlzdGF0dXMgPSAiUEFTU19CQVNFTElORSI7Cgl9
+          CgllbHNlIGlmICghcl9zb2Z0UGFydGljbGVzIHx8ICFyX3NvZnRQYXJ0aWNsZXMtPmludGVnZXIp
+          CgkJc3RhdHVzID0gIkZBSUxfT05fVE9HR0xFX05PVF9PTkUiOwoJZWxzZSBpZiAoIXJfZGVwdGhQ
+          cmVwYXNzIHx8ICFyX2RlcHRoUHJlcGFzcy0+aW50ZWdlcikKCQlzdGF0dXMgPSAiRkFJTF9ERVBU
+          SF9QUkVQQVNTX09GRiI7CgllbHNlIGlmICghdHIuc29mdFBhcnRpY2xlRGVwdGhJbWFnZSB8fCAh
+          dHIuc29mdFBhcnRpY2xlRGVwdGhGYm8pCgkJc3RhdHVzID0gIkZBSUxfREVQVEhfUkVTT1VSQ0Vf
+          TUlTU0lORyI7CgllbHNlIGlmIChmc3QxU3RhdHMuZGVwdGhDb3BpZXMgPT0gMCkKCQlzdGF0dXMg
+          PSAiRkFJTF9ERVBUSF9DT1BZIjsKCWVsc2UgaWYgKGZzdDFTdGF0cy5hY3RpdmVTdGFnZXMgPT0g
+          MCkKCQlzdGF0dXMgPSAiRkFJTF9OT1RfQUNUSVZBVEVEIjsKCWVsc2UgaWYgKGZzdDFTdGF0cy5i
+          bG9ja2VkRGVwdGhTdGFnZXMgIT0gMCkKCQlzdGF0dXMgPSAiRkFJTF9QQVJUSUFMX0RFUFRIX0JM
+          T0NLIjsKCWVsc2UgaWYgKHN0cnN0cihsYWJlbCwgIkRFQlVHIikpCgkJc3RhdHVzID0gIlBBU1Nf
+          REVCVUdfU0lHTkFMX0NBUFRVUkVEIjsKCWVsc2UKCQlzdGF0dXMgPSAiUEFTU19SVU5USU1FX1ZJ
+          U1VBTF9QRU5ESU5HIjsKCgljb2RlID0gUl9GU1QxU3RhdHVzQ29kZShzdGF0dXMpOwoJZnN0MTJQ
+          aGFzZUNvdW50Kys7CglpZiAoY29kZSA9PSAxKSBmc3QxMlBhc3NDb3VudCsrOwoJZWxzZSBpZiAo
+          Y29kZSA9PSAyKSBmc3QxMkluY29uY2x1c2l2ZUNvdW50Kys7CgllbHNlIGZzdDEyRmFpbENvdW50
+          Kys7CgoJcmkuUHJpbnRmKFBSSU5UX0FMTCwgIkZTVDF8U05BUHx2PTEuMnx0ZXN0PSVzfGxhYmVs
+          PSVzfHN0YXR1cz0lc1xuIiwKCQlmc3QxMlRlc3RLaW5kLCBsYWJlbCwgc3RhdHVzKTsKCXJpLlBy
+          aW50ZihQUklOVF9BTEwsICJGU1QxfFBFUkZ8bGFiZWw9JXN8ZnJhbWVzPSVkfG1zPSVkfGZwcz0l
+          LjJmfGZyYW1lPSVkXG4iLAoJCWxhYmVsLCBmcmFtZXMsIGVsYXBzZWQsIGZwcywgdHIuZnJhbWVD
+          b3VudCk7CglyaS5QcmludGYoUFJJTlRfQUxMLCAiRlNUMXxDRkd8bGFiZWw9JXN8c29mdD0lZHxz
+          cj0lLjFmfGZyPSUuMWZ8bWFzaz0lZHxkYmc9JWRcbiIsCgkJbGFiZWwsCgkJcl9zb2Z0UGFydGlj
+          bGVzID8gcl9zb2Z0UGFydGljbGVzLT5pbnRlZ2VyIDogMCwKCQlyX3NvZnRQYXJ0aWNsZVNtb2tl
+          UmFuZ2UgPyByX3NvZnRQYXJ0aWNsZVNtb2tlUmFuZ2UtPnZhbHVlIDogMjQuMGYsCgkJcl9zb2Z0
+          UGFydGljbGVGaXJlUmFuZ2UgPyByX3NvZnRQYXJ0aWNsZUZpcmVSYW5nZS0+dmFsdWUgOiAyNC4w
+          ZiwKCQlyX3NvZnRQYXJ0aWNsZUNsYXNzTWFzayA/IHJfc29mdFBhcnRpY2xlQ2xhc3NNYXNrLT5p
+          bnRlZ2VyIDogMCwKCQlyX3NvZnRQYXJ0aWNsZURlYnVnID8gcl9zb2Z0UGFydGljbGVEZWJ1Zy0+
+          aW50ZWdlciA6IDApOwoJcmkuUHJpbnRmKFBSSU5UX0FMTCwgIkZTVDF8REVQVEh8bGFiZWw9JXN8
+          aW1nPSV1fGZibz0ldXxjb3BpZXM9JXV8YmxvY2tlZD0ldVxuIiwKCQlsYWJlbCwgKHVuc2lnbmVk
+          IGludCkodHIuc29mdFBhcnRpY2xlRGVwdGhJbWFnZSAhPSBOVUxMKSwKCQkodW5zaWduZWQgaW50
+          KSh0ci5zb2Z0UGFydGljbGVEZXB0aEZibyAhPSBOVUxMKSwgZnN0MVN0YXRzLmRlcHRoQ29waWVz
+          LAoJCWZzdDFTdGF0cy5ibG9ja2VkRGVwdGhTdGFnZXMpOwoJcmkuUHJpbnRmKFBSSU5UX0FMTCwg
+          IkZTVDF8RUxJR3xsYWJlbD0lc3xzZWVuX3Ntb2tlPSV1fHNlZW5fZmlyZT0ldXxlbGlnaWJsZT0l
+          dXxhY3RpdmU9JXVcbiIsCgkJbGFiZWwsIGZzdDFTdGF0cy5zbW9rZVN0YWdlcywgZnN0MVN0YXRz
+          LmZpcmVTdGFnZXMsCgkJZnN0MVN0YXRzLmVsaWdpYmxlU3RhZ2VzLCBmc3QxU3RhdHMuYWN0aXZl
+          U3RhZ2VzKTsKCXJpLlByaW50ZihQUklOVF9BTEwsICJGU1QxfEFDVElWRXxsYWJlbD0lc3xhY3Rp
+          dmVfc21va2U9JXV8YWN0aXZlX2ZpcmU9JXV8dW5zdXBwb3J0ZWQ9JXVcbiIsCgkJbGFiZWwsIGZz
+          dDFTdGF0cy5hY3RpdmVTbW9rZVN0YWdlcywgZnN0MVN0YXRzLmFjdGl2ZUZpcmVTdGFnZXMsCgkJ
+          ZnN0MVN0YXRzLnVuc3VwcG9ydGVkQmxlbmQxU3RhZ2VzKTsKCXJpLlByaW50ZihQUklOVF9BTEws
+          ICJGU1QxfERSQVd8bGFiZWw9JXN8Z2VuZXJpYz0ldXxiMD0ldXxiMT0ldXxpbmRleGVzPSV1XG4i
+          LAoJCWxhYmVsLCBmc3QxU3RhdHMuZ2VuZXJpY1N0YWdlcywgZnN0MVN0YXRzLmJsZW5kMFN0YWdl
+          cywKCQlmc3QxU3RhdHMuYmxlbmQxU3RhZ2VzLCBmc3QxU3RhdHMuZWxpZ2libGVJbmRleGVzKTsK
+          Cglmb3IgKGkgPSAwOyBpIDwgZnN0MVN0YXRzLnNoYWRlckNvdW50OyBpKyspCgl7CgkJaW50IHNo
+          YWRlckNsYXNzID0gUl9GU1QxU2hhZGVyQ2xhc3NCeU5hbWUoZnN0MVN0YXRzLnNoYWRlcnNbaV0u
+          bmFtZSk7CgkJcmkuUHJpbnRmKFBSSU5UX0FMTCwgIkZTVDF8U0hBREVSfGxhYmVsPSVzfHNsb3Q9
+          JWR8Y2xhc3M9JXN8ZHJhd3M9JXVcbiIsCgkJCWxhYmVsLCBpLCBSX0ZTVDFTaGFkZXJDbGFzc05h
+          bWUoc2hhZGVyQ2xhc3MpLCBmc3QxU3RhdHMuc2hhZGVyc1tpXS5kcmF3cyk7CgkJcmkuUHJpbnRm
+          KFBSSU5UX0FMTCwgIkZTVDF8U0hBREVSMnxsYWJlbD0lc3xzbG90PSVkfHNvcnQ9JWR8bW9kZT0l
+          ZHxzdGF0ZT0weCUwOHh8bmFtZT0lc1xuIiwKCQkJbGFiZWwsIGksIGZzdDFTdGF0cy5zaGFkZXJz
+          W2ldLnNvcnQsIGZzdDFTdGF0cy5zaGFkZXJzW2ldLnNvZnRNb2RlLAoJCQlmc3QxU3RhdHMuc2hh
+          ZGVyc1tpXS5zdGF0ZUJpdHMsIGZzdDFTdGF0cy5zaGFkZXJzW2ldLm5hbWUpOwoJfQp9JycnCgpG
+          SU5JU0hfRk4gPSByJycndm9pZCBSX0ZTVDFGaW5pc2hfZih2b2lkKQp7Cgljb25zdCBjaGFyICpm
+          aW5hbFN0YXR1czsKCWlmIChmc3QxMlBoYXNlQ291bnQgPT0gMCkKCQlmaW5hbFN0YXR1cyA9ICJJ
+          TkNPTVBMRVRFIjsKCWVsc2UgaWYgKGZzdDEyRmFpbENvdW50ICE9IDApCgkJZmluYWxTdGF0dXMg
+          PSAiRkFJTF9SVU5USU1FIjsKCWVsc2UgaWYgKGZzdDEySW5jb25jbHVzaXZlQ291bnQgIT0gMCkK
+          CQlmaW5hbFN0YXR1cyA9ICJJTkNPTkNMVVNJVkVfU0NFTkUiOwoJZWxzZQoJCWZpbmFsU3RhdHVz
+          ID0gIlBBU1NfUlVOVElNRV9WSVNVQUxfUEVORElORyI7CgoJcmkuUHJpbnRmKFBSSU5UX0FMTCwg
+          IkZTVDF8RklOQUx8dj0xLjJ8dGVzdD0lc3xzdGF0dXM9JXNcbiIsIGZzdDEyVGVzdEtpbmQsIGZp
+          bmFsU3RhdHVzKTsKCXJpLlByaW50ZihQUklOVF9BTEwsICJGU1QxfEZJTkFMMnxwYXNzPSVkfGlu
+          Y29uY2x1c2l2ZT0lZHxmYWlsPSVkfHBoYXNlcz0lZFxuIiwKCQlmc3QxMlBhc3NDb3VudCwgZnN0
+          MTJJbmNvbmNsdXNpdmVDb3VudCwgZnN0MTJGYWlsQ291bnQsIGZzdDEyUGhhc2VDb3VudCk7Cgly
+          aS5QcmludGYoUFJJTlRfQUxMLCAiRlNUMXxNRUFOSU5HfHRlY2huaWNhbF9wYXRoX3Bhc3NlZF92
+          aXN1YWxfcmFuZ2VfY2hvaWNlX2lzX3VzZXJfanVkZ2VtZW50XG4iKTsKfScnJwoKVEVTVF9GTlMg
+          PSByJycnc3RhdGljIHZvaWQgUl9GU1QxMkJlZ2luVGVzdChjb25zdCBjaGFyICpraW5kKQp7Cglm
+          c3QxMlBhc3NDb3VudCA9IDA7Cglmc3QxMkluY29uY2x1c2l2ZUNvdW50ID0gMDsKCWZzdDEyRmFp
+          bENvdW50ID0gMDsKCWZzdDEyUGhhc2VDb3VudCA9IDA7Cglmc3QxMlRlc3RLaW5kID0ga2luZDsK
+          fQoKdm9pZCBSX0ZTVDEyU21va2VUZXN0X2Yodm9pZCkKewoJc3RhdGljIGNvbnN0IGNoYXIgKnNj
+          cmlwdCA9CgkJImNsZWFyXG4iCgkJImVjaG8gRlNUMXxBVVRPVEVTVHxCRUdJTnx2ZXJzaW9uPTEu
+          Mnx0ZXN0PVNNT0tFX1JBTkdFXG4iCgkJInNldCBsb2dmaWxlIDJcbiIKCQkic2V0IHJfc29mdFBh
+          cnRpY2xlUmFuZ2UgMjRcbiIKCQkic2V0IHJfc29mdFBhcnRpY2xlRmlyZVJhbmdlIDI0XG4iCgkJ
+          InNldCByX3NvZnRQYXJ0aWNsZUNsYXNzTWFzayAxXG4iCgkJInNldCByX3NvZnRQYXJ0aWNsZURl
+          YnVnIDBcbiIKCQkic2V0IHJfc29mdFBhcnRpY2xlcyAwXG4iCgkJInNldCByX3NvZnRQYXJ0aWNs
+          ZVNtb2tlUmFuZ2UgMjRcbiIKCQkiZnN0MV9yZXNldFxuIgoJCSJ3YWl0IDMwXG4iCgkJImVjaG8g
+          RlNUMXxQSEFTRXxPRkZ8QkVHSU5cbiIKCQkid2FpdCAxODBcbiIKCQkiZnN0MV9zbmFwc2hvdCBP
+          RkZcbiIKCQkic2NyZWVuc2hvdEpQRUcgRlNUMV8yX1NNT0tFX09GRlxuIgoJCSJ3YWl0IDE1XG4i
+          CgkJInNldCByX3NvZnRQYXJ0aWNsZXMgMVxuIgoJCSJzZXQgcl9zb2Z0UGFydGljbGVTbW9rZVJh
+          bmdlIDEyXG4iCgkJImZzdDFfcmVzZXRcbiIKCQkid2FpdCAzMFxuIgoJCSJlY2hvIEZTVDF8UEhB
+          U0V8U01PS0VfUjEyfEJFR0lOXG4iCgkJIndhaXQgMTgwXG4iCgkJImZzdDFfc25hcHNob3QgU01P
+          S0VfUjEyXG4iCgkJInNjcmVlbnNob3RKUEVHIEZTVDFfMl9TTU9LRV9SMTJcbiIKCQkid2FpdCAx
+          NVxuIgoJCSJzZXQgcl9zb2Z0UGFydGljbGVTbW9rZVJhbmdlIDI0XG4iCgkJImZzdDFfcmVzZXRc
+          biIKCQkid2FpdCAzMFxuIgoJCSJlY2hvIEZTVDF8UEhBU0V8U01PS0VfUjI0fEJFR0lOXG4iCgkJ
+          IndhaXQgMTgwXG4iCgkJImZzdDFfc25hcHNob3QgU01PS0VfUjI0XG4iCgkJInNjcmVlbnNob3RK
+          UEVHIEZTVDFfMl9TTU9LRV9SMjRcbiIKCQkid2FpdCAxNVxuIgoJCSJzZXQgcl9zb2Z0UGFydGlj
+          bGVTbW9rZVJhbmdlIDM2XG4iCgkJImZzdDFfcmVzZXRcbiIKCQkid2FpdCAzMFxuIgoJCSJlY2hv
+          IEZTVDF8UEhBU0V8U01PS0VfUjM2fEJFR0lOXG4iCgkJIndhaXQgMTgwXG4iCgkJImZzdDFfc25h
+          cHNob3QgU01PS0VfUjM2XG4iCgkJInNjcmVlbnNob3RKUEVHIEZTVDFfMl9TTU9LRV9SMzZcbiIK
+          CQkid2FpdCAxNVxuIgoJCSJzZXQgcl9zb2Z0UGFydGljbGVTbW9rZVJhbmdlIDQ4XG4iCgkJImZz
+          dDFfcmVzZXRcbiIKCQkid2FpdCAzMFxuIgoJCSJlY2hvIEZTVDF8UEhBU0V8U01PS0VfUjQ4fEJF
+          R0lOXG4iCgkJIndhaXQgMTgwXG4iCgkJImZzdDFfc25hcHNob3QgU01PS0VfUjQ4XG4iCgkJInNj
+          cmVlbnNob3RKUEVHIEZTVDFfMl9TTU9LRV9SNDhcbiIKCQkid2FpdCAxNVxuIgoJCSJzZXQgcl9z
+          b2Z0UGFydGljbGVTbW9rZVJhbmdlIDI0XG4iCgkJInNldCByX3NvZnRQYXJ0aWNsZURlYnVnIDFc
+          biIKCQkiZnN0MV9yZXNldFxuIgoJCSJ3YWl0IDMwXG4iCgkJImVjaG8gRlNUMXxQSEFTRXxTTU9L
+          RV9ERUJVR19SMjR8QkVHSU5cbiIKCQkid2FpdCAxMjBcbiIKCQkiZnN0MV9zbmFwc2hvdCBTTU9L
+          RV9ERUJVR19SMjRcbiIKCQkic2NyZWVuc2hvdEpQRUcgRlNUMV8yX1NNT0tFX0RFQlVHX1IyNFxu
+          IgoJCSJ3YWl0IDE1XG4iCgkJInNldCByX3NvZnRQYXJ0aWNsZURlYnVnIDBcbiIKCQkic2V0IHJf
+          c29mdFBhcnRpY2xlcyAwXG4iCgkJInNldCByX3NvZnRQYXJ0aWNsZUNsYXNzTWFzayAzXG4iCgkJ
+          InNldCByX3NvZnRQYXJ0aWNsZVNtb2tlUmFuZ2UgMjRcbiIKCQkic2V0IHJfc29mdFBhcnRpY2xl
+          RmlyZVJhbmdlIDI0XG4iCgkJImVjaG8gRlNUMXxBVVRPVEVTVHxFTkR8dmVyc2lvbj0xLjJ8dGVz
+          dD1TTU9LRV9SQU5HRXxzb2Z0X3Jlc3RvcmVkPTBcbiIKCQkiZnN0MV9maW5pc2hcbiIKCQkid2Fp
+          dCAyXG4iCgkJImNvbmR1bXAgRlNUMV8yX1NNT0tFX1JFU1VMVC50eHRcbiI7CgoJUl9GU1QxMkJl
+          Z2luVGVzdCgiU01PS0VfUkFOR0UiKTsKCXJpLlByaW50ZihQUklOVF9BTEwsICJGU1QxfExBVU5D
+          SHx2PTEuMnx0ZXN0PVNNT0tFX1JBTkdFfHF1ZXVlZD0xfGtlZXBfY2FtZXJhX3N0aWxsPTFcbiIp
+          OwoJcmkuQ21kX0V4ZWN1dGVUZXh0KEVYRUNfQVBQRU5ELCBzY3JpcHQpOwp9Cgp2b2lkIFJfRlNU
+          MTJGaXJlVGVzdF9mKHZvaWQpCnsKCXN0YXRpYyBjb25zdCBjaGFyICpzY3JpcHQgPQoJCSJjbGVh
+          clxuIgoJCSJlY2hvIEZTVDF8QVVUT1RFU1R8QkVHSU58dmVyc2lvbj0xLjJ8dGVzdD1GSVJFX1JB
+          TkdFXG4iCgkJInNldCBsb2dmaWxlIDJcbiIKCQkic2V0IHJfc29mdFBhcnRpY2xlUmFuZ2UgMjRc
+          biIKCQkic2V0IHJfc29mdFBhcnRpY2xlU21va2VSYW5nZSAyNFxuIgoJCSJzZXQgcl9zb2Z0UGFy
+          dGljbGVDbGFzc01hc2sgMlxuIgoJCSJzZXQgcl9zb2Z0UGFydGljbGVEZWJ1ZyAwXG4iCgkJInNl
+          dCByX3NvZnRQYXJ0aWNsZXMgMFxuIgoJCSJzZXQgcl9zb2Z0UGFydGljbGVGaXJlUmFuZ2UgMjRc
+          biIKCQkiZnN0MV9yZXNldFxuIgoJCSJ3YWl0IDMwXG4iCgkJImVjaG8gRlNUMXxQSEFTRXxPRkZ8
+          QkVHSU5cbiIKCQkid2FpdCAxODBcbiIKCQkiZnN0MV9zbmFwc2hvdCBPRkZcbiIKCQkic2NyZWVu
+          c2hvdEpQRUcgRlNUMV8yX0ZJUkVfT0ZGXG4iCgkJIndhaXQgMTVcbiIKCQkic2V0IHJfc29mdFBh
+          cnRpY2xlcyAxXG4iCgkJInNldCByX3NvZnRQYXJ0aWNsZUZpcmVSYW5nZSAyNFxuIgoJCSJmc3Qx
+          X3Jlc2V0XG4iCgkJIndhaXQgMzBcbiIKCQkiZWNobyBGU1QxfFBIQVNFfEZJUkVfUjI0fEJFR0lO
+          XG4iCgkJIndhaXQgMTgwXG4iCgkJImZzdDFfc25hcHNob3QgRklSRV9SMjRcbiIKCQkic2NyZWVu
+          c2hvdEpQRUcgRlNUMV8yX0ZJUkVfUjI0XG4iCgkJIndhaXQgMTVcbiIKCQkic2V0IHJfc29mdFBh
+          cnRpY2xlRmlyZVJhbmdlIDM2XG4iCgkJImZzdDFfcmVzZXRcbiIKCQkid2FpdCAzMFxuIgoJCSJl
+          Y2hvIEZTVDF8UEhBU0V8RklSRV9SMzZ8QkVHSU5cbiIKCQkid2FpdCAxODBcbiIKCQkiZnN0MV9z
+          bmFwc2hvdCBGSVJFX1IzNlxuIgoJCSJzY3JlZW5zaG90SlBFRyBGU1QxXzJfRklSRV9SMzZcbiIK
+          CQkid2FpdCAxNVxuIgoJCSJzZXQgcl9zb2Z0UGFydGljbGVGaXJlUmFuZ2UgNDhcbiIKCQkiZnN0
+          MV9yZXNldFxuIgoJCSJ3YWl0IDMwXG4iCgkJImVjaG8gRlNUMXxQSEFTRXxGSVJFX1I0OHxCRUdJ
+          TlxuIgoJCSJ3YWl0IDE4MFxuIgoJCSJmc3QxX3NuYXBzaG90IEZJUkVfUjQ4XG4iCgkJInNjcmVl
+          bnNob3RKUEVHIEZTVDFfMl9GSVJFX1I0OFxuIgoJCSJ3YWl0IDE1XG4iCgkJInNldCByX3NvZnRQ
+          YXJ0aWNsZUZpcmVSYW5nZSA2NFxuIgoJCSJmc3QxX3Jlc2V0XG4iCgkJIndhaXQgMzBcbiIKCQki
+          ZWNobyBGU1QxfFBIQVNFfEZJUkVfUjY0fEJFR0lOXG4iCgkJIndhaXQgMTgwXG4iCgkJImZzdDFf
+          c25hcHNob3QgRklSRV9SNjRcbiIKCQkic2NyZWVuc2hvdEpQRUcgRlNUMV8yX0ZJUkVfUjY0XG4i
+          CgkJIndhaXQgMTVcbiIKCQkic2V0IHJfc29mdFBhcnRpY2xlRmlyZVJhbmdlIDQ4XG4iCgkJInNl
+          dCByX3NvZnRQYXJ0aWNsZURlYnVnIDFcbiIKCQkiZnN0MV9yZXNldFxuIgoJCSJ3YWl0IDMwXG4i
+          CgkJImVjaG8gRlNUMXxQSEFTRXxGSVJFX0RFQlVHX1I0OHxCRUdJTlxuIgoJCSJ3YWl0IDEyMFxu
+          IgoJCSJmc3QxX3NuYXBzaG90IEZJUkVfREVCVUdfUjQ4XG4iCgkJInNjcmVlbnNob3RKUEVHIEZT
+          VDFfMl9GSVJFX0RFQlVHX1I0OFxuIgoJCSJ3YWl0IDE1XG4iCgkJInNldCByX3NvZnRQYXJ0aWNs
+          ZURlYnVnIDBcbiIKCQkic2V0IHJfc29mdFBhcnRpY2xlcyAwXG4iCgkJInNldCByX3NvZnRQYXJ0
+          aWNsZUNsYXNzTWFzayAzXG4iCgkJInNldCByX3NvZnRQYXJ0aWNsZVNtb2tlUmFuZ2UgMjRcbiIK
+          CQkic2V0IHJfc29mdFBhcnRpY2xlRmlyZVJhbmdlIDI0XG4iCgkJImVjaG8gRlNUMXxBVVRPVEVT
+          VHxFTkR8dmVyc2lvbj0xLjJ8dGVzdD1GSVJFX1JBTkdFfHNvZnRfcmVzdG9yZWQ9MFxuIgoJCSJm
+          c3QxX2ZpbmlzaFxuIgoJCSJ3YWl0IDJcbiIKCQkiY29uZHVtcCBGU1QxXzJfRklSRV9SRVNVTFQu
+          dHh0XG4iOwoKCVJfRlNUMTJCZWdpblRlc3QoIkZJUkVfUkFOR0UiKTsKCXJpLlByaW50ZihQUklO
+          VF9BTEwsICJGU1QxfExBVU5DSHx2PTEuMnx0ZXN0PUZJUkVfUkFOR0V8cXVldWVkPTF8a2VlcF9j
+          YW1lcmFfc3RpbGw9MVxuIik7CglyaS5DbWRfRXhlY3V0ZVRleHQoRVhFQ19BUFBFTkQsIHNjcmlw
+          dCk7Cn0KCnZvaWQgUl9GU1QxVGVzdF9mKHZvaWQpCnsKCXJpLlByaW50ZihQUklOVF9BTEwsICJG
+          U1QxfENPTVBBVHxmc3QxX3Rlc3Rfcm91dGVzX3RvPUZJUkVfUkFOR0VcbiIpOwoJUl9GU1QxMkZp
+          cmVUZXN0X2YoKTsKfScnJwoKCmRlZiBwYXRjaF9zaGFkZSh0ZXh0KToKICAgIHRleHQgPSByZXBs
+          YWNlX29uY2UoCiAgICAgICAgdGV4dCwKICAgICAgICAnLy8gUkVORDJfRlNUXzFfVjFfMV9TRU1B
+          TlRJQ19GSVJFX1NNT0tFX0FVVE9URVNUXG4nCiAgICAgICAgJy8vIEZTVC0xIHYxLjE6IGRlcHRo
+          LWF3YXJlIHNvZnQgaW50ZXJzZWN0aW9ucyBzZWxlY3RlZCBieSBhIGNvbnNlcnZhdGl2ZSBzZW1h
+          bnRpYyBzaGFkZXIgd2hpdGVsaXN0LlxuJywKICAgICAgICAnLy8gUkVORDJfRlNUXzFfVjFfMV9T
+          RU1BTlRJQ19GSVJFX1NNT0tFX0FVVE9URVNUXG4nCiAgICAgICAgJy8vIFJFTkQyX0ZTVF8xX1Yx
+          XzJfRklSRV9TTU9LRV9SQU5HRV9UVU5JTkdcbicKICAgICAgICAnLy8gRlNULTEgdjEuMjogcHJl
+          c2VydmUgc2VtYW50aWMgY2xhc3NpZmllcjsgdHVuZSBpbmRlcGVuZGVudCBzbW9rZS9maXJlIGNv
+          bnRhY3QgcmFuZ2VzLlxuJwogICAgICAgICcvLyBGU1QtMSB2MS4xOiBkZXB0aC1hd2FyZSBzb2Z0
+          IGludGVyc2VjdGlvbnMgc2VsZWN0ZWQgYnkgYSBjb25zZXJ2YXRpdmUgc2VtYW50aWMgc2hhZGVy
+          IHdoaXRlbGlzdC5cbicsCiAgICAgICAgInRyX3NoYWRlIHYxLjIgbWFya2VyIiwKICAgICkKICAg
+          IHRleHQgPSByZXBsYWNlX29uY2UoCiAgICAgICAgdGV4dCwKICAgICAgICAnc3RhdGljIGludCBm
+          c3QxT2ZmUmVzdWx0ID0gMDtcbnN0YXRpYyBpbnQgZnN0MU9uUmVzdWx0ID0gMDtcbnN0YXRpYyBp
+          bnQgZnN0MURlYnVnUmVzdWx0ID0gMDtcbicsCiAgICAgICAgJ3N0YXRpYyBpbnQgZnN0MTJQYXNz
+          Q291bnQgPSAwO1xuJwogICAgICAgICdzdGF0aWMgaW50IGZzdDEySW5jb25jbHVzaXZlQ291bnQg
+          PSAwO1xuJwogICAgICAgICdzdGF0aWMgaW50IGZzdDEyRmFpbENvdW50ID0gMDtcbicKICAgICAg
+          ICAnc3RhdGljIGludCBmc3QxMlBoYXNlQ291bnQgPSAwO1xuJwogICAgICAgICdzdGF0aWMgY29u
+          c3QgY2hhciAqZnN0MTJUZXN0S2luZCA9ICJNQU5VQUwiO1xuJywKICAgICAgICAidHJfc2hhZGUg
+          YWdncmVnYXRlIHJlc3VsdHMiLAogICAgKQogICAgdGV4dCA9IHJlcGxhY2Vfb25jZSgKICAgICAg
+          ICB0ZXh0LAogICAgICAgICdcdHJhbmdlID0gcl9zb2Z0UGFydGljbGVSYW5nZSA/IENvbV9DbGFt
+          cCgxLjBmLCAxMjguMGYsIHJfc29mdFBhcnRpY2xlUmFuZ2UtPnZhbHVlKSA6IDI0LjBmO1xuJywK
+          ICAgICAgICAnXHQvLyBSRU5EMl9GU1RfMV9WMV8yX0ZJUkVfU01PS0VfUkFOR0VfVFVOSU5HXG4n
+          CiAgICAgICAgJ1x0aWYgKHNoYWRlckNsYXNzID09IEZTVDFfQ0xBU1NfU01PS0UpXG4nCiAgICAg
+          ICAgJ1x0XHRyYW5nZSA9IHJfc29mdFBhcnRpY2xlU21va2VSYW5nZSA/IENvbV9DbGFtcCgxLjBm
+          LCAxMjguMGYsIHJfc29mdFBhcnRpY2xlU21va2VSYW5nZS0+dmFsdWUpIDogMjQuMGY7XG4nCiAg
+          ICAgICAgJ1x0ZWxzZSBpZiAoc2hhZGVyQ2xhc3MgPT0gRlNUMV9DTEFTU19GSVJFKVxuJwogICAg
+          ICAgICdcdFx0cmFuZ2UgPSByX3NvZnRQYXJ0aWNsZUZpcmVSYW5nZSA/IENvbV9DbGFtcCgxLjBm
+          LCAxMjguMGYsIHJfc29mdFBhcnRpY2xlRmlyZVJhbmdlLT52YWx1ZSkgOiAyNC4wZjtcbicKICAg
+          ICAgICAnXHRlbHNlXG4nCiAgICAgICAgJ1x0XHRyYW5nZSA9IHJfc29mdFBhcnRpY2xlUmFuZ2Ug
+          PyBDb21fQ2xhbXAoMS4wZiwgMTI4LjBmLCByX3NvZnRQYXJ0aWNsZVJhbmdlLT52YWx1ZSkgOiAy
+          NC4wZjtcbicsCiAgICAgICAgInRyX3NoYWRlIGNsYXNzIHJhbmdlIHNlbGVjdGlvbiIsCiAgICAp
+          CiAgICB0ZXh0ID0gcmVwbGFjZV9mdW5jdGlvbih0ZXh0LCAndm9pZCBSX0ZTVDFSZXNldF9mKHZv
+          aWQpJywgUkVTRVRfRk4sICJyZXNldCBmdW5jdGlvbiIpCiAgICB0ZXh0ID0gcmVwbGFjZV9mdW5j
+          dGlvbih0ZXh0LCAndm9pZCBSX0ZTVDFTbmFwc2hvdF9mKHZvaWQpJywgU05BUFNIT1RfRk4sICJz
+          bmFwc2hvdCBmdW5jdGlvbiIpCiAgICB0ZXh0ID0gcmVwbGFjZV9mdW5jdGlvbih0ZXh0LCAndm9p
+          ZCBSX0ZTVDFGaW5pc2hfZih2b2lkKScsIEZJTklTSF9GTiwgImZpbmlzaCBmdW5jdGlvbiIpCiAg
+          ICB0ZXh0ID0gcmVwbGFjZV9mdW5jdGlvbih0ZXh0LCAndm9pZCBSX0ZTVDFUZXN0X2Yodm9pZCkn
+          LCBURVNUX0ZOUywgInRlc3QgZnVuY3Rpb25zIikKICAgIHJldHVybiB0ZXh0CgoKZGVmIG1haW4o
+          KToKICAgIGFwID0gYXJncGFyc2UuQXJndW1lbnRQYXJzZXIoKQogICAgYXAuYWRkX2FyZ3VtZW50
+          KCctLXJvb3QnLCBkZWZhdWx0PScuJykKICAgIGFwLmFkZF9hcmd1bWVudCgnLS1jaGVjay1vbmx5
+          JywgYWN0aW9uPSdzdG9yZV90cnVlJykKICAgIGFyZ3MgPSBhcC5wYXJzZV9hcmdzKCkKICAgIHJv
+          b3QgPSBwYXRobGliLlBhdGgoYXJncy5yb290KQogICAgdGV4dHMgPSB7azogcmVhZF90ZXh0KHJv
+          b3QgLyBwKSBmb3IgaywgcCBpbiBGSUxFUy5pdGVtcygpfQogICAgdmFsaWRhdGVfYmFzZSh0ZXh0
+          cykKICAgIHBhdGNoZWQgPSB7CiAgICAgICAgJ2luaXQnOiBwYXRjaF9pbml0KHRleHRzWydpbml0
+          J10pLAogICAgICAgICdsb2NhbCc6IHBhdGNoX2xvY2FsKHRleHRzWydsb2NhbCddKSwKICAgICAg
+          ICAnc2hhZGUnOiBwYXRjaF9zaGFkZSh0ZXh0c1snc2hhZGUnXSksCiAgICB9CiAgICBmb3Igaywg
+          dGV4dCBpbiBwYXRjaGVkLml0ZW1zKCk6CiAgICAgICAgbXVzdF9jb250YWluKHRleHQsIE1BUktF
+          UiwgZiJ7a30gdjEuMiBtYXJrZXIiKQogICAgaWYgYXJncy5jaGVja19vbmx5OgogICAgICAgIHBy
+          aW50KCdGU1QtMSB2MS4yIHJhbmdlLXR1bmluZyBjaGVjay1vbmx5IFBBU1MnKQogICAgICAgIHJl
+          dHVybiAwCiAgICBmb3IgaywgcmVsIGluIEZJTEVTLml0ZW1zKCk6CiAgICAgICAgd3JpdGVfdGV4
+          dChyb290IC8gcmVsLCBwYXRjaGVkW2tdKQogICAgcHJpbnQoJ0ZTVC0xIHYxLjIgcmFuZ2UtdHVu
+          aW5nIHBhdGNoIGFwcGxpZWQnKQogICAgcmV0dXJuIDAKCgppZiBfX25hbWVfXyA9PSAnX19tYWlu
+          X18nOgogICAgdHJ5OgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQobWFpbigpKQogICAgZXhjZXB0
+          IFBhdGNoRXJyb3IgYXMgZToKICAgICAgICBwcmludChmJ0VSUk9SOiB7ZX0nLCBmaWxlPXN5cy5z
+          dGRlcnIpCiAgICAgICAgcmFpc2UgU3lzdGVtRXhpdCgyKQo=
+          FST12_PATCHER_B64
+          base64 -d fst12-patcher.b64 > apply_rend2_fst_1_v1_2_fire_smoke_range_tuning_sp.py
+
+          cat > fst12-setup.b64 <<'FST12_SETUP_B64'
+          Ly8gRGFya1dvbGYvaW9SVENXIFJlbmQyIEZTVC0xIHYxLjIgRmlyZS9TbW9rZSBSYW5nZSBUdW5p
+          bmcKLy8gVGVzdC1vbmx5IG92ZXIgQ0ktY29uZmlybWVkIEZTVC0xIHYxLjEuIEVuZ2luZSBkZWZh
+          dWx0IHJlbWFpbnMgT0ZGLgoKZXhlYyBEQVJLV09MRl9QUkVQUk9EVUNUSU9OX0ZJTkFMX1YxXzcu
+          Y2ZnCgpzZXQgbG9nZmlsZSAyCnNldCByX3NvZnRQYXJ0aWNsZXMgMApzZXQgcl9zb2Z0UGFydGlj
+          bGVSYW5nZSAyNApzZXQgcl9zb2Z0UGFydGljbGVTbW9rZVJhbmdlIDI0CnNldCByX3NvZnRQYXJ0
+          aWNsZUZpcmVSYW5nZSAyNApzZXQgcl9zb2Z0UGFydGljbGVDbGFzc01hc2sgMwpzZXQgcl9zb2Z0
+          UGFydGljbGVEZWJ1ZyAwCgpiaW5kIEY5ICJmc3QxMl9zbW9rZV90ZXN0IgpiaW5kIEYxMCAiZnN0
+          MTJfZmlyZV90ZXN0IgoKZWNobyBGU1QxfFNFVFVQfFJFQURZfHZlcnNpb249MS4yfEY5PVNNT0tF
+          X1JBTkdFfEYxMD1GSVJFX1JBTkdFCmVjaG8gRlNUMXxTRVRVUHxTTU9LRXxyYW5nZXM9MTIsMjQs
+          MzYsNDh8ZGVidWc9MjQKZWNobyBGU1QxfFNFVFVQfEZJUkV8cmFuZ2VzPTI0LDM2LDQ4LDY0fGRl
+          YnVnPTQ4CmVjaG8gRlNUMXxTRVRVUHxJTlNUUlVDVElPTnxsb2FkX3NjZW5lX2tlZXBfY2FtZXJh
+          X3N0aWxsX3ByZXNzX29uZV90ZXN0X2tleV9vbmNlCgp2aWRfcmVzdGFydAo=
+          FST12_SETUP_B64
+          base64 -d fst12-setup.b64 > FST_1_2_RANGE_TUNING_SETUP.cfg
+
+          cat > fst12-launcher.b64 <<'FST12_LAUNCHER_B64'
+          QGVjaG8gb2ZmCnNldGxvY2FsCmNkIC9kICIlfmRwMCIKCmlmIG5vdCBleGlzdCAiaW9Xb2xmU1Au
+          eDY0LmV4ZSIgKAogIGVjaG8gW0ZTVC0xIHYxLjJdIGlvV29sZlNQLng2NC5leGUgbm90IGZvdW5k
+          IGluIHRoaXMgZm9sZGVyLgogIGVjaG8gT3ZlcmxheSB0aGUgcmVsZWFzZSBvbiBhIGxlZ2FsIFJU
+          Q1cvaW9SVENXIFNQIHRlc3QgaW5zdGFsbGF0aW9uIGZpcnN0LgogIHBhdXNlCiAgZXhpdCAvYiAx
+          CikKCmlmIG5vdCBleGlzdCAiTWFpblxGU1RfMV8yX1JBTkdFX1RVTklOR19TRVRVUC5jZmciICgK
+          ICBlY2hvIFtGU1QtMSB2MS4yXSBNYWluXEZTVF8xXzJfUkFOR0VfVFVOSU5HX1NFVFVQLmNmZyBu
+          b3QgZm91bmQuCiAgcGF1c2UKICBleGl0IC9iIDEKKQoKZWNobyBbRlNULTEgdjEuMl0gTm9ybWFs
+          IGlvUlRDVyBob21lIHBhdGggaXMgcHJlc2VydmVkLCBzbyBleGlzdGluZyBzYXZlcyByZW1haW4g
+          dmlzaWJsZS4KZWNobyBbRlNULTEgdjEuMl0gRjkgID0gc21va2UgcmFuZ2Ugc3dlZXA6IDEyIC8g
+          MjQgLyAzNiAvIDQ4LgplY2hvIFtGU1QtMSB2MS4yXSBGMTAgPSBmaXJlIHJhbmdlIHN3ZWVwOiAy
+          NCAvIDM2IC8gNDggLyA2NC4KZWNobyBbRlNULTEgdjEuMl0gS2VlcCB0aGUgY2FtZXJhIHN0aWxs
+          IHVudGlsIEFVVE9URVNUIEVORC4KZWNoby4Kc3RhcnQgIiIgL3dhaXQgImlvV29sZlNQLng2NC5l
+          eGUiICtzZXQgbG9nZmlsZSAyICtleGVjIEZTVF8xXzJfUkFOR0VfVFVOSU5HX1NFVFVQLmNmZwoK
+          ZW5kbG9jYWwK
+          FST12_LAUNCHER_B64
+          base64 -d fst12-launcher.b64 > RUN_FST1_2_RANGE_TUNING.cmd
+
+          cat > fst12-readme.b64 <<'FST12_README_B64'
+          RGFya1dvbGYvaW9SVENXIFJlbmQyIC0gRlNULTEgdjEuMiBGaXJlL1Ntb2tlIFJhbmdlIFR1bmlu
+          ZwoKU1RBVFVTCi0gVGVzdC1vbmx5LiBOb3QgcHJvZHVjdGlvbiBwcm9tb3RlZC4KLSBCYXNlZCBv
+          biB0aGUgQ0ktY29uZmlybWVkIEZTVC0xIHYxLjEgc2VtYW50aWMgd2hpdGVsaXN0IGltcGxlbWVu
+          dGF0aW9uLgotIE5vIGNoYW5nZSB0byB0aGUgdjEuMSBzaGFkZXItbmFtZSBjbGFzc2lmaWVyLCBk
+          ZXB0aC1jb3B5IHBhdGgsIG9yIGdlbmVyaWMgZnJhZ21lbnQgZm9ybXVsYS4KLSBUaGUgb25seSBy
+          ZW5kZXJpbmcgY2hhbmdlIGlzIGluZGVwZW5kZW50IGNvbnRhY3QtZmFkZSByYW5nZSBzZWxlY3Rp
+          b24gZm9yIFNNT0tFIGFuZCBGSVJFLgoKTkVXIENWQVJTCnJfc29mdFBhcnRpY2xlU21va2VSYW5n
+          ZSAgZGVmYXVsdCAyNC4wLCBhbGxvd2VkIDEuLjEyOApyX3NvZnRQYXJ0aWNsZUZpcmVSYW5nZSAg
+          IGRlZmF1bHQgMjQuMCwgYWxsb3dlZCAxLi4xMjgKClRoZSBsZWdhY3kgcl9zb2Z0UGFydGljbGVS
+          YW5nZSByZW1haW5zIHJlZ2lzdGVyZWQgZm9yIGNvbXBhdGliaWxpdHksIGJ1dCBzZW1hbnRpYyBT
+          TU9LRS9GSVJFIHN0YWdlcyB1c2UgdGhlIG5ldyBjbGFzcy1zcGVjaWZpYyB2YWx1ZXMuCgpBVVRP
+          TUFURUQgVEVTVFMKRjkgIC0+IGZzdDEyX3Ntb2tlX3Rlc3QKICAgICAgT0ZGLCBTTU9LRV9SMTIs
+          IFNNT0tFX1IyNCwgU01PS0VfUjM2LCBTTU9LRV9SNDgsIFNNT0tFX0RFQlVHX1IyNAogICAgICBy
+          ZXN1bHQ6IEZTVDFfMl9TTU9LRV9SRVNVTFQudHh0CgpGMTAgLT4gZnN0MTJfZmlyZV90ZXN0CiAg
+          ICAgIE9GRiwgRklSRV9SMjQsIEZJUkVfUjM2LCBGSVJFX1I0OCwgRklSRV9SNjQsIEZJUkVfREVC
+          VUdfUjQ4CiAgICAgIHJlc3VsdDogRlNUMV8yX0ZJUkVfUkVTVUxULnR4dAoKRWFjaCBwaGFzZSBh
+          dXRvbWF0aWNhbGx5IHJlc2V0cyBjb3VudGVycywgd2FpdHMgZm9yIGEgc3RhYmxlIHNhbXBsZSB3
+          aW5kb3csIHJlY29yZHMgcmVuZGVyZXIvZGVwdGgvY2xhc3MgYWN0aXZhdGlvbiwgY2FwdHVyZXMg
+          YSBKUEVHLCBhbmQgcmVzdG9yZXMgcl9zb2Z0UGFydGljbGVzPTAgYWZ0ZXIgdGhlIHRlc3QuCgpX
+          SEFUIFRPIEpVREdFIFZJU1VBTExZCi0gUHJlZmVyIHRoZSBzbWFsbGVzdCByYW5nZSB0aGF0IHJl
+          bW92ZXMgdGhlIGhhcmQgaW50ZXJzZWN0aW9uIHdpdGhvdXQgdmlzaWJseSBzaHJpbmtpbmcgb3Ig
+          ZXJhc2luZyB0aGUgZWZmZWN0IGF3YXkgZnJvbSBnZW9tZXRyeS4KLSBTbW9rZTogY29tcGFyZSBo
+          b3cgdGhlIHBsdW1lIGNvbnRhY3RzIHdhbGxzL2Zsb29yL3Byb3BzLiBUb28tbGFyZ2UgcmFuZ2Ug
+          d2lsbCBtYWtlIHRoZSBzbW9rZSBsb29rIGhvbGxvdyBvciBvdmVybHkgdHJhbnNwYXJlbnQgbmVh
+          ciBzdXJmYWNlcy4KLSBGaXJlOiBjb21wYXJlIHRoZSBoYXJkIGZsYW1lIHBvbHlnb24gZWRnZSB3
+          aGVyZSBpdCBlbnRlcnMgc3RvbmUvd29vZC9tZXRhbC4gVG9vLWxhcmdlIHJhbmdlIGNhbiBtYWtl
+          IHRoZSBmbGFtZSBhcHBlYXIgZGV0YWNoZWQgb3IgdGhpbi4KLSBERUJVRyBpcyBkaWFnbm9zdGlj
+          IG9ubHkgYW5kIGlzIG5vdCBhIGNhbmRpZGF0ZSB2aXN1YWwgbW9kZS4KCkZJTEVTIFRPIFNFTkQg
+          QkFDSwpGb3Igc21va2U6IEZTVDFfMl9TTU9LRV9SRVNVTFQudHh0IHBsdXMgdGhlIHNpeCBGU1Qx
+          XzJfU01PS0VfKi5qcGcgc2NyZWVuc2hvdHMuCkZvciBmaXJlOiBGU1QxXzJfRklSRV9SRVNVTFQu
+          dHh0IHBsdXMgdGhlIHNpeCBGU1QxXzJfRklSRV8qLmpwZyBzY3JlZW5zaG90cy4KClRoZSBsb2dz
+          IHByb3ZlIGFjdGl2YXRpb24vc2NvcGUvZGVwdGggYW5kIHByb3ZpZGUgRlBTIGVzdGltYXRlcy4g
+          RmluYWwgcmFuZ2Ugc2VsZWN0aW9uIHJlbWFpbnMgYSB2aXN1YWwgQS9CIGRlY2lzaW9uLgo=
+          FST12_README_B64
+          base64 -d fst12-readme.b64 > FST_1_2_RANGE_TUNING_README.txt
+
+          cat > fst12-matrix.b64 <<'FST12_MATRIX_B64'
+          RlNULTEgdjEuMiBhdXRvbWF0ZWQgdHVuaW5nIG1hdHJpeAoKU01PS0UgUkFOR0UgVEVTVCAoRjkp
+          Ck9GRiAgICAgICAgICAgICBtYXN0ZXIgT0ZGLCBzbW9rZSBtYXNrIG9ubHksIHNtb2tlIHJhbmdl
+          IDI0ClNNT0tFX1IxMiAgICAgICBzbW9rZSByYW5nZSAxMgpTTU9LRV9SMjQgICAgICAgc21va2Ug
+          cmFuZ2UgMjQKU01PS0VfUjM2ICAgICAgIHNtb2tlIHJhbmdlIDM2ClNNT0tFX1I0OCAgICAgICBz
+          bW9rZSByYW5nZSA0OApTTU9LRV9ERUJVR19SMjQgZGVidWcgc2lnbmFsIGF0IHNtb2tlIHJhbmdl
+          IDI0CgpGSVJFIFJBTkdFIFRFU1QgKEYxMCkKT0ZGICAgICAgICAgICAgIG1hc3RlciBPRkYsIGZp
+          cmUgbWFzayBvbmx5LCBmaXJlIHJhbmdlIDI0CkZJUkVfUjI0ICAgICAgICBmaXJlIHJhbmdlIDI0
+          CkZJUkVfUjM2ICAgICAgICBmaXJlIHJhbmdlIDM2CkZJUkVfUjQ4ICAgICAgICBmaXJlIHJhbmdl
+          IDQ4CkZJUkVfUjY0ICAgICAgICBmaXJlIHJhbmdlIDY0CkZJUkVfREVCVUdfUjQ4ICBkZWJ1ZyBz
+          aWduYWwgYXQgZmlyZSByYW5nZSA0OAoKQWxsIHRlc3RzIHJlc3RvcmU6CnJfc29mdFBhcnRpY2xl
+          cyAwCnJfc29mdFBhcnRpY2xlQ2xhc3NNYXNrIDMKcl9zb2Z0UGFydGljbGVTbW9rZVJhbmdlIDI0
+          CnJfc29mdFBhcnRpY2xlRmlyZVJhbmdlIDI0CnJfc29mdFBhcnRpY2xlRGVidWcgMAo=
+          FST12_MATRIX_B64
+          base64 -d fst12-matrix.b64 > FST_1_2_TEST_MATRIX.txt
+
+          cat > fst12-analyzer.b64 <<'FST12_ANALYZER_B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwppbXBvcnQgYXJncGFyc2UKaW1wb3J0IGpzb24KZnJvbSBw
+          YXRobGliIGltcG9ydCBQYXRoCgoKZGVmIGxvZ2ljYWxfbGluZXModGV4dCk6CiAgICBjdXJyZW50
+          ID0gTm9uZQogICAgZm9yIHJhdyBpbiB0ZXh0LnNwbGl0bGluZXMoKToKICAgICAgICBsaW5lID0g
+          cmF3LnN0cmlwKCkKICAgICAgICBwb3MgPSBsaW5lLmZpbmQoIkZTVDF8IikKICAgICAgICBpZiBw
+          b3MgPj0gMDoKICAgICAgICAgICAgaWYgY3VycmVudDoKICAgICAgICAgICAgICAgIHlpZWxkIGN1
+          cnJlbnQKICAgICAgICAgICAgY3VycmVudCA9IGxpbmVbcG9zOl0KICAgICAgICAgICAgY29udGlu
+          dWUKICAgICAgICBpZiBjdXJyZW50IGFuZCBsaW5lIGFuZCBub3QgbGluZS5zdGFydHN3aXRoKCJX
+          cm90ZSAiKSBhbmQgbm90IGxpbmUuc3RhcnRzd2l0aCgiRHVtcGVkICIpOgogICAgICAgICAgICBj
+          dXJyZW50ICs9IGxpbmUKICAgICAgICBlbHNlOgogICAgICAgICAgICBpZiBjdXJyZW50OgogICAg
+          ICAgICAgICAgICAgeWllbGQgY3VycmVudAogICAgICAgICAgICAgICAgY3VycmVudCA9IE5vbmUK
+          ICAgIGlmIGN1cnJlbnQ6CiAgICAgICAgeWllbGQgY3VycmVudAoKCmRlZiBwYXJzZV9yZWNvcmQo
+          bGluZSk6CiAgICBpZiBub3QgbGluZS5zdGFydHN3aXRoKCJGU1QxfCIpOgogICAgICAgIHJldHVy
+          biBOb25lCiAgICBwYXJ0cyA9IGxpbmUuc3BsaXQoInwiKQogICAgaWYgbGVuKHBhcnRzKSA8IDI6
+          CiAgICAgICAgcmV0dXJuIE5vbmUKICAgIHJlYyA9IHsia2luZCI6IHBhcnRzWzFdLCAicmF3Ijog
+          bGluZX0KICAgIGZvciBpdGVtIGluIHBhcnRzWzI6XToKICAgICAgICBpZiAiPSIgaW4gaXRlbToK
+          ICAgICAgICAgICAgaywgdiA9IGl0ZW0uc3BsaXQoIj0iLCAxKQogICAgICAgICAgICByZWNba10g
+          PSB2CiAgICAgICAgZWxpZiBpdGVtOgogICAgICAgICAgICByZWMuc2V0ZGVmYXVsdCgidG9rZW5z
+          IiwgW10pLmFwcGVuZChpdGVtKQogICAgcmV0dXJuIHJlYwoKCmRlZiBudW0odiwgZGVmYXVsdD0w
+          LjApOgogICAgdHJ5OgogICAgICAgIHJldHVybiBmbG9hdCh2KQogICAgZXhjZXB0IChUeXBlRXJy
+          b3IsIFZhbHVlRXJyb3IpOgogICAgICAgIHJldHVybiBkZWZhdWx0CgoKZGVmIG1haW4oKToKICAg
+          IGFwID0gYXJncGFyc2UuQXJndW1lbnRQYXJzZXIoZGVzY3JpcHRpb249IlBhcnNlIERhcmtXb2xm
+          IFJlbmQyIEZTVC0xIHYxLjIgcmFuZ2UgdHVuaW5nIHJlc3VsdCIpCiAgICBhcC5hZGRfYXJndW1l
+          bnQoImxvZyIpCiAgICBhcC5hZGRfYXJndW1lbnQoIi0tanNvbiIsIGFjdGlvbj0ic3RvcmVfdHJ1
+          ZSIpCiAgICBhcmdzID0gYXAucGFyc2VfYXJncygpCgogICAgcCA9IFBhdGgoYXJncy5sb2cpCiAg
+          ICByZWNvcmRzID0gW3BhcnNlX3JlY29yZCh4KSBmb3IgeCBpbiBsb2dpY2FsX2xpbmVzKHAucmVh
+          ZF90ZXh0KGVycm9ycz0icmVwbGFjZSIpKV0KICAgIHJlY29yZHMgPSBbciBmb3IgciBpbiByZWNv
+          cmRzIGlmIHJdCgogICAgcGhhc2VzID0ge30KICAgIHNoYWRlcnMgPSBbXQogICAgZmluYWwgPSBO
+          b25lCiAgICBmb3IgciBpbiByZWNvcmRzOgogICAgICAgIGtpbmQgPSByLmdldCgia2luZCIpCiAg
+          ICAgICAgbGFiZWwgPSByLmdldCgibGFiZWwiKQogICAgICAgIGlmIGtpbmQgaW4geyJTTkFQIiwg
+          IlBFUkYiLCAiQ0ZHIiwgIkRFUFRIIiwgIkVMSUciLCAiQUNUSVZFIiwgIkRSQVcifSBhbmQgbGFi
+          ZWw6CiAgICAgICAgICAgIHBoYXNlcy5zZXRkZWZhdWx0KGxhYmVsLCB7fSkudXBkYXRlKHIpCiAg
+          ICAgICAgZWxpZiBraW5kID09ICJTSEFERVIiOgogICAgICAgICAgICBzaGFkZXJzLmFwcGVuZChy
+          KQogICAgICAgIGVsaWYga2luZCA9PSAiU0hBREVSMiI6CiAgICAgICAgICAgIHNoYWRlcnMuYXBw
+          ZW5kKHIpCiAgICAgICAgZWxpZiBraW5kID09ICJGSU5BTCI6CiAgICAgICAgICAgIGZpbmFsID0g
+          cgoKICAgIG91dCA9IHsKICAgICAgICAiZmlsZSI6IHN0cihwKSwKICAgICAgICAidGVzdCI6IGZp
+          bmFsLmdldCgidGVzdCIpIGlmIGZpbmFsIGVsc2UgTm9uZSwKICAgICAgICAiZmluYWxfc3RhdHVz
+          IjogZmluYWwuZ2V0KCJzdGF0dXMiKSBpZiBmaW5hbCBlbHNlICJNSVNTSU5HX0ZJTkFMIiwKICAg
+          ICAgICAicGhhc2VzIjogcGhhc2VzLAogICAgICAgICJzaGFkZXJzIjogc2hhZGVycywKICAgIH0K
+          CiAgICBpZiBhcmdzLmpzb246CiAgICAgICAgcHJpbnQoanNvbi5kdW1wcyhvdXQsIGVuc3VyZV9h
+          c2NpaT1GYWxzZSwgaW5kZW50PTIsIHNvcnRfa2V5cz1UcnVlKSkKICAgICAgICByZXR1cm4KCiAg
+          ICBwcmludChmIkZTVC0xIHYxLjI6IHRlc3Q9e291dFsndGVzdCddfSBmaW5hbD17b3V0WydmaW5h
+          bF9zdGF0dXMnXX0iKQogICAgZm9yIGxhYmVsLCByIGluIHBoYXNlcy5pdGVtcygpOgogICAgICAg
+          IHByaW50KAogICAgICAgICAgICBmIntsYWJlbH06IHN0YXR1cz17ci5nZXQoJ3N0YXR1cycpfSBm
+          cHM9e3IuZ2V0KCdmcHMnKX0gIgogICAgICAgICAgICBmInNtb2tlX3JhbmdlPXtyLmdldCgnc3In
+          KX0gZmlyZV9yYW5nZT17ci5nZXQoJ2ZyJyl9ICIKICAgICAgICAgICAgZiJlbGlnaWJsZT17ci5n
+          ZXQoJ2VsaWdpYmxlJyl9IGFjdGl2ZT17ci5nZXQoJ2FjdGl2ZScpfSAiCiAgICAgICAgICAgIGYi
+          YWN0aXZlX3Ntb2tlPXtyLmdldCgnYWN0aXZlX3Ntb2tlJyl9IGFjdGl2ZV9maXJlPXtyLmdldCgn
+          YWN0aXZlX2ZpcmUnKX0gIgogICAgICAgICAgICBmImRlcHRoX2NvcGllcz17ci5nZXQoJ2NvcGll
+          cycpfSBibG9ja2VkPXtyLmdldCgnYmxvY2tlZCcpfSIKICAgICAgICApCgogICAgdGVjaG5pY2Fs
+          ID0gYWxsKAogICAgICAgIChyLmdldCgic3RhdHVzIiwgIiIpLnN0YXJ0c3dpdGgoIlBBU1MiKSBh
+          bmQgbnVtKHIuZ2V0KCJibG9ja2VkIikpID09IDApCiAgICAgICAgZm9yIHIgaW4gcGhhc2VzLnZh
+          bHVlcygpCiAgICApIGlmIHBoYXNlcyBlbHNlIEZhbHNlCiAgICBwcmludChmInRlY2huaWNhbF9h
+          bGxfcGhhc2VzX3Bhc3M9e3RlY2huaWNhbH0iKQogICAgcHJpbnQoInJhbmdlX3JlY29tbWVuZGF0
+          aW9uPVZJU1VBTF9KVURHRU1FTlRfUkVRVUlSRUQiKQoKCmlmIF9fbmFtZV9fID09ICJfX21haW5f
+          XyI6CiAgICBtYWluKCkK
+          FST12_ANALYZER_B64
+          base64 -d fst12-analyzer.b64 > analyze_fst1_2_result.py
+
+          [[ "$(sha256sum apply_rend2_fst_1_v1_2_fire_smoke_range_tuning_sp.py | awk '{print $1}')" = "$FST_PATCHER_SHA256" ]]
+          [[ "$(sha256sum FST_1_2_RANGE_TUNING_SETUP.cfg | awk '{print $1}')" = "$FST_SETUP_SHA256" ]]
+          [[ "$(sha256sum RUN_FST1_2_RANGE_TUNING.cmd | awk '{print $1}')" = "$FST_LAUNCHER_SHA256" ]]
+          [[ "$(sha256sum FST_1_2_RANGE_TUNING_README.txt | awk '{print $1}')" = "$FST_README_SHA256" ]]
+          [[ "$(sha256sum FST_1_2_TEST_MATRIX.txt | awk '{print $1}')" = "$FST_MATRIX_SHA256" ]]
+          [[ "$(sha256sum analyze_fst1_2_result.py | awk '{print $1}')" = "$FST_ANALYZER_SHA256" ]]
+          python3 -m py_compile apply_rend2_fst_1_v1_2_fire_smoke_range_tuning_sp.py analyze_fst1_2_result.py
+          grep -Fq 'bind F9 "fst12_smoke_test"' FST_1_2_RANGE_TUNING_SETUP.cfg
+          grep -Fq 'bind F10 "fst12_fire_test"' FST_1_2_RANGE_TUNING_SETUP.cfg
+          ! grep -Fq 'fs_homepath' RUN_FST1_2_RANGE_TUNING.cmd
+          grep -Fq 'SMOKE_R12' FST_1_2_TEST_MATRIX.txt
+          grep -Fq 'FIRE_R64' FST_1_2_TEST_MATRIX.txt
+
+      - name: Check apply and audit minimal FST-1 v1.2 range-tuning delta
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::FST-1 v1.2 source patch/audit failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          git -C source show "$FST12_BASE_COMMIT:SP/code/rend2/tr_shade.c" > base-tr_shade.c
+          python3 apply_rend2_fst_1_v1_2_fire_smoke_range_tuning_sp.py --root source --check-only
+          python3 apply_rend2_fst_1_v1_2_fire_smoke_range_tuning_sp.py --root source
+          git -C source diff --check
+
+          cat > expected-fst12-files.txt <<'EOF'
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          SP/code/rend2/tr_shade.c
+          EOF
+          git -C source diff --name-only "$FST12_BASE_COMMIT" | LC_ALL=C sort > actual-fst12-files.txt
+          diff -u expected-fst12-files.txt actual-fst12-files.txt
+
+          while IFS= read -r f; do
+            grep -Fq 'REND2_FST_1_V1_2_FIRE_SMOKE_RANGE_TUNING' "source/$f"
+          done < expected-fst12-files.txt
+
+          grep -Fq 'r_softParticleSmokeRange = ri.Cvar_Get( "r_softParticleSmokeRange", "24.0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_softParticleFireRange = ri.Cvar_Get( "r_softParticleFireRange", "24.0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'ri.Cmd_AddCommand( "fst12_smoke_test", R_FST12SmokeTest_f );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'ri.Cmd_AddCommand( "fst12_fire_test", R_FST12FireTest_f );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'range = r_softParticleSmokeRange ? Com_Clamp' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'range = r_softParticleFireRange ? Com_Clamp' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'screenshotJPEG FST1_2_SMOKE_R12' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'screenshotJPEG FST1_2_SMOKE_R48' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'screenshotJPEG FST1_2_FIRE_R24' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'screenshotJPEG FST1_2_FIRE_R64' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'condump FST1_2_SMOKE_RESULT.txt' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'condump FST1_2_FIRE_RESULT.txt' source/SP/code/rend2/tr_shade.c
+
+          python3 - <<'PY'
+          from pathlib import Path
+          def fn(text, sig, next_sig):
+              a = text.index(sig)
+              b = text.index(next_sig, a)
+              return text[a:b]
+          base = Path('base-tr_shade.c').read_text()
+          cur = Path('source/SP/code/rend2/tr_shade.c').read_text()
+          base_classifier = fn(base, 'static int R_FST1ShaderClassByName', 'static const char *R_FST1ShaderClassName')
+          cur_classifier = fn(cur, 'static int R_FST1ShaderClassByName', 'static const char *R_FST1ShaderClassName')
+          assert base_classifier == cur_classifier, 'v1.1 semantic classifier changed'
+          base_modes = fn(base, 'static int R_FST1StageSoftMode', 'static void R_FST1ApplyGenericStage')
+          cur_modes = fn(cur, 'static int R_FST1StageSoftMode', 'static void R_FST1ApplyGenericStage')
+          assert base_modes == cur_modes, 'v1.1 blend/mode policy changed'
+          assert 'r_softParticleSmokeRange' in cur
+          assert 'r_softParticleFireRange' in cur
+          assert 'SMOKE_R12' in cur and 'SMOKE_R48' in cur
+          assert 'FIRE_R24' in cur and 'FIRE_R64' in cur
+          print('FST-1 v1.2 policy audit PASS: classifier and blend policy frozen')
+          PY
+
+          [[ "$(sha256sum source/SP/code/rend2/glsl/generic_fp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_GENERIC_FP_SHA256" ]]
+          [[ "$(sha256sum source/SP/code/rend2/glsl/ssgi_fp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_FP_SHA256" ]]
+          [[ "$(sha256sum source/SP/code/rend2/glsl/ssgi_vp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_VP_SHA256" ]]
+          git -C source diff --quiet "$FST12_BASE_COMMIT" -- \
+            SP/code/rend2/tr_backend.c SP/code/rend2/tr_fbo.c SP/code/rend2/tr_glsl.c \
+            SP/code/rend2/tr_image.c SP/code/rend2/glsl/generic_fp.glsl \
+            SP/code/rend2/tr_main.c SP/code/rend2/tr_shader.c \
+            SP/code/rend2/glsl/ssgi_fp.glsl SP/code/rend2/glsl/ssgi_vp.glsl
+
+          repeat_rc=0
+          if python3 apply_rend2_fst_1_v1_2_fire_smoke_range_tuning_sp.py --root source --check-only > repeat-guard.log 2>&1; then
+            repeat_rc=0
+          else
+            repeat_rc=$?
+          fi
+          [[ "$repeat_rc" -eq 2 ]] || { echo "::error::Patcher repeat-apply guard did not reject patched source" >&2; cat repeat-guard.log >&2; exit 1; }
+          grep -Fq 'repeat-apply guard' repeat-guard.log
+
+      - name: Validate inherited FST shader remains frozen and GLSL-valid
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Inherited FST shader validation failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          [[ "$(sha256sum source/SP/code/rend2/glsl/generic_fp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_GENERIC_FP_SHA256" ]]
+          { printf '#version 120\n'; cat source/SP/code/rend2/glsl/generic_fp.glsl; } > fst12_generic_fp_validation.glsl
+          glslangValidator -S frag fst12_generic_fp_validation.glsl
+
+      - name: Create exact delta cumulative patch and clean replay
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::FST-1 v1.2 replay validation failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          mapfile -t FST_FILES < expected-fst12-files.txt
+          git -C source diff --binary "$FST12_BASE_COMMIT" -- "${FST_FILES[@]}" > "$FST_DELTA_NAME"
+          test -s "$FST_DELTA_NAME"
+          git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$FST_DELTA_NAME"
+
+          cp "$BASE_CUMULATIVE" "$FST_CUMULATIVE_NAME"
+          printf '\n' >> "$FST_CUMULATIVE_NAME"
+          cat "$FST_DELTA_NAME" >> "$FST_CUMULATIVE_NAME"
+
+          rm -rf replay
+          git -C source worktree add --detach "$GITHUB_WORKSPACE/replay" "$UPSTREAM_SHA"
+          git -C replay apply --check --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C replay apply --whitespace=nowarn "$BASE_CUMULATIVE"
+          git -C replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/$FST_DELTA_NAME"
+          git -C replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/$FST_DELTA_NAME"
+          git -C replay diff --check
+          for f in "${FST_FILES[@]}"; do
+            cmp "source/$f" "replay/$f"
+          done
+          git -C replay apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$FST_DELTA_NAME"
+
+          fst_delta_sha="$(sha256sum "$FST_DELTA_NAME" | awk '{print $1}')"
+          fst_cumulative_sha="$(sha256sum "$FST_CUMULATIVE_NAME" | awk '{print $1}')"
+          echo "FST_DELTA_SHA256=$fst_delta_sha" >> "$GITHUB_ENV"
+          echo "FST_CUMULATIVE_SHA256=$fst_cumulative_sha" >> "$GITHUB_ENV"
+          echo "FST-1 v1.2 replay PASS delta_sha=$fst_delta_sha cumulative_sha=$fst_cumulative_sha"
+
+      - name: Build full SP Windows x64 with MinGW
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::Full SP MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 \
+            BUILD_SERVER=0 \
+            BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 \
+            USE_RENDERER_DLOPEN=1
+
+      - name: Verify and package FST-1 v1.2 range-tuning runtime experiment
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::FST-1 v1.2 packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+          SP_OUT="source/SP/build/release-mingw32-x86_64"
+          MAIN_OUT="$SP_OUT/main"
+          test -d "$SP_OUT" || { echo "::error::Missing SP release output directory" >&2; exit 1; }
+          test -s "$SP_OUT/renderer_sp_rend2_x64.dll" || { echo "::error::Missing renderer_sp_rend2_x64.dll" >&2; exit 1; }
+          test -d "$MAIN_OUT" || { echo "::error::Missing build main directory" >&2; exit 1; }
+          test ! -d source/MP/build || { echo "::error::MP build directory exists; expected SP-only output" >&2; exit 1; }
+
+          mapfile -d '' ROOT_EXES < <(find "$SP_OUT" -maxdepth 1 -type f -iname '*.exe' -print0 | LC_ALL=C sort -z)
+          mapfile -d '' ROOT_DLLS < <(find "$SP_OUT" -maxdepth 1 -type f -iname '*.dll' -print0 | LC_ALL=C sort -z)
+          mapfile -d '' ROOT_RENDERERS < <(find "$SP_OUT" -maxdepth 1 -type f -iname 'renderer_sp_*.dll' -print0 | LC_ALL=C sort -z)
+          mapfile -d '' MAIN_FILES < <(find "$MAIN_OUT" -maxdepth 1 -type f -print0 | LC_ALL=C sort -z)
+          (( ${#ROOT_EXES[@]} >= 1 )) || { echo "::error::No client EXE produced" >&2; exit 1; }
+          (( ${#ROOT_DLLS[@]} >= 2 )) || { echo "::error::Incomplete root DLL set" >&2; exit 1; }
+          (( ${#ROOT_RENDERERS[@]} >= 2 )) || { echo "::error::Both renderer DLLs are required" >&2; exit 1; }
+          find "$MAIN_OUT" -maxdepth 1 -type f -iname '*cgame*.dll' -print -quit | grep -q .
+          find "$MAIN_OUT" -maxdepth 1 -type f -iname '*qagame*.dll' -print -quit | grep -q .
+          find "$MAIN_OUT" -maxdepth 1 -type f -iname '*ui*.dll' -print -quit | grep -q .
+
+          DIST="$GITHUB_WORKSPACE/dist"
+          STAGE="$DIST/$RELEASE_BASENAME"
+          rm -rf "$DIST"
+          mkdir -p "$STAGE/Main" "$STAGE/docs"
+          for f in "${ROOT_EXES[@]}"; do install -m 0755 "$f" "$STAGE/$(basename "$f")"; done
+          for f in "${ROOT_DLLS[@]}"; do install -m 0644 "$f" "$STAGE/$(basename "$f")"; done
+          for f in "${MAIN_FILES[@]}"; do install -m 0644 "$f" "$STAGE/Main/$(basename "$f")"; done
+
+          install -m 0644 "$BASE_PROFILE" "$STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+          install -m 0644 FST_1_2_RANGE_TUNING_SETUP.cfg "$STAGE/Main/FST_1_2_RANGE_TUNING_SETUP.cfg"
+          install -m 0644 RUN_FST1_2_RANGE_TUNING.cmd "$STAGE/RUN_FST1_2_RANGE_TUNING.cmd"
+          install -m 0644 FST_1_2_RANGE_TUNING_README.txt "$STAGE/README_FST_1_2_RANGE_TUNING.txt"
+          install -m 0644 FST_1_2_TEST_MATRIX.txt "$STAGE/docs/"
+          install -m 0644 apply_rend2_fst_1_v1_2_fire_smoke_range_tuning_sp.py "$STAGE/docs/"
+          install -m 0644 analyze_fst1_2_result.py "$STAGE/docs/"
+          install -m 0644 "$FST_DELTA_NAME" "$STAGE/docs/$FST_DELTA_NAME"
+          install -m 0644 "$FST_CUMULATIVE_NAME" "$STAGE/docs/$FST_CUMULATIVE_NAME"
+          install -m 0644 source/SP/code/rend2/glsl/generic_fp.glsl "$STAGE/docs/generic_fp_fst1_v1_2_frozen.glsl"
+          install -m 0644 source/SP/code/rend2/glsl/ssgi_fp.glsl "$STAGE/docs/ssgi_fp_frozen.glsl"
+          install -m 0644 source/SP/code/rend2/glsl/ssgi_vp.glsl "$STAGE/docs/ssgi_vp_frozen.glsl"
+
+          renderer_sha="$(sha256sum "$STAGE/renderer_sp_rend2_x64.dll" | awk '{print $1}')"
+          {
+            echo "release=DarkWolf ioRTCW Rend2 FST-1 v1.2 Fire Smoke Range Tuning"
+            echo "experiment_status=TEST_ONLY_RANGE_TUNING_NOT_PRODUCTION_PROMOTED"
+            echo "base_stage=CI_CONFIRMED_FST_1_V1_1_SEMANTIC"
+            echo "upstream_sha=$UPSTREAM_SHA"
+            echo "base_run_id=$BASE_RUN_ID"
+            echo "base_artifact_id=$BASE_ARTIFACT_ID"
+            echo "base_artifact_digest=$EXPECTED_BASE_ARTIFACT_DIGEST"
+            echo "base_zip_sha256=$BASE_ZIP_SHA256"
+            echo "base_cumulative_sha256=$EXPECTED_BASE_CUMULATIVE_SHA256"
+            echo "base_renderer_sha256=$EXPECTED_BASE_RENDERER_SHA256"
+            echo "fst12_patcher_sha256=$FST_PATCHER_SHA256"
+            echo "fst12_delta_sha256=$FST_DELTA_SHA256"
+            echo "fst12_cumulative_sha256=$FST_CUMULATIVE_SHA256"
+            echo "fst12_renderer_sha256=$renderer_sha"
+            echo "source_delta_files=3"
+            echo "semantic_classifier_changed=NO"
+            echo "blend_mode_policy_changed=NO"
+            echo "depth_copy_path_changed=NO"
+            echo "generic_fp_changed=NO"
+            echo "sun_mat_ref_gi_changed=NO"
+            echo "soft_particles_engine_default=0"
+            echo "soft_particle_smoke_range_default=24"
+            echo "soft_particle_fire_range_default=24"
+            echo "smoke_test_ranges=12,24,36,48"
+            echo "fire_test_ranges=24,36,48,64"
+            echo "smoke_autotest_entry=fst12_smoke_test"
+            echo "fire_autotest_entry=fst12_fire_test"
+            echo "smoke_autotest_key=F9"
+            echo "fire_autotest_key=F10"
+            echo "smoke_result=Main/FST1_2_SMOKE_RESULT.txt"
+            echo "fire_result=Main/FST1_2_FIRE_RESULT.txt"
+            echo "runtime_acceptance=REQUIRES_USER_LOG_AND_VISUAL_RANGE_SELECTION"
+          } > "$STAGE/docs/FST_1_V1_2_BUILD_INFO.txt"
+
+          {
+            echo "ROOT EXE"
+            printf '%s\n' "${ROOT_EXES[@]}" | sed "s#^$SP_OUT/##"
+            echo
+            echo "ROOT DLL"
+            printf '%s\n' "${ROOT_DLLS[@]}" | sed "s#^$SP_OUT/##"
+            echo
+            echo "MAIN RUNTIME"
+            printf '%s\n' "${MAIN_FILES[@]}" | sed "s#^$MAIN_OUT/#Main/#"
+            echo "Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+            echo "Main/FST_1_2_RANGE_TUNING_SETUP.cfg"
+            echo "RUN_FST1_2_RANGE_TUNING.cmd"
+          } > "$STAGE/docs/RUNTIME_FILE_MANIFEST.txt"
+
+          find "$STAGE" -type f -iname 'pak*.pk3' -print -quit | grep -q . && { echo "::error::Commercial pak*.pk3 must not be packaged" >&2; exit 1; } || true
+          find "$STAGE" -type f \( -iname '*.bsp' -o -iname '*.shader' -o -iname '*.pk3' \) -print -quit | grep -q . && { echo "::error::Original RTCW BSP/shader/PK3 assets must not be packaged" >&2; exit 1; } || true
+          test -s "$STAGE/renderer_sp_rend2_x64.dll"
+          test -s "$STAGE/Main/FST_1_2_RANGE_TUNING_SETUP.cfg"
+          test -s "$STAGE/RUN_FST1_2_RANGE_TUNING.cmd"
+          test -s "$STAGE/docs/FST_1_V1_2_BUILD_INFO.txt"
+
+          (
+            cd "$STAGE"
+            find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          )
+          (
+            cd "$DIST"
+            find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"
+          )
+          sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+          unzip -t "$DIST/$RELEASE_BASENAME.zip"
+          echo "Packaged FST-1 v1.2 range tuning renderer_sha=$renderer_sha"
+
+      - name: Upload FST-1 v1.2 range-tuning automated test artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "${{ env.RELEASE_BASENAME }}"
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
