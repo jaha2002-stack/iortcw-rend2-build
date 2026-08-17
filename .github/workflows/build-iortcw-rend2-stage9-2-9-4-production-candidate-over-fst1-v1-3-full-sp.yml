@@ -1,0 +1,720 @@
+name: Build DarkWolf Rend2 Stage 9.2-9.4 Production Candidate over CI FST-1 v1.3 Full SP
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: darkwolf-stage9-2-9-4-production-candidate-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+jobs:
+  build-windows-x64:
+    name: Stage 9.2-9.4 Production Candidate Full SP
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      BASE_RUN_ID: '31943184284'
+      BASE_ARTIFACT_ID: '9262583988'
+      BASE_ARTIFACT_NAME: iortcw-rend2-fst-1-v1-3-production-candidate-full-sp-windows-x64-1
+      EXPECTED_BASE_RUN_HEAD_SHA: 898b3b9b687ce68b70697d6bf0a83647bba9bff0
+      EXPECTED_BASE_ARTIFACT_DIGEST: sha256:4c18bdceb0b496faa846d2c6d9d8df20b54207dadcebadceb77bd16adc18fdb3
+      BASE_RELEASE_BASENAME: iortcw-rend2-fst-1-v1-3-production-candidate-full-sp-windows-x64-1
+      BASE_CUMULATIVE_NAME: rend2-cumulative-preproduction-v1-7-plus-fst-1-v1-3-production-candidate-sp.patch
+      BASE_BUILD_INFO_NAME: FST_1_V1_3_BUILD_INFO.txt
+      EXPECTED_BASE_ZIP_SHA256: d02cf1e5b0a507d1abc3847df6181025c03af159ca692507945dcb9c3a8251d6
+      EXPECTED_BASE_CUMULATIVE_SHA256: 4c15c3c671091ad97fa72229918fb64a3a01af3780b2a52e067846c9a1a35f83
+      EXPECTED_BASE_RENDERER_SHA256: cdd83aa58754406e20ab5243318f45e656b21cc3942a16982fc8688dbf59f7e2
+      EXPECTED_BASE_PROFILE_SHA256: ebdcecc6f94f3a96d6bd82fbac54dc6c596043cd026ab8b61b6cc5497c838081
+      EXPECTED_BASE_GENERIC_FP_SHA256: 4c5b6130ccef690c66b1d5d414c85e45f7334c69d8889c83b4af8bcb7fc99c4b
+      EXPECTED_BASE_SSGI_FP_SHA256: a7466db1cc81b6fdf64b20acad046bb340e5d97ba0c9c0f9560c248312f9bc37
+      EXPECTED_BASE_SSGI_VP_SHA256: d8c315e04cff47410058f014a8daaddd0ae51c3e85de5ada688c7c0c3c381181
+      S9PC_PATCHER_SHA256: 6b8eb6da682688096a158826b366260e6e276ded3db878e7f745ee60d5bb5392
+      S9PC_PROFILE_SHA256: e1d13ed5ecc576ff4d1b290dc5c642416da0f79090cdbe5b48909b498917b6e0
+      S9PC_LAUNCHER_SHA256: 93f965810c9e9d87e41b2aec9ec8ad728cd2f12de0fe9369c34e89a4438baece
+      S9PC_README_SHA256: d05bff37df16fbf47160045bd89d04260d27a5a4a7a094c04e5748696bf3761f
+      S9PC_DECISIONS_SHA256: b578863791b57a16f2fddd0826db1e20bd4e4371604ad58060a940615d5dcebf
+      S9PC_DELTA_NAME: rend2-stage9-2-9-4-production-candidate-over-fst1-v1-3-sp.patch
+      S9PC_CUMULATIVE_NAME: rend2-cumulative-preproduction-v1-7-plus-fst1-v1-3-plus-stage9-2-9-4-production-candidate-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-stage9-2-9-4-production-candidate-full-sp-windows-x64-1
+    steps:
+    - name: Install exact full-SP cross-build and validation prerequisites
+      run: |
+        set -Eeuo pipefail
+        trap 'rc=$?; echo "::error::Prerequisite step failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends   binutils-mingw-w64-x86-64 build-essential ca-certificates   g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git glslang-tools   libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64   python3 python3-yaml unzip zip
+        x86_64-w64-mingw32-gcc --version
+        git --version
+        gh --version
+        python3 --version
+        glslangValidator --version
+    - name: Recover exact CI-confirmed FST-1 v1.3 Production Candidate checkpoint
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        set -Eeuo pipefail
+        trap 'rc=$?; echo "::error::FST-1 v1.3 artifact recovery failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+        rm -rf base-artifact base-release
+        mkdir -p base-artifact base-release
+        run_conclusion="$(gh api "repos/$GH_REPO/actions/runs/$BASE_RUN_ID" --jq '.conclusion')"
+        run_head_sha="$(gh api "repos/$GH_REPO/actions/runs/$BASE_RUN_ID" --jq '.head_sha')"
+        [[ "$run_conclusion" = "success" ]]
+        [[ "$run_head_sha" = "$EXPECTED_BASE_RUN_HEAD_SHA" ]]
+        artifact_name="$(gh api "repos/$GH_REPO/actions/artifacts/$BASE_ARTIFACT_ID" --jq '.name')"
+        artifact_run_id="$(gh api "repos/$GH_REPO/actions/artifacts/$BASE_ARTIFACT_ID" --jq '.workflow_run.id')"
+        artifact_expired="$(gh api "repos/$GH_REPO/actions/artifacts/$BASE_ARTIFACT_ID" --jq '.expired')"
+        artifact_digest="$(gh api "repos/$GH_REPO/actions/artifacts/$BASE_ARTIFACT_ID" --jq '.digest // ""')"
+        [[ "$artifact_name" = "$BASE_ARTIFACT_NAME" ]]
+        [[ "$artifact_run_id" = "$BASE_RUN_ID" ]]
+        [[ "$artifact_expired" = "false" ]]
+        [[ "$artifact_digest" = "$EXPECTED_BASE_ARTIFACT_DIGEST" ]]
+        gh run download "$BASE_RUN_ID" --repo "$GH_REPO" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+        base_zip="$(find base-artifact -maxdepth 2 -type f -name "$BASE_RELEASE_BASENAME.zip" -print -quit)"
+        base_zip_sha="$(find base-artifact -maxdepth 2 -type f -name "$BASE_RELEASE_BASENAME.zip.sha256" -print -quit)"
+        [[ -n "$base_zip" && -s "$base_zip" && -n "$base_zip_sha" && -s "$base_zip_sha" ]]
+        sidecar_sha="$(awk 'NF {print $1; exit}' "$base_zip_sha")"
+        actual_sha="$(sha256sum "$base_zip" | awk '{print $1}')"
+        [[ "$sidecar_sha" = "$actual_sha" ]]
+        [[ "$actual_sha" = "$EXPECTED_BASE_ZIP_SHA256" ]]
+        unzip -q "$base_zip" -d base-release
+        BASE_STAGE="$GITHUB_WORKSPACE/base-release/$BASE_RELEASE_BASENAME"
+        BASE_CUMULATIVE="$BASE_STAGE/docs/$BASE_CUMULATIVE_NAME"
+        BASE_BUILD_INFO="$BASE_STAGE/docs/$BASE_BUILD_INFO_NAME"
+        BASE_PROFILE="$BASE_STAGE/Main/DARKWOLF_FST_1_3_PRODUCTION_CANDIDATE.cfg"
+        BASE_FINAL_PROFILE="$BASE_STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+        [[ -d "$BASE_STAGE" && -s "$BASE_STAGE/renderer_sp_rend2_x64.dll" ]]
+        [[ -s "$BASE_CUMULATIVE" && -s "$BASE_BUILD_INFO" && -s "$BASE_PROFILE" && -s "$BASE_FINAL_PROFILE" ]]
+        [[ "$(sha256sum "$BASE_CUMULATIVE" | awk '{print $1}')" = "$EXPECTED_BASE_CUMULATIVE_SHA256" ]]
+        [[ "$(sha256sum "$BASE_STAGE/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$EXPECTED_BASE_RENDERER_SHA256" ]]
+        [[ "$(sha256sum "$BASE_PROFILE" | awk '{print $1}')" = "$EXPECTED_BASE_PROFILE_SHA256" ]]
+        [[ "$(sha256sum "$BASE_STAGE/docs/generic_fp_fst1_v1_3_frozen.glsl" | awk '{print $1}')" = "$EXPECTED_BASE_GENERIC_FP_SHA256" ]]
+        [[ "$(sha256sum "$BASE_STAGE/docs/ssgi_fp_frozen.glsl" | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_FP_SHA256" ]]
+        [[ "$(sha256sum "$BASE_STAGE/docs/ssgi_vp_frozen.glsl" | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_VP_SHA256" ]]
+        grep -Fq 'release=DarkWolf ioRTCW Rend2 FST-1 v1.3 Production Candidate' "$BASE_BUILD_INFO"
+        grep -Fq 'fst13_cumulative_sha256=4c15c3c671091ad97fa72229918fb64a3a01af3780b2a52e067846c9a1a35f83' "$BASE_BUILD_INFO"
+        grep -Fq 'smoke_range=36' "$BASE_BUILD_INFO"; grep -Fq 'large_fire_range=48' "$BASE_BUILD_INFO"; grep -Fq 'small_fire_range=24' "$BASE_BUILD_INFO"; grep -Fq 'flamethrower_range=24' "$BASE_BUILD_INFO"
+        echo "BASE_STAGE=$BASE_STAGE" >> "$GITHUB_ENV"; echo "BASE_CUMULATIVE=$BASE_CUMULATIVE" >> "$GITHUB_ENV"; echo "BASE_BUILD_INFO=$BASE_BUILD_INFO" >> "$GITHUB_ENV"; echo "BASE_PROFILE=$BASE_PROFILE" >> "$GITHUB_ENV"; echo "BASE_FINAL_PROFILE=$BASE_FINAL_PROFILE" >> "$GITHUB_ENV"; echo "BASE_ZIP_SHA256=$actual_sha" >> "$GITHUB_ENV"
+    - name: Reconstruct and freeze exact CI FST-1 v1.3 source for Stage 9 Production Candidate
+      run: |
+        set -Eeuo pipefail
+        trap 'rc=$?; echo "::error::FST-1 v1.3 source reconstruction failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+        rm -rf source
+        git clone --no-checkout --filter=blob:none "$UPSTREAM_REPO" source
+        git -C source checkout --detach "$UPSTREAM_SHA"
+        git -C source config user.email "darkwolf-stage9-production@local.invalid"
+        git -C source config user.name "DarkWolf Stage9 Production Builder"
+        [[ "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA" ]]
+        git -C source apply --check --whitespace=nowarn "$BASE_CUMULATIVE"
+        git -C source apply --whitespace=nowarn "$BASE_CUMULATIVE"
+        git -C source diff --check
+        git -C source apply --check --reverse --whitespace=nowarn "$BASE_CUMULATIVE"
+        for f in SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h SP/code/rend2/tr_shade.c; do grep -Fq 'REND2_FST_1_V1_3_PRODUCTION_CANDIDATE' "source/$f"; done
+        grep -Fq 'r_softParticleSmokeRange = ri.Cvar_Get( "r_softParticleSmokeRange", "36.0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+        grep -Fq 'r_softParticleFireRange = ri.Cvar_Get( "r_softParticleFireRange", "48.0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+        grep -Fq 'r_softParticleSmallFireRange = ri.Cvar_Get( "r_softParticleSmallFireRange", "24.0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+        grep -Fq 'r_softParticleFlamethrowerPath = ri.Cvar_Get( "r_softParticleFlamethrowerPath", "1", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+        [[ "$(sha256sum source/SP/code/rend2/glsl/generic_fp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_GENERIC_FP_SHA256" ]]
+        [[ "$(sha256sum source/SP/code/rend2/glsl/ssgi_fp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_FP_SHA256" ]]
+        [[ "$(sha256sum source/SP/code/rend2/glsl/ssgi_vp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_VP_SHA256" ]]
+        git -C source add -A
+        git -C source commit -q -m 'Freeze exact CI-confirmed FST-1 v1.3 source for Stage 9 Production Candidate'
+        S9PC_BASE_COMMIT="$(git -C source rev-parse HEAD)"
+        echo "S9PC_BASE_COMMIT=$S9PC_BASE_COMMIT" >> "$GITHUB_ENV"
+        [[ -z "$(git -C source status --porcelain)" ]]
+    - name: Materialize and verify embedded Stage 9 Production Candidate BuildKit
+      run: |
+        set -Eeuo pipefail
+        trap 'rc=$?; echo "::error::Stage 9 Production Candidate BuildKit materialization failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+
+        cat > s9pc_patcher.b64 <<'S9PC_PATCHER_B64'
+        IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwppbXBvcnQgYXJncGFyc2UKaW1wb3J0IHBhdGhsaWIKaW1w
+        b3J0IHN5cwoKTUFSS0VSID0gIlJFTkQyX1NUQUdFOV8yXzlfNF9QUk9EVUNUSU9OX0NBTkRJREFU
+        RSIKQkFTRV9NQVJLRVIgPSAiUkVORDJfRlNUXzFfVjFfM19QUk9EVUNUSU9OX0NBTkRJREFURSIK
+        RklMRVMgPSB7CiAgICAiaW5pdCI6IHBhdGhsaWIuUGF0aCgiU1AvY29kZS9yZW5kMi90cl9pbml0
+        LmMiKSwKICAgICJsb2NhbCI6IHBhdGhsaWIuUGF0aCgiU1AvY29kZS9yZW5kMi90cl9sb2NhbC5o
+        IiksCiAgICAic2hhZGUiOiBwYXRobGliLlBhdGgoIlNQL2NvZGUvcmVuZDIvdHJfc2hhZGUuYyIp
+        LAp9CgpjbGFzcyBQYXRjaEVycm9yKFJ1bnRpbWVFcnJvcik6CiAgICBwYXNzCgoKZGVmIHJlYWRf
+        dGV4dChwYXRoKToKICAgIGlmIG5vdCBwYXRoLmlzX2ZpbGUoKToKICAgICAgICByYWlzZSBQYXRj
+        aEVycm9yKGYibWlzc2luZyByZXF1aXJlZCBmaWxlOiB7cGF0aH0iKQogICAgZGF0YSA9IHBhdGgu
+        cmVhZF9ieXRlcygpCiAgICBpZiBiIlxyXG4iIGluIGRhdGE6CiAgICAgICAgcmFpc2UgUGF0Y2hF
+        cnJvcihmIkNSTEYgc291cmNlIGlzIG5vdCBhY2NlcHRlZCBmb3IgZGV0ZXJtaW5pc3RpYyBwYXRj
+        aGluZzoge3BhdGh9IikKICAgIHJldHVybiBkYXRhLmRlY29kZSgidXRmLTgiKQoKCmRlZiB3cml0
+        ZV90ZXh0KHBhdGgsIHRleHQpOgogICAgcGF0aC53cml0ZV9ieXRlcyh0ZXh0LmVuY29kZSgidXRm
+        LTgiKSkKCgpkZWYgbXVzdF9jb250YWluKHRleHQsIG5lZWRsZSwgbGFiZWwpOgogICAgaWYgbmVl
+        ZGxlIG5vdCBpbiB0ZXh0OgogICAgICAgIHJhaXNlIFBhdGNoRXJyb3IoZiJtaXNzaW5nIGFuY2hv
+        ci9jb250cmFjdCB7bGFiZWx9OiB7bmVlZGxlIXJ9IikKCgpkZWYgbXVzdF9ub3RfY29udGFpbih0
+        ZXh0LCBuZWVkbGUsIGxhYmVsKToKICAgIGlmIG5lZWRsZSBpbiB0ZXh0OgogICAgICAgIHJhaXNl
+        IFBhdGNoRXJyb3IoZiJmb3JiaWRkZW4vcmVwZWF0IGNvbnRyYWN0IHtsYWJlbH06IHtuZWVkbGUh
+        cn0iKQoKCmRlZiByZXBsYWNlX29uY2UodGV4dCwgb2xkLCBuZXcsIGxhYmVsKToKICAgIGNvdW50
+        ID0gdGV4dC5jb3VudChvbGQpCiAgICBpZiBjb3VudCAhPSAxOgogICAgICAgIHJhaXNlIFBhdGNo
+        RXJyb3IoZiJ7bGFiZWx9OiBleHBlY3RlZCBleGFjdGx5IG9uZSBhbmNob3IsIGZvdW5kIHtjb3Vu
+        dH06IHtvbGQhcn0iKQogICAgcmV0dXJuIHRleHQucmVwbGFjZShvbGQsIG5ldywgMSkKCgpkZWYg
+        ZnVuY3Rpb25fc2xpY2UodGV4dCwgc2lnbmF0dXJlLCBsYWJlbCk6CiAgICBwb3MgPSB0ZXh0LmZp
+        bmQoc2lnbmF0dXJlKQogICAgaWYgcG9zIDwgMDoKICAgICAgICByYWlzZSBQYXRjaEVycm9yKGYi
+        e2xhYmVsfTogZnVuY3Rpb24gc2lnbmF0dXJlIG5vdCBmb3VuZDoge3NpZ25hdHVyZX0iKQogICAg
+        aWYgdGV4dC5maW5kKHNpZ25hdHVyZSwgcG9zICsgMSkgPj0gMDoKICAgICAgICByYWlzZSBQYXRj
+        aEVycm9yKGYie2xhYmVsfTogZnVuY3Rpb24gc2lnbmF0dXJlIGlzIG5vdCB1bmlxdWU6IHtzaWdu
+        YXR1cmV9IikKICAgIGJyYWNlID0gdGV4dC5maW5kKCJ7IiwgcG9zICsgbGVuKHNpZ25hdHVyZSkp
+        CiAgICBpZiBicmFjZSA8IDA6CiAgICAgICAgcmFpc2UgUGF0Y2hFcnJvcihmIntsYWJlbH06IG9w
+        ZW5pbmcgYnJhY2Ugbm90IGZvdW5kIikKICAgIGRlcHRoID0gMAogICAgaW5fc3RyID0gaW5fY2hy
+        ID0gaW5fbGluZSA9IGluX2Jsb2NrID0gZXNjID0gRmFsc2UKICAgIGkgPSBicmFjZQogICAgd2hp
+        bGUgaSA8IGxlbih0ZXh0KToKICAgICAgICBjID0gdGV4dFtpXQogICAgICAgIG4gPSB0ZXh0W2kg
+        KyAxXSBpZiBpICsgMSA8IGxlbih0ZXh0KSBlbHNlICIiCiAgICAgICAgaWYgaW5fbGluZToKICAg
+        ICAgICAgICAgaWYgYyA9PSAiXG4iOgogICAgICAgICAgICAgICAgaW5fbGluZSA9IEZhbHNlCiAg
+        ICAgICAgICAgIGkgKz0gMQogICAgICAgICAgICBjb250aW51ZQogICAgICAgIGlmIGluX2Jsb2Nr
+        OgogICAgICAgICAgICBpZiBjID09ICIqIiBhbmQgbiA9PSAiLyI6CiAgICAgICAgICAgICAgICBp
+        bl9ibG9jayA9IEZhbHNlCiAgICAgICAgICAgICAgICBpICs9IDIKICAgICAgICAgICAgZWxzZToK
+        ICAgICAgICAgICAgICAgIGkgKz0gMQogICAgICAgICAgICBjb250aW51ZQogICAgICAgIGlmIGlu
+        X3N0cjoKICAgICAgICAgICAgaWYgZXNjOgogICAgICAgICAgICAgICAgZXNjID0gRmFsc2UKICAg
+        ICAgICAgICAgZWxpZiBjID09ICJcXCI6CiAgICAgICAgICAgICAgICBlc2MgPSBUcnVlCiAgICAg
+        ICAgICAgIGVsaWYgYyA9PSAnIic6CiAgICAgICAgICAgICAgICBpbl9zdHIgPSBGYWxzZQogICAg
+        ICAgICAgICBpICs9IDEKICAgICAgICAgICAgY29udGludWUKICAgICAgICBpZiBpbl9jaHI6CiAg
+        ICAgICAgICAgIGlmIGVzYzoKICAgICAgICAgICAgICAgIGVzYyA9IEZhbHNlCiAgICAgICAgICAg
+        IGVsaWYgYyA9PSAiXFwiOgogICAgICAgICAgICAgICAgZXNjID0gVHJ1ZQogICAgICAgICAgICBl
+        bGlmIGMgPT0gIiciOgogICAgICAgICAgICAgICAgaW5fY2hyID0gRmFsc2UKICAgICAgICAgICAg
+        aSArPSAxCiAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgaWYgYyA9PSAiLyIgYW5kIG4gPT0g
+        Ii8iOgogICAgICAgICAgICBpbl9saW5lID0gVHJ1ZQogICAgICAgICAgICBpICs9IDIKICAgICAg
+        ICAgICAgY29udGludWUKICAgICAgICBpZiBjID09ICIvIiBhbmQgbiA9PSAiKiI6CiAgICAgICAg
+        ICAgIGluX2Jsb2NrID0gVHJ1ZQogICAgICAgICAgICBpICs9IDIKICAgICAgICAgICAgY29udGlu
+        dWUKICAgICAgICBpZiBjID09ICciJzoKICAgICAgICAgICAgaW5fc3RyID0gVHJ1ZQogICAgICAg
+        ICAgICBpICs9IDEKICAgICAgICAgICAgY29udGludWUKICAgICAgICBpZiBjID09ICInIjoKICAg
+        ICAgICAgICAgaW5fY2hyID0gVHJ1ZQogICAgICAgICAgICBpICs9IDEKICAgICAgICAgICAgY29u
+        dGludWUKICAgICAgICBpZiBjID09ICJ7IjoKICAgICAgICAgICAgZGVwdGggKz0gMQogICAgICAg
+        IGVsaWYgYyA9PSAifSI6CiAgICAgICAgICAgIGRlcHRoIC09IDEKICAgICAgICAgICAgaWYgZGVw
+        dGggPT0gMDoKICAgICAgICAgICAgICAgIHJldHVybiBwb3MsIGkgKyAxCiAgICAgICAgaSArPSAx
+        CiAgICByYWlzZSBQYXRjaEVycm9yKGYie2xhYmVsfTogdW50ZXJtaW5hdGVkIGZ1bmN0aW9uIikK
+        CgpkZWYgcmVwbGFjZV9pbl9mdW5jdGlvbih0ZXh0LCBzaWduYXR1cmUsIG9sZCwgbmV3LCBsYWJl
+        bCk6CiAgICBzdGFydCwgZW5kID0gZnVuY3Rpb25fc2xpY2UodGV4dCwgc2lnbmF0dXJlLCBsYWJl
+        bCkKICAgIGJvZHkgPSB0ZXh0W3N0YXJ0OmVuZF0KICAgIGNvdW50ID0gYm9keS5jb3VudChvbGQp
+        CiAgICBpZiBjb3VudCAhPSAxOgogICAgICAgIHJhaXNlIFBhdGNoRXJyb3IoZiJ7bGFiZWx9OiBl
+        eHBlY3RlZCBvbmUgaW4tZnVuY3Rpb24gYW5jaG9yLCBmb3VuZCB7Y291bnR9OiB7b2xkIXJ9IikK
+        ICAgIGJvZHkgPSBib2R5LnJlcGxhY2Uob2xkLCBuZXcsIDEpCiAgICByZXR1cm4gdGV4dFs6c3Rh
+        cnRdICsgYm9keSArIHRleHRbZW5kOl0KCgpQUk9EX0hFTFBFUlMgPSByJycnLy8gUkVORDJfU1RB
+        R0U5XzJfOV80X1BST0RVQ1RJT05fQ0FORElEQVRFCi8vIFN0YWdlIDkuMi05LjQgcHJvZHVjdGlv
+        biByZXNwb25zZSBwb2xpY3ksIGRpc3RpbGxlZCBmcm9tIHRocmVlIHJ1bnRpbWUgQS9CIHBhc3Nl
+        cy4KLy8gTWFzdGVyIGRlZmF1bHRzIE9GRiBmb3Igcm9sbGJhY2svYmFjay1jb21wYXQ7IHRoZSBE
+        YXJrV29sZiBwcm9kdWN0aW9uIHByb2ZpbGUgZW5hYmxlcyBpdC4KLy8gTmF0aXZlIGZvZywgaGF6
+        ZSwgd2F0ZXIsIHN0YW5kYXJkIGdsYXNzLCB0cmFtIGdsYXNzIGFuZCB1bmNvbmZpcm1lZCBGSVJF
+        IGZhbWlsaWVzIGFyZSB1bnRvdWNoZWQuCnN0YXRpYyBxYm9vbGVhbiBSX0ZYOVByb2RJc0xhcmdl
+        RmlyZU5hbWUoY29uc3QgY2hhciAqbmFtZSkKewoJcmV0dXJuIChuYW1lICYmIFJfRlNUMU5hbWVQ
+        cmVmaXgobmFtZSwgInRleHR1cmVzL3NmeC94ZmxhbWUyIikpID8gcXRydWUgOiBxZmFsc2U7Cn0K
+        CnN0YXRpYyBxYm9vbGVhbiBSX0ZYOVByb2RJc1NtYWxsRmlyZU5hbWUoY29uc3QgY2hhciAqbmFt
+        ZSkKewoJcmV0dXJuIChuYW1lICYmIFJfRlNUMU5hbWVQcmVmaXgobmFtZSwgInRleHR1cmVzL3Nm
+        eC9jX2ZsYW1lXyIpKSA/IHF0cnVlIDogcWZhbHNlOwp9CgpzdGF0aWMgcWJvb2xlYW4gUl9GWDlQ
+        cm9kSXNCbGFja1Ntb2tlTmFtZShjb25zdCBjaGFyICpuYW1lKQp7CglpZiAoIW5hbWUpIHJldHVy
+        biBxZmFsc2U7CglpZiAoUl9GU1QxTmFtZVByZWZpeChuYW1lLCAic21va2VQdWZmYmxhY2siKSkg
+        cmV0dXJuIHF0cnVlOwoJaWYgKFJfRlNUMU5hbWVQcmVmaXgobmFtZSwgImJsYWNrc21va2Vhbmlt
+        IikpIHJldHVybiBxdHJ1ZTsKCXJldHVybiBxZmFsc2U7Cn0KCnN0YXRpYyBxYm9vbGVhbiBSX0ZY
+        OVByb2RJc0Nsb25lRG9vck5hbWUoY29uc3QgY2hhciAqbmFtZSkKewoJcmV0dXJuIChuYW1lICYm
+        ICFRX3N0cmljbXAobmFtZSwgIm1vZGVscy9tYXBvYmplY3RzL2Nsb25ldHViZS9jbF9kb29yMSIp
+        KSA/IHF0cnVlIDogcWZhbHNlOwp9CgpzdGF0aWMgdm9pZCBSX0ZYOVByb2RTY2FsZVJHQih2ZWM0
+        X3QgYmFzZUNvbG9yLCB2ZWM0X3QgdmVydENvbG9yLCBmbG9hdCBzY2FsZSkKewoJYmFzZUNvbG9y
+        WzBdICo9IHNjYWxlOyBiYXNlQ29sb3JbMV0gKj0gc2NhbGU7IGJhc2VDb2xvclsyXSAqPSBzY2Fs
+        ZTsKCXZlcnRDb2xvclswXSAqPSBzY2FsZTsgdmVydENvbG9yWzFdICo9IHNjYWxlOyB2ZXJ0Q29s
+        b3JbMl0gKj0gc2NhbGU7Cn0KCnN0YXRpYyB2b2lkIFJfRlg5UHJvZFNjYWxlQWxwaGEodmVjNF90
+        IGJhc2VDb2xvciwgdmVjNF90IHZlcnRDb2xvciwgZmxvYXQgc2NhbGUpCnsKCWJhc2VDb2xvclsz
+        XSAqPSBzY2FsZTsKCXZlcnRDb2xvclszXSAqPSBzY2FsZTsKfQoKc3RhdGljIHZvaWQgUl9GWDlQ
+        cm9kQXBwbHlSZXNwb25zZShzaGFkZXJTdGFnZV90ICpwU3RhZ2UsIHZlYzRfdCBiYXNlQ29sb3Is
+        IHZlYzRfdCB2ZXJ0Q29sb3IpCnsKCWNvbnN0IGNoYXIgKm5hbWU7CglpbnQgc2hhZGVyQ2xhc3M7
+        Cgl1bnNpZ25lZCBpbnQgc3JjLCBkc3Q7CglmbG9hdCBzY2FsZTsKCglpZiAoIXJfZnhTdGFnZTlF
+        bmFibGUgfHwgIXJfZnhTdGFnZTlFbmFibGUtPmludGVnZXIgfHwgIXBTdGFnZSB8fCAhdGVzcy5z
+        aGFkZXIpCgkJcmV0dXJuOwoKCW5hbWUgPSB0ZXNzLnNoYWRlci0+bmFtZTsKCXNoYWRlckNsYXNz
+        ID0gUl9GU1QxU2hhZGVyQ2xhc3NCeU5hbWUobmFtZSk7CglzcmMgPSBwU3RhZ2UtPnN0YXRlQml0
+        cyAmIEdMU19TUkNCTEVORF9CSVRTOwoJZHN0ID0gcFN0YWdlLT5zdGF0ZUJpdHMgJiBHTFNfRFNU
+        QkxFTkRfQklUUzsKCglpZiAoUl9GWDlQcm9kSXNMYXJnZUZpcmVOYW1lKG5hbWUpKQoJewoJCXNj
+        YWxlID0gcl9meExhcmdlRmlyZVJlc3BvbnNlID8gQ29tX0NsYW1wKDEuMGYsIDEuNGYsIHJfZnhM
+        YXJnZUZpcmVSZXNwb25zZS0+dmFsdWUpIDogMS4zMGY7CgkJaWYgKHNjYWxlICE9IDEuMGYpCgkJ
+        CVJfRlg5UHJvZFNjYWxlUkdCKGJhc2VDb2xvciwgdmVydENvbG9yLCBzY2FsZSk7CgkJcmV0dXJu
+        OwoJfQoKCWlmIChSX0ZYOVByb2RJc1NtYWxsRmlyZU5hbWUobmFtZSkpCgl7CgkJc2NhbGUgPSBy
+        X2Z4U21hbGxGaXJlUmVzcG9uc2UgPyBDb21fQ2xhbXAoMS4wZiwgMS4zZiwgcl9meFNtYWxsRmly
+        ZVJlc3BvbnNlLT52YWx1ZSkgOiAxLjE1ZjsKCQlpZiAoc2NhbGUgIT0gMS4wZikKCQkJUl9GWDlQ
+        cm9kU2NhbGVSR0IoYmFzZUNvbG9yLCB2ZXJ0Q29sb3IsIHNjYWxlKTsKCQlyZXR1cm47Cgl9CgoJ
+        aWYgKHNoYWRlckNsYXNzID09IEZTVDFfQ0xBU1NfU01PS0UpCgl7CgkJaWYgKFJfRlg5UHJvZElz
+        QmxhY2tTbW9rZU5hbWUobmFtZSkpCgkJCXNjYWxlID0gcl9meEJsYWNrU21va2VBbHBoYVNjYWxl
+        ID8gQ29tX0NsYW1wKDAuNzVmLCAxLjBmLCByX2Z4QmxhY2tTbW9rZUFscGhhU2NhbGUtPnZhbHVl
+        KSA6IDAuOTBmOwoJCWVsc2UKCQkJc2NhbGUgPSByX2Z4TGlnaHRTbW9rZUFscGhhU2NhbGUgPyBD
+        b21fQ2xhbXAoMC43NWYsIDEuMGYsIHJfZnhMaWdodFNtb2tlQWxwaGFTY2FsZS0+dmFsdWUpIDog
+        MC45MGY7CgkJaWYgKHNjYWxlICE9IDEuMGYpCgkJCVJfRlg5UHJvZFNjYWxlQWxwaGEoYmFzZUNv
+        bG9yLCB2ZXJ0Q29sb3IsIHNjYWxlKTsKCQlyZXR1cm47Cgl9CgoJaWYgKFJfRlg5UHJvZElzQ2xv
+        bmVEb29yTmFtZShuYW1lKSAmJiBzcmMgPT0gR0xTX1NSQ0JMRU5EX09ORSAmJiBkc3QgPT0gR0xT
+        X0RTVEJMRU5EX09ORSkKCXsKCQlzY2FsZSA9IHJfZnhDbG9uZUFkZFNjYWxlID8gQ29tX0NsYW1w
+        KDAuNzBmLCAxLjBmLCByX2Z4Q2xvbmVBZGRTY2FsZS0+dmFsdWUpIDogMC44NWY7CgkJaWYgKHNj
+        YWxlICE9IDEuMGYpCgkJCVJfRlg5UHJvZFNjYWxlUkdCKGJhc2VDb2xvciwgdmVydENvbG9yLCBz
+        Y2FsZSk7Cgl9Cn0KJycnCgoKZGVmIHZhbGlkYXRlX2Jhc2UodGV4dHMpOgogICAgZm9yIGtleSwg
+        dGV4dCBpbiB0ZXh0cy5pdGVtcygpOgogICAgICAgIG11c3RfY29udGFpbih0ZXh0LCBCQVNFX01B
+        UktFUiwgZiJ7a2V5fSBGU1QtMSB2MS4zIGJhc2UgbWFya2VyIikKICAgICAgICBtdXN0X25vdF9j
+        b250YWluKHRleHQsIE1BUktFUiwgZiJ7a2V5fSBTdGFnZTkgcHJvZHVjdGlvbiByZXBlYXQgZ3Vh
+        cmQiKQogICAgICAgIG11c3Rfbm90X2NvbnRhaW4odGV4dCwgIlJFTkQyX1NUQUdFOV8yXzlfNF9W
+        MV9VTklGSUVEX0ZYX0FVVE9URVNUIiwgZiJ7a2V5fSBtdXN0IG5vdCBzdGFydCBmcm9tIFN0YWdl
+        OSB2MSIpCiAgICAgICAgbXVzdF9ub3RfY29udGFpbih0ZXh0LCAiUkVORDJfU1RBR0U5XzJfOV80
+        X1YyX05BUlJPV19DT05GSVJNQVRJT05fQVVUT1RFU1QiLCBmIntrZXl9IG11c3Qgbm90IHN0YXJ0
+        IGZyb20gU3RhZ2U5IHYyIikKICAgICAgICBtdXN0X25vdF9jb250YWluKHRleHQsICJSRU5EMl9T
+        VEFHRTlfMl85XzRfVjNfRklOQUxfQ09ORklSTUFUSU9OX0FVVE9URVNUIiwgZiJ7a2V5fSBtdXN0
+        IG5vdCBzdGFydCBmcm9tIFN0YWdlOSB2MyIpCiAgICBtdXN0X2NvbnRhaW4odGV4dHNbImluaXQi
+        XSwgJ3Jfc29mdFBhcnRpY2xlU21va2VSYW5nZSA9IHJpLkN2YXJfR2V0KCAicl9zb2Z0UGFydGlj
+        bGVTbW9rZVJhbmdlIiwgIjM2LjAiLCBDVkFSX0FSQ0hJVkUgKTsnLCAidjEuMyBzbW9rZSAzNiIp
+        CiAgICBtdXN0X2NvbnRhaW4odGV4dHNbImluaXQiXSwgJ3Jfc29mdFBhcnRpY2xlRmlyZVJhbmdl
+        ID0gcmkuQ3Zhcl9HZXQoICJyX3NvZnRQYXJ0aWNsZUZpcmVSYW5nZSIsICI0OC4wIiwgQ1ZBUl9B
+        UkNISVZFICk7JywgInYxLjMgZmlyZSA0OCIpCiAgICBtdXN0X2NvbnRhaW4odGV4dHNbImluaXQi
+        XSwgJ3Jfc29mdFBhcnRpY2xlU21hbGxGaXJlUmFuZ2UgPSByaS5DdmFyX0dldCggInJfc29mdFBh
+        cnRpY2xlU21hbGxGaXJlUmFuZ2UiLCAiMjQuMCIsIENWQVJfQVJDSElWRSApOycsICJ2MS4zIHNt
+        YWxsIGZpcmUgMjQiKQogICAgbXVzdF9jb250YWluKHRleHRzWyJpbml0Il0sICdyX3NvZnRQYXJ0
+        aWNsZUZsYW1ldGhyb3dlclJhbmdlID0gcmkuQ3Zhcl9HZXQoICJyX3NvZnRQYXJ0aWNsZUZsYW1l
+        dGhyb3dlclJhbmdlIiwgIjI0LjAiLCBDVkFSX0FSQ0hJVkUgKTsnLCAidjEuMyBmbGFtZXRocm93
+        ZXIgMjQiKQogICAgbXVzdF9jb250YWluKHRleHRzWyJpbml0Il0sICdyX3NvZnRQYXJ0aWNsZUZs
+        YW1ldGhyb3dlclBhdGggPSByaS5DdmFyX0dldCggInJfc29mdFBhcnRpY2xlRmxhbWV0aHJvd2Vy
+        UGF0aCIsICIxIiwgQ1ZBUl9BUkNISVZFICk7JywgInYxLjMgZmxhbWV0aHJvd2VyIHJvdXRlIikK
+        ICAgIG11c3RfY29udGFpbih0ZXh0c1sic2hhZGUiXSwgJ3N0YXRpYyBxYm9vbGVhbiBSX0ZTVDEz
+        VXNlR2VuZXJpY1NvZnRQYXRoKHNoYWRlclN0YWdlX3QgKnBTdGFnZSknLCAidjEuMyByb3V0ZSBo
+        ZWxwZXIiKQogICAgbXVzdF9jb250YWluKHRleHRzWyJzaGFkZSJdLCAnc3RhdGljIHZvaWQgUl9G
+        U1QxUmVjb3JkU2hhZGVyKHNoYWRlclN0YWdlX3QgKnBTdGFnZSwgaW50IHNvZnRNb2RlKScsICJp
+        bmhlcml0ZWQgRlNUIHJlY29yZCBjb3JlIikKICAgIG11c3RfY29udGFpbih0ZXh0c1sic2hhZGUi
+        XSwgJ3N0YXRpYyBpbnQgUl9GU1QxU3RhZ2VTb2Z0TW9kZShzaGFkZXJTdGFnZV90ICpwU3RhZ2Up
+        JywgImluaGVyaXRlZCBGU1Qgc29mdC1tb2RlIGNvcmUiKQoKCmRlZiBwYXRjaF9pbml0KHRleHQp
+        OgogICAgdGV4dCA9IHJlcGxhY2Vfb25jZSgKICAgICAgICB0ZXh0LAogICAgICAgICdjdmFyX3Qg
+        ICpyX3NvZnRQYXJ0aWNsZURlYnVnO1xuJywKICAgICAgICAnY3Zhcl90ICAqcl9zb2Z0UGFydGlj
+        bGVEZWJ1ZztcbicKICAgICAgICAnLy8gUkVORDJfU1RBR0U5XzJfOV80X1BST0RVQ1RJT05fQ0FO
+        RElEQVRFXG4nCiAgICAgICAgJ2N2YXJfdCAgKnJfZnhTdGFnZTlFbmFibGU7XG4nCiAgICAgICAg
+        J2N2YXJfdCAgKnJfZnhMYXJnZUZpcmVSZXNwb25zZTtcbicKICAgICAgICAnY3Zhcl90ICAqcl9m
+        eFNtYWxsRmlyZVJlc3BvbnNlO1xuJwogICAgICAgICdjdmFyX3QgICpyX2Z4QmxhY2tTbW9rZUFs
+        cGhhU2NhbGU7XG4nCiAgICAgICAgJ2N2YXJfdCAgKnJfZnhMaWdodFNtb2tlQWxwaGFTY2FsZTtc
+        bicKICAgICAgICAnY3Zhcl90ICAqcl9meENsb25lQWRkU2NhbGU7XG4nLAogICAgICAgICJTdGFn
+        ZTkgcHJvZHVjdGlvbiBjdmFyIGRlY2xhcmF0aW9ucyIsCiAgICApCiAgICB0ZXh0ID0gcmVwbGFj
+        ZV9vbmNlKAogICAgICAgIHRleHQsCiAgICAgICAgJ1x0cmkuQ3Zhcl9DaGVja1JhbmdlKCByX3Nv
+        ZnRQYXJ0aWNsZURlYnVnLCAwLCAxLCBxdHJ1ZSApO1xuJywKICAgICAgICAnXHRyaS5DdmFyX0No
+        ZWNrUmFuZ2UoIHJfc29mdFBhcnRpY2xlRGVidWcsIDAsIDEsIHF0cnVlICk7XG4nCiAgICAgICAg
+        J1x0Ly8gUkVORDJfU1RBR0U5XzJfOV80X1BST0RVQ1RJT05fQ0FORElEQVRFXG4nCiAgICAgICAg
+        J1x0cl9meFN0YWdlOUVuYWJsZSA9IHJpLkN2YXJfR2V0KCAicl9meFN0YWdlOUVuYWJsZSIsICIw
+        IiwgQ1ZBUl9BUkNISVZFICk7XG4nCiAgICAgICAgJ1x0cmkuQ3Zhcl9DaGVja1JhbmdlKCByX2Z4
+        U3RhZ2U5RW5hYmxlLCAwLCAxLCBxdHJ1ZSApO1xuJwogICAgICAgICdcdHJfZnhMYXJnZUZpcmVS
+        ZXNwb25zZSA9IHJpLkN2YXJfR2V0KCAicl9meExhcmdlRmlyZVJlc3BvbnNlIiwgIjEuMzAiLCBD
+        VkFSX0FSQ0hJVkUgKTtcbicKICAgICAgICAnXHRyaS5DdmFyX0NoZWNrUmFuZ2UoIHJfZnhMYXJn
+        ZUZpcmVSZXNwb25zZSwgMS4wZiwgMS40ZiwgcWZhbHNlICk7XG4nCiAgICAgICAgJ1x0cl9meFNt
+        YWxsRmlyZVJlc3BvbnNlID0gcmkuQ3Zhcl9HZXQoICJyX2Z4U21hbGxGaXJlUmVzcG9uc2UiLCAi
+        MS4xNSIsIENWQVJfQVJDSElWRSApO1xuJwogICAgICAgICdcdHJpLkN2YXJfQ2hlY2tSYW5nZSgg
+        cl9meFNtYWxsRmlyZVJlc3BvbnNlLCAxLjBmLCAxLjNmLCBxZmFsc2UgKTtcbicKICAgICAgICAn
+        XHRyX2Z4QmxhY2tTbW9rZUFscGhhU2NhbGUgPSByaS5DdmFyX0dldCggInJfZnhCbGFja1Ntb2tl
+        QWxwaGFTY2FsZSIsICIwLjkwIiwgQ1ZBUl9BUkNISVZFICk7XG4nCiAgICAgICAgJ1x0cmkuQ3Zh
+        cl9DaGVja1JhbmdlKCByX2Z4QmxhY2tTbW9rZUFscGhhU2NhbGUsIDAuNzVmLCAxLjBmLCBxZmFs
+        c2UgKTtcbicKICAgICAgICAnXHRyX2Z4TGlnaHRTbW9rZUFscGhhU2NhbGUgPSByaS5DdmFyX0dl
+        dCggInJfZnhMaWdodFNtb2tlQWxwaGFTY2FsZSIsICIwLjkwIiwgQ1ZBUl9BUkNISVZFICk7XG4n
+        CiAgICAgICAgJ1x0cmkuQ3Zhcl9DaGVja1JhbmdlKCByX2Z4TGlnaHRTbW9rZUFscGhhU2NhbGUs
+        IDAuNzVmLCAxLjBmLCBxZmFsc2UgKTtcbicKICAgICAgICAnXHRyX2Z4Q2xvbmVBZGRTY2FsZSA9
+        IHJpLkN2YXJfR2V0KCAicl9meENsb25lQWRkU2NhbGUiLCAiMC44NSIsIENWQVJfQVJDSElWRSAp
+        O1xuJwogICAgICAgICdcdHJpLkN2YXJfQ2hlY2tSYW5nZSggcl9meENsb25lQWRkU2NhbGUsIDAu
+        NzBmLCAxLjBmLCBxZmFsc2UgKTtcbicsCiAgICAgICAgIlN0YWdlOSBwcm9kdWN0aW9uIGN2YXIg
+        cmVnaXN0cmF0aW9uIiwKICAgICkKICAgIHJldHVybiB0ZXh0CgoKZGVmIHBhdGNoX2xvY2FsKHRl
+        eHQpOgogICAgcmV0dXJuIHJlcGxhY2Vfb25jZSgKICAgICAgICB0ZXh0LAogICAgICAgICdleHRl
+        cm4gIGN2YXJfdCAgKnJfc29mdFBhcnRpY2xlRGVidWc7XG4nLAogICAgICAgICdleHRlcm4gIGN2
+        YXJfdCAgKnJfc29mdFBhcnRpY2xlRGVidWc7XG4nCiAgICAgICAgJy8vIFJFTkQyX1NUQUdFOV8y
+        XzlfNF9QUk9EVUNUSU9OX0NBTkRJREFURVxuJwogICAgICAgICdleHRlcm4gIGN2YXJfdCAgKnJf
+        ZnhTdGFnZTlFbmFibGU7XG4nCiAgICAgICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9meExhcmdlRmly
+        ZVJlc3BvbnNlO1xuJwogICAgICAgICdleHRlcm4gIGN2YXJfdCAgKnJfZnhTbWFsbEZpcmVSZXNw
+        b25zZTtcbicKICAgICAgICAnZXh0ZXJuICBjdmFyX3QgICpyX2Z4QmxhY2tTbW9rZUFscGhhU2Nh
+        bGU7XG4nCiAgICAgICAgJ2V4dGVybiAgY3Zhcl90ICAqcl9meExpZ2h0U21va2VBbHBoYVNjYWxl
+        O1xuJwogICAgICAgICdleHRlcm4gIGN2YXJfdCAgKnJfZnhDbG9uZUFkZFNjYWxlO1xuJywKICAg
+        ICAgICAiU3RhZ2U5IHByb2R1Y3Rpb24gZXh0ZXJucyIsCiAgICApCgoKZGVmIHBhdGNoX3NoYWRl
+        KHRleHQpOgogICAgYW5jaG9yID0gJ3N0YXRpYyB2b2lkIFJfRlNUMVJlY29yZFNoYWRlcihzaGFk
+        ZXJTdGFnZV90ICpwU3RhZ2UsIGludCBzb2Z0TW9kZSknCiAgICBwb3MgPSB0ZXh0LmZpbmQoYW5j
+        aG9yKQogICAgaWYgcG9zIDwgMCBvciB0ZXh0LmZpbmQoYW5jaG9yLCBwb3MgKyAxKSA+PSAwOgog
+        ICAgICAgIHJhaXNlIFBhdGNoRXJyb3IoIlN0YWdlOSBwcm9kdWN0aW9uIGhlbHBlciBpbnNlcnRp
+        b24gYW5jaG9yIFJfRlNUMVJlY29yZFNoYWRlciBtaXNzaW5nL25vbnVuaXF1ZSIpCiAgICB0ZXh0
+        ID0gdGV4dFs6cG9zXSArIFBST0RfSEVMUEVSUyArICdcblxuJyArIHRleHRbcG9zOl0KICAgIHNp
+        ZyA9ICdzdGF0aWMgdm9pZCBSQl9JdGVyYXRlU3RhZ2VzR2VuZXJpYyggc2hhZGVyQ29tbWFuZHNf
+        dCAqaW5wdXQgKScKICAgIHRleHQgPSByZXBsYWNlX2luX2Z1bmN0aW9uKAogICAgICAgIHRleHQs
+        CiAgICAgICAgc2lnLAogICAgICAgICdcdFx0XHRDb21wdXRlU2hhZGVyQ29sb3JzKHBTdGFnZSwg
+        YmFzZUNvbG9yLCB2ZXJ0Q29sb3IsIHBTdGFnZS0+c3RhdGVCaXRzKTtcbicsCiAgICAgICAgJ1x0
+        XHRcdENvbXB1dGVTaGFkZXJDb2xvcnMocFN0YWdlLCBiYXNlQ29sb3IsIHZlcnRDb2xvciwgcFN0
+        YWdlLT5zdGF0ZUJpdHMpO1xuJwogICAgICAgICdcdFx0XHQvLyBSRU5EMl9TVEFHRTlfMl85XzRf
+        UFJPRFVDVElPTl9DQU5ESURBVEVcbicKICAgICAgICAnXHRcdFx0Ul9GWDlQcm9kQXBwbHlSZXNw
+        b25zZShwU3RhZ2UsIGJhc2VDb2xvciwgdmVydENvbG9yKTtcbicsCiAgICAgICAgIlN0YWdlOSBw
+        cm9kdWN0aW9uIHJlc3BvbnNlIGhvb2siLAogICAgKQogICAgcmV0dXJuIHRleHQKCgpkZWYgdmFs
+        aWRhdGVfcGF0Y2hlZCh0ZXh0cyk6CiAgICBmb3Iga2V5LCB0ZXh0IGluIHRleHRzLml0ZW1zKCk6
+        CiAgICAgICAgbXVzdF9jb250YWluKHRleHQsIE1BUktFUiwgZiJ7a2V5fSBTdGFnZTkgcHJvZHVj
+        dGlvbiBtYXJrZXIiKQogICAgZm9yIG5lZWRsZSBpbiAoCiAgICAgICAgJ3JfZnhTdGFnZTlFbmFi
+        bGUgPSByaS5DdmFyX0dldCggInJfZnhTdGFnZTlFbmFibGUiLCAiMCIsIENWQVJfQVJDSElWRSAp
+        OycsCiAgICAgICAgJ3JfZnhMYXJnZUZpcmVSZXNwb25zZSA9IHJpLkN2YXJfR2V0KCAicl9meExh
+        cmdlRmlyZVJlc3BvbnNlIiwgIjEuMzAiLCBDVkFSX0FSQ0hJVkUgKTsnLAogICAgICAgICdyX2Z4
+        U21hbGxGaXJlUmVzcG9uc2UgPSByaS5DdmFyX0dldCggInJfZnhTbWFsbEZpcmVSZXNwb25zZSIs
+        ICIxLjE1IiwgQ1ZBUl9BUkNISVZFICk7JywKICAgICAgICAncl9meEJsYWNrU21va2VBbHBoYVNj
+        YWxlID0gcmkuQ3Zhcl9HZXQoICJyX2Z4QmxhY2tTbW9rZUFscGhhU2NhbGUiLCAiMC45MCIsIENW
+        QVJfQVJDSElWRSApOycsCiAgICAgICAgJ3JfZnhMaWdodFNtb2tlQWxwaGFTY2FsZSA9IHJpLkN2
+        YXJfR2V0KCAicl9meExpZ2h0U21va2VBbHBoYVNjYWxlIiwgIjAuOTAiLCBDVkFSX0FSQ0hJVkUg
+        KTsnLAogICAgICAgICdyX2Z4Q2xvbmVBZGRTY2FsZSA9IHJpLkN2YXJfR2V0KCAicl9meENsb25l
+        QWRkU2NhbGUiLCAiMC44NSIsIENWQVJfQVJDSElWRSApOycsCiAgICApOgogICAgICAgIG11c3Rf
+        Y29udGFpbih0ZXh0c1siaW5pdCJdLCBuZWVkbGUsICJTdGFnZTkgcHJvZHVjdGlvbiBpbml0IGNv
+        bnRyYWN0IikKICAgIGZvciBuZWVkbGUgaW4gKAogICAgICAgICdzdGF0aWMgdm9pZCBSX0ZYOVBy
+        b2RBcHBseVJlc3BvbnNlKHNoYWRlclN0YWdlX3QgKnBTdGFnZSwgdmVjNF90IGJhc2VDb2xvciwg
+        dmVjNF90IHZlcnRDb2xvciknLAogICAgICAgICdSX0ZYOVByb2RBcHBseVJlc3BvbnNlKHBTdGFn
+        ZSwgYmFzZUNvbG9yLCB2ZXJ0Q29sb3IpOycsCiAgICAgICAgJ3RleHR1cmVzL3NmeC94ZmxhbWUy
+        JywKICAgICAgICAndGV4dHVyZXMvc2Z4L2NfZmxhbWVfJywKICAgICAgICAnc21va2VQdWZmYmxh
+        Y2snLAogICAgICAgICdtb2RlbHMvbWFwb2JqZWN0cy9jbG9uZXR1YmUvY2xfZG9vcjEnLAogICAg
+        ICAgICdzaGFkZXJDbGFzcyA9PSBGU1QxX0NMQVNTX1NNT0tFJywKICAgICAgICAnc3JjID09IEdM
+        U19TUkNCTEVORF9PTkUgJiYgZHN0ID09IEdMU19EU1RCTEVORF9PTkUnLAogICAgKToKICAgICAg
+        ICBtdXN0X2NvbnRhaW4odGV4dHNbInNoYWRlIl0sIG5lZWRsZSwgIlN0YWdlOSBwcm9kdWN0aW9u
+        IHNoYWRlIGNvbnRyYWN0IikKICAgIGZvciBmb3JiaWRkZW4gaW4gKAogICAgICAgICdmeDkzXycs
+        ICdSX0ZYOTMnLCAnRlg5M3wnLAogICAgICAgICdyX2Z4U3RkR2xhc3NBZGRTY2FsZScsICdyX2Z4
+        U3RkR2xhc3NPdGhlclNjYWxlJywgJ3JfZnhUcmFtR2xhc3NBbHBoYVNjYWxlJywKICAgICAgICAn
+        cl9meENsb25lT3RoZXJTY2FsZScsICdyX2Z4Q2xvbmVBbHBoYVNjYWxlJywKICAgICAgICAncl9m
+        eFNtb2tlRm9nTW9kZScsICdSX0ZYOUFkanVzdEZvZ0NvbG9yTWFzaycsICdyX2Z4R2VuZXJhbFRy
+        YW5zcGFyZW5jeU1vZGUnLAogICAgICAgICdyX2Z4V2F0ZXJSZXNwb25zZScsICdyX2Z4SGF6ZUFs
+        cGhhU2NhbGUnLCAnUl9GWDkySXNXYXRlclN1cmZhY2VOYW1lJywgJ1JfRlg5MklzSGF6ZU5hbWUn
+        LAogICAgKToKICAgICAgICBtdXN0X25vdF9jb250YWluKHRleHRzWyJpbml0Il0gKyB0ZXh0c1si
+        bG9jYWwiXSArIHRleHRzWyJzaGFkZSJdLCBmb3JiaWRkZW4sIGYidGVzdC9uYXRpdmUtYnJhbmNo
+        IGNvZGUge2ZvcmJpZGRlbn0iKQogICAgbXVzdF9jb250YWluKHRleHRzWyJpbml0Il0sICdyX3Nv
+        ZnRQYXJ0aWNsZVNtb2tlUmFuZ2UgPSByaS5DdmFyX0dldCggInJfc29mdFBhcnRpY2xlU21va2VS
+        YW5nZSIsICIzNi4wIiwgQ1ZBUl9BUkNISVZFICk7JywgIkZTVCBzbW9rZSAzNiBwcmVzZXJ2ZWQi
+        KQogICAgbXVzdF9jb250YWluKHRleHRzWyJpbml0Il0sICdyX3NvZnRQYXJ0aWNsZUZpcmVSYW5n
+        ZSA9IHJpLkN2YXJfR2V0KCAicl9zb2Z0UGFydGljbGVGaXJlUmFuZ2UiLCAiNDguMCIsIENWQVJf
+        QVJDSElWRSApOycsICJGU1QgZmlyZSA0OCBwcmVzZXJ2ZWQiKQogICAgbXVzdF9jb250YWluKHRl
+        eHRzWyJpbml0Il0sICdyX3NvZnRQYXJ0aWNsZVNtYWxsRmlyZVJhbmdlID0gcmkuQ3Zhcl9HZXQo
+        ICJyX3NvZnRQYXJ0aWNsZVNtYWxsRmlyZVJhbmdlIiwgIjI0LjAiLCBDVkFSX0FSQ0hJVkUgKTsn
+        LCAiRlNUIHNtYWxsIGZpcmUgMjQgcHJlc2VydmVkIikKICAgIG11c3RfY29udGFpbih0ZXh0c1si
+        aW5pdCJdLCAncl9zb2Z0UGFydGljbGVGbGFtZXRocm93ZXJSYW5nZSA9IHJpLkN2YXJfR2V0KCAi
+        cl9zb2Z0UGFydGljbGVGbGFtZXRocm93ZXJSYW5nZSIsICIyNC4wIiwgQ1ZBUl9BUkNISVZFICk7
+        JywgIkZTVCBmbGFtZXRocm93ZXIgMjQgcHJlc2VydmVkIikKICAgIG11c3RfY29udGFpbih0ZXh0
+        c1siaW5pdCJdLCAncl9zb2Z0UGFydGljbGVGbGFtZXRocm93ZXJQYXRoID0gcmkuQ3Zhcl9HZXQo
+        ICJyX3NvZnRQYXJ0aWNsZUZsYW1ldGhyb3dlclBhdGgiLCAiMSIsIENWQVJfQVJDSElWRSApOycs
+        ICJGU1QgZmxhbWV0aHJvd2VyIHJvdXRlIHByZXNlcnZlZCIpCgoKZGVmIG1haW4oKToKICAgIGFw
+        ID0gYXJncGFyc2UuQXJndW1lbnRQYXJzZXIoKQogICAgYXAuYWRkX2FyZ3VtZW50KCItLXJvb3Qi
+        LCBkZWZhdWx0PSIuIikKICAgIGFwLmFkZF9hcmd1bWVudCgiLS1jaGVjay1vbmx5IiwgYWN0aW9u
+        PSJzdG9yZV90cnVlIikKICAgIGFyZ3MgPSBhcC5wYXJzZV9hcmdzKCkKICAgIHJvb3QgPSBwYXRo
+        bGliLlBhdGgoYXJncy5yb290KQogICAgdGV4dHMgPSB7azogcmVhZF90ZXh0KHJvb3QgLyByZWwp
+        IGZvciBrLCByZWwgaW4gRklMRVMuaXRlbXMoKX0KICAgIHZhbGlkYXRlX2Jhc2UodGV4dHMpCiAg
+        ICBwYXRjaGVkID0gewogICAgICAgICJpbml0IjogcGF0Y2hfaW5pdCh0ZXh0c1siaW5pdCJdKSwK
+        ICAgICAgICAibG9jYWwiOiBwYXRjaF9sb2NhbCh0ZXh0c1sibG9jYWwiXSksCiAgICAgICAgInNo
+        YWRlIjogcGF0Y2hfc2hhZGUodGV4dHNbInNoYWRlIl0pLAogICAgfQogICAgdmFsaWRhdGVfcGF0
+        Y2hlZChwYXRjaGVkKQogICAgaWYgYXJncy5jaGVja19vbmx5OgogICAgICAgIHByaW50KCJTdGFn
+        ZSA5LjItOS40IFByb2R1Y3Rpb24gQ2FuZGlkYXRlIGNoZWNrLW9ubHkgUEFTUyIpCiAgICAgICAg
+        cmV0dXJuIDAKICAgIGZvciBrZXksIHJlbCBpbiBGSUxFUy5pdGVtcygpOgogICAgICAgIHdyaXRl
+        X3RleHQocm9vdCAvIHJlbCwgcGF0Y2hlZFtrZXldKQogICAgcHJpbnQoIlN0YWdlIDkuMi05LjQg
+        UHJvZHVjdGlvbiBDYW5kaWRhdGUgcGF0Y2ggYXBwbGllZCIpCiAgICByZXR1cm4gMAoKCmlmIF9f
+        bmFtZV9fID09ICJfX21haW5fXyI6CiAgICB0cnk6CiAgICAgICAgcmFpc2UgU3lzdGVtRXhpdCht
+        YWluKCkpCiAgICBleGNlcHQgUGF0Y2hFcnJvciBhcyBleGM6CiAgICAgICAgcHJpbnQoZiJQQVRD
+        SF9FUlJPUjoge2V4Y30iLCBmaWxlPXN5cy5zdGRlcnIpCiAgICAgICAgcmFpc2UgU3lzdGVtRXhp
+        dCgyKQo=
+        S9PC_PATCHER_B64
+        cat > s9pc_profile.b64 <<'S9PC_PROFILE_B64'
+        Ly8gRGFya1dvbGYvaW9SVENXIFJlbmQyIFN0YWdlIDkuMi05LjQgUHJvZHVjdGlvbiBDYW5kaWRh
+        dGUKLy8gQmFzZSByZW5kZXJlciBzdGFjazogZnJvemVuIFByZS1Qcm9kdWN0aW9uIEZJTkFMIHYx
+        LjcgKyBGU1QtMSB2MS4zICsgdmFsaWRhdGVkIFN0YWdlIDkgRlggcmVzcG9uc2UuCi8vIEZyb3pl
+        biBjaGVja3BvaW50OiBTVU4tNUMgKyBNQVQtMCB2Mi40ICsgTUFULTEgdjIgKyBSRUYtMSB2MS4x
+        ICsgR0ktMiB2MS43LgovLyBHSS0yIHN0YWdlIGlzIGNsb3NlZC4gRXhlY3V0ZSBhZnRlciBvdmVy
+        bGF5aW5nIHRoZSBmdWxsIFNQIGJ1aWxkOgovLyAgIGV4ZWMgREFSS1dPTEZfU1RBR0U5XzJfOV80
+        X1BST0RVQ1RJT05fQ0FORElEQVRFLmNmZwovLyBJZiBhbnkgbGF0Y2hlZCByZW5kZXJlciBjdmFy
+        cyBjaGFuZ2VkLCBmb2xsb3cgd2l0aCB2aWRfcmVzdGFydC4KCnNldGEgcl9tYXRlcmlhbERlYnVn
+        IDAKc2V0YSByX3BiciAxCnNldGEgcl9jdWJlTWFwcGluZyAxCnNldGEgcl9wb3N0UHJvY2VzcyAx
+        CnNldGEgcl9kZXB0aFByZXBhc3MgMQoKc2V0YSByX3N1bmxpZ2h0TW9kZSAxCnNldGEgcl9zaGFk
+        b3dGaWx0ZXIgNApzZXRhIHJfZm9yY2VTdW4gMAoKc2V0YSByX21hdGVyaWFsQXdhcmVGYWxsYmFj
+        ayAxCnNldGEgcl9tYXRlcmlhbEZhbGxiYWNrQ2xhc3NNYXNrIDEwCnNldGEgcl9tYXRlcmlhbEZh
+        bGxiYWNrTWluZXJhbFNwZWN1bGFyIDAuMDE1CnNldGEgcl9tYXRlcmlhbEZhbGxiYWNrTWluZXJh
+        bFJvdWdobmVzcyAwLjk1CnNldGEgcl9tYXRlcmlhbEZhbGxiYWNrTWluZXJhbE1ldGFsbGljIDAu
+        MDAKc2V0YSByX21hdGVyaWFsRmFsbGJhY2tNZXRhbFNwZWN1bGFyIDAuMTQKc2V0YSByX21hdGVy
+        aWFsRmFsbGJhY2tNZXRhbFJvdWdobmVzcyAwLjQ1CnNldGEgcl9tYXRlcmlhbEZhbGxiYWNrTWV0
+        YWxNZXRhbGxpYyAwLjU1CgpzZXRhIHJfbWF0ZXJpYWxBd2FyZVJlZmxlY3Rpb25zIDEKc2V0YSBy
+        X21hdGVyaWFsUmVmbGVjdGlvbkNsYXNzTWFzayAxMApzZXRhIHJfbWF0ZXJpYWxSZWZsZWN0aW9u
+        TWluZXJhbFNjYWxlIDAuMDUKc2V0YSByX21hdGVyaWFsUmVmbGVjdGlvbk1ldGFsU2NhbGUgMC42
+        MApzZXRhIHJfbWF0ZXJpYWxSZWZsZWN0aW9uTWF4IDAuNzUKCi8vIEdJLTEgcmVtYWlucyBvcHRp
+        b25hbCBhbmQgaXMgbm90IHBhcnQgb2YgdGhlIGZpbmFsIHYxLjcgcHJvZHVjdGlvbiBwcm9maWxl
+        LgpzZXRhIHJfaW5kaXJlY3RMaWdodGluZyAwCgovLyBHSS0yIHYxLjcgRklOQUwgYWNjZXB0ZWQg
+        c2V0dGluZ3MuCnNldGEgcl9zc2dpIDEKc2V0YSByX3NzZ2lTdHJlbmd0aCAwLjc1CnNldGEgcl9z
+        c2dpUmFkaXVzIDMyLjAKc2V0YSByX3NzZ2lTYXR1cmF0aW9uIDAuODUKc2V0YSByX3NzZ2lNYXgg
+        MC4zMApzZXRhIHJfc3NnaURlYnVnIDAKc2V0YSByX3NzZ2lUcmFjZSAwCnNldGEgcl9zc2dpUmVz
+        b2x2ZU1vZGUgMApzZXRhIHJfc3NnaUVudGl0eUd1YXJkTW9kZSAyCnNldGEgcl9zc2dpRW50aXR5
+        TWFza01vZGUgMAoKLy8gRlNULTEgdjEuMyBQcm9kdWN0aW9uIENhbmRpZGF0ZTogZGVwdGgtYXdh
+        cmUgZmlyZS9zbW9rZSBpbnRlcnNlY3Rpb25zLgovLyBSdW50aW1lLXNlbGVjdGVkIHZhbHVlcyBh
+        cmUgYmFzZWQgb24gdGVtcG9yYWwgQS9CIHRlc3RzIGFjcm9zcyBtdWx0aXBsZSBzY2VuZXMuCnNl
+        dGEgcl9zb2Z0UGFydGljbGVzIDEKc2V0YSByX3NvZnRQYXJ0aWNsZVNtb2tlUmFuZ2UgMzYKc2V0
+        YSByX3NvZnRQYXJ0aWNsZUZpcmVSYW5nZSA0OApzZXRhIHJfc29mdFBhcnRpY2xlU21hbGxGaXJl
+        UmFuZ2UgMjQKc2V0YSByX3NvZnRQYXJ0aWNsZUZsYW1ldGhyb3dlclJhbmdlIDI0CnNldGEgcl9z
+        b2Z0UGFydGljbGVGbGFtZXRocm93ZXJQYXRoIDEKc2V0YSByX3NvZnRQYXJ0aWNsZUNsYXNzTWFz
+        ayAzCnNldGEgcl9zb2Z0UGFydGljbGVEZWJ1ZyAwCgovLyBTdGFnZSA5LjItOS40IFByb2R1Y3Rp
+        b24gQ2FuZGlkYXRlOiB2YWxpZGF0ZWQgZmFtaWx5LWF3YXJlIEZYIHJlc3BvbnNlLgovLyBFbmdp
+        bmUgbWFzdGVyIGRlZmF1bHRzIE9GRiBmb3Igc2FmZSByb2xsYmFjazsgdGhpcyBwcm9kdWN0aW9u
+        IHByb2ZpbGUgZW5hYmxlcyBpdC4Kc2V0YSByX2Z4U3RhZ2U5RW5hYmxlIDEKc2V0YSByX2Z4TGFy
+        Z2VGaXJlUmVzcG9uc2UgMS4zMApzZXRhIHJfZnhTbWFsbEZpcmVSZXNwb25zZSAxLjE1CnNldGEg
+        cl9meEJsYWNrU21va2VBbHBoYVNjYWxlIDAuOTAKc2V0YSByX2Z4TGlnaHRTbW9rZUFscGhhU2Nh
+        bGUgMC45MApzZXRhIHJfZnhDbG9uZUFkZFNjYWxlIDAuODUK
+        S9PC_PROFILE_B64
+        cat > s9pc_launcher.b64 <<'S9PC_LAUNCHER_B64'
+        QGVjaG8gb2ZmCnNldGxvY2FsCmNkIC9kICIlfmRwMCIKaWYgbm90IGV4aXN0ICJpb1dvbGZTUC54
+        NjQuZXhlIiAoCiAgZWNobyBpb1dvbGZTUC54NjQuZXhlIG5vdCBmb3VuZCBpbiB0aGlzIGZvbGRl
+        ci4KICBwYXVzZQogIGV4aXQgL2IgMQopCnN0YXJ0ICJEYXJrV29sZiBTdGFnZSA5LjItOS40IFBy
+        b2R1Y3Rpb24gQ2FuZGlkYXRlIiAiaW9Xb2xmU1AueDY0LmV4ZSIgK3NldCBjbF9yZW5kZXJlciBy
+        ZW5kMiArZXhlYyBEQVJLV09MRl9TVEFHRTlfMl85XzRfUFJPRFVDVElPTl9DQU5ESURBVEUuY2Zn
+        CmVuZGxvY2FsCg==
+        S9PC_LAUNCHER_B64
+        cat > s9pc_readme.b64 <<'S9PC_README_B64'
+        RGFya1dvbGYvaW9SVENXIFJlbmQyIC0gU3RhZ2UgOS4yLTkuNCBQcm9kdWN0aW9uIENhbmRpZGF0
+        ZQo9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09
+        PT09PQoK0J3QsNC30L3QsNGH0LXQvdC40LUKLS0tLS0tLS0tLQpQcm9kdWN0aW9uIENhbmRpZGF0
+        ZSDQv9C+0YHQu9C1INGC0YDQtdGFIHJ1bnRpbWUgQS9CINC/0YDQvtGF0L7QtNC+0LIgU3RhZ2Ug
+        OToKOS4yIEZpcmUgcmVzcG9uc2UsIDkuMyBTbW9rZSBhbHBoYS9mb2cgaW50ZWdyYXRpb24sIDku
+        NCBUcmFuc3BhcmVuY3kuCgrQn9GA0LjQvdGP0YLQviDQsiBwcm9kdWN0aW9uCi0tLS0tLS0tLS0t
+        LS0tLS0tLS0tLQotIExhcmdlL3dvcmxkIGZpcmUgdGV4dHVyZXMvc2Z4L3hmbGFtZTIqOiBSR0Ig
+        cmVzcG9uc2UgMS4zMC4KLSBTbWFsbC9jYW5kbGUgZmlyZSB0ZXh0dXJlcy9zZngvY19mbGFtZV8q
+        OiBSR0IgcmVzcG9uc2UgMS4xNS4KLSBCbGFjayBzbW9rZSBzbW9rZVB1ZmZibGFjayovYmxhY2tz
+        bW9rZWFuaW0qOiBhbHBoYSAwLjkwLgotINCe0YHRgtCw0LvRjNC90L7QuSDQv9C+0LTRgtCy0LXR
+        gNC20LTQtdC90L3Ri9C5IEZTVCBTTU9LRTogYWxwaGEgMC45MC4KLSBFeGFjdCBtb2RlbHMvbWFw
+        b2JqZWN0cy9jbG9uZXR1YmUvY2xfZG9vcjE6INGC0L7Qu9GM0LrQviBBREQgcGFzcyBPTkUvT05F
+        INC/0L7Qu9GD0YfQsNC10YIgUkdCIHNjYWxlIDAuODUuCgrQntGB0YLQsNCy0LvQtdC90L4gbmF0
+        aXZlCi0tLS0tLS0tLS0tLS0tLS0KLSBTbW9rZSBmb2cgcG9saWN5OiBuYXRpdmUgUmVuZDIvRlNU
+        IGJlaGF2aW9yLgotIEhhemU6IG5hdGl2ZS4KLSBXYXRlcjogbmF0aXZlLgotIHRleHR1cmVzL3Nm
+        eC9nbGFzczogbmF0aXZlLgotIHRleHR1cmVzL3NmeC90cmFtZ2xhc3MyKjogbmF0aXZlLgotIGNs
+        X2Rvb3IxIE9USEVSINC4IEFMUEhBIHBhc3NlczogbmF0aXZlLgotIEZsYW1ldGhyb3dlciByZXNw
+        b25zZS9lbWlzc2l2ZTog0L3QtSDRg9GB0LjQu9C40LLQsNC10YLRgdGPOyDRgdC+0YXRgNCw0L3R
+        j9C10YLRgdGPINGC0L7Qu9GM0LrQviDRg9C20LUg0L/RgNC40L3Rj9GC0YvQuSBGU1Qgc29mdCBw
+        YXRoL3JhbmdlIDI0LgotINCS0YHQtSDQtNGA0YPQs9C40LUg0L3QtdC/0L7QtNGC0LLQtdGA0LbQ
+        tNC10L3QvdGL0LUgRklSRS90cmFuc3BhcmVudCBmYW1pbGllczogbmF0aXZlLgoKQ3ZhcnMKLS0t
+        LS0Kcl9meFN0YWdlOUVuYWJsZSAgICAgICAgICAgIGVuZ2luZSBkZWZhdWx0IDAsIHByb2R1Y3Rp
+        b24gcHJvZmlsZSAxCnJfZnhMYXJnZUZpcmVSZXNwb25zZSAgICAgICBkZWZhdWx0IDEuMzAKcl9m
+        eFNtYWxsRmlyZVJlc3BvbnNlICAgICAgIGRlZmF1bHQgMS4xNQpyX2Z4QmxhY2tTbW9rZUFscGhh
+        U2NhbGUgICAgZGVmYXVsdCAwLjkwCnJfZnhMaWdodFNtb2tlQWxwaGFTY2FsZSAgICBkZWZhdWx0
+        IDAuOTAKcl9meENsb25lQWRkU2NhbGUgICAgICAgICAgIGRlZmF1bHQgMC44NQoKTWFzdGVyIHJf
+        ZnhTdGFnZTlFbmFibGU9MCDQvNCz0L3QvtCy0LXQvdC90L4g0LLQvtC30LLRgNCw0YnQsNC10YIg
+        U3RhZ2UgOSByZXNwb25zZSDQuiBuYXRpdmUg0LHQtdC3INC+0YLQutC70Y7Rh9C10L3QuNGPIEZT
+        VCBzb2Z0IHBhcnRpY2xlcy4K0JLRgdC1IGN2YXJzIENWQVJfQVJDSElWRS4KCkZTVC0xIHYxLjMg
+        0YHQvtGF0YDQsNC90Y/QtdGC0YHRjyDQsdC10Lcg0LjQt9C80LXQvdC10L3QuNC5Ci0tLS0tLS0t
+        LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQpyX3NvZnRQYXJ0aWNsZXMgcHJvZmlsZT0xLCBl
+        bmdpbmUgZGVmYXVsdD0wClNtb2tlUmFuZ2U9MzYKTGFyZ2VGaXJlUmFuZ2U9NDgKU21hbGxGaXJl
+        UmFuZ2U9MjQKRmxhbWV0aHJvd2VyUmFuZ2U9MjQKRmxhbWV0aHJvd2VyUGF0aD0xCkNsYXNzTWFz
+        az0zCkRlYnVnPTAKCtCY0YHRhdC+0LTQvdC40LrQuCBTdGFnZSA5IFByb2R1Y3Rpb24gQ2FuZGlk
+        YXRlCi0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCtCc0LXQvdGP0Y7RgtGB
+        0Y8g0YLQvtC70YzQutC+OgpTUC9jb2RlL3JlbmQyL3RyX2luaXQuYwpTUC9jb2RlL3JlbmQyL3Ry
+        X2xvY2FsLmgKU1AvY29kZS9yZW5kMi90cl9zaGFkZS5jCgrQndC1INC80LXQvdGP0Y7RgtGB0Y86
+        CnRyX3NoYWRlci5jLCBnZW5lcmljX2ZwLmdsc2wsIHNzZ2lfZnAuZ2xzbCwgc3NnaV92cC5nbHNs
+        LApGU1QgY2xhc3NpZmllciwgUl9GU1QxU3RhZ2VTb2Z0TW9kZSwgUl9GU1QxM1VzZUdlbmVyaWNT
+        b2Z0UGF0aCwKU1VOLTVDLCBNQVQtMCB2Mi40LCBNQVQtMSB2MiwgUkVGLTEgdjEuMSwgR0ktMiB2
+        MS43LgoK0JIgUHJvZHVjdGlvbiBDYW5kaWRhdGUg0L3QtdGCIEY2LUYxMiBhdXRvdGVzdCBjb21t
+        YW5kcywgc2NyZWVuc2hvdCBtYWNoaW5lcnksCnJ1bnRpbWUgdHJhY2UgdGFibGVzLCBIYXplL1dh
+        dGVyIHRlc3QgaG9va3Mg0LjQu9C4INGN0LrRgdC/0LXRgNC40LzQtdC90YLQsNC70YzQvdGL0YUg
+        Z2xhc3MgY3ZhcnMuCg==
+        S9PC_README_B64
+        cat > s9pc_decisions.b64 <<'S9PC_DECISIONS_B64'
+        RGFya1dvbGYvaW9SVENXIFJlbmQyIC0gU3RhZ2UgOS4yLTkuNCBwcm9kdWN0aW9uIGRlY2lzaW9u
+        cwo9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09
+        PT09ClJ1bnRpbWUtY29uZmlybWVkIGZpbmFsIHZhbHVlcyBkaXN0aWxsZWQgZnJvbSBTdGFnZSA5
+        IHYxL3YyL3YzIEEvQjoKCkxhcmdlL3dvcmxkIHhmbGFtZTIqOiAxLjMwClNtYWxsL2NhbmRsZSBj
+        X2ZsYW1lXyo6IDEuMTUKQmxhY2sgc21va2UgYWxwaGE6IDAuOTAKTGlnaHQvbm9uLWJsYWNrIEZT
+        VCBzbW9rZSBhbHBoYTogMC45MApOYXRpdmUgc21va2UgZm9nOiBLRUVQCkhhemU6IEtFRVAgTkFU
+        SVZFCldhdGVyOiBLRUVQIE5BVElWRQp0ZXh0dXJlcy9zZngvZ2xhc3M6IEtFRVAgTkFUSVZFCnRl
+        eHR1cmVzL3NmeC90cmFtZ2xhc3MyKjogS0VFUCBOQVRJVkUKY2xfZG9vcjEgQUREIHBhc3MgT05F
+        L09ORTogMC44NQpjbF9kb29yMSBPVEhFUiBwYXNzOiBLRUVQIE5BVElWRQpjbF9kb29yMSBBTFBI
+        QSBwYXNzOiBLRUVQIE5BVElWRQpGbGFtZXRocm93ZXIgcmVzcG9uc2U6IEtFRVAgTkFUSVZFOyBG
+        U1Qgc29mdCBpbnRlcnNlY3Rpb24gcmVtYWlucyByYW5nZSAyNC9wYXRoIDEKClByb2R1Y3Rpb24g
+        aW1wbGVtZW50YXRpb24gcnVsZToKT25seSB0aGUgcnVudGltZS1jb25maXJtZWQgZXhhY3QgZmFt
+        aWxpZXMvcGFzc2VzIGFib3ZlIGFyZSBtdXRhdGVkLiBObyBicm9hZCBjbGFzcz1OT05FIHRyYW5z
+        cGFyZW5jeSBydWxlIGlzIGludHJvZHVjZWQuCg==
+        S9PC_DECISIONS_B64
+
+        base64 -d s9pc_patcher.b64 > apply_rend2_stage9_2_9_4_production_candidate_sp.py
+        base64 -d s9pc_profile.b64 > DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg
+        base64 -d s9pc_launcher.b64 > RUN_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cmd
+        base64 -d s9pc_readme.b64 > README_STAGE9_2_9_4_PRODUCTION_CANDIDATE_RU.txt
+        base64 -d s9pc_decisions.b64 > STAGE9_2_9_4_PRODUCTION_DECISIONS.txt
+        rm -f s9pc_*.b64
+
+        [[ "$(sha256sum apply_rend2_stage9_2_9_4_production_candidate_sp.py | awk '{print $1}')" = "$S9PC_PATCHER_SHA256" ]]
+        [[ "$(sha256sum DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg | awk '{print $1}')" = "$S9PC_PROFILE_SHA256" ]]
+        [[ "$(sha256sum RUN_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cmd | awk '{print $1}')" = "$S9PC_LAUNCHER_SHA256" ]]
+        [[ "$(sha256sum README_STAGE9_2_9_4_PRODUCTION_CANDIDATE_RU.txt | awk '{print $1}')" = "$S9PC_README_SHA256" ]]
+        [[ "$(sha256sum STAGE9_2_9_4_PRODUCTION_DECISIONS.txt | awk '{print $1}')" = "$S9PC_DECISIONS_SHA256" ]]
+        python3 -m py_compile apply_rend2_stage9_2_9_4_production_candidate_sp.py
+        ! grep -Fqi 'fs_homepath' RUN_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cmd
+        grep -Fq 'seta r_fxStage9Enable 1' DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg
+        grep -Fq 'seta r_fxLargeFireResponse 1.30' DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg
+        grep -Fq 'seta r_fxSmallFireResponse 1.15' DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg
+        grep -Fq 'seta r_fxBlackSmokeAlphaScale 0.90' DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg
+        grep -Fq 'seta r_fxLightSmokeAlphaScale 0.90' DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg
+        grep -Fq 'seta r_fxCloneAddScale 0.85' DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg
+        ! grep -Eq 'bind F[0-9]|fx93_|FX93\|' DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg README_STAGE9_2_9_4_PRODUCTION_CANDIDATE_RU.txt
+    - name: Apply and audit minimal Stage 9.2-9.4 Production Candidate delta
+      run: |
+        set -Eeuo pipefail
+        trap 'rc=$?; echo "::error::Stage 9 Production Candidate source patch/audit failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+
+        git -C source show "$S9PC_BASE_COMMIT:SP/code/rend2/tr_shade.c" > s9pc-base-tr_shade.c
+        git -C source show "$S9PC_BASE_COMMIT:SP/code/rend2/tr_shader.c" > s9pc-base-tr_shader.c
+        python3 apply_rend2_stage9_2_9_4_production_candidate_sp.py --root source --check-only
+        python3 apply_rend2_stage9_2_9_4_production_candidate_sp.py --root source
+        git -C source diff --check
+
+        cat > expected-s9pc-files.txt <<'S9PC_FILES'
+        SP/code/rend2/tr_init.c
+        SP/code/rend2/tr_local.h
+        SP/code/rend2/tr_shade.c
+        S9PC_FILES
+        git -C source diff --name-only "$S9PC_BASE_COMMIT" | LC_ALL=C sort > actual-s9pc-files.txt
+        LC_ALL=C sort expected-s9pc-files.txt -o expected-s9pc-files.txt
+        diff -u expected-s9pc-files.txt actual-s9pc-files.txt
+        while IFS= read -r f; do grep -Fq 'REND2_STAGE9_2_9_4_PRODUCTION_CANDIDATE' "source/$f"; done < expected-s9pc-files.txt
+
+        for old in REND2_STAGE9_2_9_4_V1_UNIFIED_FX_AUTOTEST REND2_STAGE9_2_9_4_V2_NARROW_CONFIRMATION_AUTOTEST REND2_STAGE9_2_9_4_V3_FINAL_CONFIRMATION_AUTOTEST; do
+          ! grep -R -Fq "$old" source/SP/code/rend2/tr_init.c source/SP/code/rend2/tr_local.h source/SP/code/rend2/tr_shade.c
+        done
+        for cv in r_fxStage9Enable r_fxLargeFireResponse r_fxSmallFireResponse r_fxBlackSmokeAlphaScale r_fxLightSmokeAlphaScale r_fxCloneAddScale; do
+          grep -Fq "$cv = ri.Cvar_Get" source/SP/code/rend2/tr_init.c
+        done
+        for gone in r_fxStdGlassAddScale r_fxStdGlassOtherScale r_fxTramGlassAlphaScale r_fxCloneOtherScale r_fxCloneAlphaScale r_fxWaterResponse r_fxHazeAlphaScale r_fxSmokeFogMode r_fxGeneralTransparencyMode; do
+          ! grep -R -Fq "$gone" source/SP/code/rend2/tr_init.c source/SP/code/rend2/tr_local.h source/SP/code/rend2/tr_shade.c
+        done
+        ! grep -R -Eq 'fx93_|R_FX93|FX93\|' source/SP/code/rend2/tr_init.c source/SP/code/rend2/tr_local.h source/SP/code/rend2/tr_shade.c
+        ! grep -Fq 'Cmd_AddCommand( "fx' source/SP/code/rend2/tr_init.c
+
+        python3 - <<'S9PC_POLICY_PY'
+        from pathlib import Path
+
+        def fun(text,sig):
+         p=text.find(sig)
+         if p<0: raise AssertionError('missing '+sig)
+         if text.find(sig,p+1)>=0: raise AssertionError('nonunique '+sig)
+         b=text.find('{',p); d=0; i=b; ins=inc=esc=False; line=block=False
+         while i<len(text):
+          c=text[i]; n=text[i+1] if i+1<len(text) else ''
+          if line:
+           if c=='\n': line=False
+           i+=1; continue
+          if block:
+           if c=='*' and n=='/': block=False; i+=2
+           else: i+=1
+           continue
+          if ins:
+           if esc: esc=False
+           elif ord(c)==92: esc=True
+           elif c=='"': ins=False
+           i+=1; continue
+          if inc:
+           if esc: esc=False
+           elif ord(c)==92: esc=True
+           elif c=="'": inc=False
+           i+=1; continue
+          if c=='/' and n=='/': line=True; i+=2; continue
+          if c=='/' and n=='*': block=True; i+=2; continue
+          if c=='"': ins=True; i+=1; continue
+          if c=="'": inc=True; i+=1; continue
+          if c=='{': d+=1
+          elif c=='}':
+           d-=1
+           if d==0: return text[p:i+1]
+          i+=1
+         raise AssertionError('unterminated '+sig)
+
+        base=Path('s9pc-base-tr_shade.c').read_text(); cur=Path('source/SP/code/rend2/tr_shade.c').read_text()
+        for sig in (
+         'static int R_FST1ShaderClassByName(const char *name)',
+         'static void R_FST1RecordShader(shaderStage_t *pStage, int softMode)',
+         'static int R_FST1StageSoftMode(shaderStage_t *pStage)',
+         'static qboolean R_FST13UseGenericSoftPath(shaderStage_t *pStage)'):
+         assert fun(base,sig)==fun(cur,sig), sig+' changed'
+        resp=fun(cur,'static void R_FX9ProdApplyResponse(shaderStage_t *pStage, vec4_t baseColor, vec4_t vertColor)')
+        for token in (
+         'R_FX9ProdIsLargeFireName','r_fxLargeFireResponse',
+         'R_FX9ProdIsSmallFireName','r_fxSmallFireResponse',
+         'FST1_CLASS_SMOKE','r_fxBlackSmokeAlphaScale','r_fxLightSmokeAlphaScale',
+         'R_FX9ProdIsCloneDoorName','r_fxCloneAddScale',
+         'GLS_SRCBLEND_ONE','GLS_DSTBLEND_ONE'):
+         assert token in resp, token+' absent'
+        for forbidden in (
+         'FST1_CLASS_FIRE','textures/sfx/glass','textures/sfx/tramglass2',
+         'r_fxStdGlass','r_fxTramGlass','r_fxCloneOther','r_fxCloneAlpha',
+         'r_fxWater','r_fxHaze','r_fxSmokeFogMode','r_fxGeneralTransparencyMode','R_FX92','R_FX93'):
+         assert forbidden not in resp, forbidden+' unexpectedly present'
+        assert 'R_FX9ProdApplyResponse(pStage, baseColor, vertColor);' in cur
+        print('Stage 9 Production Candidate inherited-FST freeze and exact-family policy audit PASS')
+        S9PC_POLICY_PY
+
+        cmp s9pc-base-tr_shader.c source/SP/code/rend2/tr_shader.c
+        [[ "$(sha256sum source/SP/code/rend2/glsl/generic_fp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_GENERIC_FP_SHA256" ]]
+        [[ "$(sha256sum source/SP/code/rend2/glsl/ssgi_fp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_FP_SHA256" ]]
+        [[ "$(sha256sum source/SP/code/rend2/glsl/ssgi_vp.glsl | awk '{print $1}')" = "$EXPECTED_BASE_SSGI_VP_SHA256" ]]
+
+        repeat_rc=0
+        if python3 apply_rend2_stage9_2_9_4_production_candidate_sp.py --root source --check-only > repeat-guard.log 2>&1; then repeat_rc=0; else repeat_rc=$?; fi
+        [[ "$repeat_rc" -eq 2 ]]
+        grep -Eq 'forbidden/repeat|repeat' repeat-guard.log
+    - name: Validate inherited FST/SSGI GLSL remains frozen and valid (desktop GLSL mode)
+      run: |
+        set -Eeuo pipefail
+        trap 'rc=$?; echo "::error::GLSL validation failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+        glslangValidator -d -S frag --glsl-version 120 source/SP/code/rend2/glsl/generic_fp.glsl
+        glslangValidator -d -S frag --glsl-version 120 source/SP/code/rend2/glsl/ssgi_fp.glsl
+        glslangValidator -d -S vert --glsl-version 120 source/SP/code/rend2/glsl/ssgi_vp.glsl
+    - name: Create exact Stage 9 Production Candidate delta/cumulative patch and clean replay
+      run: |
+        set -Eeuo pipefail
+        trap 'rc=$?; echo "::error::Stage 9 Production Candidate delta/replay failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+        git -C source diff --binary "$S9PC_BASE_COMMIT" -- SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h SP/code/rend2/tr_shade.c > "$S9PC_DELTA_NAME"; test -s "$S9PC_DELTA_NAME"
+        git -C source diff --binary "$UPSTREAM_SHA" > "$S9PC_CUMULATIVE_NAME"; test -s "$S9PC_CUMULATIVE_NAME"
+        S9PC_DELTA_SHA256="$(sha256sum "$S9PC_DELTA_NAME" | awk '{print $1}')"; S9PC_CUMULATIVE_SHA256="$(sha256sum "$S9PC_CUMULATIVE_NAME" | awk '{print $1}')"; echo "S9PC_DELTA_SHA256=$S9PC_DELTA_SHA256" >> "$GITHUB_ENV"; echo "S9PC_CUMULATIVE_SHA256=$S9PC_CUMULATIVE_SHA256" >> "$GITHUB_ENV"
+        git -C source apply --check --reverse --whitespace=nowarn "$GITHUB_WORKSPACE/$S9PC_DELTA_NAME"
+        rm -rf replay; git -C source worktree add --detach "$GITHUB_WORKSPACE/replay" "$UPSTREAM_SHA"; git -C replay apply --check --whitespace=nowarn "$GITHUB_WORKSPACE/$S9PC_CUMULATIVE_NAME"; git -C replay apply --whitespace=nowarn "$GITHUB_WORKSPACE/$S9PC_CUMULATIVE_NAME"; git -C replay diff --check
+        mapfile -t changed < <(git -C source diff --name-only "$UPSTREAM_SHA" | LC_ALL=C sort); (( ${#changed[@]} > 0 )); for f in "${changed[@]}"; do cmp "source/$f" "replay/$f"; done; git -C source worktree remove --force "$GITHUB_WORKSPACE/replay"
+    - name: Build Stage 9 Production Candidate full SP Windows x64 with MinGW
+      run: |
+        set -Eeuo pipefail
+        trap 'rc=$?; echo "::error::Full SP MinGW build failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+        jobs="$(nproc)"; if (( jobs > 4 )); then jobs=4; fi
+        chmod +x source/SP/cross-make-mingw64.sh
+        cd source/SP
+        ./cross-make-mingw64.sh -j"$jobs"   BUILD_CLIENT=1   BUILD_SERVER=0   BUILD_GAME_SO=1   BUILD_GAME_QVM=0   BUILD_BASEGAME=1   BUILD_RENDERER_REND2=1   USE_RENDERER_DLOPEN=1
+    - name: Verify and package Stage 9.2-9.4 Production Candidate
+      run: |
+        set -Eeuo pipefail
+        trap 'rc=$?; echo "::error::Stage 9 Production Candidate packaging failed (rc=$rc) at command: $BASH_COMMAND" >&2; exit "$rc"' ERR
+        SP_OUT="source/SP/build/release-mingw32-x86_64"; MAIN_OUT="$SP_OUT/main"; test -d "$SP_OUT"; test -s "$SP_OUT/renderer_sp_rend2_x64.dll"; test -s "$SP_OUT/renderer_sp_opengl1_x64.dll"; find "$SP_OUT" -maxdepth 1 -type f -iname 'ioWolfSP*.exe' -print -quit | grep -q .; test -d "$MAIN_OUT"; test ! -d source/MP/build
+        mapfile -d '' ROOT_EXES < <(find "$SP_OUT" -maxdepth 1 -type f -iname '*.exe' -print0 | LC_ALL=C sort -z); mapfile -d '' ROOT_DLLS < <(find "$SP_OUT" -maxdepth 1 -type f -iname '*.dll' -print0 | LC_ALL=C sort -z); mapfile -d '' ROOT_RENDERERS < <(find "$SP_OUT" -maxdepth 1 -type f -iname 'renderer_sp_*.dll' -print0 | LC_ALL=C sort -z); mapfile -d '' MAIN_FILES < <(find "$MAIN_OUT" -maxdepth 1 -type f -print0 | LC_ALL=C sort -z)
+        (( ${#ROOT_EXES[@]} >= 1 )); (( ${#ROOT_DLLS[@]} >= 2 )); (( ${#ROOT_RENDERERS[@]} >= 2 )); find "$MAIN_OUT" -maxdepth 1 -type f -iname '*cgame*.dll' -print -quit | grep -q .; find "$MAIN_OUT" -maxdepth 1 -type f -iname '*qagame*.dll' -print -quit | grep -q .; find "$MAIN_OUT" -maxdepth 1 -type f -iname '*ui*.dll' -print -quit | grep -q .
+        DIST="$GITHUB_WORKSPACE/dist"; STAGE="$DIST/$RELEASE_BASENAME"; rm -rf "$DIST"; mkdir -p "$STAGE/Main" "$STAGE/docs"
+        for f in "${ROOT_EXES[@]}"; do install -m 0755 "$f" "$STAGE/$(basename "$f")"; done; for f in "${ROOT_DLLS[@]}"; do install -m 0644 "$f" "$STAGE/$(basename "$f")"; done; for f in "${MAIN_FILES[@]}"; do install -m 0644 "$f" "$STAGE/Main/$(basename "$f")"; done
+        install -m 0644 "$BASE_FINAL_PROFILE" "$STAGE/Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"
+        install -m 0644 "$BASE_PROFILE" "$STAGE/Main/DARKWOLF_FST_1_3_PRODUCTION_CANDIDATE.cfg"
+        install -m 0644 DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg "$STAGE/Main/"
+        install -m 0644 RUN_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cmd "$STAGE/"
+        install -m 0644 README_STAGE9_2_9_4_PRODUCTION_CANDIDATE_RU.txt "$STAGE/"
+        install -m 0644 apply_rend2_stage9_2_9_4_production_candidate_sp.py "$STAGE/docs/"
+        install -m 0644 STAGE9_2_9_4_PRODUCTION_DECISIONS.txt "$STAGE/docs/"
+        install -m 0644 "$BASE_BUILD_INFO" "$STAGE/docs/BASE_FST_1_V1_3_BUILD_INFO.txt"
+        install -m 0644 "$S9PC_DELTA_NAME" "$STAGE/docs/$S9PC_DELTA_NAME"
+        install -m 0644 "$S9PC_CUMULATIVE_NAME" "$STAGE/docs/$S9PC_CUMULATIVE_NAME"
+        install -m 0644 source/SP/code/rend2/glsl/generic_fp.glsl "$STAGE/docs/generic_fp_frozen.glsl"
+        install -m 0644 source/SP/code/rend2/glsl/ssgi_fp.glsl "$STAGE/docs/ssgi_fp_frozen.glsl"
+        install -m 0644 source/SP/code/rend2/glsl/ssgi_vp.glsl "$STAGE/docs/ssgi_vp_frozen.glsl"
+        renderer_sha="$(sha256sum "$STAGE/renderer_sp_rend2_x64.dll" | awk '{print $1}')"
+        profile_sha="$(sha256sum "$STAGE/Main/DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg" | awk '{print $1}')"
+        {
+         echo "release=DarkWolf ioRTCW Rend2 Stage 9.2-9.4 Production Candidate"; echo "status=PRODUCTION_CANDIDATE_REQUIRES_FULL_GAME_REGRESSION";
+         echo "base_run_id=$BASE_RUN_ID"; echo "base_artifact_id=$BASE_ARTIFACT_ID"; echo "base_artifact_digest=$EXPECTED_BASE_ARTIFACT_DIGEST"; echo "base_zip_sha256=$BASE_ZIP_SHA256"; echo "base_cumulative_sha256=$EXPECTED_BASE_CUMULATIVE_SHA256"; echo "base_renderer_sha256=$EXPECTED_BASE_RENDERER_SHA256";
+         echo "stage9_patcher_sha256=$S9PC_PATCHER_SHA256"; echo "stage9_delta_sha256=$S9PC_DELTA_SHA256"; echo "stage9_cumulative_sha256=$S9PC_CUMULATIVE_SHA256"; echo "renderer_sha256=$renderer_sha"; echo "production_profile_sha256=$profile_sha";
+         echo "source_delta_files=3"; echo "glsl_changed=NO"; echo "tr_shader_changed=NO"; echo "autotest_commands=REMOVED"; echo "runtime_trace_machinery=REMOVED";
+         echo "engine_master_r_fxStage9Enable=0"; echo "production_profile_r_fxStage9Enable=1"; echo "large_fire_response=1.30_exact_xflame2"; echo "small_fire_response=1.15_exact_c_flame"; echo "black_smoke_alpha=0.90"; echo "light_smoke_alpha=0.90"; echo "smoke_fog=NATIVE"; echo "haze=NATIVE"; echo "water=NATIVE"; echo "standard_glass=NATIVE"; echo "tramglass2=NATIVE"; echo "clone_door_add=0.85_exact_ONE_ONE"; echo "clone_door_other=NATIVE"; echo "clone_door_alpha=NATIVE"; echo "flamethrower_response=NATIVE_FST_SOFT_RANGE24_RETAINED";
+        } > "$STAGE/docs/STAGE9_2_9_4_PRODUCTION_BUILD_INFO.txt"
+        {
+         echo "ROOT EXE"; printf '%s\n' "${ROOT_EXES[@]}" | sed "s#^$SP_OUT/##"; echo; echo "ROOT DLL"; printf '%s\n' "${ROOT_DLLS[@]}" | sed "s#^$SP_OUT/##"; echo; echo "MAIN RUNTIME"; printf '%s\n' "${MAIN_FILES[@]}" | sed "s#^$MAIN_OUT/#Main/#"; echo "Main/DARKWOLF_PREPRODUCTION_FINAL_V1_7.cfg"; echo "Main/DARKWOLF_FST_1_3_PRODUCTION_CANDIDATE.cfg"; echo "Main/DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg"; echo "RUN_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cmd";
+        } > "$STAGE/docs/RUNTIME_FILE_MANIFEST.txt"
+
+        # Production cleanup guards.
+        ! grep -R -Eq 'fx93_|R_FX93|FX93\||fx92_|FX92\|' source/SP/code/rend2/tr_init.c source/SP/code/rend2/tr_local.h source/SP/code/rend2/tr_shade.c
+        ! grep -R -Eq 'r_fxStdGlass|r_fxTramGlass|r_fxCloneOther|r_fxCloneAlpha|r_fxWater|r_fxHaze|r_fxSmokeFogMode|r_fxGeneralTransparencyMode' source/SP/code/rend2/tr_init.c source/SP/code/rend2/tr_local.h source/SP/code/rend2/tr_shade.c
+        find "$STAGE" -type f -iname 'pak*.pk3' -print -quit | grep -q . && { echo "::error::Commercial pak*.pk3 must not be packaged" >&2; exit 1; } || true
+        find "$STAGE" -type f \( -iname '*.bsp' -o -iname '*.shader' -o -iname '*.pk3' -o -iname '*.tga' \) -print -quit | grep -q . && { echo "::error::Original RTCW assets must not be packaged" >&2; exit 1; } || true
+        ( cd "$STAGE"; find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+        find "$STAGE" -exec touch -h -d '2000-01-01 00:00:00 UTC' {} +
+        ( cd "$DIST"; find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"; cp "$RELEASE_BASENAME.zip" "$RELEASE_BASENAME.first.zip"; rm -f "$RELEASE_BASENAME.zip"; find "$RELEASE_BASENAME" -type f -print0 | LC_ALL=C sort -z | xargs -0 zip -X -9 "$RELEASE_BASENAME.zip"; cmp "$RELEASE_BASENAME.first.zip" "$RELEASE_BASENAME.zip"; rm -f "$RELEASE_BASENAME.first.zip" )
+        sha256sum "$DIST/$RELEASE_BASENAME.zip" > "$DIST/$RELEASE_BASENAME.zip.sha256"
+        unzip -t "$DIST/$RELEASE_BASENAME.zip"
+        echo "Packaged Stage 9.2-9.4 Production Candidate renderer_sha=$renderer_sha profile_sha=$profile_sha"
+    - name: Upload Stage 9.2-9.4 Production Candidate artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: ${{ env.RELEASE_BASENAME }}
+        path: |-
+          dist/${{ env.RELEASE_BASENAME }}.zip
+          dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+        if-no-files-found: error
+        compression-level: 0
