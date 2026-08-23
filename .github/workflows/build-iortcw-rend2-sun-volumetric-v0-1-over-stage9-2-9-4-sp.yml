@@ -1,0 +1,1048 @@
+name: Build DarkWolf Rend2 Sun Volumetric v0.1 over Stage 9.2-9.4 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: sun-volumetric-v0-1-stage9-2-9-4-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Sun Volumetric v0.1 over exact Stage 9.2-9.4 SP
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "31993514170"
+      BASE_RUN_HEAD_SHA: 034e8df370d60c7a0e125e3a2d0bee498ef869ba
+      BASE_ARTIFACT_ID: "9276111064"
+      BASE_ARTIFACT_NAME: iortcw-rend2-stage9-2-9-4-production-candidate-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:9d0f41dc364595bff268dab599d8c7c2bb911d346e93eb411ef049628088ab36
+      BASE_RELEASE_BASENAME: iortcw-rend2-stage9-2-9-4-production-candidate-full-sp-windows-x64-1
+
+      BASE_PROFILE_NAME: DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg
+      BASE_PROFILE_SHA256: e1d13ed5ecc576ff4d1b290dc5c642416da0f79090cdbe5b48909b498917b6e0
+      BASE_RENDERER_SHA256: e38b2c3d5423ad03fafb2f8a3915b29227d732c67814c43c8acd17ca6e275a0c
+      BASE_CUMULATIVE_NAME: rend2-cumulative-preproduction-v1-7-plus-fst1-v1-3-plus-stage9-2-9-4-production-candidate-sp.patch
+      BASE_CUMULATIVE_SHA256: 6e1637b344d45f42a81eeeff3558005a633360ffb1dcf72ee8245eb6bd2ea8cd
+
+      RELEASE_BASENAME: iortcw-rend2-sun-volumetric-v0-1-over-stage9-2-9-4-full-sp-windows-x64-1
+      SV01_DELTA_NAME: rend2-sun-volumetric-v0-1-over-stage9-2-9-4-sp.patch
+      SV01_CUMULATIVE_NAME: rend2-cumulative-stage9-2-9-4-plus-sun-volumetric-v0-1-sp.patch
+
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install deterministic build and shader tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git glslang-tools \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 python3-yaml unzip zip file
+
+      - name: Verify exact Stage 9.2-9.4 base run and artifact
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          run_sha="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}" --jq '.head_sha')"
+          run_conclusion="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}" --jq '.conclusion')"
+
+          test "$run_sha" = "$BASE_RUN_HEAD_SHA" || {
+            echo "ERROR: base run head SHA drift: $run_sha" >&2
+            exit 1
+          }
+          test "$run_conclusion" = "success" || {
+            echo "ERROR: base run is not successful: $run_conclusion" >&2
+            exit 1
+          }
+
+          artifact_line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name, .expired, .digest] | @tsv")"
+          test -n "$artifact_line" || {
+            echo "ERROR: exact base artifact id ${BASE_ARTIFACT_ID} not found" >&2
+            exit 1
+          }
+
+          IFS=$'\t' read -r artifact_name artifact_expired artifact_digest <<< "$artifact_line"
+          test "$artifact_name" = "$BASE_ARTIFACT_NAME" || {
+            echo "ERROR: base artifact name drift: $artifact_name" >&2
+            exit 1
+          }
+          test "$artifact_expired" = "false" || {
+            echo "ERROR: base artifact is expired" >&2
+            exit 1
+          }
+          test "$artifact_digest" = "$BASE_ARTIFACT_DIGEST" || {
+            echo "ERROR: base artifact digest drift: $artifact_digest" >&2
+            exit 1
+          }
+
+          echo "Exact base contract PASS"
+          echo "run=$BASE_RUN_ID head=$run_sha"
+          echo "artifact=$BASE_ARTIFACT_ID digest=$artifact_digest"
+
+      - name: Download and verify exact Stage 9.2-9.4 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+
+          gh run download "$BASE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$BASE_ARTIFACT_NAME" \
+            --dir base-artifact
+
+          base_zip="$(find base-artifact -type f -name "${BASE_RELEASE_BASENAME}.zip" -print -quit)"
+          if [ -z "$base_zip" ]; then
+            mapfile -t all_zips < <(find base-artifact -type f -name '*.zip' -print)
+            if [ "${#all_zips[@]}" -ne 1 ]; then
+              echo "ERROR: cannot uniquely identify base release zip" >&2
+              find base-artifact -maxdepth 3 -type f -print >&2
+              exit 1
+            fi
+            base_zip="${all_zips[0]}"
+          fi
+
+          sidecar="${base_zip}.sha256"
+          test -f "$sidecar" || {
+            echo "ERROR: base release sha256 sidecar missing: $sidecar" >&2
+            exit 1
+          }
+          expected_zip_sha="$(awk 'NR==1 {print $1}' "$sidecar")"
+          actual_zip_sha="$(sha256sum "$base_zip" | awk '{print $1}')"
+          test "$actual_zip_sha" = "$expected_zip_sha" || {
+            echo "ERROR: base release zip checksum mismatch" >&2
+            exit 1
+          }
+
+          unzip -q "$base_zip" -d base-release
+          base_renderer="$(find base-release -type f -name 'renderer_sp_rend2_x64.dll' -print -quit)"
+          test -n "$base_renderer" || {
+            echo "ERROR: base renderer not found after release extraction" >&2
+            exit 1
+          }
+          base_stage="$(dirname "$base_renderer")"
+          printf '%s\n' "$base_stage" > .base_stage_path
+
+          test "$(sha256sum "$base_renderer" | awk '{print $1}')" = "$BASE_RENDERER_SHA256" || {
+            echo "ERROR: base renderer hash does not match run 31993514170 contract" >&2
+            exit 1
+          }
+
+          base_profile="$base_stage/Main/$BASE_PROFILE_NAME"
+          test -f "$base_profile" || {
+            echo "ERROR: base Stage 9 profile missing: $base_profile" >&2
+            exit 1
+          }
+          test "$(sha256sum "$base_profile" | awk '{print $1}')" = "$BASE_PROFILE_SHA256" || {
+            echo "ERROR: base Stage 9 profile hash drift" >&2
+            exit 1
+          }
+
+          base_patch="$base_stage/docs/$BASE_CUMULATIVE_NAME"
+          test -f "$base_patch" || {
+            echo "ERROR: exact cumulative Stage 9 patch missing: $base_patch" >&2
+            exit 1
+          }
+          test "$(sha256sum "$base_patch" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256" || {
+            echo "ERROR: cumulative Stage 9 patch hash drift" >&2
+            exit 1
+          }
+
+          echo "Base release byte contract PASS: $base_stage"
+
+      - name: Reconstruct exact Stage 9.2-9.4 renderer source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf source
+          git clone --quiet "$UPSTREAM_REPO" source
+          git -C source checkout --quiet --detach "$UPSTREAM_SHA"
+          test "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA"
+
+          base_stage="$(cat .base_stage_path)"
+          base_patch="$(realpath "$base_stage/docs/$BASE_CUMULATIVE_NAME")"
+
+          git -C source apply --check "$base_patch"
+          git -C source apply "$base_patch"
+
+          git -C source config user.name "DarkWolf Build Bot"
+          git -C source config user.email "darkwolf-build@users.noreply.github.com"
+          git -C source add -A
+          git -C source commit -q -m "Reconstruct exact Stage 9.2-9.4 base from run 31993514170"
+          git -C source tag sv01-base-stage9-2-9-4
+
+          git -C source apply --reverse --check "$base_patch"
+          echo "Exact Stage 9 cumulative replay PASS"
+
+      - name: Freeze existing lighting shadow GI FX and Bloom-sensitive carriers
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          frozen=(
+            SP/code/rend2/glsl/lightall_fp.glsl
+            SP/code/rend2/glsl/lightall_vp.glsl
+            SP/code/rend2/glsl/dlight_fp.glsl
+            SP/code/rend2/glsl/dlight_vp.glsl
+            SP/code/rend2/glsl/generic_fp.glsl
+            SP/code/rend2/glsl/generic_vp.glsl
+            SP/code/rend2/glsl/ssgi_fp.glsl
+            SP/code/rend2/glsl/ssgi_vp.glsl
+            SP/code/rend2/tr_shade.c
+            SP/code/rend2/tr_shader.c
+          )
+
+          for f in "${frozen[@]}"; do
+            test -f "source/$f" || {
+              echo "ERROR: frozen Stage 9 carrier is missing: $f" >&2
+              exit 1
+            }
+          done
+
+          sha256sum "${frozen[@]/#/source/}" > sv01-frozen-before.sha256
+          echo "Frozen-carrier manifest created"
+
+      - name: Apply Sun Volumetric v0.1 isolated source patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > apply_sun_volumetric_v0_1.py <<'PY'
+          #!/usr/bin/env python3
+          from pathlib import Path
+          import sys
+          
+          ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
+          MARKER = "DARKWOLF_SUN_VOLUMETRIC_V0_1"
+          
+          
+          def die(msg):
+              raise SystemExit(f"Sun Volumetric v0.1 patch error: {msg}")
+          
+          
+          def read(rel):
+              p = ROOT / rel
+              if not p.is_file():
+                  die(f"missing file: {rel}")
+              return p, p.read_text(encoding="utf-8")
+          
+          
+          def write(rel, text):
+              p = ROOT / rel
+              p.parent.mkdir(parents=True, exist_ok=True)
+              p.write_text(text, encoding="utf-8", newline="\n")
+          
+          
+          def replace_once(rel, old, new):
+              p, text = read(rel)
+              count = text.count(old)
+              if count != 1:
+                  die(f"{rel}: expected exactly one anchor, found {count}: {old!r}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
+          
+          
+          def insert_after(rel, anchor, addition):
+              replace_once(rel, anchor, anchor + addition)
+          
+          
+          def insert_before(rel, anchor, addition):
+              replace_once(rel, anchor, addition + anchor)
+          
+          
+          # Refuse accidental double-application.
+          for rel in [
+              "SP/code/rend2/tr_init.c",
+              "SP/code/rend2/tr_local.h",
+              "SP/code/rend2/tr_glsl.c",
+              "SP/code/rend2/tr_backend.c",
+          ]:
+              _, t = read(rel)
+              if MARKER in t:
+                  die(f"{rel}: patch marker already present")
+          
+          # ---------------------------------------------------------------------------
+          # 1) Makefile: stringify and link the new fallback GLSL sources in every
+          #    Rend2 renderer object list that already contains shadowmask_vp.
+          # ---------------------------------------------------------------------------
+          make_rel = "SP/Makefile"
+          p, text = read(make_rel)
+          needle = "$(B)/rend2/glsl/shadowmask_vp.o \\\n"
+          count = text.count(needle)
+          if count < 1 or count > 4:
+              die(f"{make_rel}: unexpected shadowmask_vp object occurrence count: {count}")
+          addition = (
+              needle
+              + "  $(B)/rend2/glsl/volumetricsun_fp.o \\\n"
+              + "  $(B)/rend2/glsl/volumetricsun_vp.o \\\n"
+          )
+          text = text.replace(needle, addition)
+          p.write_text(text, encoding="utf-8", newline="\n")
+          
+          # ---------------------------------------------------------------------------
+          # 2) New shaders.  Vertex shader intentionally mirrors Rend2 shadowmask_vp so
+          #    depth/world reconstruction uses the exact same camera-ray convention.
+          # ---------------------------------------------------------------------------
+          vp = r'''// DARKWOLF_SUN_VOLUMETRIC_V0_1
+          // Half-resolution shadow-aware directional-sun volumetric pass.
+          attribute vec4 attr_Position;
+          attribute vec4 attr_TexCoord0;
+          
+          uniform vec3   u_ViewForward;
+          uniform vec3   u_ViewLeft;
+          uniform vec3   u_ViewUp;
+          uniform vec4   u_ViewInfo;
+          
+          varying vec2   var_DepthTex;
+          varying vec3   var_ViewDir;
+          
+          void main()
+          {
+              gl_Position = attr_Position;
+              vec2 screenCoords = gl_Position.xy / gl_Position.w;
+              var_DepthTex = attr_TexCoord0.xy;
+              var_ViewDir = u_ViewForward + u_ViewLeft * -screenCoords.x + u_ViewUp * screenCoords.y;
+          }
+          '''
+          
+          fp = r'''// DARKWOLF_SUN_VOLUMETRIC_V0_1
+          // Experimental v0.1: 16-step, half-resolution, shadow-aware sun raymarch.
+          // It deliberately does not touch Bloom, ToneMap, LightAll, dlight or SSGI.
+          uniform sampler2D u_ScreenDepthMap;
+          
+          uniform sampler2DShadow u_ShadowMap;
+          #if defined(USE_SHADOW_CASCADE)
+          uniform sampler2DShadow u_ShadowMap2;
+          uniform sampler2DShadow u_ShadowMap3;
+          uniform sampler2DShadow u_ShadowMap4;
+          #endif
+          
+          uniform mat4 u_ShadowMvp;
+          #if defined(USE_SHADOW_CASCADE)
+          uniform mat4 u_ShadowMvp2;
+          uniform mat4 u_ShadowMvp3;
+          uniform mat4 u_ShadowMvp4;
+          #endif
+          
+          uniform vec3 u_ViewOrigin;
+          uniform vec4 u_ViewInfo;              // x=zFar/zNear, y=zFar
+          uniform vec4 u_PrimaryLightOrigin;    // xyz=direction toward sun
+          uniform vec3 u_PrimaryLightColor;
+          uniform vec4 u_Color;                 // strength,density,anisotropy,maxDistance
+          
+          varying vec2 var_DepthTex;
+          varying vec3 var_ViewDir;
+          
+          #define DEPTH_MAX_ERROR 0.000000059604644775390625
+          #define VOLUMETRIC_SAMPLES 16
+          
+          float getLinearDepth(sampler2D depthMap, vec2 tex, float zFarDivZNear)
+          {
+              float sampleZDivW = texture2D(depthMap, tex).r - DEPTH_MAX_ERROR;
+              return 1.0 / mix(zFarDivZNear, 1.0, sampleZDivW);
+          }
+          
+          bool insideShadowClip(vec4 p)
+          {
+              vec3 a = abs(p.xyz);
+              float w = abs(p.w);
+              return w > 0.000001 && all(lessThan(a, vec3(w)));
+          }
+          
+          vec3 toShadowTex(vec4 p)
+          {
+              return p.xyz * (0.5 / p.w) + vec3(0.5);
+          }
+          
+          float sunVisibility(vec3 worldPos)
+          {
+              vec4 p = u_ShadowMvp * vec4(worldPos, 1.0);
+          
+          #if defined(USE_SHADOW_CASCADE)
+              if (insideShadowClip(p))
+              {
+                  vec3 tc = toShadowTex(p);
+                  return shadow2D(u_ShadowMap, tc);
+              }
+          
+              p = u_ShadowMvp2 * vec4(worldPos, 1.0);
+              if (insideShadowClip(p))
+              {
+                  vec3 tc = toShadowTex(p);
+                  return shadow2D(u_ShadowMap2, tc);
+              }
+          
+              p = u_ShadowMvp3 * vec4(worldPos, 1.0);
+              if (insideShadowClip(p))
+              {
+                  vec3 tc = toShadowTex(p);
+                  return shadow2D(u_ShadowMap3, tc);
+              }
+          
+              p = u_ShadowMvp4 * vec4(worldPos, 1.0);
+              if (insideShadowClip(p))
+              {
+                  vec3 tc = toShadowTex(p);
+                  return shadow2D(u_ShadowMap4, tc);
+              }
+          
+              // Do not smear the edge of the last cascade into unsupported distance.
+              return 0.0;
+          #else
+              if (!insideShadowClip(p))
+                  return 0.0;
+              return shadow2D(u_ShadowMap, toShadowTex(p));
+          #endif
+          }
+          
+          float stableJitter(vec2 p)
+          {
+              return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+          }
+          
+          float phaseHG(float cosTheta, float g)
+          {
+              float gg = g * g;
+              float denom = max(1.0 + gg - 2.0 * g * cosTheta, 0.02);
+              return min((1.0 - gg) / pow(denom, 1.5), 4.0);
+          }
+          
+          void main()
+          {
+              float zFar = max(u_ViewInfo.y, 1.0);
+              float sceneDepth = getLinearDepth(u_ScreenDepthMap, var_DepthTex, u_ViewInfo.x);
+              float maxDepth = min(sceneDepth, max(u_Color.w, 1.0) / zFar);
+          
+              if (maxDepth <= 0.0)
+              {
+                  gl_FragColor = vec4(0.0);
+                  return;
+              }
+          
+              float strength = max(u_Color.x, 0.0);
+              float density = max(u_Color.y, 0.000001);
+              float g = clamp(u_Color.z, -0.85, 0.85);
+          
+              float viewRayLength = max(length(var_ViewDir), 0.0001);
+              vec3 viewRayDir = var_ViewDir / viewRayLength;
+              vec3 sunDir = normalize(u_PrimaryLightOrigin.xyz);
+              float phase = phaseHG(clamp(dot(viewRayDir, sunDir), -1.0, 1.0), g);
+          
+              float stepDepth = maxDepth / float(VOLUMETRIC_SAMPLES);
+              float worldStep = viewRayLength * stepDepth;
+              float jitter = (stableJitter(var_DepthTex) - 0.5) * 0.50;
+              float integrated = 0.0;
+          
+              for (int i = 0; i < VOLUMETRIC_SAMPLES; ++i)
+              {
+                  float fi = float(i);
+                  float sampleDepth = stepDepth * (fi + 0.5 + jitter);
+                  sampleDepth = clamp(sampleDepth, 0.0, maxDepth);
+          
+                  float worldDistance = viewRayLength * sampleDepth;
+                  vec3 worldPos = u_ViewOrigin + var_ViewDir * sampleDepth;
+                  float visibility = sunVisibility(worldPos);
+                  float transmittance = exp(-density * worldDistance);
+          
+                  integrated += visibility * transmittance * density * worldStep;
+              }
+          
+              // Use the existing sun color as tint, not as an uncontrolled intensity
+              // multiplier. This keeps SUN-5C tuning and this experimental pass decoupled.
+              float sunPeak = max(max(u_PrimaryLightColor.r, u_PrimaryLightColor.g),
+                                  max(u_PrimaryLightColor.b, 0.001));
+              vec3 sunTint = u_PrimaryLightColor / sunPeak;
+              vec3 scatter = sunTint * (integrated * phase * strength);
+          
+              gl_FragColor = vec4(clamp(scatter, vec3(0.0), vec3(1.0)), 0.0);
+          }
+          '''
+          write("SP/code/rend2/glsl/volumetricsun_vp.glsl", vp)
+          write("SP/code/rend2/glsl/volumetricsun_fp.glsl", fp)
+          
+          # ---------------------------------------------------------------------------
+          # 3) Renderer state + cvars.  Master is LATCH so the GPU shader is only built
+          #    when requested; all tuning cvars can be adjusted live.
+          # ---------------------------------------------------------------------------
+          insert_after(
+              "SP/code/rend2/tr_local.h",
+              "\tshaderProgram_t shadowmaskShader;\n",
+              "\tshaderProgram_t volumetricSunShader; // DARKWOLF_SUN_VOLUMETRIC_V0_1\n",
+          )
+          insert_after(
+              "SP/code/rend2/tr_local.h",
+              "extern  cvar_t  *r_drawSunRays;\n",
+              "extern  cvar_t  *r_volumetricSun; // DARKWOLF_SUN_VOLUMETRIC_V0_1\n"
+              "extern  cvar_t  *r_volumetricSunStrength;\n"
+              "extern  cvar_t  *r_volumetricSunDensity;\n"
+              "extern  cvar_t  *r_volumetricSunAnisotropy;\n"
+              "extern  cvar_t  *r_volumetricSunMaxDistance;\n",
+          )
+          insert_after(
+              "SP/code/rend2/tr_init.c",
+              "cvar_t  *r_drawSunRays;\n",
+              "cvar_t  *r_volumetricSun; // DARKWOLF_SUN_VOLUMETRIC_V0_1\n"
+              "cvar_t  *r_volumetricSunStrength;\n"
+              "cvar_t  *r_volumetricSunDensity;\n"
+              "cvar_t  *r_volumetricSunAnisotropy;\n"
+              "cvar_t  *r_volumetricSunMaxDistance;\n",
+          )
+          insert_after(
+              "SP/code/rend2/tr_init.c",
+              "\tr_drawSunRays = ri.Cvar_Get( \"r_drawSunRays\", \"0\", CVAR_ARCHIVE | CVAR_LATCH );\n",
+              "\t// DARKWOLF_SUN_VOLUMETRIC_V0_1: independent, default-off test path.\n"
+              "\tr_volumetricSun = ri.Cvar_Get( \"r_volumetricSun\", \"0\", CVAR_ARCHIVE | CVAR_LATCH );\n"
+              "\tr_volumetricSunStrength = ri.Cvar_Get( \"r_volumetricSunStrength\", \"0.18\", CVAR_ARCHIVE );\n"
+              "\tr_volumetricSunDensity = ri.Cvar_Get( \"r_volumetricSunDensity\", \"0.0012\", CVAR_ARCHIVE );\n"
+              "\tr_volumetricSunAnisotropy = ri.Cvar_Get( \"r_volumetricSunAnisotropy\", \"0.45\", CVAR_ARCHIVE );\n"
+              "\tr_volumetricSunMaxDistance = ri.Cvar_Get( \"r_volumetricSunMaxDistance\", \"1024\", CVAR_ARCHIVE );\n",
+          )
+          
+          # ---------------------------------------------------------------------------
+          # 4) GPU program registration. Reuse Rend2's existing uniforms/TMUs; no new
+          #    uniform enum is introduced, minimizing collision risk with existing work.
+          # ---------------------------------------------------------------------------
+          insert_after(
+              "SP/code/rend2/tr_glsl.c",
+              "extern const char *fallbackShader_shadowmask_fp;\n",
+              "extern const char *fallbackShader_volumetricsun_vp; // DARKWOLF_SUN_VOLUMETRIC_V0_1\n"
+              "extern const char *fallbackShader_volumetricsun_fp;\n",
+          )
+          
+          p, text = read("SP/code/rend2/tr_glsl.c")
+          start = text.find("if (!GLSL_InitGPUShader(&tr.shadowmaskShader")
+          if start < 0:
+              die("SP/code/rend2/tr_glsl.c: shadowmask init start not found")
+          end_marker = "\tnumEtcShaders++;\n"
+          end = text.find(end_marker, start)
+          if end < 0:
+              die("SP/code/rend2/tr_glsl.c: shadowmask init end not found")
+          end += len(end_marker)
+          block = r'''
+          
+          	// DARKWOLF_SUN_VOLUMETRIC_V0_1
+          	// Compile only when the latched master switch was enabled before renderer init.
+          	if (r_volumetricSun->integer)
+          	{
+          		if (!GLSL_InitGPUShader(&tr.volumetricSunShader, "volumetricsun", attribs, qtrue, extradefines, qtrue,
+          				fallbackShader_volumetricsun_vp, fallbackShader_volumetricsun_fp))
+          		{
+          			ri.Error(ERR_FATAL, "Could not load Sun Volumetric v0.1 shader!");
+          		}
+          
+          		GLSL_InitUniforms(&tr.volumetricSunShader);
+          		GLSL_SetUniformInt(&tr.volumetricSunShader, UNIFORM_SCREENDEPTHMAP, TB_NORMALMAP);
+          		GLSL_SetUniformInt(&tr.volumetricSunShader, UNIFORM_SHADOWMAP,  TB_SHADOWMAP);
+          		GLSL_SetUniformInt(&tr.volumetricSunShader, UNIFORM_SHADOWMAP2, TB_SHADOWMAP2);
+          		GLSL_SetUniformInt(&tr.volumetricSunShader, UNIFORM_SHADOWMAP3, TB_SHADOWMAP3);
+          		GLSL_SetUniformInt(&tr.volumetricSunShader, UNIFORM_SHADOWMAP4, TB_SHADOWMAP4);
+          		GLSL_FinishGPUShader(&tr.volumetricSunShader);
+          		numEtcShaders++;
+          		ri.Printf(PRINT_ALL, "Sun Volumetric v0.1: shader loaded (16 samples, half-resolution)\n");
+          	}
+          '''
+          text = text[:end] + block + text[end:]
+          p.write_text(text, encoding="utf-8", newline="\n")
+          
+          insert_after(
+              "SP/code/rend2/tr_glsl.c",
+              "\tGLSL_DeleteGPUShader(&tr.shadowmaskShader);\n",
+              "\tGLSL_DeleteGPUShader(&tr.volumetricSunShader); // DARKWOLF_SUN_VOLUMETRIC_V0_1\n",
+          )
+          
+          # ---------------------------------------------------------------------------
+          # 5) Backend pass. It renders into Rend2's existing half-size quarterFbo[0],
+          #    then adds RGB into the HDR source before the existing post-processing.
+          # ---------------------------------------------------------------------------
+          helper = r'''// DARKWOLF_SUN_VOLUMETRIC_V0_1
+          static void RB_VolumetricSun(FBO_t *srcFbo, ivec4_t srcBox)
+          {
+          	vec4_t viewInfo;
+          	vec4_t sunDir;
+          	vec4_t params;
+          	vec3_t viewVector;
+          	float zmax, ymax, xmax;
+          
+          	if (!r_volumetricSun->integer || !tr.volumetricSunShader.program)
+          		return;
+          	if (!glRefConfig.framebufferObject || !srcFbo || !tr.quarterFbo[0] || !tr.renderDepthImage)
+          		return;
+          	if (!r_hdr->integer)
+          		return;
+          	if (backEnd.refdef.rdflags & RDF_NOWORLDMODEL)
+          		return;
+          	if (!r_sunlightMode->integer || !(tr.sunShadows || r_forceSun->integer))
+          		return;
+          	if (!tr.sunShadowDepthImage[3])
+          		return;
+          	if (r_shadowCascadeZFar->integer != 0 &&
+          		(!tr.sunShadowDepthImage[0] || !tr.sunShadowDepthImage[1] || !tr.sunShadowDepthImage[2]))
+          		return;
+          
+          	GLSL_BindProgram(&tr.volumetricSunShader);
+          	GL_BindToTMU(tr.renderDepthImage, TB_NORMALMAP);
+          
+          	if (r_shadowCascadeZFar->integer != 0)
+          	{
+          		GL_BindToTMU(tr.sunShadowDepthImage[0], TB_SHADOWMAP);
+          		GL_BindToTMU(tr.sunShadowDepthImage[1], TB_SHADOWMAP2);
+          		GL_BindToTMU(tr.sunShadowDepthImage[2], TB_SHADOWMAP3);
+          		GL_BindToTMU(tr.sunShadowDepthImage[3], TB_SHADOWMAP4);
+          
+          		GLSL_SetUniformMat4(&tr.volumetricSunShader, UNIFORM_SHADOWMVP,  backEnd.refdef.sunShadowMvp[0]);
+          		GLSL_SetUniformMat4(&tr.volumetricSunShader, UNIFORM_SHADOWMVP2, backEnd.refdef.sunShadowMvp[1]);
+          		GLSL_SetUniformMat4(&tr.volumetricSunShader, UNIFORM_SHADOWMVP3, backEnd.refdef.sunShadowMvp[2]);
+          		GLSL_SetUniformMat4(&tr.volumetricSunShader, UNIFORM_SHADOWMVP4, backEnd.refdef.sunShadowMvp[3]);
+          	}
+          	else
+          	{
+          		GL_BindToTMU(tr.sunShadowDepthImage[3], TB_SHADOWMAP);
+          		GLSL_SetUniformMat4(&tr.volumetricSunShader, UNIFORM_SHADOWMVP, backEnd.refdef.sunShadowMvp[3]);
+          	}
+          
+          	zmax = backEnd.viewParms.zFar;
+          	ymax = zmax * tan(backEnd.viewParms.fovY * M_PI / 360.0f);
+          	xmax = zmax * tan(backEnd.viewParms.fovX * M_PI / 360.0f);
+          
+          	GLSL_SetUniformVec3(&tr.volumetricSunShader, UNIFORM_VIEWORIGIN, backEnd.refdef.vieworg);
+          	VectorScale(backEnd.refdef.viewaxis[0], zmax, viewVector);
+          	GLSL_SetUniformVec3(&tr.volumetricSunShader, UNIFORM_VIEWFORWARD, viewVector);
+          	VectorScale(backEnd.refdef.viewaxis[1], xmax, viewVector);
+          	GLSL_SetUniformVec3(&tr.volumetricSunShader, UNIFORM_VIEWLEFT, viewVector);
+          	VectorScale(backEnd.refdef.viewaxis[2], ymax, viewVector);
+          	GLSL_SetUniformVec3(&tr.volumetricSunShader, UNIFORM_VIEWUP, viewVector);
+          
+          	VectorSet4(viewInfo, zmax / r_znear->value, zmax, 0.0f, 0.0f);
+          	GLSL_SetUniformVec4(&tr.volumetricSunShader, UNIFORM_VIEWINFO, viewInfo);
+          
+          	VectorSet4(sunDir,
+          		backEnd.refdef.sunDir[0], backEnd.refdef.sunDir[1], backEnd.refdef.sunDir[2], 0.0f);
+          	GLSL_SetUniformVec4(&tr.volumetricSunShader, UNIFORM_PRIMARYLIGHTORIGIN, sunDir);
+          	GLSL_SetUniformVec3(&tr.volumetricSunShader, UNIFORM_PRIMARYLIGHTCOLOR, backEnd.refdef.sunCol);
+          
+          	VectorSet4(params,
+          		Com_Clamp(0.0f, 2.0f, r_volumetricSunStrength->value),
+          		Com_Clamp(0.000001f, 0.02f, r_volumetricSunDensity->value),
+          		Com_Clamp(-0.85f, 0.85f, r_volumetricSunAnisotropy->value),
+          		Com_Clamp(64.0f, zmax, r_volumetricSunMaxDistance->value));
+          
+          	// First pass overwrites the half-resolution buffer; second pass adds RGB to HDR.
+          	FBO_Blit(srcFbo, srcBox, NULL, tr.quarterFbo[0], NULL,
+          		&tr.volumetricSunShader, params, 0);
+          	FBO_Blit(tr.quarterFbo[0], NULL, NULL, srcFbo, srcBox, NULL, NULL,
+          		GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+          }
+          
+          
+          '''
+          insert_before(
+              "SP/code/rend2/tr_backend.c",
+              "/*\n=============\nRB_PostProcess\n\n=============\n*/\nconst void *RB_PostProcess(const void *data)\n",
+              helper,
+          )
+          
+          # Insert as the first HDR/source post-process operation. This keeps the pass
+          # before any existing Bloom/ToneMap additions without editing their code.
+          p, text = read("SP/code/rend2/tr_backend.c")
+          fn = text.find("const void *RB_PostProcess(const void *data)")
+          if fn < 0:
+              die("SP/code/rend2/tr_backend.c: RB_PostProcess not found")
+          anchor = "\tif (srcFbo)\n\t{\n"
+          pos = text.find(anchor, fn)
+          if pos < 0:
+              die("SP/code/rend2/tr_backend.c: srcFbo post-process anchor not found")
+          pos += len(anchor)
+          hook = (
+              "\t\t// DARKWOLF_SUN_VOLUMETRIC_V0_1: pre-Bloom/pre-ToneMap HDR additive pass.\n"
+              "\t\tif (r_volumetricSun->integer)\n"
+              "\t\t\tRB_VolumetricSun(srcFbo, srcBox);\n\n"
+          )
+          text = text[:pos] + hook + text[pos:]
+          p.write_text(text, encoding="utf-8", newline="\n")
+          
+          print("Sun Volumetric v0.1 source patch applied successfully")
+          PY
+          python3 -m py_compile apply_sun_volumetric_v0_1.py
+          python3 apply_sun_volumetric_v0_1.py source
+
+      - name: Verify source isolation and patch contracts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          sha256sum -c sv01-frozen-before.sha256
+
+          git -C source add -A
+          git -C source diff --cached --check
+
+          git -C source diff --cached --name-only | sort > sv01-changed-actual.txt
+          cat > sv01-changed-expected.txt <<'EOF'
+          SP/Makefile
+          SP/code/rend2/glsl/volumetricsun_fp.glsl
+          SP/code/rend2/glsl/volumetricsun_vp.glsl
+          SP/code/rend2/tr_backend.c
+          SP/code/rend2/tr_glsl.c
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          EOF
+          sort -o sv01-changed-expected.txt sv01-changed-expected.txt
+          diff -u sv01-changed-expected.txt sv01-changed-actual.txt
+
+          grep -q 'r_volumetricSun' source/SP/code/rend2/tr_init.c
+          grep -q 'volumetricSunShader' source/SP/code/rend2/tr_glsl.c
+          grep -q 'RB_VolumetricSun' source/SP/code/rend2/tr_backend.c
+          grep -q 'DARKWOLF_SUN_VOLUMETRIC_V0_1' source/SP/code/rend2/glsl/volumetricsun_fp.glsl
+
+          mkdir -p generated-patches
+          git -C source diff --cached --binary HEAD > "generated-patches/$SV01_DELTA_NAME"
+          git -C source diff --cached --binary "$UPSTREAM_SHA" > "generated-patches/$SV01_CUMULATIVE_NAME"
+          test -s "generated-patches/$SV01_DELTA_NAME"
+          test -s "generated-patches/$SV01_CUMULATIVE_NAME"
+
+          rm -rf replay
+          git -C source worktree add --quiet --detach ../replay "$UPSTREAM_SHA"
+          git -C replay apply --check "$(realpath "generated-patches/$SV01_CUMULATIVE_NAME")"
+          git -C replay apply "$(realpath "generated-patches/$SV01_CUMULATIVE_NAME")"
+
+          git -C source diff --cached --name-status "$UPSTREAM_SHA" > sv01-cumulative-files.txt
+          while IFS=$'\t' read -r status path extra; do
+            case "$status" in
+              D*)
+                test ! -e "source/$path" && test ! -e "replay/$path"
+                ;;
+              R*|C*)
+                test -n "$extra"
+                cmp "source/$extra" "replay/$extra"
+                ;;
+              *)
+                cmp "source/$path" "replay/$path"
+                ;;
+            esac
+          done < sv01-cumulative-files.txt
+
+          git -C source worktree remove --force ../replay
+          echo "Sun Volumetric v0.1 isolation + cumulative replay PASS"
+
+      - name: Validate new GLSL in Rend2 GLSL 1.20 contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf glsl-check
+          mkdir -p glsl-check
+
+          {
+            echo '#version 120'
+            cat source/SP/code/rend2/glsl/volumetricsun_vp.glsl
+          } > glsl-check/volumetricsun.vert
+          glslangValidator -S vert glsl-check/volumetricsun.vert
+
+          {
+            echo '#version 120'
+            echo '#define shadow2D(a,b) shadow2D(a,b).r'
+            cat source/SP/code/rend2/glsl/volumetricsun_fp.glsl
+          } > glsl-check/volumetricsun-nocascade.frag
+          glslangValidator -S frag glsl-check/volumetricsun-nocascade.frag
+
+          {
+            echo '#version 120'
+            echo '#define shadow2D(a,b) shadow2D(a,b).r'
+            echo '#define USE_SHADOW_CASCADE'
+            cat source/SP/code/rend2/glsl/volumetricsun_fp.glsl
+          } > glsl-check/volumetricsun-cascade.frag
+          glslangValidator -S frag glsl-check/volumetricsun-cascade.frag
+
+          echo "GLSL 1.20 cascade/non-cascade validation PASS"
+
+      - name: Build Windows x64 SP with Rend2
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"
+          if [ "$jobs" -gt 4 ]; then jobs=4; fi
+
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify rebuilt renderer and Windows import hygiene
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          new_renderer="source/SP/build/release-mingw32-x86_64/renderer_sp_rend2_x64.dll"
+          test -s "$new_renderer" || {
+            echo "ERROR: expected Stage 9 Rend2 renderer output missing: $new_renderer" >&2
+            exit 1
+          }
+          printf '%s\n' "$new_renderer" > .new_renderer_path
+
+          file "$new_renderer"
+          x86_64-w64-mingw32-objdump -p "$new_renderer" \
+            | awk '/DLL Name:/ {print tolower($3)}' \
+            | sort -u | tee sv01-renderer-imports.txt
+
+          if grep -Eiq 'pthread|winpthread|libgcc|libstdc\+\+|libssp' sv01-renderer-imports.txt; then
+            echo "ERROR: forbidden MinGW runtime dependency detected" >&2
+            exit 1
+          fi
+
+          new_sha="$(sha256sum "$new_renderer" | awk '{print $1}')"
+          test "$new_sha" != "$BASE_RENDERER_SHA256" || {
+            echo "ERROR: rebuilt renderer is unexpectedly byte-identical to base" >&2
+            exit 1
+          }
+          echo "New renderer SHA256: $new_sha"
+
+      - name: Package exact base release plus isolated Sun Volumetric v0.1 renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          new_renderer="$(cat .new_renderer_path)"
+
+          rm -rf dist "$RELEASE_BASENAME"
+          mkdir -p dist
+          cp -a "$base_stage" "$RELEASE_BASENAME"
+          stage="$RELEASE_BASENAME"
+
+          cp -f "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+          mkdir -p "$stage/Main" "$stage/docs"
+
+          cat > "$stage/Main/DARKWOLF_SUN_VOLUMETRIC_V0_1_TEST.cfg" <<'EOF'
+          // DarkWolf / ioRTCW Rend2 SP - Sun Volumetric v0.1 test profile
+          // Base: run 31993514170 / Stage 9.2-9.4 Production Candidate
+          exec DARKWOLF_STAGE9_2_9_4_PRODUCTION_CANDIDATE.cfg
+
+          // Disable legacy 2D radial sun rays so the two effects never stack.
+          seta r_drawSunRays "0"
+
+          // Keep the existing sun/depth/shadow path active.
+          seta r_depthPrepass "1"
+          seta r_sunlightMode "1"
+          seta r_sunShadows "1"
+          seta r_forceSun "0"
+
+          // Experimental Sun Volumetric v0.1.
+          seta r_volumetricSun "1"
+          seta r_volumetricSunStrength "0.24"
+          seta r_volumetricSunDensity "0.0012"
+          seta r_volumetricSunAnisotropy "0.50"
+          seta r_volumetricSunMaxDistance "1024"
+          EOF
+
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path(os.environ["RELEASE_BASENAME"]) / "RUN_SUN_VOLUMETRIC_V0_1_TEST.cmd"
+          text = r'''@echo off
+          setlocal
+          cd /d "%~dp0"
+          set "GAME="
+          for %%F in (ioWolfSP*.exe) do if not defined GAME set "GAME=%%~fF"
+          if not defined GAME (
+            echo ERROR: ioWolfSP executable was not found in this release folder.
+            pause
+            exit /b 1
+          )
+          "%GAME%" +set r_volumetricSun 1 +set r_drawSunRays 0 +exec DARKWOLF_SUN_VOLUMETRIC_V0_1_TEST.cfg
+          endlocal
+          '''
+          lines = [line.strip() if i == 0 else line[10:] if line.startswith("          ") else line
+                   for i, line in enumerate(text.splitlines())]
+          p.write_bytes(("\r\n".join(lines).strip() + "\r\n").encode("ascii"))
+          PY
+
+          cat > "$stage/SUN_VOLUMETRIC_V0_1_README_RU.txt" <<'EOF'
+          DarkWolf / ioRTCW Rend2 SP
+          SUN VOLUMETRIC v0.1 - EXPERIMENTAL TEST BUILD
+
+          БАЗА
+          -----
+          GitHub Actions run: 31993514170
+          Stage 9.2-9.4 Production Candidate Full SP.
+          Пакет создаётся из точного релиза этого run. Из существующих файлов
+          заменяется только renderer_sp_rend2_x64.dll; остальные файлы базы
+          проверяются на байтовую идентичность.
+
+          ЧТО ДОБАВЛЕНО
+          -------------
+          Новый независимый Sun Volumetric pass:
+          - 16 samples вдоль луча камеры;
+          - half-resolution через существующий Rend2 quarterFbo[0];
+          - восстановление 3D позиции по renderDepthImage;
+          - чтение 4 существующих cascaded sun shadow maps;
+          - shadow-aware scattering: дерево/решётка/архитектура могут разрезать
+            видимый объём солнечного света;
+          - additive composite в HDR ДО существующих post-process стадий;
+          - legacy r_drawSunRays для тестового профиля выключен.
+
+          НЕ ИЗМЕНЯЮТСЯ
+          -------------
+          lightall_fp/vp, dlight_fp/vp, generic_fp/vp, ssgi_fp/vp,
+          tr_shade.c, tr_shader.c, Stage 9 FX, локальные dlights и существующая
+          логика Bloom/ToneMap. Local volumetric для ламп/факелов сюда НЕ входит.
+
+          ЗАПУСК
+          ------
+          Рекомендуется RUN_SUN_VOLUMETRIC_V0_1_TEST.cmd.
+
+          Вручную из консоли:
+            /seta r_volumetricSun 1
+            /seta r_drawSunRays 0
+            /vid_restart
+
+          Затем можно менять без vid_restart:
+            /set r_volumetricSunStrength 0.24
+            /set r_volumetricSunDensity 0.0012
+            /set r_volumetricSunAnisotropy 0.50
+            /set r_volumetricSunMaxDistance 1024
+
+          Для A/B:
+            /seta r_volumetricSun 0
+            /vid_restart
+          При r_volumetricSun 0 новый GPU program не создаётся и новый pass
+          полностью обходится.
+
+          ГДЕ ТЕСТИРОВАТЬ
+          ---------------
+          Лучше всего: яркое солнце + деревья/ветви, окна, решётки, проёмы.
+          Если карта не создаёт солнечные shadow maps, эффект намеренно не
+          выполняется: v0.1 не подменяет sun/shadow architecture своей.
+
+          ПЕРВЫЙ ТЕСТ
+          ------------
+          Сравнить один и тот же кадр:
+          A) r_volumetricSun 0
+          B) r_volumetricSun 1
+          и записать FPS. Особенно смотреть на световые коридоры между ветвями,
+          отсутствие света за непрозрачной геометрией и стабильность картинки
+          при движении камеры.
+          EOF
+
+          cp generated-patches/$SV01_DELTA_NAME "$stage/docs/$SV01_DELTA_NAME"
+          cp generated-patches/$SV01_CUMULATIVE_NAME "$stage/docs/$SV01_CUMULATIVE_NAME"
+          cp apply_sun_volumetric_v0_1.py "$stage/docs/apply_sun_volumetric_v0_1.py"
+          cp sv01-frozen-before.sha256 "$stage/docs/SUN_VOLUMETRIC_V0_1_FROZEN_CARRIERS.sha256"
+          cp sv01-renderer-imports.txt "$stage/docs/SUN_VOLUMETRIC_V0_1_RENDERER_IMPORTS.txt"
+          cp source/SP/code/rend2/glsl/volumetricsun_fp.glsl "$stage/docs/volumetricsun_fp.glsl"
+          cp source/SP/code/rend2/glsl/volumetricsun_vp.glsl "$stage/docs/volumetricsun_vp.glsl"
+
+          cat > "$stage/SUN_VOLUMETRIC_V0_1_BUILD_INFO.txt" <<EOF
+          DarkWolf ioRTCW Rend2 SP - Sun Volumetric v0.1
+          base_run_id=$BASE_RUN_ID
+          base_run_head_sha=$BASE_RUN_HEAD_SHA
+          base_artifact_id=$BASE_ARTIFACT_ID
+          base_artifact_digest=$BASE_ARTIFACT_DIGEST
+          upstream_sha=$UPSTREAM_SHA
+          base_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          base_renderer_sha256=$BASE_RENDERER_SHA256
+          new_renderer_sha256=$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')
+          sun_volumetric_samples=16
+          sun_volumetric_resolution=half_linear_quarter_pixels
+          sun_volumetric_shadow_source=existing_rend2_cascaded_sun_shadow_maps
+          legacy_r_drawSunRays_in_test_profile=0
+          master_default=r_volumetricSun_0
+          EOF
+
+          # Byte-preservation proof for every file inherited from the base release,
+          # except the one renderer DLL that this experiment intentionally replaces.
+          python3 - "$base_stage" "$stage" <<'PY'
+          import hashlib
+          import os
+          import sys
+
+          base, stage = map(os.path.abspath, sys.argv[1:])
+          replaced = os.path.normcase("renderer_sp_rend2_x64.dll")
+
+          def digest(path):
+              h = hashlib.sha256()
+              with open(path, "rb") as f:
+                  for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          bad = []
+          checked = 0
+          for root, _, files in os.walk(base):
+              for name in files:
+                  src = os.path.join(root, name)
+                  rel = os.path.relpath(src, base)
+                  if os.path.normcase(rel) == replaced:
+                      continue
+                  dst = os.path.join(stage, rel)
+                  if not os.path.isfile(dst) or digest(src) != digest(dst):
+                      bad.append(rel)
+                  checked += 1
+
+          if bad:
+              print("ERROR: inherited base files changed unexpectedly:", file=sys.stderr)
+              for rel in bad:
+                  print(rel, file=sys.stderr)
+              raise SystemExit(1)
+          print(f"Base byte-preservation PASS: {checked} inherited files unchanged")
+          PY
+
+          test "$(sha256sum "$stage/Main/$BASE_PROFILE_NAME" | awk '{print $1}')" = "$BASE_PROFILE_SHA256"
+
+          manifest_tmp="$GITHUB_WORKSPACE/SUN_VOLUMETRIC_V0_1_MANIFEST.sha256.tmp"
+          (cd "$stage" && find . -type f ! -name 'SUN_VOLUMETRIC_V0_1_MANIFEST.sha256' -print0 \
+            | LC_ALL=C sort -z | xargs -0 sha256sum) > "$manifest_tmp"
+          mv "$manifest_tmp" "$stage/SUN_VOLUMETRIC_V0_1_MANIFEST.sha256"
+
+          mv "$stage" dist/
+          (cd dist && zip -X -q -r "${RELEASE_BASENAME}.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+
+          echo "Packaged: dist/${RELEASE_BASENAME}.zip"
+
+      - name: Final release contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -s "dist/${RELEASE_BASENAME}.zip"
+          test -s "dist/${RELEASE_BASENAME}.zip.sha256"
+          test -s "dist/${RELEASE_BASENAME}/renderer_sp_rend2_x64.dll"
+          test -s "dist/${RELEASE_BASENAME}/Main/DARKWOLF_SUN_VOLUMETRIC_V0_1_TEST.cfg"
+          test -s "dist/${RELEASE_BASENAME}/RUN_SUN_VOLUMETRIC_V0_1_TEST.cmd"
+          test -s "dist/${RELEASE_BASENAME}/docs/$SV01_DELTA_NAME"
+          test -s "dist/${RELEASE_BASENAME}/docs/$SV01_CUMULATIVE_NAME"
+
+          grep -q 'r_volumetricSun "1"' \
+            "dist/${RELEASE_BASENAME}/Main/DARKWOLF_SUN_VOLUMETRIC_V0_1_TEST.cfg"
+          grep -q 'Local volumetric' \
+            "dist/${RELEASE_BASENAME}/SUN_VOLUMETRIC_V0_1_README_RU.txt"
+
+          echo "### Sun Volumetric v0.1 build" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Base run: $BASE_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Base artifact: $BASE_ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Upstream: $UPSTREAM_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "- New pass: 16 samples, half-resolution, cascaded-shadow-aware" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Frozen carriers verified unchanged" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Existing base files preserved except renderer_sp_rend2_x64.dll" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Local lamp/torch volumetrics: intentionally not part of v0.1" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Sun Volumetric v0.1 experimental release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
