@@ -1,0 +1,1905 @@
+name: Build DarkWolf Rend2 Local Volumetric v0.2 Root Cause Correction over Sun Production v1 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: local-volumetric-v0-2-root-cause-over-sun-production-v1-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Local Volumetric v0.2 Root Cause Correction over exact successful Sun Volumetric Production v1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "32636643432"
+      BASE_RUN_HEAD_SHA: 31022e33e0883a8a26f56872e97c5e5a082cb13c
+      BASE_ARTIFACT_ID: "9492508236"
+      BASE_ARTIFACT_NAME: iortcw-rend2-sun-volumetric-production-v1-over-stage9-2-9-4-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:b03d93e301338ff0770837e92c8682b025f76971e288415e2b3331e66e538eaa
+      BASE_RELEASE_BASENAME: iortcw-rend2-sun-volumetric-production-v1-over-stage9-2-9-4-full-sp-windows-x64-1
+      BASE_RELEASE_ZIP_SHA256: 6326e437d8ad8e64fe18f86d3a69b9fed72fa08b422ae498a61d6e5c498ae4f9
+      BASE_RENDERER_SHA256: 14351ee2f0060df679fb74c1bf6930d749e1903ad2e64de056cabebea4f19d9c
+      BASE_CGAME_SHA256: 6a2707e8ce1ea2cae527721a6c3a2953721b259fe1937c9229c207afddd5fefb
+      BASE_QAGAME_SHA256: 449f0c1464af8f456a8b9e5b319c2042e08198377a01ed08ea098ad7315378d6
+      BASE_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      BASE_EXE_SHA256: edd9403d6aa84c53547a18235b20fc34de35e1b92b9137bdbdd16a4ffc0c204d
+      BASE_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      BASE_PROFILE_NAME: DARKWOLF_SUN_VOLUMETRIC_PRODUCTION.cfg
+      BASE_PROFILE_SHA256: 45b16c23ee7ad2b8152bc17e2e12f39d00c16cd67a122697e2d1f34c141e939c
+      BASE_CUMULATIVE_NAME: rend2-cumulative-stage9-2-9-4-plus-sun-volumetric-production-v1-sp.patch
+      BASE_CUMULATIVE_SHA256: 5878978e9716a42c1ca0b4df45ef2c40761f47708052d88505e9b3d6aa2cd3e1
+      V03_VP_SHA256: ecd3aa89ec7be5d347ffb10eacf2e72220cfdf73f3109de55ed0bfac1e71c4d4
+      V03_FP_SHA256: b5ec4c12a0664350e8f2021dce9c3a5caf3b3dde3912d4abb065b1459d4ef448
+      BASE_SSGI_FP_SHA256: a7466db1cc81b6fdf64b20acad046bb340e5d97ba0c9c0f9560c248312f9bc37
+      BASE_SSGI_VP_SHA256: d8c315e04cff47410058f014a8daaddd0ae51c3e85de5ada688c7c0c3c381181
+
+      RELEASE_BASENAME: iortcw-rend2-local-volumetric-v0-2-root-cause-correction-over-sun-production-v1-full-sp-windows-x64-1
+      LOCALVOL_DELTA_NAME: rend2-local-volumetric-v0-2-root-cause-over-sun-production-v1-sp.patch
+      LOCALVOL_CUMULATIVE_NAME: rend2-cumulative-stage9-2-9-4-plus-sun-volumetric-production-v1-plus-local-volumetric-v0-2-root-cause-sp.patch
+
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install deterministic build and shader tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git glslang-tools \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 python3-yaml unzip zip file
+
+      - name: Verify exact successful Sun Volumetric Production v1 base run and artifact
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          run_sha="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["head_sha"])')"
+          run_conclusion="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["conclusion"])')"
+          run_workflow="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])')"
+          test "$run_sha" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: base run HEAD drift: $run_sha" >&2; exit 1; }
+          test "$run_conclusion" = "success" || { echo "ERROR: base run is not successful: $run_conclusion" >&2; exit 1; }
+          test "$run_workflow" = ".github/workflows/build-iortcw-rend2-sun-volumetric-production-v1-over-stage9-2-9-4-sp.yml" || {
+            echo "ERROR: base workflow path drift: $run_workflow" >&2; exit 1;
+          }
+
+          artifact_line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name, .expired, .digest] | @tsv")"
+          test -n "$artifact_line" || { echo "ERROR: exact base artifact not found" >&2; exit 1; }
+          IFS=$'\t' read -r artifact_name artifact_expired artifact_digest <<< "$artifact_line"
+          test "$artifact_name" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: artifact name drift: $artifact_name" >&2; exit 1; }
+          test "$artifact_expired" = "false" || { echo "ERROR: base artifact expired" >&2; exit 1; }
+          test "$artifact_digest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: artifact digest drift: $artifact_digest" >&2; exit 1; }
+          echo "Exact Sun Volumetric Production base contract PASS"
+          echo "run=$BASE_RUN_ID head=$run_sha artifact=$BASE_ARTIFACT_ID digest=$artifact_digest"
+
+      - name: Download and verify exact Sun Volumetric Production v1 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+
+          nested_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+          nested_sidecar="base-artifact/${BASE_RELEASE_BASENAME}.zip.sha256"
+          test -s "$nested_zip" || { echo "ERROR: nested base release ZIP missing" >&2; find base-artifact -maxdepth 2 -type f -print; exit 1; }
+          test -s "$nested_sidecar" || { echo "ERROR: nested base release sidecar missing" >&2; exit 1; }
+          actual_zip_sha="$(sha256sum "$nested_zip" | awk '{print $1}')"
+          test "$actual_zip_sha" = "$BASE_RELEASE_ZIP_SHA256" || { echo "ERROR: base release ZIP SHA drift: $actual_zip_sha" >&2; exit 1; }
+          sidecar_sha="$(awk '{print $1}' "$nested_sidecar")"
+          test "$sidecar_sha" = "$BASE_RELEASE_ZIP_SHA256" || { echo "ERROR: base release sidecar SHA drift: $sidecar_sha" >&2; exit 1; }
+
+          unzip -q "$nested_zip" -d base-release
+          base_stage="$(find base-release -type f -name renderer_sp_rend2_x64.dll -printf '%h\n' | head -1)"
+          test -n "$base_stage" || { echo "ERROR: renderer not found inside base release" >&2; exit 1; }
+          printf '%s\n' "$base_stage" > .base_stage_path
+
+          test "$(sha256sum "$base_stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$base_stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$base_stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$base_stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$base_stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$base_stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$BASE_OPENGL1_SHA256"
+          test "$(sha256sum "$base_stage/Main/$BASE_PROFILE_NAME" | awk '{print $1}')" = "$BASE_PROFILE_SHA256"
+          test "$(sha256sum "$base_stage/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(sha256sum "$base_stage/docs/volumetricsun_vp_v0_3_frozen.glsl" | awk '{print $1}')" = "$V03_VP_SHA256"
+          test "$(sha256sum "$base_stage/docs/volumetricsun_fp_v0_3_frozen.glsl" | awk '{print $1}')" = "$V03_FP_SHA256"
+          echo "Exact Sun Volumetric Production release bytes PASS: $base_stage"
+
+      - name: Reconstruct exact Sun Volumetric Production v1 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          test "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA"
+
+          cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" base-sun-production.patch
+          test "$(sha256sum base-sun-production.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          git -C source apply --check "$(realpath base-sun-production.patch)"
+          git -C source apply "$(realpath base-sun-production.patch)"
+
+          test "$(sha256sum source/SP/code/rend2/glsl/volumetricsun_vp.glsl | awk '{print $1}')" = "$V03_VP_SHA256"
+          test "$(sha256sum source/SP/code/rend2/glsl/volumetricsun_fp.glsl | awk '{print $1}')" = "$V03_FP_SHA256"
+          test "$(sha256sum source/SP/code/rend2/glsl/ssgi_fp.glsl | awk '{print $1}')" = "$BASE_SSGI_FP_SHA256"
+          test "$(sha256sum source/SP/code/rend2/glsl/ssgi_vp.glsl | awk '{print $1}')" = "$BASE_SSGI_VP_SHA256"
+          grep -Fq 'R_VolumetricSunMapSourceValid' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'R_StaticPromote' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'dlightShadowSlot[MAX_DLIGHTS]' source/SP/code/rend2/tr_local.h
+          grep -Fq 'Sun Volumetric Production: approved v0.3 shader loaded' source/SP/code/rend2/tr_glsl.c
+
+          git -C source config user.email "localvol-build@invalid.local"
+          git -C source config user.name "DarkWolf Local Volumetric Build"
+          git -C source add -A
+          git -C source commit -q -m "Exact Sun Volumetric Production v1 reconstructed base"
+          git -C source rev-parse HEAD > .sunprod_source_commit
+          echo "Exact source reconstruction PASS: $(cat .sunprod_source_commit)"
+
+      - name: Freeze Sun Volumetric and all unaffected light shadow GI Bloom-sensitive carriers
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          frozen=(
+            SP/code/rend2/glsl/volumetricsun_vp.glsl
+            SP/code/rend2/glsl/volumetricsun_fp.glsl
+            SP/code/rend2/glsl/lightall_vp.glsl
+            SP/code/rend2/glsl/lightall_fp.glsl
+            SP/code/rend2/glsl/dlight_vp.glsl
+            SP/code/rend2/glsl/dlight_fp.glsl
+            SP/code/rend2/glsl/shadowfill_vp.glsl
+            SP/code/rend2/glsl/shadowfill_fp.glsl
+            SP/code/rend2/glsl/shadowmask_fp.glsl
+            SP/code/rend2/glsl/ssgi_vp.glsl
+            SP/code/rend2/glsl/generic_fp.glsl
+            SP/code/rend2/tr_main.c
+            SP/code/rend2/tr_shade.c
+            SP/code/rend2/tr_postprocess.c
+          )
+          test "$(sha256sum source/SP/code/rend2/glsl/ssgi_fp.glsl | awk '{print $1}')" = "$BASE_SSGI_FP_SHA256"
+          test "$(sha256sum source/SP/code/rend2/glsl/ssgi_vp.glsl | awk '{print $1}')" = "$BASE_SSGI_VP_SHA256"
+          : > localvol-v02-frozen-before.sha256
+          for f in "${frozen[@]}"; do
+            test -s "source/$f" || { echo "ERROR: frozen carrier missing: $f" >&2; exit 1; }
+            (cd source && sha256sum "$f") >> localvol-v02-frozen-before.sha256
+          done
+          cat localvol-v02-frozen-before.sha256
+
+      - name: Apply proven Local Volumetric v0.1 FIXED4 core
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > apply_local_volumetric_v0_1.py <<'PY'
+          #!/usr/bin/env python3
+          from pathlib import Path
+          import sys
+          
+          ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else '.').resolve()
+          MARKER = 'DARKWOLF_LOCAL_VOLUMETRIC_V0_1'
+          
+          
+          def die(msg):
+              raise SystemExit(f'Local Volumetric v0.1 patch error: {msg}')
+          
+          
+          def read(rel):
+              p = ROOT / rel
+              if not p.is_file():
+                  die(f'missing file: {rel}')
+              return p, p.read_text(encoding='utf-8')
+          
+          
+          def write(rel, content):
+              p = ROOT / rel
+              p.parent.mkdir(parents=True, exist_ok=True)
+              p.write_text(content, encoding='utf-8', newline='\n')
+          
+          
+          def insert_after(rel, needle, addition, count=1):
+              p, s = read(rel)
+              n = s.count(needle)
+              if n != count:
+                  die(f'{rel}: expected {count} occurrences of anchor, found {n}: {needle[:80]!r}')
+              p.write_text(s.replace(needle, needle + addition, count), encoding='utf-8', newline='\n')
+          
+          
+          def insert_before(rel, needle, addition, count=1):
+              p, s = read(rel)
+              n = s.count(needle)
+              if n != count:
+                  die(f'{rel}: expected {count} occurrences of anchor, found {n}: {needle[:80]!r}')
+              p.write_text(s.replace(needle, addition + needle, count), encoding='utf-8', newline='\n')
+          
+          
+          def replace_once(rel, old, new):
+              p, s = read(rel)
+              n = s.count(old)
+              if n != 1:
+                  die(f'{rel}: expected one replacement anchor, found {n}: {old[:100]!r}')
+              p.write_text(s.replace(old, new, 1), encoding='utf-8', newline='\n')
+          
+          
+          # Refuse accidental replay or a wrong source generation.
+          for rel in (
+              'SP/code/rend2/tr_backend.c',
+              'SP/code/rend2/tr_scene.c',
+              'SP/code/rend2/tr_local.h',
+              'SP/code/cgame/cg_ents.c',
+          ):
+              _, text = read(rel)
+              if MARKER in text:
+                  die(f'{rel}: marker already present; refusing repeat apply')
+          
+          # The experiment MUST sit on the proven Sun Volumetric Production source.
+          _, sun_fp = read('SP/code/rend2/glsl/volumetricsun_fp.glsl')
+          _, sun_vp = read('SP/code/rend2/glsl/volumetricsun_vp.glsl')
+          if 'DARKWOLF_SUN_VOLUMETRIC_V0_3' not in sun_fp or 'DARKWOLF_SUN_VOLUMETRIC_V0_3' not in sun_vp:
+              die('proven Sun Volumetric v0.3 beauty core not found')
+          _, scene_text = read('SP/code/rend2/tr_scene.c')
+          if 'R_VolumetricSunMapSourceValid' not in scene_text or 'R_VolumetricSunShouldUpdateCascade' not in scene_text:
+              die('Sun Volumetric Production CSM producer not found')
+          if 'R_StaticPromote' not in scene_text:
+              die('Static Promotion / Lamp Learn carrier not found')
+          _, local_h = read('SP/code/rend2/tr_local.h')
+          if 'dlightShadowMask' not in local_h or 'dlightShadowSlot[MAX_DLIGHTS]' not in local_h:
+              die('production point-light shadow slot contract not found')
+          
+          # 1) Fallback shader objects in the SP Makefile.
+          # FIX1: the exact Sun Volumetric Production SP/Makefile Q3R2STRINGOBJ list
+          # uses two leading spaces, not a tab. Anchor to the proven production bytes.
+          p, makefile = read('SP/Makefile')
+          make_anchor = '  $(B)/rend2/glsl/volumetricsun_vp.o \\\n'
+          make_count = makefile.count(make_anchor)
+          if make_count != 1:
+              die(f'SP/Makefile: expected exact Sun Production volumetricsun_vp object once, found {make_count}')
+          makefile = makefile.replace(
+              make_anchor,
+              make_anchor +
+              '  $(B)/rend2/glsl/volumetriclocal_fp.o \\\n'
+              '  $(B)/rend2/glsl/volumetriclocal_vp.o \\\n',
+              1,
+          )
+          if makefile.count('  $(B)/rend2/glsl/volumetriclocal_fp.o \\\n') != 1 or \
+             makefile.count('  $(B)/rend2/glsl/volumetriclocal_vp.o \\\n') != 1:
+              die('SP/Makefile: Local Volumetric fallback object insertion contract failed')
+          p.write_text(makefile, encoding='utf-8', newline='\n')
+          
+          # 2) New Local Volumetric shaders. Sun shaders are intentionally untouched.
+          vp = r'''// DARKWOLF_LOCAL_VOLUMETRIC_V0_1
+          // Fullscreen vertex contract intentionally matches proven Sun Volumetric v0.3.
+          attribute vec4 attr_Position;
+          attribute vec4 attr_TexCoord0;
+          
+          uniform mat4 u_ModelViewProjectionMatrix;
+          uniform vec3 u_ViewForward;
+          uniform vec3 u_ViewLeft;
+          uniform vec3 u_ViewUp;
+          uniform vec4 u_ViewInfo;
+          
+          varying vec2 var_DepthTex;
+          varying vec3 var_ViewDir;
+          
+          void main()
+          {
+              gl_Position = u_ModelViewProjectionMatrix * vec4(attr_Position.xyz, 1.0);
+              vec2 screenCoords = gl_Position.xy / gl_Position.w;
+              var_DepthTex = attr_TexCoord0.xy;
+              var_ViewDir = u_ViewForward + u_ViewLeft * -screenCoords.x + u_ViewUp * screenCoords.y;
+          }
+          '''
+          
+          fp = r'''// DARKWOLF_LOCAL_VOLUMETRIC_V0_1
+          // Diagnostic-first local volumetric core.
+          // mode 1 = lamp source diagnostic (unshadowed, boosted)
+          // mode 2 = lamp point volumetric, unshadowed
+          // mode 3 = lamp point volumetric, production dlight cubemap shadow-aware
+          // mode 4 = ET_SPOTLIGHT_EF cone, unshadowed in v0.1
+          // u_Color:          strength, density, anisotropy, maxDistance
+          // u_EnableTextures: samples, local-PCF (0/1), jitter, mode
+          // u_BaseColor:      energy gain, soft-knee, spot cos(inner), reserved
+          // u_PrimaryLightOrigin: xyz source, w radius/range
+          // u_DlightInfo:     xyz spotlight direction, w spot cos(outer)
+          // u_DlightShadowParams: enabled, bias, normalized softness, shadow strength
+          uniform sampler2D u_ScreenDepthMap;
+          uniform samplerCube u_DlightShadowMap;
+          
+          uniform vec3 u_ViewOrigin;
+          uniform vec4 u_ViewInfo;
+          uniform vec4 u_PrimaryLightOrigin;
+          uniform vec3 u_PrimaryLightColor;
+          uniform vec4 u_DlightInfo;
+          uniform vec4 u_DlightShadowParams;
+          uniform vec4 u_Color;
+          uniform vec4 u_EnableTextures;
+          uniform vec4 u_BaseColor;
+          
+          varying vec2 var_DepthTex;
+          varying vec3 var_ViewDir;
+          
+          #define DEPTH_MAX_ERROR 0.000000059604644775390625
+          #define LOCALVOL_MAX_SAMPLES 32
+          
+          float getLinearDepth(sampler2D depthMap, vec2 tex, float zFarDivZNear)
+          {
+              float sampleZDivW = texture2D(depthMap, tex).r - DEPTH_MAX_ERROR;
+              return 1.0 / mix(zFarDivZNear, 1.0, sampleZDivW);
+          }
+          
+          float interleavedGradientNoise(vec2 p)
+          {
+              return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y));
+          }
+          
+          float phaseHG(float cosTheta, float g)
+          {
+              float gg = g * g;
+              float denom = max(1.0 + gg - 2.0 * g * cosTheta, 0.0025);
+              return (1.0 - gg) / (4.0 * M_PI * pow(denom, 1.5));
+          }
+          
+          float localLightAttenuation(float distanceSquared, float radiusSquared)
+          {
+              float nd2 = distanceSquared / max(radiusSquared, 0.0001);
+              float radial = clamp(1.0 - nd2, 0.0, 1.0);
+              float smoothCutoff = radial * radial * radial * (radial * (radial * 6.0 - 15.0) + 10.0);
+              float shoulder = 1.0 / (1.0 + 0.55 * nd2);
+              return clamp(smoothCutoff * (0.35 + 0.65 * shoulder), 0.0, 1.0);
+          }
+          
+          float decodeDlightShadowDepth(vec3 encodedDepth)
+          {
+              return clamp(dot(encodedDepth, vec3(1.0 / 65536.0, 1.0 / 256.0, 1.0)), 0.0, 1.0);
+          }
+          
+          #if __VERSION__ >= 130
+          #define LOCALVOL_TEXTURE_CUBE(s, d) texture((s), (d))
+          #else
+          #define LOCALVOL_TEXTURE_CUBE(s, d) textureCube((s), (d))
+          #endif
+
+          float compareDlightShadow(vec3 direction, float currentDepth, float bias)
+          {
+              float storedDepth = decodeDlightShadowDepth(LOCALVOL_TEXTURE_CUBE(u_DlightShadowMap, normalize(direction)).rgb);
+              return step(currentDepth - bias, storedDepth);
+          }
+          
+          float localDlightVisibility(vec3 fragmentToLight, float currentDepth, int pcfMode)
+          {
+              if (u_DlightShadowParams.x < 0.5)
+                  return 1.0;
+          
+              vec3 dir = normalize(fragmentToLight);
+              float bias = max(u_DlightShadowParams.y, 0.0);
+              float filtered;
+          
+              if (pcfMode <= 0)
+              {
+                  filtered = compareDlightShadow(dir, currentDepth, bias);
+              }
+              else
+              {
+                  vec3 helper = abs(dir.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+                  vec3 tangent = normalize(cross(helper, dir));
+                  vec3 bitangent = cross(dir, tangent);
+                  float radius = max(u_DlightShadowParams.z, 0.00001);
+                  filtered = compareDlightShadow(dir, currentDepth, bias) * 0.50;
+                  filtered += compareDlightShadow(dir + tangent * radius, currentDepth, bias) * 0.125;
+                  filtered += compareDlightShadow(dir - tangent * radius, currentDepth, bias) * 0.125;
+                  filtered += compareDlightShadow(dir + bitangent * radius, currentDepth, bias) * 0.125;
+                  filtered += compareDlightShadow(dir - bitangent * radius, currentDepth, bias) * 0.125;
+              }
+          
+              return mix(1.0, filtered, clamp(u_DlightShadowParams.w, 0.0, 1.0));
+          }
+          
+          bool raySphereSegment(vec3 rayOrigin, vec3 rayDir, vec3 center, float radius,
+                                float maxDistance, out float segmentStart, out float segmentEnd)
+          {
+              vec3 oc = rayOrigin - center;
+              float b = dot(oc, rayDir);
+              float c = dot(oc, oc) - radius * radius;
+              float h = b * b - c;
+              if (h <= 0.0)
+                  return false;
+              h = sqrt(h);
+              segmentStart = max(-b - h, 0.0);
+              segmentEnd = min(-b + h, maxDistance);
+              return segmentEnd > segmentStart;
+          }
+          
+          void main()
+          {
+              float zFar = max(u_ViewInfo.y, 1.0);
+              float sceneDepth = getLinearDepth(u_ScreenDepthMap, var_DepthTex, u_ViewInfo.x);
+              float rayLength = max(length(var_ViewDir), 0.0001);
+              vec3 rayDir = var_ViewDir / rayLength;
+              float sceneDistance = rayLength * sceneDepth;
+              float maxDistance = min(sceneDistance, max(u_Color.w, 1.0));
+          
+              vec3 lightOrigin = u_PrimaryLightOrigin.xyz;
+              float lightRadius = max(u_PrimaryLightOrigin.w, 1.0);
+              float segmentStart, segmentEnd;
+              if (!raySphereSegment(u_ViewOrigin, rayDir, lightOrigin, lightRadius,
+                                    maxDistance, segmentStart, segmentEnd))
+              {
+                  gl_FragColor = vec4(0.0);
+                  return;
+              }
+          
+              float strength = max(u_Color.x, 0.0);
+              float density = max(u_Color.y, 0.000001);
+              float g = clamp(u_Color.z, -0.70, 0.70);
+              int sampleCount = int(clamp(u_EnableTextures.x, 4.0, float(LOCALVOL_MAX_SAMPLES)) + 0.5);
+              int pcfMode = int(clamp(u_EnableTextures.y, 0.0, 1.0) + 0.5);
+              float jitterAmount = clamp(u_EnableTextures.z, 0.0, 0.50);
+              int mode = int(clamp(u_EnableTextures.w, 1.0, 4.0) + 0.5);
+              float energyGain = clamp(u_BaseColor.x, 0.0, 16.0);
+              float kneeStrength = clamp(u_BaseColor.y, 0.0, 4.0);
+          
+              float segmentLength = segmentEnd - segmentStart;
+              float stepLength = segmentLength / float(sampleCount);
+              float jitter = (interleavedGradientNoise(gl_FragCoord.xy) - 0.5) * jitterAmount;
+              float integrated = 0.0;
+          
+              for (int i = 0; i < LOCALVOL_MAX_SAMPLES; ++i)
+              {
+                  if (i >= sampleCount)
+                      break;
+          
+                  float t = segmentStart + stepLength * (float(i) + 0.5 + jitter);
+                  t = clamp(t, segmentStart, segmentEnd);
+                  vec3 worldPos = u_ViewOrigin + rayDir * t;
+                  vec3 toLight = lightOrigin - worldPos;
+                  float distanceSquared = dot(toLight, toLight);
+                  float distanceToLight = sqrt(max(distanceSquared, 0.000001));
+                  float attenuation = localLightAttenuation(distanceSquared, lightRadius * lightRadius);
+                  if (attenuation <= 0.00001)
+                      continue;
+          
+                  float cone = 1.0;
+                  if (mode == 4)
+                  {
+                      vec3 fromLight = -toLight / distanceToLight;
+                      float coneDot = dot(fromLight, normalize(u_DlightInfo.xyz));
+                      float cosOuter = u_DlightInfo.w;
+                      float cosInner = max(u_BaseColor.z, cosOuter + 0.0001);
+                      cone = smoothstep(cosOuter, cosInner, coneDot);
+                      if (cone <= 0.00001)
+                          continue;
+                  }
+          
+                  float visibility = 1.0;
+                  if (mode == 3)
+                      visibility = localDlightVisibility(toLight, distanceToLight / lightRadius, pcfMode);
+          
+                  float phase = (mode == 1) ? 1.0 : phaseHG(clamp(dot(normalize(toLight), rayDir), -1.0, 1.0), g);
+                  float transmittance = exp(-density * max(t - segmentStart, 0.0));
+                  integrated += attenuation * cone * visibility * phase * transmittance * density * stepLength;
+              }
+          
+              float lightPeak = max(max(u_PrimaryLightColor.r, u_PrimaryLightColor.g),
+                                    max(u_PrimaryLightColor.b, 0.001));
+              vec3 lightTint = u_PrimaryLightColor / lightPeak;
+              float colorEnergy = sqrt(lightPeak / (lightPeak + 0.35));
+          
+              float scatterAmount = integrated * strength * colorEnergy;
+              if (mode == 1)
+                  scatterAmount *= 2.5; // source-probe boost: diagnostic only
+              scatterAmount *= energyGain;
+              scatterAmount = scatterAmount / (1.0 + kneeStrength * scatterAmount);
+          
+              gl_FragColor = vec4(max(lightTint * scatterAmount, vec3(0.0)), 0.0);
+          }
+          '''
+          write('SP/code/rend2/glsl/volumetriclocal_vp.glsl', vp)
+          write('SP/code/rend2/glsl/volumetriclocal_fp.glsl', fp)
+          
+          # 3) Renderer internal data contracts: marked promoted lamps + up to four cgame spotlights.
+          insert_after(
+              'SP/code/rend2/tr_local.h',
+              '#define MAX_DLIGHT_SHADOWS 8\n',
+              '#define MAX_LOCAL_VOLUMETRIC_SPOTS 4 // DARKWOLF_LOCAL_VOLUMETRIC_V0_1\n',
+          )
+          insert_after(
+              'SP/code/rend2/tr_local.h',
+              '\tqboolean forced;\t//----(SA) use this dlight when r_dynamiclight is either 1 or 2 (rather than just 1) for "important" gameplay lights (alarm lights, etc)\n',
+              '\tqboolean localVolumetricLamp; // DARKWOLF_LOCAL_VOLUMETRIC_V0_1: Static Promotion / Lamp Learn marker\n',
+          )
+          
+          spot_type = r'''
+          // DARKWOLF_LOCAL_VOLUMETRIC_V0_1
+          // Direction/FOV bridge for RTCW ET_SPOTLIGHT_EF without changing REF_API_VERSION.
+          typedef struct localVolumetricSpot_s {
+          	vec3_t origin;
+          	vec3_t direction;
+          	vec3_t color;
+          	float range;
+          	float fov;
+          } localVolumetricSpot_t;
+          
+          '''.replace('\\t', '\t')
+          insert_before('SP/code/rend2/tr_local.h', '// trRefdef_t holds everything that comes in refdef_t,\n', spot_type)
+          insert_after(
+              'SP/code/rend2/tr_local.h',
+              '\tsigned char dlightShadowSlot[MAX_DLIGHTS]; // light index -> compact cubemap slot, -1 if absent\n',
+              '\tint localVolumetricSpotCount; // DARKWOLF_LOCAL_VOLUMETRIC_V0_1\n'
+              '\tlocalVolumetricSpot_t localVolumetricSpots[MAX_LOCAL_VOLUMETRIC_SPOTS];\n',
+          )
+          insert_after(
+              'SP/code/rend2/tr_local.h',
+              '\tshaderProgram_t volumetricSunShader; // DARKWOLF_SUN_VOLUMETRIC_V0_3\n',
+              '\tshaderProgram_t volumetricLocalShader; // DARKWOLF_LOCAL_VOLUMETRIC_V0_1\n',
+          )
+          insert_after(
+              'SP/code/rend2/tr_local.h',
+              'extern  cvar_t  *r_volumetricSunKnee;\n',
+              'extern cvar_t *r_volumetricLocal; // DARKWOLF_LOCAL_VOLUMETRIC_V0_1\n'
+              'extern cvar_t *r_volumetricLocalMode;\n'
+              'extern cvar_t *r_volumetricLocalTrace;\n'
+              'extern cvar_t *r_volumetricLocalStrength;\n'
+              'extern cvar_t *r_volumetricLocalDensity;\n'
+              'extern cvar_t *r_volumetricLocalAnisotropy;\n'
+              'extern cvar_t *r_volumetricLocalMaxDistance;\n'
+              'extern cvar_t *r_volumetricLocalSamples;\n'
+              'extern cvar_t *r_volumetricLocalShadowPcf;\n'
+              'extern cvar_t *r_volumetricLocalJitter;\n'
+              'extern cvar_t *r_volumetricLocalGain;\n'
+              'extern cvar_t *r_volumetricLocalKnee;\n'
+              'extern cvar_t *r_volumetricLocalSourceMode;\n'
+              'extern cvar_t *r_volumetricLocalSpotSelect;\n',
+          )
+          
+          # 4) Renderer cvars. Master is latched only because the shader is init-time; all tuning/modes are live.
+          insert_after(
+              'SP/code/rend2/tr_init.c',
+              'cvar_t  *r_volumetricSunKnee;\n',
+              'cvar_t *r_volumetricLocal; // DARKWOLF_LOCAL_VOLUMETRIC_V0_1\n'
+              'cvar_t *r_volumetricLocalMode;\n'
+              'cvar_t *r_volumetricLocalTrace;\n'
+              'cvar_t *r_volumetricLocalStrength;\n'
+              'cvar_t *r_volumetricLocalDensity;\n'
+              'cvar_t *r_volumetricLocalAnisotropy;\n'
+              'cvar_t *r_volumetricLocalMaxDistance;\n'
+              'cvar_t *r_volumetricLocalSamples;\n'
+              'cvar_t *r_volumetricLocalShadowPcf;\n'
+              'cvar_t *r_volumetricLocalJitter;\n'
+              'cvar_t *r_volumetricLocalGain;\n'
+              'cvar_t *r_volumetricLocalKnee;\n'
+              'cvar_t *r_volumetricLocalSourceMode;\n'
+              'cvar_t *r_volumetricLocalSpotSelect;\n',
+          )
+          insert_after(
+              'SP/code/rend2/tr_init.c',
+              '\tr_volumetricSunKnee = ri.Cvar_Get( "r_volumetricSunKnee", "1.60", CVAR_ARCHIVE );\n',
+              '\t// DARKWOLF_LOCAL_VOLUMETRIC_V0_1: diagnostic-first local lamp / spotlight experiment.\n'
+              '\tr_volumetricLocal = ri.Cvar_Get( "r_volumetricLocal", "0", CVAR_ARCHIVE | CVAR_LATCH );\n'
+              '\tr_volumetricLocalMode = ri.Cvar_Get( "r_volumetricLocalMode", "0", CVAR_ARCHIVE );\n'
+              '\tr_volumetricLocalTrace = ri.Cvar_Get( "r_volumetricLocalTrace", "1", CVAR_ARCHIVE );\n'
+              '\tr_volumetricLocalStrength = ri.Cvar_Get( "r_volumetricLocalStrength", "0.90", CVAR_ARCHIVE );\n'
+              '\tr_volumetricLocalDensity = ri.Cvar_Get( "r_volumetricLocalDensity", "0.0045", CVAR_ARCHIVE );\n'
+              '\tr_volumetricLocalAnisotropy = ri.Cvar_Get( "r_volumetricLocalAnisotropy", "0.20", CVAR_ARCHIVE );\n'
+              '\tr_volumetricLocalMaxDistance = ri.Cvar_Get( "r_volumetricLocalMaxDistance", "3072", CVAR_ARCHIVE );\n'
+              '\tr_volumetricLocalSamples = ri.Cvar_Get( "r_volumetricLocalSamples", "24", CVAR_ARCHIVE );\n'
+              '\tr_volumetricLocalShadowPcf = ri.Cvar_Get( "r_volumetricLocalShadowPcf", "1", CVAR_ARCHIVE );\n'
+              '\tr_volumetricLocalJitter = ri.Cvar_Get( "r_volumetricLocalJitter", "0.10", CVAR_ARCHIVE );\n'
+              '\tr_volumetricLocalGain = ri.Cvar_Get( "r_volumetricLocalGain", "6.0", CVAR_ARCHIVE );\n'
+              '\tr_volumetricLocalKnee = ri.Cvar_Get( "r_volumetricLocalKnee", "1.40", CVAR_ARCHIVE );\n'
+              '\tr_volumetricLocalSourceMode = ri.Cvar_Get( "r_volumetricLocalSourceMode", "1", CVAR_ARCHIVE );\n'
+              '\tr_volumetricLocalSpotSelect = ri.Cvar_Get( "r_volumetricLocalSpotSelect", "-1", CVAR_ARCHIVE );\n'
+              '\tri.Cvar_CheckRange( r_volumetricLocalMode, 0, 5, qtrue );\n'
+              '\tri.Cvar_CheckRange( r_volumetricLocalTrace, 0, 1, qtrue );\n'
+              '\tri.Cvar_CheckRange( r_volumetricLocalSamples, 4, 32, qtrue );\n'
+              '\tri.Cvar_CheckRange( r_volumetricLocalShadowPcf, 0, 1, qtrue );\n'
+              '\tri.Cvar_CheckRange( r_volumetricLocalSourceMode, 0, 1, qtrue );\n'
+              '\tri.Cvar_CheckRange( r_volumetricLocalSpotSelect, -1, MAX_LOCAL_VOLUMETRIC_SPOTS - 1, qtrue );\n',
+          )
+          
+          # 5) GPU program registration, isolated from Sun Volumetric's shader and defines.
+          insert_after(
+              'SP/code/rend2/tr_glsl.c',
+              'extern const char *fallbackShader_volumetricsun_fp;\n',
+              'extern const char *fallbackShader_volumetriclocal_vp; // DARKWOLF_LOCAL_VOLUMETRIC_V0_1\n'
+              'extern const char *fallbackShader_volumetriclocal_fp;\n',
+          )
+          
+          glsl_block = r'''
+          
+          	// DARKWOLF_LOCAL_VOLUMETRIC_V0_1
+          	if (r_volumetricLocal->integer)
+          	{
+          		if (!GLSL_InitGPUShader(&tr.volumetricLocalShader, "volumetriclocal", attribs, qtrue, "", qtrue,
+          				fallbackShader_volumetriclocal_vp, fallbackShader_volumetriclocal_fp))
+          		{
+          			ri.Error(ERR_FATAL, "Could not load Local Volumetric v0.1 shader!");
+          		}
+          		GLSL_InitUniforms(&tr.volumetricLocalShader);
+          		GLSL_SetUniformInt(&tr.volumetricLocalShader, UNIFORM_SCREENDEPTHMAP, TB_NORMALMAP);
+          		GLSL_SetUniformInt(&tr.volumetricLocalShader, UNIFORM_DLIGHTSHADOWMAP, TB_CUBEMAP);
+          		GLSL_FinishGPUShader(&tr.volumetricLocalShader);
+          		numEtcShaders++;
+          		ri.Printf(PRINT_ALL, "Local Volumetric v0.1: lamp/spot diagnostic shader loaded\n");
+          	}
+          '''.replace('\\t', '\t')
+          # FIX2: do not anchor on the exact escape spelling of the production log message.
+          # Find the unique semantic Sun load marker and insert after its init block.
+          p, glsl_text = read('SP/code/rend2/tr_glsl.c')
+          sun_load_marker = 'Sun Volumetric Production: approved v0.3 shader loaded'
+          sun_load_pos = glsl_text.find(sun_load_marker)
+          if sun_load_pos < 0 or glsl_text.find(sun_load_marker, sun_load_pos + 1) >= 0:
+              die('tr_glsl.c: unique Sun Volumetric Production load marker not found')
+          sun_load_eol = glsl_text.find('\n', sun_load_pos)
+          if sun_load_eol < 0:
+              die('tr_glsl.c: Sun Volumetric Production load line is unterminated')
+          sun_block_close = glsl_text.find('\t}\n', sun_load_eol + 1)
+          if sun_block_close < 0:
+              die('tr_glsl.c: Sun Volumetric Production init closing brace not found')
+          sun_block_end = sun_block_close + len('\t}\n')
+          glsl_text = glsl_text[:sun_block_end] + glsl_block + glsl_text[sun_block_end:]
+          p.write_text(glsl_text, encoding='utf-8', newline='\n')
+          insert_after(
+              'SP/code/rend2/tr_glsl.c',
+              '\tGLSL_DeleteGPUShader(&tr.volumetricSunShader); // DARKWOLF_SUN_VOLUMETRIC_V0_3\n',
+              '\tGLSL_DeleteGPUShader(&tr.volumetricLocalShader); // DARKWOLF_LOCAL_VOLUMETRIC_V0_1\n',
+          )
+          
+          # 6) Mark Static Promotion / Lamp Learn dlights and bridge ET_SPOTLIGHT_EF direction/FOV to Rend2.
+          scene_prefix = r'''// DARKWOLF_LOCAL_VOLUMETRIC_V0_1
+          // High bits are private renderer/cgame bridge markers. They are intercepted before
+          // the normal dlight overdraw path and never reach surface lighting semantics.
+          #define DARKWOLF_REF_LOCALVOL_SPOTLIGHT (1 << 29)
+          #define DARKWOLF_REF_LOCALVOL_LAMP      (1 << 28)
+          #define DARKWOLF_LOCALVOL_SPOT_FOV_MASK 0x0FFF
+          #define DARKWOLF_LOCALVOL_SPOT_FOV_SCALE 16.0f
+          
+          static localVolumetricSpot_t s_localVolumetricSpots[MAX_LOCAL_VOLUMETRIC_SPOTS];
+          static int s_localVolumetricSpotCount = 0;
+          
+          '''
+          insert_after('SP/code/rend2/tr_scene.c', '#include "tr_local.h"\n', '\n' + scene_prefix)
+          # FIX1: r_firstSceneDlight = r_numdlights appears in both RE_ClearScene and
+          # RE_EndScene. Reset the spotlight bridge only at the unique RE_ClearScene boundary.
+          insert_after(
+              'SP/code/rend2/tr_scene.c',
+              'void RE_ClearScene( void ) {\n\tr_firstSceneDlight = r_numdlights;\n',
+              '\ts_localVolumetricSpotCount = 0; // DARKWOLF_LOCAL_VOLUMETRIC_V0_1: per-scene bridge state\n',
+          )
+          
+          p, scene = read('SP/code/rend2/tr_scene.c')
+          fn = scene.find('void RE_AddLightToScene( const vec3_t org, float intensity, float r, float g, float b, int overdraw ) {')
+          if fn < 0:
+              die('tr_scene.c: RE_AddLightToScene signature not found')
+          body_anchor = '\tdlight_t    *dl;\n'
+          pos = scene.find(body_anchor, fn)
+          if pos < 0:
+              die('tr_scene.c: RE_AddLightToScene dlight declaration anchor not found')
+          pos += len(body_anchor)
+          scene_insert = r'''
+          	qboolean localVolumetricLampMarker = (overdraw & DARKWOLF_REF_LOCALVOL_LAMP) ? qtrue : qfalse;
+          
+          	// DARKWOLF_LOCAL_VOLUMETRIC_V0_1: ET_SPOTLIGHT_EF bridge marker.
+          	// RGB encodes normalized direction as [0,1], intensity carries range, low 12 bits carry FOV*16.
+          	if (overdraw & DARKWOLF_REF_LOCALVOL_SPOTLIGHT)
+          	{
+          		if (s_localVolumetricSpotCount < MAX_LOCAL_VOLUMETRIC_SPOTS)
+          		{
+          			localVolumetricSpot_t *spot = &s_localVolumetricSpots[s_localVolumetricSpotCount++];
+          			VectorCopy(org, spot->origin);
+          			VectorSet(spot->direction, r * 2.0f - 1.0f, g * 2.0f - 1.0f, b * 2.0f - 1.0f);
+          			if (VectorNormalize(spot->direction) <= 0.0001f)
+          				VectorSet(spot->direction, 1.0f, 0.0f, 0.0f);
+          			VectorSet(spot->color, 1.0f, 1.0f, 1.0f);
+          			spot->range = MAX(intensity, 64.0f);
+          			spot->fov = (float)(overdraw & DARKWOLF_LOCALVOL_SPOT_FOV_MASK) / DARKWOLF_LOCALVOL_SPOT_FOV_SCALE;
+          			if (spot->fov < 1.0f || spot->fov > 179.0f)
+          				spot->fov = 90.0f;
+          		}
+          		return; // Marker is data-only; never create an omnidirectional dlight.
+          	}
+          '''.replace('\\t', '\t')
+          scene = scene[:pos] + scene_insert + scene[pos:]
+          # Strip the renderer-only lamp marker before legacy overdraw values 10/11 are interpreted.
+          strip_anchor = '\toverdraw &= ~REF_JUNIOR_DLIGHT;\n'
+          strip_pos = scene.find(strip_anchor, fn)
+          if strip_pos < 0:
+              die('tr_scene.c: overdraw strip anchor not found')
+          strip_pos += len(strip_anchor)
+          scene = scene[:strip_pos] + '\toverdraw &= ~DARKWOLF_REF_LOCALVOL_LAMP;\n' + scene[strip_pos:]
+          # Initialize the internal lamp marker after dlight allocation/color setup.
+          init_anchor = '\tdl->overdraw = 0;\n'
+          init_pos = scene.find(init_anchor, fn)
+          if init_pos < 0:
+              die('tr_scene.c: dl->overdraw initialization anchor not found')
+          init_pos += len(init_anchor)
+          scene = scene[:init_pos] + '\tdl->localVolumetricLamp = localVolumetricLampMarker;\n' + scene[init_pos:]
+          p.write_text(scene, encoding='utf-8', newline='\n')
+          
+          # Mark only lights already accepted by the proven Static Promotion/Lamp Learn system.
+          replace_once(
+              'SP/code/rend2/tr_scene.c',
+              'RE_AddLightToScene(candidate->origin, radius, color[0], color[1], color[2], REF_FORCE_DLIGHT);',
+              'RE_AddLightToScene(candidate->origin, radius, color[0], color[1], color[2], REF_FORCE_DLIGHT | DARKWOLF_REF_LOCALVOL_LAMP); // DARKWOLF_LOCAL_VOLUMETRIC_V0_1',
+          )
+          
+          # Copy per-scene spotlight bridge data into tr.refdef after RE_BeginScene prepared scene data.
+          insert_after(
+              'SP/code/rend2/tr_scene.c',
+              '\tRE_BeginScene(fd);\n',
+              '\t// DARKWOLF_LOCAL_VOLUMETRIC_V0_1: freeze cgame spotlight bridge into this rendered scene.\n'
+              '\ttr.refdef.localVolumetricSpotCount = s_localVolumetricSpotCount;\n'
+              '\tif (s_localVolumetricSpotCount > 0)\n'
+              '\t\tCom_Memcpy(tr.refdef.localVolumetricSpots, s_localVolumetricSpots,\n'
+              '\t\t\ts_localVolumetricSpotCount * sizeof(localVolumetricSpot_t));\n',
+          )
+          
+          # cgame marker definition and one data-only marker call after the stock CG_Spotlight effect.
+          insert_after(
+              'SP/code/cgame/cg_ents.c',
+              '#include "cg_local.h"\n',
+              '\n// DARKWOLF_LOCAL_VOLUMETRIC_V0_1: data-only spotlight bridge marker for Rend2.\n'
+              '#define DARKWOLF_REF_LOCALVOL_SPOTLIGHT (1 << 29)\n'
+              '#define DARKWOLF_LOCALVOL_SPOT_FOV_MASK 0x0FFF\n'
+              '#define DARKWOLF_LOCALVOL_SPOT_FOV_SCALE 16.0f\n',
+          )
+          spot_anchor = '\t\tCG_Spotlight( cent, color, cent->currentState.origin, normalized_direction, 999, 4096, 10, fov, 0 );\n'
+          spot_bridge = r'''
+          
+          		// DARKWOLF_LOCAL_VOLUMETRIC_V0_1: preserve the original spotlight effect unchanged,
+          		// then submit direction/FOV/range as a data-only AddLight marker when the experiment is enabled.
+          		{
+          			char localVolEnabled[8];
+          			trap_Cvar_VariableStringBuffer("r_volumetricLocal", localVolEnabled, sizeof(localVolEnabled));
+          			if (localVolEnabled[0] == '1')
+          			{
+          				int fovCode = (int)(fov * DARKWOLF_LOCALVOL_SPOT_FOV_SCALE + 0.5f);
+          				if (fovCode < 1) fovCode = 1;
+          				if (fovCode > DARKWOLF_LOCALVOL_SPOT_FOV_MASK) fovCode = DARKWOLF_LOCALVOL_SPOT_FOV_MASK;
+          				trap_R_AddLightToScene(cent->currentState.origin, 4096.0f,
+          					normalized_direction[0] * 0.5f + 0.5f,
+          					normalized_direction[1] * 0.5f + 0.5f,
+          					normalized_direction[2] * 0.5f + 0.5f,
+          					DARKWOLF_REF_LOCALVOL_SPOTLIGHT | fovCode);
+          			}
+          		}
+          '''.replace('\\t', '\t')
+          insert_after('SP/code/cgame/cg_ents.c', spot_anchor, spot_bridge)
+          
+          # 7) Backend: choose one marked lamp / one spotlight and render diagnostic local volumes after Sun Volumetric.
+          backend_helper = r'''// DARKWOLF_LOCAL_VOLUMETRIC_V0_1
+          static float RB_LocalVolumetricDlightScore(const dlight_t *dl)
+          {
+          	vec3_t delta;
+          	float distanceSquared, radiusSquared, luminance;
+          	VectorSubtract(dl->origin, backEnd.refdef.vieworg, delta);
+          	distanceSquared = DotProduct(delta, delta);
+          	radiusSquared = dl->radius * dl->radius;
+          	luminance = 0.2126f * dl->color[0] + 0.7152f * dl->color[1] + 0.0722f * dl->color[2];
+          	return radiusSquared * (0.25f + luminance) /
+          		(distanceSquared + radiusSquared * 0.25f + 1.0f);
+          }
+          
+          static int RB_LocalVolumetricSelectLamp(qboolean requireShadow, int *shadowSlot, qboolean *marked)
+          {
+          	int pass, i, best = -1;
+          	float bestScore = -1.0f;
+          	int sourceMode = r_volumetricLocalSourceMode ? r_volumetricLocalSourceMode->integer : 0;
+          	*shadowSlot = -1;
+          	*marked = qfalse;
+          
+          	// pass 0: only Static Promotion / Lamp Learn-marked dlights.
+          	// pass 1 (diagnostic fallback): any dlight, but only when explicitly allowed by SourceMode=1.
+          	for (pass = 0; pass < 2; ++pass)
+          	{
+          		best = -1;
+          		bestScore = -1.0f;
+          		for (i = 0; i < backEnd.refdef.num_dlights && i < MAX_DLIGHTS; ++i)
+          		{
+          			dlight_t *dl = &backEnd.refdef.dlights[i];
+          			int slot = (int)backEnd.refdef.dlightShadowSlot[i];
+          			qboolean hasShadow = (backEnd.refdef.dlightShadowMask & (1u << i)) &&
+          				slot >= 0 && slot < MAX_DLIGHT_SHADOWS && tr.shadowCubemaps[slot] != NULL;
+          			float score;
+          
+          			if (pass == 0 && !dl->localVolumetricLamp)
+          				continue;
+          			if (pass == 1 && sourceMode == 0)
+          				continue;
+          			if (requireShadow && !hasShadow)
+          				continue;
+          			score = RB_LocalVolumetricDlightScore(dl);
+          			if (score > bestScore)
+          			{
+          				bestScore = score;
+          				best = i;
+          			}
+          		}
+          		if (best >= 0)
+          		{
+          			int slot = (int)backEnd.refdef.dlightShadowSlot[best];
+          			*marked = backEnd.refdef.dlights[best].localVolumetricLamp;
+          			if ((backEnd.refdef.dlightShadowMask & (1u << best)) &&
+          				slot >= 0 && slot < MAX_DLIGHT_SHADOWS && tr.shadowCubemaps[slot])
+          				*shadowSlot = slot;
+          			return best;
+          		}
+          	}
+          	return -1;
+          }
+          
+          static int RB_LocalVolumetricSelectSpot(void)
+          {
+          	int count = backEnd.refdef.localVolumetricSpotCount;
+          	int requested = r_volumetricLocalSpotSelect ? r_volumetricLocalSpotSelect->integer : -1;
+          	int i, best = -1;
+          	float bestScore = -1.0f;
+          	if (count <= 0)
+          		return -1;
+          	if (count > MAX_LOCAL_VOLUMETRIC_SPOTS)
+          		count = MAX_LOCAL_VOLUMETRIC_SPOTS;
+          	if (requested >= 0 && requested < count)
+          		return requested;
+          	for (i = 0; i < count; ++i)
+          	{
+          		vec3_t delta;
+          		float dist2, facing, score;
+          		localVolumetricSpot_t *spot = &backEnd.refdef.localVolumetricSpots[i];
+          		VectorSubtract(backEnd.refdef.vieworg, spot->origin, delta);
+          		dist2 = DotProduct(delta, delta);
+          		if (VectorNormalize(delta) <= 0.0001f)
+          			facing = 1.0f;
+          		else
+          			facing = DotProduct(delta, spot->direction);
+          		score = (0.35f + 0.65f * MAX(facing, 0.0f)) / (dist2 + 4096.0f);
+          		if (score > bestScore)
+          		{
+          			bestScore = score;
+          			best = i;
+          		}
+          	}
+          	return best;
+          }
+          
+          static void RB_LocalVolumetricRender(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+          	const dlight_t *lamp, int shadowSlot, const localVolumetricSpot_t *spot)
+          {
+          	vec4_t viewInfo, source, params, qualityParams, energyParams, dlightInfo, shadowParams;
+          	vec3_t viewVector, lightColor;
+          	float zmax, ymax, xmax;
+          	float radiusOrRange;
+          	qboolean useShadow = qfalse;
+          
+          	if (!srcFbo || !tr.quarterFbo[0] || !tr.renderDepthImage || !tr.volumetricLocalShader.program)
+          		return;
+          
+          	if (mode >= 1 && mode <= 3)
+          	{
+          		if (!lamp)
+          			return;
+          		VectorSet4(source, lamp->origin[0], lamp->origin[1], lamp->origin[2], MAX(lamp->radius, 1.0f));
+          		VectorCopy(lamp->color, lightColor);
+          		VectorSet4(dlightInfo, 0.0f, 0.0f, 1.0f, -1.0f);
+          		useShadow = (mode == 3 && shadowSlot >= 0 && shadowSlot < MAX_DLIGHT_SHADOWS && tr.shadowCubemaps[shadowSlot]) ? qtrue : qfalse;
+          		radiusOrRange = source[3];
+          	}
+          	else if (mode == 4)
+          	{
+          		float halfFov, innerHalf;
+          		if (!spot)
+          			return;
+          		radiusOrRange = MAX(spot->range, 64.0f);
+          		VectorSet4(source, spot->origin[0], spot->origin[1], spot->origin[2], radiusOrRange);
+          		VectorCopy(spot->color, lightColor);
+          		halfFov = Com_Clamp(1.0f, 89.0f, spot->fov * 0.5f);
+          		innerHalf = MAX(1.0f, halfFov * 0.72f);
+          		VectorSet4(dlightInfo, spot->direction[0], spot->direction[1], spot->direction[2], cosf(halfFov * M_PI / 180.0f));
+          		VectorSet4(energyParams,
+          			Com_Clamp(0.0f, 16.0f, r_volumetricLocalGain->value),
+          			Com_Clamp(0.0f, 4.0f, r_volumetricLocalKnee->value),
+          			cosf(innerHalf * M_PI / 180.0f), 0.0f);
+          	}
+          	else
+          	{
+          		return;
+          	}
+          
+          	GLSL_BindProgram(&tr.volumetricLocalShader);
+          	GL_BindToTMU(tr.renderDepthImage, TB_NORMALMAP);
+          	if (useShadow)
+          		GL_BindToTMU(tr.shadowCubemaps[shadowSlot], TB_CUBEMAP);
+          
+          	zmax = backEnd.viewParms.zFar;
+          	ymax = zmax * tan(backEnd.viewParms.fovY * M_PI / 360.0f);
+          	xmax = zmax * tan(backEnd.viewParms.fovX * M_PI / 360.0f);
+          	GLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_VIEWORIGIN, backEnd.refdef.vieworg);
+          	VectorScale(backEnd.refdef.viewaxis[0], zmax, viewVector);
+          	GLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_VIEWFORWARD, viewVector);
+          	VectorScale(backEnd.refdef.viewaxis[1], xmax, viewVector);
+          	GLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_VIEWLEFT, viewVector);
+          	VectorScale(backEnd.refdef.viewaxis[2], ymax, viewVector);
+          	GLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_VIEWUP, viewVector);
+          	VectorSet4(viewInfo, zmax / r_znear->value, zmax, 0.0f, 0.0f);
+          	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_VIEWINFO, viewInfo);
+          	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_PRIMARYLIGHTORIGIN, source);
+          	GLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_PRIMARYLIGHTCOLOR, lightColor);
+          	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_DLIGHTINFO, dlightInfo);
+          
+          	if (mode != 4)
+          	{
+          		VectorSet4(energyParams,
+          			Com_Clamp(0.0f, 16.0f, r_volumetricLocalGain->value),
+          			Com_Clamp(0.0f, 4.0f, r_volumetricLocalKnee->value),
+          			0.0f, 0.0f);
+          	}
+          	VectorSet4(params,
+          		Com_Clamp(0.0f, 3.0f, r_volumetricLocalStrength->value),
+          		Com_Clamp(0.000001f, 0.05f, r_volumetricLocalDensity->value),
+          		Com_Clamp(-0.70f, 0.70f, r_volumetricLocalAnisotropy->value),
+          		Com_Clamp(64.0f, zmax, r_volumetricLocalMaxDistance->value));
+          	VectorSet4(qualityParams,
+          		(float)Com_Clamp(4, 32, r_volumetricLocalSamples->integer),
+          		(float)Com_Clamp(0, 1, r_volumetricLocalShadowPcf->integer),
+          		Com_Clamp(0.0f, 0.50f, r_volumetricLocalJitter->value),
+          		(float)mode);
+          	if (useShadow)
+          	{
+          		float cubeWidth = (float)MAX(tr.shadowCubemaps[shadowSlot]->width, 1);
+          		VectorSet4(shadowParams,
+          			1.0f,
+          			r_dlightShadowBias ? r_dlightShadowBias->value : 0.0033f,
+          			(2.0f * (r_dlightShadowSoftness ? r_dlightShadowSoftness->value : 1.70f)) / cubeWidth,
+          			r_dlightShadowStrength ? r_dlightShadowStrength->value : 0.88f);
+          	}
+          	else
+          	{
+          		VectorSet4(shadowParams, 0.0f, 0.0f, 0.0f, 0.0f);
+          	}
+          	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_DLIGHTSHADOWPARAMS, shadowParams);
+          	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_ENABLETEXTURES, qualityParams);
+          	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_BASECOLOR, energyParams);
+          
+          	FBO_Blit(srcFbo, srcBox, NULL, tr.quarterFbo[0], NULL, &tr.volumetricLocalShader, params, 0);
+          	FBO_Blit(tr.quarterFbo[0], NULL, NULL, srcFbo, srcBox, NULL, NULL, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+          }
+          
+          static void RB_LocalVolumetricTrace(int mode, int lampIndex, int lampSlot, qboolean lampMarked,
+          	qboolean lampShadow, int spotIndex)
+          {
+          	static int lastTraceTime = -100000;
+          	const dlight_t *lamp = (lampIndex >= 0 && lampIndex < backEnd.refdef.num_dlights) ? &backEnd.refdef.dlights[lampIndex] : NULL;
+          	const localVolumetricSpot_t *spot = (spotIndex >= 0 && spotIndex < backEnd.refdef.localVolumetricSpotCount) ?
+          		&backEnd.refdef.localVolumetricSpots[spotIndex] : NULL;
+          	if (!r_volumetricLocalTrace || !r_volumetricLocalTrace->integer)
+          		return;
+          	if (backEnd.refdef.time - lastTraceTime < 750)
+          		return;
+          	lastTraceTime = backEnd.refdef.time;
+          
+          	if (lamp)
+          	{
+          		ri.Printf(PRINT_ALL,
+          			"LVTRACE mode=%d dlights=%d lamp=%d marked=%d shadow=%d slot=%d origin=%.1f,%.1f,%.1f radius=%.1f color=%.3f,%.3f,%.3f spots=%d spot=%d",
+          			mode, backEnd.refdef.num_dlights, lampIndex, lampMarked ? 1 : 0, lampShadow ? 1 : 0, lampSlot,
+          			lamp->origin[0], lamp->origin[1], lamp->origin[2], lamp->radius,
+          			lamp->color[0], lamp->color[1], lamp->color[2], backEnd.refdef.localVolumetricSpotCount, spotIndex);
+          	}
+          	else
+          	{
+          		ri.Printf(PRINT_ALL,
+          			"LVTRACE mode=%d dlights=%d lamp=-1 marked=0 shadow=0 slot=-1 spots=%d spot=%d",
+          			mode, backEnd.refdef.num_dlights, backEnd.refdef.localVolumetricSpotCount, spotIndex);
+          	}
+          	if (spot)
+          	{
+          		ri.Printf(PRINT_ALL,
+          			" spotOrigin=%.1f,%.1f,%.1f spotDir=%.3f,%.3f,%.3f fov=%.1f range=%.1f",
+          			spot->origin[0], spot->origin[1], spot->origin[2],
+          			spot->direction[0], spot->direction[1], spot->direction[2], spot->fov, spot->range);
+          	}
+          	ri.Printf(PRINT_ALL, " samples=%d pcf=%d strength=%.3f density=%.5f gain=%.2f knee=%.2f\n",
+          		r_volumetricLocalSamples ? r_volumetricLocalSamples->integer : 0,
+          		r_volumetricLocalShadowPcf ? r_volumetricLocalShadowPcf->integer : 0,
+          		r_volumetricLocalStrength ? r_volumetricLocalStrength->value : 0.0f,
+          		r_volumetricLocalDensity ? r_volumetricLocalDensity->value : 0.0f,
+          		r_volumetricLocalGain ? r_volumetricLocalGain->value : 0.0f,
+          		r_volumetricLocalKnee ? r_volumetricLocalKnee->value : 0.0f);
+          }
+          
+          static void RB_VolumetricLocal(FBO_t *srcFbo, ivec4_t srcBox)
+          {
+          	int mode, lampIndex = -1, lampSlot = -1, spotIndex = -1;
+          	qboolean lampMarked = qfalse;
+          	qboolean lampShadow = qfalse;
+          	const dlight_t *lamp = NULL;
+          	const localVolumetricSpot_t *spot = NULL;
+          
+          	if (!r_volumetricLocal || !r_volumetricLocal->integer ||
+          		!r_hdr || !r_hdr->integer || !glRefConfig.framebufferObject ||
+          		(backEnd.refdef.rdflags & RDF_NOWORLDMODEL))
+          		return;
+          
+          	mode = Com_Clamp(0, 5, r_volumetricLocalMode ? r_volumetricLocalMode->integer : 0);
+          	if (mode == 0)
+          	{
+          		RB_LocalVolumetricTrace(mode, -1, -1, qfalse, qfalse, -1);
+          		return;
+          	}
+          
+          	if (mode >= 1 && mode <= 3)
+          	{
+          		lampIndex = RB_LocalVolumetricSelectLamp(qfalse, &lampSlot, &lampMarked);
+          		if (lampIndex >= 0)
+          		{
+          			lamp = &backEnd.refdef.dlights[lampIndex];
+          			lampShadow = (lampSlot >= 0 && lampSlot < MAX_DLIGHT_SHADOWS && tr.shadowCubemaps[lampSlot]) ? qtrue : qfalse;
+          		}
+          	}
+          	spotIndex = RB_LocalVolumetricSelectSpot();
+          	if (spotIndex >= 0)
+          		spot = &backEnd.refdef.localVolumetricSpots[spotIndex];
+          
+          	// Mode 5 uses the same source-selection rule as F7/F8; never silently swap to another shadowed dlight.
+          	if (mode == 5)
+          	{
+          		lampIndex = RB_LocalVolumetricSelectLamp(qfalse, &lampSlot, &lampMarked);
+          		if (lampIndex >= 0)
+          		{
+          			lamp = &backEnd.refdef.dlights[lampIndex];
+          			lampShadow = (lampSlot >= 0 && lampSlot < MAX_DLIGHT_SHADOWS && tr.shadowCubemaps[lampSlot]) ? qtrue : qfalse;
+          		}
+          	}
+          
+          	RB_LocalVolumetricTrace(mode, lampIndex, lampSlot, lampMarked, lampShadow, spotIndex);
+          
+          	if (mode >= 1 && mode <= 3)
+          	{
+          		if (lamp && (mode != 3 || lampShadow))
+          			RB_LocalVolumetricRender(srcFbo, srcBox, mode, lamp, lampSlot, NULL);
+          	}
+          	else if (mode == 4)
+          	{
+          		if (spot)
+          			RB_LocalVolumetricRender(srcFbo, srcBox, 4, NULL, -1, spot);
+          	}
+          	else if (mode == 5)
+          	{
+          		// Optional manual combined mode: keep source identity stable and add lamp only when its cubemap slot exists.
+          		if (lamp && lampShadow)
+          			RB_LocalVolumetricRender(srcFbo, srcBox, 3, lamp, lampSlot, NULL);
+          		if (spot)
+          			RB_LocalVolumetricRender(srcFbo, srcBox, 4, NULL, -1, spot);
+          	}
+          }
+          
+          '''.replace('\\t', '\t')
+          insert_before(
+              'SP/code/rend2/tr_backend.c',
+              '/*\n=============\nRB_PostProcess\n\n=============\n*/\nconst void *RB_PostProcess(const void *data)\n',
+              backend_helper,
+          )
+          insert_after(
+              'SP/code/rend2/tr_backend.c',
+              '\t\tif (r_volumetricSun->integer)\n\t\t\tRB_VolumetricSun(srcFbo, srcBox);\n\n',
+              '\t\t// DARKWOLF_LOCAL_VOLUMETRIC_V0_1: independent local lamp / spotlight pass.\n'
+              '\t\tif (r_volumetricLocal->integer)\n'
+              '\t\t\tRB_VolumetricLocal(srcFbo, srcBox);\n\n',
+          )
+          
+          # Final source-level assertions: experiment must not mutate Sun shaders or Bloom-sensitive lighting shaders.
+          for rel in ('SP/code/rend2/glsl/volumetricsun_vp.glsl', 'SP/code/rend2/glsl/volumetricsun_fp.glsl'):
+              _, s = read(rel)
+              if 'DARKWOLF_LOCAL_VOLUMETRIC_V0_1' in s:
+                  die(f'{rel}: Local Volumetric marker leaked into frozen Sun shader')
+          
+          print('Local Volumetric v0.1 source patch applied successfully')
+          PY
+          chmod +x apply_local_volumetric_v0_1.py
+          python3 -m py_compile apply_local_volumetric_v0_1.py
+
+          # FULL-PREFLIGHT: execute the complete patcher against an exact detached
+          # Sun Production source worktree BEFORE touching the real build tree.
+          # This catches runtime Python errors and every source anchor in one pass.
+          base_commit="$(cat .sunprod_source_commit)"
+          preflight_dir="localvol-v01-source-preflight"
+          preflight_patch="localvol-v01-preflight.patch"
+          rm -rf "$preflight_dir" "$preflight_patch"
+          git -C source worktree add -q --detach "../$preflight_dir" "$base_commit"
+          python3 apply_local_volumetric_v0_1.py "$preflight_dir"
+          git -C "$preflight_dir" add -A
+          git -C "$preflight_dir" diff --cached --check
+          git -C "$preflight_dir" diff --cached --binary "$base_commit" -- > "$preflight_patch"
+          test -s "$preflight_patch" || { echo 'ERROR: Local Volumetric preflight patch is empty' >&2; exit 1; }
+
+          # Apply exactly the bytes produced by the successful preflight run.
+          # The production-base source itself remains untouched until all patcher logic succeeds.
+          git -C source apply --check "$(realpath "$preflight_patch")"
+          git -C source apply "$(realpath "$preflight_patch")"
+          diff -qr --exclude=.git source "$preflight_dir" > localvol-v01-preflight.diff || {
+            echo 'ERROR: applied source differs from fully preflighted source' >&2
+            cat localvol-v01-preflight.diff >&2
+            exit 1
+          }
+          git -C source worktree remove -f "../$preflight_dir"
+          rm -f "$preflight_patch" localvol-v01-preflight.diff
+          echo 'Local Volumetric v0.1 full patcher preflight PASS'
+
+          # Freeze the proven v0.1 core as the immutable parent for the v0.2 correction step.
+          git -C source add -A
+          git -C source commit -q -m "Proven Local Volumetric v0.1 FIXED4 core"
+          git -C source rev-parse HEAD > .localvol_v01_commit
+          echo "Proven v0.1 parent commit: $(cat .localvol_v01_commit)"
+
+      - name: Apply Local Volumetric v0.2 SSGI halo main-view shadow-validation correction
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > apply_local_volumetric_v0_2_root_fix.py <<'PY_V02'
+          #!/usr/bin/env python3
+          from pathlib import Path
+          import sys
+          
+          ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else '.').resolve()
+          MARKER = 'DARKWOLF_LOCAL_VOLUMETRIC_V0_1'
+          FIX_MARKER = 'DARKWOLF_LOCAL_VOLUMETRIC_V0_2_ROOT_CAUSE_CORRECTION'
+          SSGI_MARKER = 'DARKWOLF_SSGI_BRIGHT_SOURCE_HALO_FIX_V0_2'
+          
+          
+          def die(msg):
+              raise SystemExit(f'Local Volumetric v0.2 root-fix error: {msg}')
+          
+          
+          def read(rel):
+              p = ROOT / rel
+              if not p.is_file():
+                  die(f'missing file: {rel}')
+              return p, p.read_text(encoding='utf-8')
+          
+          
+          def replace_once(rel, old, new):
+              p, s = read(rel)
+              n = s.count(old)
+              if n != 1:
+                  die(f'{rel}: expected one replacement anchor, found {n}: {old[:120]!r}')
+              p.write_text(s.replace(old, new, 1), encoding='utf-8', newline='\n')
+          
+          
+          def insert_after(rel, needle, addition):
+              p, s = read(rel)
+              n = s.count(needle)
+              if n != 1:
+                  die(f'{rel}: expected one insertion anchor, found {n}: {needle[:120]!r}')
+              p.write_text(s.replace(needle, needle + addition, 1), encoding='utf-8', newline='\n')
+          
+          
+          # Exact parent contract: proven FIXED4 local core + GI-2 carrier.
+          for rel in ('SP/code/rend2/tr_backend.c', 'SP/code/rend2/tr_local.h', 'SP/code/rend2/tr_init.c'):
+              _, txt = read(rel)
+              if MARKER not in txt:
+                  die(f'{rel}: proven v0.1 Local Volumetric core marker missing')
+              if FIX_MARKER in txt or SSGI_MARKER in txt:
+                  die(f'{rel}: v0.2 root-fix marker already present; refusing repeat apply')
+          
+          _, ssgi = read('SP/code/rend2/glsl/ssgi_fp.glsl')
+          if 'REND2_GI_2_V1_SCREEN_SPACE_LOCAL_INDIRECT' not in ssgi:
+              die('GI-2 SSGI carrier missing')
+          if SSGI_MARKER in ssgi:
+              die('SSGI bright-source fix already present; refusing repeat apply')
+          
+          # 1) One live root-cause toggle. F5=0 reproduces legacy GI-2; F6-F9=1 enables correction.
+          insert_after(
+              'SP/code/rend2/tr_local.h',
+              'extern  cvar_t  *r_ssgiTrace;\n',
+              f'extern cvar_t *r_ssgiBrightSourceFix; // {SSGI_MARKER}\n'
+          )
+          insert_after(
+              'SP/code/rend2/tr_init.c',
+              'cvar_t  *r_ssgiTrace;\n',
+              f'cvar_t *r_ssgiBrightSourceFix; // {SSGI_MARKER}\n'
+          )
+          insert_after(
+              'SP/code/rend2/tr_init.c',
+              '\tri.Cvar_CheckRange( r_ssgiTrace, 0, 1, qtrue );\n',
+              f'\t// {SSGI_MARKER}: live A/B toggle; GI remains enabled.\n'
+              '\tr_ssgiBrightSourceFix = ri.Cvar_Get( "r_ssgiBrightSourceFix", "1", CVAR_ARCHIVE );\n'
+              '\tri.Cvar_CheckRange( r_ssgiBrightSourceFix, 0, 1, qtrue );\n'
+          )
+          
+          # Honest source identity: only Static Promotion / Lamp Learn-marked lamps by default.
+          replace_once(
+              'SP/code/rend2/tr_init.c',
+              '\tr_volumetricLocalSourceMode = ri.Cvar_Get( "r_volumetricLocalSourceMode", "1", CVAR_ARCHIVE );\n',
+              f'\tr_volumetricLocalSourceMode = ri.Cvar_Get( "r_volumetricLocalSourceMode", "0", CVAR_ARCHIVE ); // {FIX_MARKER}: marked lamps only\n'
+          )
+          
+          # 2) SSGI bright-source halo correction.
+          ssgi_luma_anchor = 'float SsgiLuma(const vec3 c)\n{\n\treturn dot(c, vec3(0.2125, 0.7154, 0.0721));\n}\n'
+          ssgi_helper = f'''
+          
+          // {SSGI_MARKER}
+          // Runtime proof: r_ssgi 1 produced the lamp/torch halo; r_ssgi 0 removed it completely.
+          // Preserve ordinary donors; only extreme HDR emitters enter this smooth shoulder.
+          // u_ViewInfo.w: 0 = legacy GI-2 donor path, 1 = bright-source correction.
+          float SsgiBrightSourceScale(const vec3 c)
+          {{
+          \tif (u_ViewInfo.w < 0.5)
+          \t\treturn 1.0;
+          
+          \tfloat luma = SsgiLuma(c);
+          \tfloat peak = max(c.r, max(c.g, c.b));
+          \tfloat metric = max(luma, peak * 0.75);
+          \tconst float brightStart = 0.85;
+          \tconst float brightKnee = 3.0;
+          \tfloat excess = max(metric - brightStart, 0.0);
+          \tif (excess <= 0.0)
+          \t\treturn 1.0;
+          
+          \tfloat compressed = brightStart + excess / (1.0 + brightKnee * excess);
+          \treturn clamp(compressed / max(metric, 0.0001), 0.18, 1.0);
+          }}
+          '''
+          insert_after('SP/code/rend2/glsl/ssgi_fp.glsl', ssgi_luma_anchor, ssgi_helper)
+          
+          replace_once(
+              'SP/code/rend2/glsl/ssgi_fp.glsl',
+              '\tvec3 sampleColor = texture2D(u_ScreenImageMap, uv).rgb;\n'
+              '\tfloat centerLuma = SsgiLuma(centerColor);\n'
+              '\tfloat sourceLuma = SsgiLuma(sampleColor);\n'
+              '\tfloat donor = clamp((sourceLuma - centerLuma * 0.72 - 0.015) * 1.45, 0.0, 1.0);\n'
+              '\tif (donor <= 0.0001)\n'
+              '\t\treturn;\n',
+              '\tvec3 sampleColor = texture2D(u_ScreenImageMap, uv).rgb;\n'
+              '\tfloat centerLuma = SsgiLuma(centerColor);\n'
+              '\tfloat sourceLuma = SsgiLuma(sampleColor);\n'
+              '\tfloat brightSourceScale = 1.0;\n'
+              '\tfloat donor = clamp((sourceLuma - centerLuma * 0.72 - 0.015) * 1.45, 0.0, 1.0);\n'
+              '\tif (u_ViewInfo.w >= 0.5)\n'
+              '\t{\n'
+              '\t\tbrightSourceScale = SsgiBrightSourceScale(sampleColor);\n'
+              '\t\tdonor *= sqrt(brightSourceScale);\n'
+              '\t}\n'
+              '\tif (donor <= 0.0001)\n'
+              '\t\treturn;\n'
+          )
+          replace_once(
+              'SP/code/rend2/glsl/ssgi_fp.glsl',
+              '\tfloat w = geometryWeight * donor;\n'
+              '\tvec3 tinted = mix(vec3(sourceLuma), sampleColor, clamp(u_Color.y, 0.0, 1.0));\n'
+              '\tsumColor += tinted * w;\n',
+              '\tfloat w = geometryWeight * donor;\n'
+              '\tvec3 donorColor = sampleColor;\n'
+              '\tfloat donorLuma = sourceLuma;\n'
+              '\tif (u_ViewInfo.w >= 0.5)\n'
+              '\t{\n'
+              '\t\tdonorColor *= brightSourceScale;\n'
+              '\t\tdonorLuma = SsgiLuma(donorColor);\n'
+              '\t}\n'
+              '\tvec3 tinted = mix(vec3(donorLuma), donorColor, clamp(u_Color.y, 0.0, 1.0));\n'
+              '\tsumColor += tinted * w;\n'
+          )
+          
+          # Feed the toggle through GI-2's previously reserved u_ViewInfo.w component.
+          replace_once(
+              'SP/code/rend2/tr_backend.c',
+              '\t\t\t\tgiViewInfo[3] = 0.0f;\n',
+              f'\t\t\t\tgiViewInfo[3] = (float)(r_ssgiBrightSourceFix ? r_ssgiBrightSourceFix->integer : 1); // {SSGI_MARKER}\n'
+          )
+          
+          # 3) Main-view-only Local Volumetric. This prevents skybox/portal postprocess from stealing LVTRACE
+          # and avoids duplicate local-volume work in the wrong view.
+          replace_once(
+              'SP/code/rend2/tr_backend.c',
+              '\tif (!r_volumetricLocal || !r_volumetricLocal->integer ||\n'
+              '\t\t!r_hdr || !r_hdr->integer || !glRefConfig.framebufferObject ||\n'
+              '\t\t(backEnd.refdef.rdflags & RDF_NOWORLDMODEL))\n'
+              '\t\treturn;\n',
+              '\tif (!r_volumetricLocal || !r_volumetricLocal->integer ||\n'
+              '\t\t!r_hdr || !r_hdr->integer || !glRefConfig.framebufferObject ||\n'
+              '\t\t(backEnd.refdef.rdflags & (RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL)) ||\n'
+              '\t\tbackEnd.viewParms.isPortal)\n'
+              '\t\treturn; // ' + FIX_MARKER + ': main world view only; skip skybox/mirror/portal views\n'
+          )
+          
+          # 4) Honest main-view telemetry for lamp identity, shadow slot and performance context.
+          replace_once(
+              'SP/code/rend2/tr_backend.c',
+              '\t\tri.Printf(PRINT_ALL,\n'
+              '\t\t\t"LVTRACE mode=%d dlights=%d lamp=%d marked=%d shadow=%d slot=%d origin=%.1f,%.1f,%.1f radius=%.1f color=%.3f,%.3f,%.3f spots=%d spot=%d",\n'
+              '\t\t\tmode, backEnd.refdef.num_dlights, lampIndex, lampMarked ? 1 : 0, lampShadow ? 1 : 0, lampSlot,\n',
+              '\t\tri.Printf(PRINT_ALL,\n'
+              '\t\t\t"LVTRACE view=MAIN rdflags=0x%x frame=%d mode=%d dlights=%d lamp=%d marked=%d shadow=%d slot=%d origin=%.1f,%.1f,%.1f radius=%.1f color=%.3f,%.3f,%.3f spots=%d spot=%d",\n'
+              '\t\t\t(unsigned int)backEnd.refdef.rdflags, tr.frameCount, mode, backEnd.refdef.num_dlights, lampIndex, lampMarked ? 1 : 0, lampShadow ? 1 : 0, lampSlot,\n'
+          )
+          replace_once(
+              'SP/code/rend2/tr_backend.c',
+              '\t\tri.Printf(PRINT_ALL,\n'
+              '\t\t\t"LVTRACE mode=%d dlights=%d lamp=-1 marked=0 shadow=0 slot=-1 spots=%d spot=%d",\n'
+              '\t\t\tmode, backEnd.refdef.num_dlights, backEnd.refdef.localVolumetricSpotCount, spotIndex);\n',
+              '\t\tri.Printf(PRINT_ALL,\n'
+              '\t\t\t"LVTRACE view=MAIN rdflags=0x%x frame=%d mode=%d dlights=%d lamp=-1 marked=0 shadow=0 slot=-1 spots=%d spot=%d",\n'
+              '\t\t\t(unsigned int)backEnd.refdef.rdflags, tr.frameCount, mode, backEnd.refdef.num_dlights, backEnd.refdef.localVolumetricSpotCount, spotIndex);\n'
+          )
+          replace_once(
+              'SP/code/rend2/tr_backend.c',
+              '\tri.Printf(PRINT_ALL, " samples=%d pcf=%d strength=%.3f density=%.5f gain=%.2f knee=%.2f\\n",\n'
+              '\t\tr_volumetricLocalSamples ? r_volumetricLocalSamples->integer : 0,\n',
+              '\tri.Printf(PRINT_ALL, " qsize=%dx%d samples=%d pcf=%d strength=%.3f density=%.5f gain=%.2f knee=%.2f ssgiBrightFix=%d\\n",\n'
+              '\t\ttr.quarterFbo[0] ? tr.quarterFbo[0]->width : 0,\n'
+              '\t\ttr.quarterFbo[0] ? tr.quarterFbo[0]->height : 0,\n'
+              '\t\tr_volumetricLocalSamples ? r_volumetricLocalSamples->integer : 0,\n'
+          )
+          replace_once(
+              'SP/code/rend2/tr_backend.c',
+              '\t\tr_volumetricLocalGain ? r_volumetricLocalGain->value : 0.0f,\n'
+              '\t\tr_volumetricLocalKnee ? r_volumetricLocalKnee->value : 0.0f);\n',
+              '\t\tr_volumetricLocalGain ? r_volumetricLocalGain->value : 0.0f,\n'
+              '\t\tr_volumetricLocalKnee ? r_volumetricLocalKnee->value : 0.0f,\n'
+              '\t\tr_ssgiBrightSourceFix ? r_ssgiBrightSourceFix->integer : 1);\n'
+          )
+          
+          # Extend SSGITRACE with the fix state; all existing GI tuning values remain visible for F5/F6 parity checks.
+          replace_once(
+              'SP/code/rend2/tr_backend.c',
+              'maskmode=%d frame=%d\\n",',
+              'maskmode=%d brightfix=%d frame=%d\\n",'
+          )
+          replace_once(
+              'SP/code/rend2/tr_backend.c',
+              '\t\t\t\t\tr_ssgiEntityMaskMode ? r_ssgiEntityMaskMode->integer : 0,\n'
+              '\t\t\t\t\ttr.frameCount);',
+              '\t\t\t\t\tr_ssgiEntityMaskMode ? r_ssgiEntityMaskMode->integer : 0,\n'
+              '\t\t\t\t\tr_ssgiBrightSourceFix ? r_ssgiBrightSourceFix->integer : 1,\n'
+              '\t\t\t\t\ttr.frameCount);'
+          )
+          
+          # Postconditions.
+          _, backend = read('SP/code/rend2/tr_backend.c')
+          _, ssgi = read('SP/code/rend2/glsl/ssgi_fp.glsl')
+          _, init = read('SP/code/rend2/tr_init.c')
+          if SSGI_MARKER not in backend or SSGI_MARKER not in ssgi or SSGI_MARKER not in init:
+              die('root-cause correction did not reach all required carriers')
+          if ('LVTRACE view=MAIN' not in backend or 'RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL' not in backend or
+                  'backEnd.viewParms.isPortal' not in backend):
+              die('main-view telemetry/gate contract missing')
+          if 'r_volumetricLocalSourceMode", "0"' not in init:
+              die('marked-lamp-only default missing')
+          
+          print('Local Volumetric v0.2 root-cause correction patch applied successfully')
+          PY_V02
+          chmod +x apply_local_volumetric_v0_2_root_fix.py
+          python3 -m py_compile apply_local_volumetric_v0_2_root_fix.py
+
+          # Full v0.2 preflight on the exact committed FIXED4 source before touching build source.
+          parent_commit="$(cat .localvol_v01_commit)"
+          preflight_dir="localvol-v02-root-preflight"
+          preflight_patch="localvol-v02-root-preflight.patch"
+          rm -rf "$preflight_dir" "$preflight_patch"
+          git -C source worktree add -q --detach "../$preflight_dir" "$parent_commit"
+          python3 apply_local_volumetric_v0_2_root_fix.py "$preflight_dir"
+          git -C "$preflight_dir" add -A
+          git -C "$preflight_dir" diff --cached --check
+          git -C "$preflight_dir" diff --cached --binary "$parent_commit" -- > "$preflight_patch"
+          test -s "$preflight_patch" || { echo 'ERROR: v0.2 root-cause preflight patch is empty' >&2; exit 1; }
+
+          # Apply only the exact bytes produced by the successful preflight.
+          git -C source apply --check "$(realpath "$preflight_patch")"
+          git -C source apply "$(realpath "$preflight_patch")"
+          diff -qr --exclude=.git source "$preflight_dir" > localvol-v02-preflight.diff || {
+            echo 'ERROR: v0.2 applied source differs from preflighted source' >&2
+            cat localvol-v02-preflight.diff >&2
+            exit 1
+          }
+
+          # Repeat application must be rejected.
+          if python3 apply_local_volumetric_v0_2_root_fix.py source > v02-repeat.log 2>&1; then
+            echo 'ERROR: v0.2 root-fix patcher unexpectedly allowed repeat apply' >&2
+            exit 1
+          fi
+          grep -Eq 'already present|refusing repeat' v02-repeat.log
+
+          git -C source worktree remove -f "../$preflight_dir"
+          rm -f "$preflight_patch" localvol-v02-preflight.diff
+          echo 'Local Volumetric v0.2 full root-cause preflight PASS'
+
+      - name: Verify v0.2 root-cause isolation source contracts and generate replayable patches
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(sha256sum source/SP/code/rend2/glsl/volumetricsun_vp.glsl | awk '{print $1}')" = "$V03_VP_SHA256"
+          test "$(sha256sum source/SP/code/rend2/glsl/volumetricsun_fp.glsl | awk '{print $1}')" = "$V03_FP_SHA256"
+
+          while read -r sha rel; do
+            actual="$(sha256sum "source/$rel" | awk '{print $1}')"
+            test "$actual" = "$sha" || { echo "ERROR: frozen carrier changed: $rel" >&2; exit 1; }
+          done < localvol-v02-frozen-before.sha256
+
+          test "$(sha256sum source/SP/code/rend2/glsl/ssgi_vp.glsl | awk '{print $1}')" = "$BASE_SSGI_VP_SHA256"
+          test "$(sha256sum source/SP/code/rend2/glsl/ssgi_fp.glsl | awk '{print $1}')" != "$BASE_SSGI_FP_SHA256"
+          grep -Fq 'DARKWOLF_SSGI_BRIGHT_SOURCE_HALO_FIX_V0_2' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'r_ssgiBrightSourceFix' source/SP/code/rend2/tr_init.c
+          grep -Fq 'RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'backEnd.viewParms.isPortal' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'LVTRACE view=MAIN' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'r_volumetricLocalSourceMode = ri.Cvar_Get( "r_volumetricLocalSourceMode", "0"' source/SP/code/rend2/tr_init.c
+
+          grep -Fq 'DARKWOLF_LOCAL_VOLUMETRIC_V0_1' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'DARKWOLF_LOCAL_VOLUMETRIC_V0_1' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'localVolumetricLamp' source/SP/code/rend2/tr_local.h
+          grep -Fq 'DARKWOLF_REF_LOCALVOL_SPOTLIGHT' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'trap_R_AddLightToScene(cent->currentState.origin, 4096.0f' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'UNIFORM_DLIGHTSHADOWMAP, TB_CUBEMAP' source/SP/code/rend2/tr_glsl.c
+          grep -Fq 'RB_VolumetricLocal(srcFbo, srcBox)' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'REF_FORCE_DLIGHT | DARKWOLF_REF_LOCALVOL_LAMP' source/SP/code/rend2/tr_scene.c
+
+          # No Bloom/ToneMap/Exposure or existing Sun beauty shader edits are allowed in this experiment.
+          base_commit="$(cat .sunprod_source_commit)"
+          git -C source add -A
+          changed="$(git -C source diff --cached --name-only "$base_commit")"
+          printf '%s\n' "$changed" | tee localvol-v02-changed-files.txt
+          allowed_re='^(SP/Makefile|SP/code/cgame/cg_ents\.c|SP/code/rend2/tr_backend\.c|SP/code/rend2/tr_glsl\.c|SP/code/rend2/tr_init\.c|SP/code/rend2/tr_local\.h|SP/code/rend2/tr_scene\.c|SP/code/rend2/glsl/ssgi_fp\.glsl|SP/code/rend2/glsl/volumetriclocal_fp\.glsl|SP/code/rend2/glsl/volumetriclocal_vp\.glsl)$'
+          bad="$(printf '%s\n' "$changed" | grep -Ev "$allowed_re" || true)"
+          test -z "$bad" || { echo "ERROR: Local Volumetric v0.2 changed files outside allowlist:" >&2; printf '%s\n' "$bad" >&2; exit 1; }
+          git -C source diff --cached --check
+
+          mkdir -p generated-patches
+          git -C source diff --cached --binary "$base_commit" -- > "generated-patches/$LOCALVOL_DELTA_NAME"
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- > "generated-patches/$LOCALVOL_CUMULATIVE_NAME"
+          test -s "generated-patches/$LOCALVOL_DELTA_NAME"
+          test -s "generated-patches/$LOCALVOL_CUMULATIVE_NAME"
+
+          # Replay cumulative patch onto pristine upstream and compare only source tree bytes.
+          rm -rf replay-source
+          git -C source worktree add -q --detach ../replay-source "$UPSTREAM_SHA"
+          git -C replay-source apply --check "$(realpath generated-patches/$LOCALVOL_CUMULATIVE_NAME)"
+          git -C replay-source apply "$(realpath generated-patches/$LOCALVOL_CUMULATIVE_NAME)"
+          diff -qr --exclude=.git source replay-source > replay.diff || {
+            echo 'ERROR: cumulative patch replay differs from working Local Volumetric source' >&2
+            cat replay.diff >&2
+            exit 1
+          }
+          git -C source worktree remove -f ../replay-source
+
+          # Repeat apply must be rejected by marker contract.
+          if python3 apply_local_volumetric_v0_1.py source > repeat-apply.log 2>&1; then
+            echo 'ERROR: Local Volumetric patcher unexpectedly allowed repeat apply' >&2
+            exit 1
+          fi
+          grep -Fq 'marker already present' repeat-apply.log
+          if python3 apply_local_volumetric_v0_2_root_fix.py source > repeat-v02.log 2>&1; then
+            echo 'ERROR: v0.2 root-fix unexpectedly allowed repeat apply' >&2; exit 1
+          fi
+          grep -Eq 'already present|refusing repeat' repeat-v02.log
+          echo 'Local Volumetric v0.2 isolation/replay contract PASS'
+
+      - name: Validate Local Volumetric and corrected SSGI GLSL under Rend2 runtime header
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf glsl-check
+          mkdir -p glsl-check
+
+          # Legacy parser check (kept to avoid regressing the fallback source dialect).
+          { echo '#version 120'; cat source/SP/code/rend2/glsl/volumetriclocal_vp.glsl; } > glsl-check/volumetriclocal-120.vert
+          { echo '#version 120'; echo '#define M_PI 3.14159265358979323846'; cat source/SP/code/rend2/glsl/volumetriclocal_fp.glsl; } > glsl-check/volumetriclocal-120.frag
+          glslangValidator -S vert glsl-check/volumetriclocal-120.vert
+          glslangValidator -S frag glsl-check/volumetriclocal-120.frag
+
+          # Exact runtime-class validation for the user's Rend2 path.  GLSL_GetShaderHeader()
+          # emits #version 150 plus these compatibility macros before the fallback shader.
+          cat > glsl-check/runtime150-vp-header.glsl <<'EOF'
+          #version 150
+          #define attribute in
+          #define varying out
+          #ifndef M_PI
+          #define M_PI 3.14159265358979323846
+          #endif
+          #define USE_PBR
+          #define ROUGHNESS_MIPS float(9)
+          #line 0
+          EOF
+          cat > glsl-check/runtime150-fp-header.glsl <<'EOF'
+          #version 150
+          #define varying in
+          out vec4 out_Color;
+          #define gl_FragColor out_Color
+          #define texture2D texture
+          #define textureCubeLod textureLod
+          #define shadow2D texture
+          #ifndef M_PI
+          #define M_PI 3.14159265358979323846
+          #endif
+          #define USE_PBR
+          #define ROUGHNESS_MIPS float(9)
+          #line 0
+          EOF
+          cat glsl-check/runtime150-vp-header.glsl source/SP/code/rend2/glsl/volumetriclocal_vp.glsl > glsl-check/volumetriclocal-runtime150.vert
+          cat glsl-check/runtime150-fp-header.glsl source/SP/code/rend2/glsl/volumetriclocal_fp.glsl > glsl-check/volumetriclocal-runtime150.frag
+          glslangValidator -S vert glsl-check/volumetriclocal-runtime150.vert
+          glslangValidator -S frag glsl-check/volumetriclocal-runtime150.frag
+
+          # NVIDIA runtime regression guard: a raw legacy textureCube() call under the
+          # generated #version 150 header caused C7531 on RTX 3060 Ti.  The source must
+          # use the version-aware LOCALVOL_TEXTURE_CUBE wrapper instead.
+          grep -Fq '#define LOCALVOL_TEXTURE_CUBE(s, d) texture((s), (d))' source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+          grep -Fq '#define LOCALVOL_TEXTURE_CUBE(s, d) textureCube((s), (d))' source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+          ! grep -Eq 'decodeDlightShadowDepth\(textureCube\(' source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+
+          # The SSGI correction runs under the same GLSL 1.50 runtime compatibility header.
+          cat glsl-check/runtime150-fp-header.glsl source/SP/code/rend2/glsl/ssgi_fp.glsl > glsl-check/ssgi-v02-runtime150.frag
+          glslangValidator -S frag glsl-check/ssgi-v02-runtime150.frag
+          grep -Fq 'DARKWOLF_SSGI_BRIGHT_SOURCE_HALO_FIX_V0_2' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'const float brightStart = 0.85;' source/SP/code/rend2/glsl/ssgi_fp.glsl
+          grep -Fq 'const float brightKnee = 3.0;' source/SP/code/rend2/glsl/ssgi_fp.glsl
+
+          test "$(sha256sum source/SP/code/rend2/glsl/volumetricsun_vp.glsl | awk '{print $1}')" = "$V03_VP_SHA256"
+          test "$(sha256sum source/SP/code/rend2/glsl/volumetricsun_fp.glsl | awk '{print $1}')" = "$V03_FP_SHA256"
+          echo 'Local Volumetric v0.2 + corrected SSGI runtime-header 150 validation PASS; Sun v0.3 beauty core still byte-frozen'
+
+      - name: Build Windows x64 SP with Rend2 and cgame spotlight bridge
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify new renderer cgame and Windows import hygiene
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          new_renderer="$(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print -quit)"
+          new_cgame="$(find source/SP/build -type f -name cgame_sp_x64.dll -print -quit)"
+          test -s "$new_renderer" || { echo 'ERROR: rebuilt Rend2 renderer missing' >&2; exit 1; }
+          test -s "$new_cgame" || { echo 'ERROR: rebuilt cgame spotlight bridge missing' >&2; exit 1; }
+          printf '%s\n' "$new_renderer" > .new_renderer_path
+          printf '%s\n' "$new_cgame" > .new_cgame_path
+
+          file "$new_renderer" "$new_cgame"
+          for dll in "$new_renderer" "$new_cgame"; do
+            x86_64-w64-mingw32-objdump -p "$dll" | awk '/DLL Name:/ {print tolower($3)}' | sort -u
+            if x86_64-w64-mingw32-objdump -p "$dll" | awk '/DLL Name:/ {print tolower($3)}' | grep -Eiq 'pthread|winpthread|libgcc|libstdc\+\+|libssp'; then
+              echo "ERROR: forbidden MinGW runtime dependency in $dll" >&2; exit 1
+            fi
+          done
+          test "$(sha256sum "$new_renderer" | awk '{print $1}')" != "$BASE_RENDERER_SHA256" || { echo 'ERROR: renderer unexpectedly identical to Sun Production base' >&2; exit 1; }
+          test "$(sha256sum "$new_cgame" | awk '{print $1}')" != "$BASE_CGAME_SHA256" || { echo 'ERROR: cgame unexpectedly identical; spotlight bridge not compiled' >&2; exit 1; }
+          echo "new_renderer_sha256=$(sha256sum "$new_renderer" | awk '{print $1}')"
+          echo "new_cgame_sha256=$(sha256sum "$new_cgame" | awk '{print $1}')"
+
+      - name: Package Local Volumetric v0.2 root-cause correction test release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          new_renderer="$(cat .new_renderer_path)"
+          new_cgame="$(cat .new_cgame_path)"
+          rm -rf dist "$RELEASE_BASENAME"
+          mkdir -p dist
+          cp -a "$base_stage" "$RELEASE_BASENAME"
+          stage="$RELEASE_BASENAME"
+          cp -f "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+          cp -f "$new_cgame" "$stage/Main/cgame_sp_x64.dll"
+          mkdir -p "$stage/Main" "$stage/docs"
+
+          cat > "$stage/Main/DARKWOLF_LOCAL_VOLUMETRIC_V0_2.cfg" <<'EOF'
+          // DarkWolf ioRTCW Rend2 - Local Volumetric v0.2 Root-Cause Correction
+          // Exact base: successful Sun Volumetric Production v1.
+          exec DARKWOLF_SUN_VOLUMETRIC_PRODUCTION.cfg
+
+          // Keep production GI enabled. F5/F6 only toggle the targeted donor correction.
+          seta r_ssgi "1"
+          seta r_ssgiBrightSourceFix "1"
+          seta r_ssgiTrace "1"
+
+          seta r_volumetricLocal "1"
+          seta r_volumetricLocalMode "0"
+          seta r_volumetricLocalTrace "1"
+          seta r_volumetricLocalStrength "0.90"
+          seta r_volumetricLocalDensity "0.0045"
+          seta r_volumetricLocalAnisotropy "0.20"
+          seta r_volumetricLocalMaxDistance "3072"
+          seta r_volumetricLocalSamples "24"
+          seta r_volumetricLocalShadowPcf "1"
+          seta r_volumetricLocalJitter "0.10"
+          seta r_volumetricLocalGain "6.0"
+          seta r_volumetricLocalKnee "1.40"
+          seta r_volumetricLocalSourceMode "0"
+          seta r_volumetricLocalSpotSelect "-1"
+          set cg_drawFPS "1"
+
+          bind F5 "exec LV02_F5_SSGI_ORIGINAL.cfg"
+          bind F6 "exec LV02_F6_SSGI_HALO_FIX.cfg"
+          bind F7 "exec LV02_F7_LAMP_UNSHADOWED.cfg"
+          bind F8 "exec LV02_F8_LAMP_SHADOWED.cfg"
+          bind F9 "exec LV02_F9_SPOTLIGHT.cfg"
+          EOF
+
+          cat > "$stage/Main/LV02_F5_SSGI_ORIGINAL.cfg" <<'EOF'
+          set r_ssgi 1
+          set r_ssgiBrightSourceFix 0
+          set r_volumetricLocalMode 0
+          echo "LV02 F5: ORIGINAL GI-2 SSGI, Local Volumetric OFF - halo control"
+          EOF
+          cat > "$stage/Main/LV02_F6_SSGI_HALO_FIX.cfg" <<'EOF'
+          set r_ssgi 1
+          set r_ssgiBrightSourceFix 1
+          set r_volumetricLocalMode 0
+          echo "LV02 F6: SSGI BRIGHT-SOURCE FIX ON, Local Volumetric OFF"
+          EOF
+          cat > "$stage/Main/LV02_F7_LAMP_UNSHADOWED.cfg" <<'EOF'
+          set r_ssgi 1
+          set r_ssgiBrightSourceFix 1
+          set r_volumetricLocalSourceMode 0
+          set r_volumetricLocalMode 2
+          echo "LV02 F7: SSGI FIX ON + marked-lamp point volumetric UNSHADOWED"
+          EOF
+          cat > "$stage/Main/LV02_F8_LAMP_SHADOWED.cfg" <<'EOF'
+          set r_ssgi 1
+          set r_ssgiBrightSourceFix 1
+          set r_volumetricLocalSourceMode 0
+          set r_volumetricLocalMode 3
+          echo "LV02 F8: SSGI FIX ON + SAME marked lamp + production cubemap SHADOWED"
+          EOF
+          cat > "$stage/Main/LV02_F9_SPOTLIGHT.cfg" <<'EOF'
+          set r_ssgi 1
+          set r_ssgiBrightSourceFix 1
+          set r_volumetricLocalMode 4
+          echo "LV02 F9: SSGI FIX ON + ET_SPOTLIGHT_EF volumetric cone"
+          EOF
+          cat > "$stage/Main/LV02_MODE1_SOURCE_PROBE.cfg" <<'EOF'
+          set r_ssgi 1
+          set r_ssgiBrightSourceFix 1
+          set r_volumetricLocalSourceMode 0
+          set r_volumetricLocalMode 1
+          echo "LV02 MODE1 SOURCE PROBE: optional diagnostic only; not part of F5-F9 acceptance matrix"
+          EOF
+
+          cat > "$stage/RUN_LOCAL_VOLUMETRIC_V0_2_TEST.cmd" <<'EOF'
+          @echo off
+          setlocal
+          cd /d "%~dp0"
+          set "GAME="
+          for %%G in (ioWolfSP*.exe) do if not defined GAME set "GAME=%%G"
+          if not defined GAME (
+            echo ERROR: ioWolfSP executable not found.
+            pause
+            exit /b 1
+          )
+          "%GAME%" +set logfile 2 +set r_volumetricSun 1 +set r_volumetricLocal 1 +set r_drawSunRays 0 +set r_forceSun 0 +exec DARKWOLF_LOCAL_VOLUMETRIC_V0_2.cfg
+          endlocal
+          EOF
+
+          cat > "$stage/README_LOCAL_VOLUMETRIC_V0_2_RU.txt" <<'EOF'
+          DARKWOLF / ioRTCW REND2 - LOCAL VOLUMETRIC v0.2 ROOT-CAUSE CORRECTION
+          =====================================================================
+
+          БАЗА
+          ----
+          Exact successful Sun Volumetric Production v1, run 32636643432.
+          Proven Local Volumetric v0.1 FIXED4 core is applied first unchanged, then this v0.2 correction.
+          Sun Volumetric v0.3 beauty shaders remain byte-frozen.
+          Bloom / ToneMap / Exposure are not modified.
+
+          ДОКАЗАННЫЙ ROOT CAUSE
+          ---------------------
+          On Stage 9.2-9.4 the visible circular halo around both torch and electric lamp is present with:
+            r_ssgi 1
+          and disappears completely with:
+            r_ssgi 0
+          Therefore v0.2 corrects GI-2 SSGI bright-source donor energy instead of hiding the defect by
+          weakening lamps, fire, or Local Volumetric.
+
+          SSGI BRIGHT-SOURCE FIX
+          ----------------------
+          r_ssgiBrightSourceFix 0 = exact legacy GI-2 donor behavior.
+          r_ssgiBrightSourceFix 1 = soft shoulder only for extreme HDR donor pixels.
+          Ordinary donors below the bright-source threshold remain unchanged in intent; r_ssgi itself stays ON.
+
+          MAIN-VIEW LOCAL VOLUMETRIC
+          --------------------------
+          Local Volumetric now skips RDF_NOWORLDMODEL, RDF_SKYBOXPORTAL and mirror/portal views (isPortal). LVTRACE must therefore
+          report view=MAIN and the real main-scene dlight list rather than the prior dlights=0 portal trace.
+
+          HONEST LAMP VALIDATION
+          ----------------------
+          r_volumetricLocalSourceMode defaults to 0. F7/F8 are allowed to use only lights explicitly marked
+          by the existing Static Promotion / Lamp Learn path. No unrelated fallback dlight may replace them.
+          Expected useful F7/F8 telemetry:
+            lamp>=0
+            marked=1
+          and, when the same lamp owns a point-shadow cubemap:
+            shadow=1
+            slot=0..7
+
+          F5-F9 MATRIX
+          ------------
+          F5 = SSGI original, Local Volumetric OFF. Old halo control.
+          F6 = SSGI bright-source fix ON, Local Volumetric OFF. Tests only the root-cause correction.
+          F7 = F6 + marked-lamp point volumetric, unshadowed.
+          F8 = F6 + same marked lamp + existing production point-shadow cubemap.
+          F9 = F6 + ET_SPOTLIGHT_EF volumetric cone (spot shadowing still not introduced here).
+
+          ACCEPTANCE ORDER
+          ----------------
+          1) Same camera: F5 screenshot -> F6 screenshot.
+             PASS if lamp/torch circular halo disappears or is strongly reduced while useful GI on walls/floor remains.
+          2) Same camera: F6 -> F7 -> F8.
+             F6->F7 isolates actual Local Volumetric cost and visual contribution.
+             F7->F8 isolates point-shadow cubemap sampling cost and shadow visibility.
+          3) Spotlight scene: F6 -> F9.
+
+          PERFORMANCE
+          -----------
+          cg_drawFPS is enabled. Do not judge from a single frame. Hold the same camera for ~10 seconds per mode
+          and report a stable FPS range:
+            F5 FPS = legacy SSGI baseline, local pass OFF
+            F6 FPS = SSGI-fix cost only, local pass OFF
+            F7 FPS = unshadowed local volumetric cost
+            F8 FPS = shadow-aware local volumetric cost
+            F9 FPS = spotlight volumetric cost
+          The most important deltas are F5->F6, F6->F7, and F7->F8.
+          LVTRACE also prints qsize/samples/pcf for exact test context; it is not a GPU timer.
+
+          TELEMETRY
+          ---------
+          LVTRACE must include:
+            view=MAIN rdflags=... frame=... dlights=... lamp=... marked=... shadow=... slot=...
+            qsize=... samples=24 pcf=1 ... ssgiBrightFix=...
+          SSGITRACE includes brightfix=0/1 while keeping legacy strength/radius/saturation/max visible.
+
+          IMPORTANT
+          ---------
+          Do not tune Strength/Density/Gain/Knee yet. v0.2 is a root-cause and architecture build.
+          Quality tuning comes only after F5/F6, main-view lamp identity, shadow slot, and FPS deltas are proven.
+          EOF
+
+          cp "generated-patches/$LOCALVOL_DELTA_NAME" "$stage/docs/$LOCALVOL_DELTA_NAME"
+          cp "generated-patches/$LOCALVOL_CUMULATIVE_NAME" "$stage/docs/$LOCALVOL_CUMULATIVE_NAME"
+          cp apply_local_volumetric_v0_1.py "$stage/docs/apply_local_volumetric_v0_1_FIXED4_core.py"
+          cp apply_local_volumetric_v0_2_root_fix.py "$stage/docs/apply_local_volumetric_v0_2_root_fix.py"
+          cp localvol-v02-frozen-before.sha256 "$stage/docs/LOCAL_VOLUMETRIC_V0_2_FROZEN_CARRIERS.sha256"
+          cp localvol-v02-changed-files.txt "$stage/docs/LOCAL_VOLUMETRIC_V0_2_CHANGED_FILES.txt"
+          cp source/SP/code/rend2/glsl/volumetriclocal_vp.glsl "$stage/docs/volumetriclocal_vp_v0_2.glsl"
+          cp source/SP/code/rend2/glsl/volumetriclocal_fp.glsl "$stage/docs/volumetriclocal_fp_v0_2.glsl"
+          cp source/SP/code/rend2/glsl/ssgi_fp.glsl "$stage/docs/ssgi_fp_v0_2_bright_source_fix.glsl"
+
+          cat > "$stage/LOCAL_VOLUMETRIC_V0_2_BUILD_INFO.txt" <<EOF
+          DarkWolf ioRTCW Rend2 SP - Local Volumetric v0.2 Root-Cause Correction
+          exact_base_run_id=$BASE_RUN_ID
+          exact_base_run_head_sha=$BASE_RUN_HEAD_SHA
+          exact_base_artifact_id=$BASE_ARTIFACT_ID
+          exact_base_artifact_digest=$BASE_ARTIFACT_DIGEST
+          base_release_zip_sha256=$BASE_RELEASE_ZIP_SHA256
+          base_renderer_sha256=$BASE_RENDERER_SHA256
+          base_cgame_sha256=$BASE_CGAME_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          sun_v03_vp_sha256=$V03_VP_SHA256
+          sun_v03_fp_sha256=$V03_FP_SHA256
+          ssgi_root_cause=GI2_bright_source_donor_bleed
+          ssgi_bright_source_fix_default=1
+          ssgi_bright_start=0.85
+          ssgi_bright_knee=3.0
+          local_main_view_only=YES
+          local_source_mode_default=0_marked_lamps_only
+          local_default_samples=24
+          local_default_strength=0.90
+          local_default_density=0.0045
+          local_default_anisotropy=0.20
+          local_default_gain=6.0
+          local_default_knee=1.40
+          local_point_shadow_source=existing_production_dlight_cubemap
+          spotlight_source=ET_SPOTLIGHT_EF_data_bridge
+          spotlight_shadow=v0.2_not_yet_implemented
+          bloom_tonemap_exposure=untouched
+          new_renderer_sha256=$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')
+          new_cgame_sha256=$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')
+          EOF
+
+          # Preserve every exact base runtime file except the two intentional binary replacements.
+          python3 - "$base_stage" "$stage" <<'PY'
+          import hashlib, os, sys
+          base, stage = map(os.path.abspath, sys.argv[1:])
+          replaced = {os.path.normcase('renderer_sp_rend2_x64.dll'), os.path.normcase('Main/cgame_sp_x64.dll')}
+          def digest(path):
+              h=hashlib.sha256()
+              with open(path,'rb') as f:
+                  for chunk in iter(lambda:f.read(1024*1024), b''): h.update(chunk)
+              return h.hexdigest()
+          bad=[]; checked=0
+          for root, _, files in os.walk(base):
+              for name in files:
+                  src=os.path.join(root,name); rel=os.path.relpath(src,base)
+                  if os.path.normcase(rel) in replaced: continue
+                  dst=os.path.join(stage,rel)
+                  if not os.path.isfile(dst) or digest(src)!=digest(dst): bad.append(rel)
+                  checked += 1
+          if bad:
+              print('ERROR: inherited Sun Production files changed unexpectedly:', file=sys.stderr)
+              for rel in bad: print(rel, file=sys.stderr)
+              raise SystemExit(1)
+          print(f'Base byte-preservation PASS: {checked} inherited files unchanged')
+          PY
+
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$BASE_OPENGL1_SHA256"
+          test "$(sha256sum "$stage/Main/$BASE_PROFILE_NAME" | awk '{print $1}')" = "$BASE_PROFILE_SHA256"
+          test -d "$stage/Main"; test ! -d "$stage/main"
+          if find "$stage" -type f -iname 'pak*.pk3' -print -quit | grep -q .; then echo 'ERROR: commercial pak*.pk3 found' >&2; exit 1; fi
+
+          (cd "$stage" && find . -type f ! -name 'LOCAL_VOLUMETRIC_V0_2_MANIFEST.sha256' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > "$stage/LOCAL_VOLUMETRIC_V0_2_MANIFEST.sha256"
+          mv "$stage" dist/
+          (cd dist && zip -X -q -r "${RELEASE_BASENAME}.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+
+      - name: Final Local Volumetric v0.2 release contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="dist/${RELEASE_BASENAME}"
+          test -s "dist/${RELEASE_BASENAME}.zip"
+          test -s "dist/${RELEASE_BASENAME}.zip.sha256"
+          test -s "$stage/renderer_sp_rend2_x64.dll"
+          test -s "$stage/Main/cgame_sp_x64.dll"
+          test -s "$stage/RUN_LOCAL_VOLUMETRIC_V0_2_TEST.cmd"
+          test -s "$stage/Main/DARKWOLF_LOCAL_VOLUMETRIC_V0_2.cfg"
+          test -s "$stage/Main/LV02_F5_SSGI_ORIGINAL.cfg"
+          test -s "$stage/Main/LV02_F6_SSGI_HALO_FIX.cfg"
+          test -s "$stage/Main/LV02_F7_LAMP_UNSHADOWED.cfg"
+          test -s "$stage/Main/LV02_F8_LAMP_SHADOWED.cfg"
+          test -s "$stage/Main/LV02_F9_SPOTLIGHT.cfg"
+          test -s "$stage/README_LOCAL_VOLUMETRIC_V0_2_RU.txt"
+          test -s "$stage/docs/$LOCALVOL_DELTA_NAME"
+          test -s "$stage/docs/$LOCALVOL_CUMULATIVE_NAME"
+
+          grep -Fq 'seta r_volumetricLocal "1"' "$stage/Main/DARKWOLF_LOCAL_VOLUMETRIC_V0_2.cfg"
+          grep -Fq 'bind F5 "exec LV02_F5_SSGI_ORIGINAL.cfg"' "$stage/Main/DARKWOLF_LOCAL_VOLUMETRIC_V0_2.cfg"
+          grep -Fq 'bind F9 "exec LV02_F9_SPOTLIGHT.cfg"' "$stage/Main/DARKWOLF_LOCAL_VOLUMETRIC_V0_2.cfg"
+          grep -Fq 'exec DARKWOLF_SUN_VOLUMETRIC_PRODUCTION.cfg' "$stage/Main/DARKWOLF_LOCAL_VOLUMETRIC_V0_2.cfg"
+          grep -Fq 'seta r_ssgiBrightSourceFix "1"' "$stage/Main/DARKWOLF_LOCAL_VOLUMETRIC_V0_2.cfg"
+          grep -Fq 'set r_ssgiBrightSourceFix 0' "$stage/Main/LV02_F5_SSGI_ORIGINAL.cfg"
+          grep -Fq 'set r_ssgiBrightSourceFix 1' "$stage/Main/LV02_F6_SSGI_HALO_FIX.cfg"
+          grep -Fq 'set r_volumetricLocalMode 2' "$stage/Main/LV02_F7_LAMP_UNSHADOWED.cfg"
+          grep -Fq 'set r_volumetricLocalMode 3' "$stage/Main/LV02_F8_LAMP_SHADOWED.cfg"
+
+          # Frozen Sun Production is still present and remains the parent profile.
+          test "$(sha256sum "$stage/Main/$BASE_PROFILE_NAME" | awk '{print $1}')" = "$BASE_PROFILE_SHA256"
+          test "$(sha256sum "$stage/docs/volumetricsun_vp_v0_3_frozen.glsl" | awk '{print $1}')" = "$V03_VP_SHA256"
+          test "$(sha256sum "$stage/docs/volumetricsun_fp_v0_3_frozen.glsl" | awk '{print $1}')" = "$V03_FP_SHA256"
+
+          echo '### Local Volumetric v0.2 Root-Cause Correction' >> "$GITHUB_STEP_SUMMARY"
+          echo "- Exact base: successful Sun Volumetric Production run ${BASE_RUN_ID}" >> "$GITHUB_STEP_SUMMARY"
+          echo '- Sun v0.3 beauty shader hashes frozen' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Lamp source: existing Static Promotion / Lamp Learn marked dlight' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Lamp shadow: existing production point-shadow cubemap, no new shadow producer' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Spotlight source: ET_SPOTLIGHT_EF direction/FOV data-only bridge, REF API unchanged' >> "$GITHUB_STEP_SUMMARY"
+          echo '- F5/F6 root-cause SSGI halo A/B + F6/F7/F8 local cost/shadow matrix included' >> "$GITHUB_STEP_SUMMARY"
+          echo '- GI-2 SSGI FP changes only for bright-source donor correction; Bloom/ToneMap/Exposure untouched' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Local Volumetric v0.2 root-cause correction release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
