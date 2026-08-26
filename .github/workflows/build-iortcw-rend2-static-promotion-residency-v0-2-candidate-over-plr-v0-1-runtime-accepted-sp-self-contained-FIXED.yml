@@ -1,0 +1,849 @@
+name: Build DarkWolf Rend2 Static Promotion Residency v0.2 Candidate over Runtime-Accepted PLR v0.1 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: static-promotion-residency-v0-2-candidate-over-plr-v0-1-runtime-accepted-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: C Residency v0.2 - BSP topology influence coverage + A/B runtime kit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      # Exact B runtime-accepted parent. A is already contained in B and remains frozen.
+      PARENT_RUN_ID: "32950584939"
+      PARENT_RUN_HEAD_SHA: ed0c652b6d1134e626935825a9a403fb3d74dd16
+      PARENT_WORKFLOW_PATH: .github/workflows/build-iortcw-rend2-physical-light-recognition-v0-1-fix-candidate-over-native-dlight-multi-area-runtime-accepted-sp-self-contained-FIXED.yml
+      PARENT_ARTIFACT_ID: "9600015247"
+      PARENT_ARTIFACT_NAME: iortcw-rend2-physical-light-recognition-v0-1-fix-candidate-over-native-dlight-multi-area-runtime-accepted-full-sp-windows-x64-1
+      PARENT_ARTIFACT_DIGEST: sha256:4cb22e0e784bc9722401ccf970b26c479683ee69e7e50af7d1ba369efc4ff2dd
+      PARENT_RELEASE_BASENAME: iortcw-rend2-physical-light-recognition-v0-1-fix-candidate-over-native-dlight-multi-area-runtime-accepted-full-sp-windows-x64-1
+      PARENT_RELEASE_ZIP_SHA256: ba50a3f076e2e094cadc4409cf7c5137f7ca0151212c9f3225f39b0a21b2b3e7
+      PARENT_CUMULATIVE_NAME: rend2-cumulative-native-dlight-multi-area-v1-plus-plr-v0-1-fix-candidate-sp.patch
+      PARENT_CUMULATIVE_SHA256: e10c513718420103e626f55ee7115802a2d2a7072ce4968487f998f365b0e58b
+      PARENT_PATCHER_NAME: apply_physical_light_recognition_v0_1_candidate.py
+      PARENT_PATCHER_SHA256: 14bc2d7aaec5444e32c3e53dc76017a4c3d35f11e6b4d86b5fa5aebb2a8f130d
+      PARENT_PROFILE_NAME: DARKWOLF_PHYSICAL_LIGHT_RECOGNITION_V0_1_FIX_CANDIDATE.cfg
+      PARENT_PROFILE_SHA256: 9e65eb47eca9ed9e3f30df7d6be140b3c2599d56cd170f670963e1fb5d91dba7
+      PARENT_EXE_SHA256: a1fca4b9215deb9fb771a014786bd42fb5aedac073817b58127d134e2866abf2
+      PARENT_QAGAME_SHA256: 134377dfb099046aa635293d7834d605584b430fb24667964ceeb787664165cb
+      PARENT_CGAME_SHA256: fd4add9648553e70f9ba3fe0a2bf2ac03afc55f479600647557f60cc6f631b7c
+      PARENT_RENDERER_SHA256: f1cba5843122a32f54b7bf28004847863e178b4b74749e0ac322d811c860d1a3
+      PARENT_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      PARENT_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+
+      C_PATCHER_SHA256: 2833ba468c717f642df27a412719b4ec285baae3e34535b3120a72093ddc495d
+      C_DELTA_NAME: rend2-static-promotion-residency-v0-2-candidate-over-plr-v0-1-runtime-accepted-sp.patch
+      C_CUMULATIVE_NAME: rend2-cumulative-native-dlight-multi-area-v1-plus-plr-v0-1-plus-static-promotion-residency-v0-2-candidate-sp.patch
+      C_PROFILE_NAME: DARKWOLF_STATIC_PROMOTION_RESIDENCY_V0_2_CANDIDATE.cfg
+      RELEASE_BASENAME: iortcw-rend2-static-promotion-residency-v0-2-candidate-over-plr-v0-1-runtime-accepted-full-sp-windows-x64-1
+
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install deterministic build tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 python3-yaml unzip zip file
+
+      - name: Verify exact runtime-accepted B parent
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          run_sha="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["head_sha"])')"
+          run_conclusion="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["conclusion"])')"
+          run_workflow="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])')"
+          test "$run_sha" = "$PARENT_RUN_HEAD_SHA" || { echo "ERROR: B parent HEAD drift: $run_sha" >&2; exit 1; }
+          test "$run_conclusion" = "success" || { echo "ERROR: B parent run is not successful: $run_conclusion" >&2; exit 1; }
+          test "$run_workflow" = "$PARENT_WORKFLOW_PATH" || { echo "ERROR: B parent workflow drift: $run_workflow" >&2; exit 1; }
+
+          artifact_line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${PARENT_ARTIFACT_ID}) | [.name, .expired, .digest] | @tsv")"
+          test -n "$artifact_line" || { echo "ERROR: exact B parent artifact not found" >&2; exit 1; }
+          IFS=$'\t' read -r artifact_name artifact_expired artifact_digest <<< "$artifact_line"
+          test "$artifact_name" = "$PARENT_ARTIFACT_NAME"
+          test "$artifact_expired" = "false"
+          test "$artifact_digest" = "$PARENT_ARTIFACT_DIGEST"
+          echo "Exact runtime-accepted B parent contract PASS"
+
+      - name: Download and verify exact B parent release bytes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf parent-artifact parent-release
+          mkdir -p parent-artifact parent-release
+          gh run download "$PARENT_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$PARENT_ARTIFACT_NAME" --dir parent-artifact
+          nested_zip="parent-artifact/${PARENT_RELEASE_BASENAME}.zip"
+          nested_sidecar="parent-artifact/${PARENT_RELEASE_BASENAME}.zip.sha256"
+          test -s "$nested_zip"; test -s "$nested_sidecar"
+          actual_zip_sha="$(sha256sum "$nested_zip" | awk '{print $1}')"
+          test "$actual_zip_sha" = "$PARENT_RELEASE_ZIP_SHA256" || { echo "ERROR: B parent release ZIP drift: $actual_zip_sha" >&2; exit 1; }
+          test "$(awk '{print $1}' "$nested_sidecar")" = "$PARENT_RELEASE_ZIP_SHA256"
+          unzip -q "$nested_zip" -d parent-release
+          parent_stage="$(find parent-release -type f -name renderer_sp_rend2_x64.dll -printf '%h\n' | head -1)"
+          test -n "$parent_stage"
+          printf '%s\n' "$parent_stage" > .parent_stage_path
+
+          test "$(sha256sum "$parent_stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$parent_stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$parent_stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$parent_stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          test "$(sha256sum "$parent_stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$PARENT_RENDERER_SHA256"
+          test "$(sha256sum "$parent_stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$parent_stage/Main/$PARENT_PROFILE_NAME" | awk '{print $1}')" = "$PARENT_PROFILE_SHA256"
+          test "$(sha256sum "$parent_stage/docs/$PARENT_CUMULATIVE_NAME" | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256"
+          test "$(sha256sum "$parent_stage/docs/$PARENT_PATCHER_NAME" | awk '{print $1}')" = "$PARENT_PATCHER_SHA256"
+          grep -Fq 'static_promote_residency_changed=NO' "$parent_stage/PHYSICAL_LIGHT_RECOGNITION_V0_1_BUILD_INFO.txt"
+          echo "Exact B runtime release byte contract PASS: $parent_stage"
+
+      - name: Reconstruct exact B source and freeze A plus B parent behavior
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_stage="$(cat .parent_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          test "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA"
+          cp "$parent_stage/docs/$PARENT_CUMULATIVE_NAME" parent-b.patch
+          test "$(sha256sum parent-b.patch | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256"
+          git -C source apply --check "$(realpath parent-b.patch)"
+          git -C source apply "$(realpath parent-b.patch)"
+
+          grep -Fq 'DARKWOLF_NATIVE_DLIGHT_MULTI_AREA_FIX_CANDIDATE_V1' source/SP/code/game/g_misc.c
+          grep -Fq 'PLR_NATIVE_AREA_FIX' source/SP/code/server/sv_snapshot.c
+          grep -Fq 'DARKWOLF_PHYSICAL_LIGHT_RECOGNITION_V0_1' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'R_StaticPromoteBuildInfluenceMetadata' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'R_StaticPromoteInfluenceVisible' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'R_StaticPromoteAddCandidate' source/SP/code/rend2/tr_scene.c
+          if grep -Fq 'DARKWOLF_STATIC_PROMOTION_RESIDENCY_V0_2' source/SP/code/rend2/tr_scene.c; then
+            echo "ERROR: C marker already present in B parent" >&2; exit 1
+          fi
+
+          # The immutable accepted lineage contains a known historical whitespace line.
+          # Commit the exact B parent first; strict diff --check is applied only to C delta below.
+          git -C source config user.email "static-residency-v02@invalid.local"
+          git -C source config user.name "DarkWolf Static Promotion Residency v0.2"
+          git -C source add -A
+          git -C source commit -q -m "Exact runtime-accepted PLR v0.1 parent"
+          git -C source rev-parse HEAD > .parent_source_commit
+
+          python3 - <<'PY2'
+          from pathlib import Path
+          import hashlib
+          root=Path('source')
+          text=(root/'SP/code/rend2/tr_scene.c').read_text(encoding='utf-8')
+          names=[
+              'R_StaticPromotePLRBuildAssociations',
+              'R_StaticPromoteClassifyFixture',
+              'R_StaticPromotePhysicalPriority',
+              'R_StaticPromoteInfluenceVisible',
+              'R_StaticPromoteSelectPersistentInfluence',
+              'R_StaticPromoteAddCandidate',
+          ]
+          def fn(name):
+              pos=text.find(name+'(')
+              if pos < 0: raise SystemExit('missing frozen function '+name)
+              start=text.rfind('\n',0,pos)+1
+              brace=text.find('{',pos)
+              if brace < 0: raise SystemExit('missing brace '+name)
+              depth=0
+              for i in range(brace,len(text)):
+                  if text[i]=='{': depth+=1
+                  elif text[i]=='}':
+                      depth-=1
+                      if depth==0: return text[start:i+1]
+              raise SystemExit('unterminated '+name)
+          lines=[]
+          for n in names:
+              lines.append(f'{hashlib.sha256(fn(n).encode()).hexdigest()} function:{n}')
+          for rel in ['SP/code/game/g_misc.c','SP/code/server/sv_snapshot.c']:
+              lines.append(f'{hashlib.sha256((root/rel).read_bytes()).hexdigest()} file:{rel}')
+          Path('.c_frozen_before.sha256').write_text('\n'.join(lines)+'\n')
+          print(Path('.c_frozen_before.sha256').read_text(),end='')
+          PY2
+          echo "Exact B source reconstruction PASS: $(cat .parent_source_commit)"
+
+      - name: Decode apply and validate C Static Promotion Residency v0.2 Candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > c-patcher.b64 <<'EOF'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKaW1wb3J0IHN5
+          cwoKUk9PVCA9IFBhdGgoJy4nKQpDSEVDS19PTkxZID0gRmFsc2UKYXJncyA9IHN5cy5hcmd2WzE6
+          XQppZiBhcmdzIGFuZCBhcmdzWzBdID09ICctLWNoZWNrLW9ubHknOgogICAgQ0hFQ0tfT05MWSA9
+          IFRydWUKICAgIGFyZ3MgPSBhcmdzWzE6XQppZiBhcmdzOgogICAgUk9PVCA9IFBhdGgoYXJnc1sw
+          XSkKClJFTCA9ICdTUC9jb2RlL3JlbmQyL3RyX3NjZW5lLmMnCk1BUktFUiA9ICdEQVJLV09MRl9T
+          VEFUSUNfUFJPTU9USU9OX1JFU0lERU5DWV9WMF8yJwoKCmRlZiByZXBsYWNlX29uY2UodGV4dDog
+          c3RyLCBvbGQ6IHN0ciwgbmV3OiBzdHIsIGxhYmVsOiBzdHIpIC0+IHN0cjoKICAgIGNvdW50ID0g
+          dGV4dC5jb3VudChvbGQpCiAgICBpZiBjb3VudCAhPSAxOgogICAgICAgIHJhaXNlIFN5c3RlbUV4
+          aXQoZidFUlJPUjoge2xhYmVsfTogZXhwZWN0ZWQgZXhhY3RseSBvbmUgYW5jaG9yLCBmb3VuZCB7
+          Y291bnR9JykKICAgIHJldHVybiB0ZXh0LnJlcGxhY2Uob2xkLCBuZXcsIDEpCgpwID0gUk9PVCAv
+          IFJFTAppZiBub3QgcC5pc19maWxlKCk6CiAgICByYWlzZSBTeXN0ZW1FeGl0KGYnRVJST1I6IG1p
+          c3Npbmcge1JFTH0nKQp0ID0gcC5yZWFkX3RleHQoZW5jb2Rpbmc9J3V0Zi04JykKaWYgTUFSS0VS
+          IGluIHQ6CiAgICByYWlzZSBTeXN0ZW1FeGl0KGYnRVJST1I6IHtNQVJLRVJ9IG1hcmtlciBhbHJl
+          YWR5IHByZXNlbnQnKQoKIyBBJ3MgTmF0aXZlIERMaWdodCBNdWx0aS1BcmVhIG1hcmtlciBsaXZl
+          cyBpbiBnYW1lL2dfbWlzYy5jLCBub3QgaW4gUmVuZDIgdHJfc2NlbmUuYy4KIyBWYWxpZGF0ZSBl
+          YWNoIGZyb3plbiBwYXJlbnQgdG9rZW4gaW4gdGhlIHNvdXJjZSBmaWxlIHRoYXQgYWN0dWFsbHkg
+          b3ducyBpdC4KYV9yZWwgPSAnU1AvY29kZS9nYW1lL2dfbWlzYy5jJwphX3BhdGggPSBST09UIC8g
+          YV9yZWwKaWYgbm90IGFfcGF0aC5pc19maWxlKCk6CiAgICByYWlzZSBTeXN0ZW1FeGl0KGYnRVJS
+          T1I6IG1pc3NpbmcgZnJvemVuIEEgc291cmNlIGZpbGU6IHthX3JlbH0nKQphX3RleHQgPSBhX3Bh
+          dGgucmVhZF90ZXh0KGVuY29kaW5nPSd1dGYtOCcpCmFfbWFya2VyID0gJ0RBUktXT0xGX05BVElW
+          RV9ETElHSFRfTVVMVElfQVJFQV9GSVhfQ0FORElEQVRFX1YxJwppZiBhX21hcmtlciBub3QgaW4g
+          YV90ZXh0OgogICAgcmFpc2UgU3lzdGVtRXhpdChmJ0VSUk9SOiByZXF1aXJlZCBBIGZyb3plbiBw
+          YXJlbnQgdG9rZW4gbWlzc2luZyBpbiB7YV9yZWx9OiB7YV9tYXJrZXJ9JykKCnJlcXVpcmVkX3Jl
+          bmRlcmVyX3BhcmVudF90b2tlbnMgPSBbCiAgICAnREFSS1dPTEZfUEhZU0lDQUxfTElHSFRfUkVD
+          T0dOSVRJT05fVjBfMScsCiAgICAnUl9TdGF0aWNQcm9tb3RlUExSQnVpbGRBc3NvY2lhdGlvbnMn
+          LAogICAgJ1JfU3RhdGljUHJvbW90ZUNsYXNzaWZ5Rml4dHVyZScsCiAgICAnUl9TdGF0aWNQcm9t
+          b3RlUGh5c2ljYWxQcmlvcml0eScsCiAgICAnUl9TdGF0aWNQcm9tb3RlSW5mbHVlbmNlVmlzaWJs
+          ZScsCiAgICAnUl9TdGF0aWNQcm9tb3RlU2VsZWN0UGVyc2lzdGVudEluZmx1ZW5jZScsCiAgICAn
+          Ul9TdGF0aWNQcm9tb3RlQWRkQ2FuZGlkYXRlJywKICAgICdyX3N0YXRpY1Byb21vdGVQaHlzaWNh
+          bFJlY29nbml0aW9uJywKXQpmb3IgdG9rZW4gaW4gcmVxdWlyZWRfcmVuZGVyZXJfcGFyZW50X3Rv
+          a2VuczoKICAgIGlmIHRva2VuIG5vdCBpbiB0OgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoZidF
+          UlJPUjogcmVxdWlyZWQgQiBmcm96ZW4gcmVuZGVyZXIgdG9rZW4gbWlzc2luZzoge3Rva2VufScp
+          CgojIEMgY2hhbmdlcyBvbmx5IHJlc2lkZW5jeSBtZXRhZGF0YSByZXByZXNlbnRhdGlvbi4gS2Vl
+          cCB0aGUgc2FtZSB3b3JsZC1zcGFjZSByYWRpdXMsCiMgUFZTL2FyZWFtYXNrIHRlc3QsIDgwMDAg
+          bXMgaG9sZCwgc2VsZWN0aW9uIHByaW9yaXR5LCBlbWl0dGVkLWxpZ2h0IHBhdGggYW5kIEIgcmVj
+          b2duaXRpb24uCnQgPSByZXBsYWNlX29uY2UoCiAgICB0LAogICAgJyNkZWZpbmUgU1RBVElDX1BS
+          T01PVEVfSU5GTFVFTkNFX01BWF9MRUFWRVMgMjgnLAogICAgJycnLy8gREFSS1dPTEZfU1RBVElD
+          X1BST01PVElPTl9SRVNJREVOQ1lfVjBfMlxuJycnCiAgICAnJycvLyBUb3BvbG9neSBjb3ZlcmFn
+          ZSBtYXkgdG91Y2ggbW9yZSB1bmlxdWUgY2x1c3Rlci9hcmVhIHBhaXJzIHRoYW4gdGhlIGxlZ2Fj
+          eSAyNyBwcm9iZXMuXG4nJycKICAgICcnJy8vIFRoaXMgaXMgbWV0YWRhdGEgY2FwYWNpdHkgb25s
+          eTsgaXQgZG9lcyBOT1QgY2hhbmdlIHJfc3RhdGljUHJvbW90ZUluZmx1ZW5jZVJhZGl1cyBvciBt
+          YXggYWN0aXZlIERMaWdodCBjb3VudC5cbicnJwogICAgJycnI2RlZmluZSBTVEFUSUNfUFJPTU9U
+          RV9JTkZMVUVOQ0VfTUFYX0xFQVZFUyAxMjgnJycsCiAgICAnaW5mbHVlbmNlIG1ldGFkYXRhIGNh
+          cGFjaXR5JwopCgpvbGRfc3RydWN0ID0gJycnXHRpbnQgcmF3TWVtYmVycztcblx0aW50IGluZmx1
+          ZW5jZUNvdW50O1xuXHRpbnQgaW5mbHVlbmNlQ2x1c3RlcltTVEFUSUNfUFJPTU9URV9JTkZMVUVO
+          Q0VfTUFYX0xFQVZFU107XG5cdGludCBpbmZsdWVuY2VBcmVhW1NUQVRJQ19QUk9NT1RFX0lORkxV
+          RU5DRV9NQVhfTEVBVkVTXTtcblx0aW50IGxhc3RJbmZsdWVuY2VWaXNpYmxlTXM7JycnCm5ld19z
+          dHJ1Y3QgPSAnJydcdGludCByYXdNZW1iZXJzO1xuXHRpbnQgaW5mbHVlbmNlQ291bnQ7XG5cdC8v
+          IERBUktXT0xGX1NUQVRJQ19QUk9NT1RJT05fUkVTSURFTkNZX1YwXzIgZGlhZ25vc3RpY3Mgb25s
+          eS5cblx0aW50IGluZmx1ZW5jZVZpc2l0ZWRMZWF2ZXM7XG5cdHFib29sZWFuIGluZmx1ZW5jZU92
+          ZXJmbG93O1xuXHRpbnQgaW5mbHVlbmNlQ2x1c3RlcltTVEFUSUNfUFJPTU9URV9JTkZMVUVOQ0Vf
+          TUFYX0xFQVZFU107XG5cdGludCBpbmZsdWVuY2VBcmVhW1NUQVRJQ19QUk9NT1RFX0lORkxVRU5D
+          RV9NQVhfTEVBVkVTXTtcblx0aW50IGxhc3RJbmZsdWVuY2VWaXNpYmxlTXM7JycnCnQgPSByZXBs
+          YWNlX29uY2UodCwgb2xkX3N0cnVjdCwgbmV3X3N0cnVjdCwgJ3BlcnNpc3RlbnQtbGlnaHQgcmVz
+          aWRlbmN5IGRpYWdub3N0aWNzJykKCm9sZF9mbiA9IHInJydzdGF0aWMgdm9pZCBSX1N0YXRpY1By
+          b21vdGVCdWlsZEluZmx1ZW5jZU1ldGFkYXRhKHN0YXRpY1Byb21vdGVQZXJzaXN0ZW50TGlnaHRf
+          dCAqbGlnaHQpCnsKCXN0YXRpYyBjb25zdCB2ZWMzX3QgZGlyZWN0aW9uc1syNl0gPSB7CgkJeyAx
+          LjBmLCAwLjBmLCAwLjBmIH0sIHsgLTEuMGYsIDAuMGYsIDAuMGYgfSwKCQl7IDAuMGYsIDEuMGYs
+          IDAuMGYgfSwgeyAwLjBmLCAtMS4wZiwgMC4wZiB9LAoJCXsgMC4wZiwgMC4wZiwgMS4wZiB9LCB7
+          IDAuMGYsIDAuMGYsIC0xLjBmIH0sCgkJeyAwLjcwNzFmLCAwLjcwNzFmLCAwLjBmIH0sIHsgMC43
+          MDcxZiwgLTAuNzA3MWYsIDAuMGYgfSwKCQl7IC0wLjcwNzFmLCAwLjcwNzFmLCAwLjBmIH0sIHsg
+          LTAuNzA3MWYsIC0wLjcwNzFmLCAwLjBmIH0sCgkJeyAwLjcwNzFmLCAwLjBmLCAwLjcwNzFmIH0s
+          IHsgMC43MDcxZiwgMC4wZiwgLTAuNzA3MWYgfSwKCQl7IC0wLjcwNzFmLCAwLjBmLCAwLjcwNzFm
+          IH0sIHsgLTAuNzA3MWYsIDAuMGYsIC0wLjcwNzFmIH0sCgkJeyAwLjBmLCAwLjcwNzFmLCAwLjcw
+          NzFmIH0sIHsgMC4wZiwgMC43MDcxZiwgLTAuNzA3MWYgfSwKCQl7IDAuMGYsIC0wLjcwNzFmLCAw
+          LjcwNzFmIH0sIHsgMC4wZiwgLTAuNzA3MWYsIC0wLjcwNzFmIH0sCgkJeyAwLjU3NzRmLCAwLjU3
+          NzRmLCAwLjU3NzRmIH0sIHsgMC41Nzc0ZiwgMC41Nzc0ZiwgLTAuNTc3NGYgfSwKCQl7IDAuNTc3
+          NGYsIC0wLjU3NzRmLCAwLjU3NzRmIH0sIHsgMC41Nzc0ZiwgLTAuNTc3NGYsIC0wLjU3NzRmIH0s
+          CgkJeyAtMC41Nzc0ZiwgMC41Nzc0ZiwgMC41Nzc0ZiB9LCB7IC0wLjU3NzRmLCAwLjU3NzRmLCAt
+          MC41Nzc0ZiB9LAoJCXsgLTAuNTc3NGYsIC0wLjU3NzRmLCAwLjU3NzRmIH0sIHsgLTAuNTc3NGYs
+          IC0wLjU3NzRmLCAtMC41Nzc0ZiB9Cgl9OwoJZmxvYXQgaW5mbHVlbmNlUmFkaXVzOwoJdmVjM190
+          IHBvaW50OwoJbW5vZGVfdCAqbGVhZjsKCWludCBpOwoKCWlmICghbGlnaHQpCgkJcmV0dXJuOwoJ
+          bGlnaHQtPmluZmx1ZW5jZUNvdW50ID0gMDsKCWluZmx1ZW5jZVJhZGl1cyA9IHJfc3RhdGljUHJv
+          bW90ZUluZmx1ZW5jZVJhZGl1cyA/IHJfc3RhdGljUHJvbW90ZUluZmx1ZW5jZVJhZGl1cy0+dmFs
+          dWUgOiAzMjAuMGY7CglpbmZsdWVuY2VSYWRpdXMgPSBDTEFNUChpbmZsdWVuY2VSYWRpdXMsIDEy
+          OC4wZiwgNTEyLjBmKTsKCglsZWFmID0gUl9TdGF0aWNQcm9tb3RlUG9pbnRJbkxlYWZTYWZlKGxp
+          Z2h0LT5jYW5kaWRhdGUub3JpZ2luKTsKCVJfU3RhdGljUHJvbW90ZUluZmx1ZW5jZUFkZExlYWYo
+          bGlnaHQsIGxlYWYpOwoJZm9yIChpID0gMDsgaSA8IDI2OyArK2kpCgl7CgkJVmVjdG9yTUEobGln
+          aHQtPmNhbmRpZGF0ZS5vcmlnaW4sIGluZmx1ZW5jZVJhZGl1cywgZGlyZWN0aW9uc1tpXSwgcG9p
+          bnQpOwoJCWxlYWYgPSBSX1N0YXRpY1Byb21vdGVQb2ludEluTGVhZlNhZmUocG9pbnQpOwoJCVJf
+          U3RhdGljUHJvbW90ZUluZmx1ZW5jZUFkZExlYWYobGlnaHQsIGxlYWYpOwoJfQp9JycnCgpuZXdf
+          Zm4gPSByJycnLy8gREFSS1dPTEZfU1RBVElDX1BST01PVElPTl9SRVNJREVOQ1lfVjBfMgovLyBD
+          YW5kaWRhdGUgc2NvcGU6IHJlcGxhY2Ugc3BhcnNlIGNlbnRlcisyNiBzaGVsbCBzYW1wbGluZyB3
+          aXRoIGNvbnNlcnZhdGl2ZSBCU1AgdG9wb2xvZ3kgY292ZXJhZ2UKLy8gaW5zaWRlIHRoZSBTQU1F
+          IGNvbmZpZ3VyZWQgaW5mbHVlbmNlIHJhZGl1cy4gUFZTLCBhcmVhbWFzaywgcmVzaWRlbmN5IGhv
+          bGQsIHNlbGVjdGlvbiBwcmlvcml0eSwKLy8gZW1pdHRlZCBETGlnaHQgZW5lcmd5L3JhZGl1cyBh
+          bmQgUGh5c2ljYWwgTGlnaHQgUmVjb2duaXRpb24gcmVtYWluIGZyb3plbiBwYXJlbnQgYmVoYXZp
+          b3IuCnN0YXRpYyBxYm9vbGVhbiBSX1N0YXRpY1Byb21vdGVSZXNpZGVuY3lWMDJFbmFibGVkKHZv
+          aWQpCnsKCXJldHVybiByaS5DdmFyX0dldCgicl9zdGF0aWNQcm9tb3RlUmVzaWRlbmN5VjAyIiwg
+          IjAiLCBDVkFSX0FSQ0hJVkUpLT5pbnRlZ2VyID8gcXRydWUgOiBxZmFsc2U7Cn0KCnN0YXRpYyB2
+          b2lkIFJfU3RhdGljUHJvbW90ZUluZmx1ZW5jZVRyYXZlcnNlU3BoZXJlKHN0YXRpY1Byb21vdGVQ
+          ZXJzaXN0ZW50TGlnaHRfdCAqbGlnaHQsCgltbm9kZV90ICpub2RlLCBjb25zdCB2ZWMzX3Qgb3Jp
+          Z2luLCBmbG9hdCByYWRpdXMpCnsKCWZsb2F0IGQ7CgoJaWYgKCFsaWdodCB8fCAhbm9kZSkKCQly
+          ZXR1cm47CglpZiAobm9kZS0+Y29udGVudHMgIT0gQ09OVEVOVFNfTk9ERSkKCXsKCQlsaWdodC0+
+          aW5mbHVlbmNlVmlzaXRlZExlYXZlcysrOwoJCWlmIChub2RlLT5jbHVzdGVyIDwgMCB8fCBub2Rl
+          LT5jbHVzdGVyID49IHRyLndvcmxkLT5udW1DbHVzdGVycykKCQkJcmV0dXJuOwoJCWlmIChsaWdo
+          dC0+aW5mbHVlbmNlQ291bnQgPj0gU1RBVElDX1BST01PVEVfSU5GTFVFTkNFX01BWF9MRUFWRVMp
+          CgkJewoJCQlsaWdodC0+aW5mbHVlbmNlT3ZlcmZsb3cgPSBxdHJ1ZTsKCQkJcmV0dXJuOwoJCX0K
+          CQlSX1N0YXRpY1Byb21vdGVJbmZsdWVuY2VBZGRMZWFmKGxpZ2h0LCBub2RlKTsKCQlyZXR1cm47
+          Cgl9CglpZiAoIW5vZGUtPnBsYW5lKQoJCXJldHVybjsKCglkID0gRG90UHJvZHVjdChvcmlnaW4s
+          IG5vZGUtPnBsYW5lLT5ub3JtYWwpIC0gbm9kZS0+cGxhbmUtPmRpc3Q7CglpZiAoZCA+IHJhZGl1
+          cykKCXsKCQlSX1N0YXRpY1Byb21vdGVJbmZsdWVuY2VUcmF2ZXJzZVNwaGVyZShsaWdodCwgbm9k
+          ZS0+Y2hpbGRyZW5bMF0sIG9yaWdpbiwgcmFkaXVzKTsKCQlyZXR1cm47Cgl9CglpZiAoZCA8IC1y
+          YWRpdXMpCgl7CgkJUl9TdGF0aWNQcm9tb3RlSW5mbHVlbmNlVHJhdmVyc2VTcGhlcmUobGlnaHQs
+          IG5vZGUtPmNoaWxkcmVuWzFdLCBvcmlnaW4sIHJhZGl1cyk7CgkJcmV0dXJuOwoJfQoKCVJfU3Rh
+          dGljUHJvbW90ZUluZmx1ZW5jZVRyYXZlcnNlU3BoZXJlKGxpZ2h0LCBub2RlLT5jaGlsZHJlblsw
+          XSwgb3JpZ2luLCByYWRpdXMpOwoJUl9TdGF0aWNQcm9tb3RlSW5mbHVlbmNlVHJhdmVyc2VTcGhl
+          cmUobGlnaHQsIG5vZGUtPmNoaWxkcmVuWzFdLCBvcmlnaW4sIHJhZGl1cyk7Cn0KCnN0YXRpYyB2
+          b2lkIFJfU3RhdGljUHJvbW90ZUJ1aWxkSW5mbHVlbmNlTWV0YWRhdGEoc3RhdGljUHJvbW90ZVBl
+          cnNpc3RlbnRMaWdodF90ICpsaWdodCkKewoJc3RhdGljIGNvbnN0IHZlYzNfdCBkaXJlY3Rpb25z
+          WzI2XSA9IHsKCQl7IDEuMGYsIDAuMGYsIDAuMGYgfSwgeyAtMS4wZiwgMC4wZiwgMC4wZiB9LAoJ
+          CXsgMC4wZiwgMS4wZiwgMC4wZiB9LCB7IDAuMGYsIC0xLjBmLCAwLjBmIH0sCgkJeyAwLjBmLCAw
+          LjBmLCAxLjBmIH0sIHsgMC4wZiwgMC4wZiwgLTEuMGYgfSwKCQl7IDAuNzA3MWYsIDAuNzA3MWYs
+          IDAuMGYgfSwgeyAwLjcwNzFmLCAtMC43MDcxZiwgMC4wZiB9LAoJCXsgLTAuNzA3MWYsIDAuNzA3
+          MWYsIDAuMGYgfSwgeyAtMC43MDcxZiwgLTAuNzA3MWYsIDAuMGYgfSwKCQl7IDAuNzA3MWYsIDAu
+          MGYsIDAuNzA3MWYgfSwgeyAwLjcwNzFmLCAwLjBmLCAtMC43MDcxZiB9LAoJCXsgLTAuNzA3MWYs
+          IDAuMGYsIDAuNzA3MWYgfSwgeyAtMC43MDcxZiwgMC4wZiwgLTAuNzA3MWYgfSwKCQl7IDAuMGYs
+          IDAuNzA3MWYsIDAuNzA3MWYgfSwgeyAwLjBmLCAwLjcwNzFmLCAtMC43MDcxZiB9LAoJCXsgMC4w
+          ZiwgLTAuNzA3MWYsIDAuNzA3MWYgfSwgeyAwLjBmLCAtMC43MDcxZiwgLTAuNzA3MWYgfSwKCQl7
+          IDAuNTc3NGYsIDAuNTc3NGYsIDAuNTc3NGYgfSwgeyAwLjU3NzRmLCAwLjU3NzRmLCAtMC41Nzc0
+          ZiB9LAoJCXsgMC41Nzc0ZiwgLTAuNTc3NGYsIDAuNTc3NGYgfSwgeyAwLjU3NzRmLCAtMC41Nzc0
+          ZiwgLTAuNTc3NGYgfSwKCQl7IC0wLjU3NzRmLCAwLjU3NzRmLCAwLjU3NzRmIH0sIHsgLTAuNTc3
+          NGYsIDAuNTc3NGYsIC0wLjU3NzRmIH0sCgkJeyAtMC41Nzc0ZiwgLTAuNTc3NGYsIDAuNTc3NGYg
+          fSwgeyAtMC41Nzc0ZiwgLTAuNTc3NGYsIC0wLjU3NzRmIH0KCX07CglmbG9hdCBpbmZsdWVuY2VS
+          YWRpdXM7Cgl2ZWMzX3QgcG9pbnQ7Cgltbm9kZV90ICpsZWFmOwoJcWJvb2xlYW4gdG9wb2xvZ3lN
+          b2RlOwoJaW50IGk7CgoJaWYgKCFsaWdodCkKCQlyZXR1cm47CglsaWdodC0+aW5mbHVlbmNlQ291
+          bnQgPSAwOwoJbGlnaHQtPmluZmx1ZW5jZVZpc2l0ZWRMZWF2ZXMgPSAwOwoJbGlnaHQtPmluZmx1
+          ZW5jZU92ZXJmbG93ID0gcWZhbHNlOwoJaW5mbHVlbmNlUmFkaXVzID0gcl9zdGF0aWNQcm9tb3Rl
+          SW5mbHVlbmNlUmFkaXVzID8gcl9zdGF0aWNQcm9tb3RlSW5mbHVlbmNlUmFkaXVzLT52YWx1ZSA6
+          IDMyMC4wZjsKCWluZmx1ZW5jZVJhZGl1cyA9IENMQU1QKGluZmx1ZW5jZVJhZGl1cywgMTI4LjBm
+          LCA1MTIuMGYpOwoJdG9wb2xvZ3lNb2RlID0gUl9TdGF0aWNQcm9tb3RlUmVzaWRlbmN5VjAyRW5h
+          YmxlZCgpOwoKCWlmICh0b3BvbG9neU1vZGUgJiYgdHIud29ybGQgJiYgdHIud29ybGQtPm5vZGVz
+          ICYmIHRyLndvcmxkLT5udW1ub2RlcyA+IDApCgl7CgkJUl9TdGF0aWNQcm9tb3RlSW5mbHVlbmNl
+          VHJhdmVyc2VTcGhlcmUobGlnaHQsIHRyLndvcmxkLT5ub2RlcywgbGlnaHQtPmNhbmRpZGF0ZS5v
+          cmlnaW4sIGluZmx1ZW5jZVJhZGl1cyk7CgkJLy8gRGVmZW5zaXZlIGZhbGxiYWNrIG9ubHk6IGEg
+          dmFsaWQgdmlzaWJsZSBmaXh0dXJlIHNob3VsZCBhbHdheXMgcmVzb2x2ZSBhdCBsZWFzdCBpdHMg
+          b3JpZ2luIGxlYWYuCgkJaWYgKGxpZ2h0LT5pbmZsdWVuY2VDb3VudCA8PSAwKQoJCXsKCQkJbGVh
+          ZiA9IFJfU3RhdGljUHJvbW90ZVBvaW50SW5MZWFmU2FmZShsaWdodC0+Y2FuZGlkYXRlLm9yaWdp
+          bik7CgkJCWlmIChsZWFmKQoJCQkJbGlnaHQtPmluZmx1ZW5jZVZpc2l0ZWRMZWF2ZXMrKzsKCQkJ
+          Ul9TdGF0aWNQcm9tb3RlSW5mbHVlbmNlQWRkTGVhZihsaWdodCwgbGVhZik7CgkJfQoJfQoJZWxz
+          ZQoJewoJCS8vIEV4YWN0IGZyb3plbiBCIHJlc2lkZW5jeSByZXByZXNlbnRhdGlvbjogY2VudGVy
+          ICsgMjYgc2hlbGwgcHJvYmVzIGF0IHRoZSBzYW1lIHJhZGl1cy4KCQlsZWFmID0gUl9TdGF0aWNQ
+          cm9tb3RlUG9pbnRJbkxlYWZTYWZlKGxpZ2h0LT5jYW5kaWRhdGUub3JpZ2luKTsKCQlpZiAobGVh
+          ZikKCQkJbGlnaHQtPmluZmx1ZW5jZVZpc2l0ZWRMZWF2ZXMrKzsKCQlSX1N0YXRpY1Byb21vdGVJ
+          bmZsdWVuY2VBZGRMZWFmKGxpZ2h0LCBsZWFmKTsKCQlmb3IgKGkgPSAwOyBpIDwgMjY7ICsraSkK
+          CQl7CgkJCVZlY3Rvck1BKGxpZ2h0LT5jYW5kaWRhdGUub3JpZ2luLCBpbmZsdWVuY2VSYWRpdXMs
+          IGRpcmVjdGlvbnNbaV0sIHBvaW50KTsKCQkJbGVhZiA9IFJfU3RhdGljUHJvbW90ZVBvaW50SW5M
+          ZWFmU2FmZShwb2ludCk7CgkJCWlmIChsZWFmKQoJCQkJbGlnaHQtPmluZmx1ZW5jZVZpc2l0ZWRM
+          ZWF2ZXMrKzsKCQkJUl9TdGF0aWNQcm9tb3RlSW5mbHVlbmNlQWRkTGVhZihsaWdodCwgbGVhZik7
+          CgkJfQoJfQoKCWlmIChyaS5DdmFyX0dldCgiZHdfc3RhdGljUHJvbW90ZVJlc2lkZW5jeVYwMkRp
+          YWciLCAiMCIsIDApLT5pbnRlZ2VyICYmIHRyLndvcmxkKQoJewoJCXJpLlByaW50ZihQUklOVF9B
+          TEwsCgkJCSJTUFJfVjAyX01FVEEgbWFwPSVzIGVudGl0eT0lZCBtb2RlPSVkIHJhZGl1cz0lLjFm
+          IHZpc2l0ZWRMZWF2ZXM9JWQgaW5mbHVlbmNlUGFpcnM9JWQgbWF4UGFpcnM9JWQgb3ZlcmZsb3c9
+          JWQgb3JpZ2luPSUuMWYvJS4xZi8lLjFmXFxuIiwKCQkJdHIud29ybGQtPmJhc2VOYW1lLCBsaWdo
+          dC0+Y2FuZGlkYXRlLmVudGl0eU9yZGluYWwsIHRvcG9sb2d5TW9kZSA/IDEgOiAwLCBpbmZsdWVu
+          Y2VSYWRpdXMsCgkJCWxpZ2h0LT5pbmZsdWVuY2VWaXNpdGVkTGVhdmVzLCBsaWdodC0+aW5mbHVl
+          bmNlQ291bnQsIFNUQVRJQ19QUk9NT1RFX0lORkxVRU5DRV9NQVhfTEVBVkVTLAoJCQlsaWdodC0+
+          aW5mbHVlbmNlT3ZlcmZsb3cgPyAxIDogMCwKCQkJbGlnaHQtPmNhbmRpZGF0ZS5vcmlnaW5bMF0s
+          IGxpZ2h0LT5jYW5kaWRhdGUub3JpZ2luWzFdLCBsaWdodC0+Y2FuZGlkYXRlLm9yaWdpblsyXSk7
+          Cgl9Cn0nJycKCnQgPSByZXBsYWNlX29uY2UodCwgb2xkX2ZuLCBuZXdfZm4sICdsZWdhY3kgaW5m
+          bHVlbmNlIGJ1aWxkZXInKQoKIyBHdWFyZCBhZ2FpbnN0IHNjb3BlIGNyZWVwIGluIHRoZSBwYXRj
+          aGVyIG91dHB1dCBpdHNlbGYuCmZvciBmb3JiaWRkZW4gaW4gWwogICAgJ3Jfc3RhdGljUHJvbW90
+          ZUluZmx1ZW5jZVJhZGl1cyIsICIzODQnLAogICAgJ3Jfc3RhdGljUHJvbW90ZVBWU0hvbGRNcyIs
+          ICInLAogICAgJ01BWF9ETElHSFRTIDY0JywKICAgICdTVkZfQlJPQURDQVNUJywKICAgICdGaXJl
+          IFZvbHVtZXRyaWMnLApdOgogICAgaWYgZm9yYmlkZGVuIGluIG5ld19mbjoKICAgICAgICByYWlz
+          ZSBTeXN0ZW1FeGl0KGYnRVJST1I6IGZvcmJpZGRlbiBDIHNjb3BlIHRva2VuIGluIHJlcGxhY2Vt
+          ZW50OiB7Zm9yYmlkZGVufScpCgppZiBDSEVDS19PTkxZOgogICAgcHJpbnQoJ1N0YXRpYyBQcm9t
+          b3Rpb24gUmVzaWRlbmN5IHYwLjIgY2hlY2stb25seSBQQVNTOiBleGFjdCBCIGFuY2hvcnMgcmVz
+          b2x2ZWQ7IG5vIGZpbGUgd3JpdHRlbicpCmVsc2U6CiAgICBwLndyaXRlX3RleHQodCwgZW5jb2Rp
+          bmc9J3V0Zi04JywgbmV3bGluZT0nXG4nKQogICAgcHJpbnQoJ1N0YXRpYyBQcm9tb3Rpb24gUmVz
+          aWRlbmN5IHYwLjIgY2FuZGlkYXRlIHBhdGNoIGFwcGxpZWQgdG8nLCBSRUwpCg==
+          EOF
+          base64 -d c-patcher.b64 > apply_static_promotion_residency_v0_2_candidate.py
+          test "$(sha256sum apply_static_promotion_residency_v0_2_candidate.py | awk '{print $1}')" = "$C_PATCHER_SHA256" || { echo "ERROR: embedded C patcher hash mismatch" >&2; exit 1; }
+          python3 -m py_compile apply_static_promotion_residency_v0_2_candidate.py
+          python3 apply_static_promotion_residency_v0_2_candidate.py --check-only source
+          python3 apply_static_promotion_residency_v0_2_candidate.py source
+
+          # Strict validation applies only to the new uncommitted C delta.
+          git -C source diff --check
+          git -C source diff --name-only > c-changed-files.txt
+          printf 'SP/code/rend2/tr_scene.c\n' > c-expected-files.txt
+          diff -u c-expected-files.txt c-changed-files.txt
+
+          grep -Fq 'DARKWOLF_STATIC_PROMOTION_RESIDENCY_V0_2' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'r_staticPromoteResidencyV02' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'R_StaticPromoteInfluenceTraverseSphere' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'STATIC_PROMOTE_INFLUENCE_MAX_LEAVES 128' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'SPR_V02_META' source/SP/code/rend2/tr_scene.c
+
+          # C source must remain generic: no benchmark map/entity acceptance logic in the renderer delta.
+          git -C source diff "$(cat .parent_source_commit)" -- SP/code/rend2/tr_scene.c > c-candidate.diff
+          if grep '^+' c-candidate.diff | grep -Eiq '"factory"|"escape1"|"crypt1"|entityOrdinal[[:space:]]*=='; then
+            echo "ERROR: map/entity-specific C residency logic detected" >&2; exit 1
+          fi
+          # C must not tune energy, radius, hold, light budgets, A/B recognition or shadow/volumetric policy.
+          if grep '^+' c-candidate.diff | grep -Eiq 'r_staticPromotePVSHoldMs|r_staticPromoteMaxLights|r_staticPromotePhysicalRecognition|r_staticPromote(MinRadius|MaxRadius|Gain|DirectGain)|g_dlightPVS|r_dlightShadow|r_localVolumetric|r_sunVolumetric|MAX_DLIGHTS[[:space:]]*='; then
+            echo "ERROR: prohibited A/B/frozen tuning detected in C delta" >&2; exit 1
+          fi
+
+          python3 - <<'PY2'
+          from pathlib import Path
+          import hashlib
+          root=Path('source')
+          text=(root/'SP/code/rend2/tr_scene.c').read_text(encoding='utf-8')
+          names=[
+              'R_StaticPromotePLRBuildAssociations',
+              'R_StaticPromoteClassifyFixture',
+              'R_StaticPromotePhysicalPriority',
+              'R_StaticPromoteInfluenceVisible',
+              'R_StaticPromoteSelectPersistentInfluence',
+              'R_StaticPromoteAddCandidate',
+          ]
+          def fn(name):
+              pos=text.find(name+'(')
+              if pos < 0: raise SystemExit('missing frozen function '+name)
+              start=text.rfind('\n',0,pos)+1; brace=text.find('{',pos); depth=0
+              for i in range(brace,len(text)):
+                  if text[i]=='{': depth+=1
+                  elif text[i]=='}':
+                      depth-=1
+                      if depth==0:return text[start:i+1]
+              raise SystemExit('unterminated '+name)
+          lines=[]
+          for n in names:
+              lines.append(f'{hashlib.sha256(fn(n).encode()).hexdigest()} function:{n}')
+          for rel in ['SP/code/game/g_misc.c','SP/code/server/sv_snapshot.c']:
+              lines.append(f'{hashlib.sha256((root/rel).read_bytes()).hexdigest()} file:{rel}')
+          Path('.c_frozen_after.sha256').write_text('\n'.join(lines)+'\n')
+          PY2
+          diff -u .c_frozen_before.sha256 .c_frozen_after.sha256
+
+          mkdir -p generated-patches
+          git -C source diff --binary "$(cat .parent_source_commit)" -- . > "$(realpath generated-patches)/$C_DELTA_NAME"
+          test -s "generated-patches/$C_DELTA_NAME"
+          git -C source diff --binary "$UPSTREAM_SHA" -- . > "$(realpath generated-patches)/$C_CUMULATIVE_NAME"
+          test -s "generated-patches/$C_CUMULATIVE_NAME"
+          sha256sum "generated-patches/$C_DELTA_NAME" > c-delta.sha256
+          sha256sum "generated-patches/$C_CUMULATIVE_NAME" > c-cumulative.sha256
+
+          if python3 apply_static_promotion_residency_v0_2_candidate.py --check-only source >/tmp/c-repeat.log 2>&1; then
+            echo "ERROR: C patcher unexpectedly accepts second apply" >&2; cat /tmp/c-repeat.log; exit 1
+          fi
+          grep -Fq 'marker already present' /tmp/c-repeat.log
+
+      - name: Replay C delta and cumulative from exact bases
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_commit="$(cat .parent_source_commit)"
+          rm -rf replay-delta replay-cumulative
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$parent_commit"
+          git -C replay-delta apply --check "$(realpath generated-patches/$C_DELTA_NAME)"
+          git -C replay-delta apply "$(realpath generated-patches/$C_DELTA_NAME)"
+
+          git clone -q source replay-cumulative
+          git -C replay-cumulative checkout -q --detach "$UPSTREAM_SHA"
+          git -C replay-cumulative apply --check "$(realpath generated-patches/$C_CUMULATIVE_NAME)"
+          git -C replay-cumulative apply "$(realpath generated-patches/$C_CUMULATIVE_NAME)"
+
+          python3 - <<'PY2'
+          from pathlib import Path
+          import hashlib, subprocess
+          def h(p): return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          files=subprocess.check_output(['git','-C','source','diff','--name-only','438e7d413b5f7277187c35b032eb0ef9093ae778','--','.'],text=True).splitlines()
+          if not files: raise SystemExit('ERROR: cumulative changed file list empty')
+          for rel in files:
+              a=h(Path('source')/rel); c=h(Path('replay-cumulative')/rel)
+              if a!=c: raise SystemExit(f'ERROR cumulative replay mismatch {rel} {a} {c}')
+          rel='SP/code/rend2/tr_scene.c'
+          a=h(Path('source')/rel); b=h(Path('replay-delta')/rel)
+          if a!=b: raise SystemExit(f'ERROR delta replay mismatch {rel} {a} {b}')
+          print('Exact C delta + cumulative replay PASS; cumulative files=',len(files))
+          PY2
+
+      - name: Build Windows x64 SP with C residency candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify rebuilt Rend2 candidate and import hygiene
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          new_renderer="$(find source/SP/build -type f -name 'renderer_sp_rend2_x64.dll' -print -quit)"
+          test -s "$new_renderer" || { echo "ERROR: rebuilt Rend2 DLL missing" >&2; exit 1; }
+          printf '%s\n' "$new_renderer" > .new_renderer_path
+          file "$new_renderer"
+          x86_64-w64-mingw32-objdump -p "$new_renderer" | awk '/DLL Name:/ {print tolower($3)}' | sort -u
+          if x86_64-w64-mingw32-objdump -p "$new_renderer" | awk '/DLL Name:/ {print tolower($3)}' | grep -Eiq 'pthread|winpthread|libgcc|libstdc\+\+|libssp'; then
+            echo "ERROR: forbidden MinGW runtime dependency in Rend2" >&2; exit 1
+          fi
+          test "$(sha256sum "$new_renderer" | awk '{print $1}')" != "$PARENT_RENDERER_SHA256" || { echo "ERROR: renderer hash unchanged; C delta not linked" >&2; exit 1; }
+          echo "new_renderer_sha256=$(sha256sum "$new_renderer" | awk '{print $1}')"
+
+      - name: Package automated C residency runtime test kit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_stage="$(cat .parent_stage_path)"
+          new_renderer="$(cat .new_renderer_path)"
+          rm -rf dist "$RELEASE_BASENAME"
+          mkdir -p dist
+          cp -a "$parent_stage" "$RELEASE_BASENAME"
+          stage="$RELEASE_BASENAME"
+          cp -f "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+          mkdir -p "$stage/Main" "$stage/docs" "$stage/spr_v02_inputs"
+
+          cat > "$stage/Main/$C_PROFILE_NAME" <<'EOF'
+          // DarkWolf ioRTCW Rend2 - Static Promotion Residency v0.2 Candidate
+          // A Native Multi-Area and B Physical Light Recognition are frozen runtime-accepted parents.
+          exec DARKWOLF_PHYSICAL_LIGHT_RECOGNITION_V0_1_FIX_CANDIDATE.cfg
+          seta dw_staticPromoteResidencyV02Diag "1"
+          seta cg_drawFPS "1"
+          // IMPORTANT: r_staticPromoteResidencyV02 is NOT forced here.
+          // Baseline/Fix launchers set 0 or 1 before map load.
+          EOF
+
+          cat > "$stage/spr_v02_inputs/EMPTY_static_promote_user_overrides.txt" <<'EOF'
+          # C v0.2 clean residency test: intentionally no active user overrides.
+          EOF
+          cat > "$stage/spr_v02_inputs/EMPTY_static_promote_synthetic_lights.txt" <<'EOF'
+          # C v0.2 clean residency test: intentionally no synthetic learned lights.
+          EOF
+
+          cat > "$stage/SPR_V02_ACCEPTANCE_CONTRACT.txt" <<'EOF'
+          DarkWolf Static Promotion Residency v0.2 acceptance contract
+          ============================================================
+          Frozen parents:
+          A Native DLight Multi-Area Fix = RUNTIME ACCEPTED / FROZEN.
+          B Physical Light Recognition v0.1 = RUNTIME ACCEPTED / FROZEN.
+
+          C changes only influence metadata representation used by Static Promotion residency.
+          Mode 0 = exact frozen B center + 26 shell probes.
+          Mode 1 = BSP topology sphere traversal using the SAME r_staticPromoteInfluenceRadius.
+          PVS, areamask, 8000 ms hold, priority, maxLights, emitted light energy/radius,
+          B recognition/source routing, A native delivery, shadows and volumetrics stay frozen.
+
+          Mandatory runtime benchmarks:
+          1) Factory tunnel: baseline 0 then candidate 1, identical route and speed.
+          2) Escape1: baseline 0 then candidate 1, identical full route:
+             furnace/native boundary -> furnace wall lamps -> doctor office -> guard-room lamp row,
+             observe the row from 5-10 m before entry, walk slowly underneath, turn right, return.
+             Historical promoted guard-room primaries 735/736/737 are useful diagnostic anchors only;
+             they are NOT hardcoded by the C algorithm. Do not guess furnace-wall IDs visually.
+          3) Crypt1 candidate 1: native torch + point-shadow regression control.
+
+          Key log contract:
+          SPR_V02_META mode=0/1 radius=... visitedLeaves=... influencePairs=... overflow=...
+          Candidate should broaden useful cluster/area representation for problematic fixtures.
+          overflow=1 is a review condition, not an automatic acceptance.
+          Existing PLR_FACTORY_*, PLR_V01_*, PLR_NATIVE_* and PLR_PERF traces remain available.
+          Green CI means CI COMPILE CONFIRMED only. Runtime ZIP comparison decides C acceptance.
+          EOF
+
+          cat > "$stage/RUN_SPR_V02_CORE.cmd" <<'EOF'
+          @echo off
+          setlocal EnableExtensions
+          cd /d "%~dp0"
+          set "TEST=%~1"
+          set "MAP=%~2"
+          set "MODE=%~3"
+          if "%TEST%"=="" goto :usage
+          if "%MAP%"=="" goto :usage
+          if "%MODE%"=="" goto :usage
+
+          set "GAME="
+          for %%G in (ioWolfSP*.exe) do if not defined GAME set "GAME=%%G"
+          if not defined GAME (
+            echo ERROR: ioWolfSP executable not found.
+            pause
+            exit /b 1
+          )
+
+          set "TESTHOME=%CD%\SPR_V02_TEST_HOME\%TEST%"
+          set "TESTMAIN=%TESTHOME%\Main"
+          if not exist "%TESTMAIN%" mkdir "%TESTMAIN%"
+          copy /y "spr_v02_inputs\EMPTY_static_promote_synthetic_lights.txt" "%TESTMAIN%\static_promote_synthetic_lights.txt" >nul
+          copy /y "spr_v02_inputs\EMPTY_static_promote_user_overrides.txt" "%TESTMAIN%\static_promote_user_overrides.txt" >nul
+          del /q "%TESTMAIN%\rtcwconsole.log" 2>nul
+          for %%F in ("%TESTMAIN%\static_promote_status.txt" "%TESTMAIN%\static_promote_v12_final_status.txt" "%TESTMAIN%\static_promote_v12_fix_v5_status.txt" "%TESTMAIN%\static_promote_v12_fix_v5_1_status.txt") do del /q %%F 2>nul
+
+          echo ============================================================
+          echo DarkWolf Static Promotion Residency v0.2 Candidate
+          echo Test : %TEST%
+          echo Map  : %MAP%
+          echo Mode : %MODE%  ^(0=frozen B probes, 1=C BSP topology coverage^)
+          echo A Native Multi-Area: FORCED ON / FROZEN
+          echo B Physical Recognition: FORCED ON / FROZEN
+          echo ============================================================
+
+          "%GAME%" +set fs_homepath "%TESTHOME%" +set cl_renderer rend2 +set developer 1 +set logfile 2 +set r_dynamiclight 1 +set r_dlightMode 2 +set dw_physicalLightDiag 1 +set dw_physicalLightDiagAllNative 0 +set dw_plrV01Diag 1 +set dw_staticPromoteResidencyV02Diag 1 +set g_dlightPVSFix 1 +set g_dlightPVSRadius 256 +set g_dlightPVSMultiAreaFix 1 +set r_staticPromotePhysicalRecognition 1 +set r_staticPromoteResidencyV02 %MODE% +exec DARKWOLF_STATIC_PROMOTION_RESIDENCY_V0_2_CANDIDATE.cfg +spdevmap %MAP%
+
+          for /f %%T in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set "TS=%%T"
+          if not defined TS set "TS=%RANDOM%"
+          set "OUT=%CD%\SPR_V02_RESULTS\%TEST%_%TS%"
+          mkdir "%OUT%" 2>nul
+          (
+            echo test=%TEST%
+            echo map=%MAP%
+            echo r_staticPromoteResidencyV02=%MODE%
+            echo r_staticPromotePhysicalRecognition=1_RUNTIME_ACCEPTED_B
+            echo g_dlightPVSMultiAreaFix=1_RUNTIME_ACCEPTED_A
+            echo g_dlightPVSRadius=256_FROZEN
+            echo r_staticPromoteInfluenceRadius=UNCHANGED_PARENT_VALUE
+            echo parent_B_run=32950584939
+            echo parent_B_head=ed0c652b6d1134e626935825a9a403fb3d74dd16
+          ) > "%OUT%\TEST_METADATA.txt"
+
+          if exist "%TESTMAIN%\rtcwconsole.log" (
+            copy /y "%TESTMAIN%\rtcwconsole.log" "%OUT%\rtcwconsole.log" >nul
+            findstr /C:"SPR_V02_" "%TESTMAIN%\rtcwconsole.log" > "%OUT%\SPR_V02_LINES.txt" 2>nul
+            findstr /C:"STATIC_PROMOTE_V12_FIX_V5_1_STATUS" "%TESTMAIN%\rtcwconsole.log" > "%OUT%\STATIC_PROMOTE_STATUS_LINES.txt" 2>nul
+            findstr /C:"PLR_V01_" "%TESTMAIN%\rtcwconsole.log" > "%OUT%\PLR_V01_LINES.txt" 2>nul
+            findstr /C:"PLR_FACTORY_" "%TESTMAIN%\rtcwconsole.log" > "%OUT%\PLR_FACTORY_LINES.txt" 2>nul
+            findstr /C:"PLR_NATIVE_" "%TESTMAIN%\rtcwconsole.log" > "%OUT%\PLR_NATIVE_LINES.txt" 2>nul
+            findstr /C:"PLR_PERF " "%TESTMAIN%\rtcwconsole.log" > "%OUT%\PLR_PERF_LINES.txt" 2>nul
+          )
+          for %%F in ("%TESTMAIN%\static_promote*.txt") do if exist %%F copy /y %%F "%OUT%" >nul
+          if exist "%TESTMAIN%\static_promote_user_overrides.txt" copy /y "%TESTMAIN%\static_promote_user_overrides.txt" "%OUT%\ACTIVE_static_promote_user_overrides.txt" >nul
+          if exist "%TESTMAIN%\static_promote_synthetic_lights.txt" copy /y "%TESTMAIN%\static_promote_synthetic_lights.txt" "%OUT%\ACTIVE_static_promote_synthetic_lights.txt" >nul
+          copy /y "SPR_V02_ACCEPTANCE_CONTRACT.txt" "%OUT%\SPR_V02_ACCEPTANCE_CONTRACT.txt" >nul
+          powershell -NoProfile -Command "Compress-Archive -Path '%OUT%\*' -DestinationPath '%OUT%.zip' -Force" >nul 2>nul
+
+          echo.
+          echo Result ready:
+          echo %OUT%.zip
+          echo Upload that ZIP to ChatGPT.
+          pause
+          exit /b 0
+
+          :usage
+          echo Usage: RUN_SPR_V02_CORE.cmd TEST MAP 0^|1
+          pause
+          exit /b 2
+          EOF
+
+          cat > "$stage/RUN_SPR_V02_01_FACTORY_BASELINE.cmd" <<'EOF'
+          @echo off
+          call "%~dp0RUN_SPR_V02_CORE.cmd" FACTORY_BASELINE_B_RESIDENCY factory 0
+          EOF
+          cat > "$stage/RUN_SPR_V02_02_FACTORY_FIX.cmd" <<'EOF'
+          @echo off
+          call "%~dp0RUN_SPR_V02_CORE.cmd" FACTORY_C_RESIDENCY_V02 factory 1
+          EOF
+          cat > "$stage/RUN_SPR_V02_03_ESCAPE1_BASELINE.cmd" <<'EOF'
+          @echo off
+          call "%~dp0RUN_SPR_V02_CORE.cmd" ESCAPE1_BASELINE_B_RESIDENCY escape1 0
+          EOF
+          cat > "$stage/RUN_SPR_V02_04_ESCAPE1_FIX.cmd" <<'EOF'
+          @echo off
+          call "%~dp0RUN_SPR_V02_CORE.cmd" ESCAPE1_C_RESIDENCY_V02 escape1 1
+          EOF
+          cat > "$stage/RUN_SPR_V02_05_CRYPT1_FIX_CONTROL.cmd" <<'EOF'
+          @echo off
+          call "%~dp0RUN_SPR_V02_CORE.cmd" CRYPT1_C_RESIDENCY_V02_CONTROL crypt1 1
+          EOF
+
+          cat > "$stage/README_STATIC_PROMOTION_RESIDENCY_V0_2_RU.txt" <<'EOF'
+          DARKWOLF / ioRTCW REND2 SINGLE PLAYER
+          C — STATIC PROMOTION RESIDENCY v0.2 CANDIDATE
+          ================================================================
+
+          PARENT CONTRACT
+          ---------------
+          A — Native DLight Multi-Area Fix: RUNTIME ACCEPTED / FROZEN.
+          B — Physical Light Recognition v0.1: RUNTIME ACCEPTED / FROZEN.
+          Exact B parent: run 32950584939, HEAD ed0c652b6d1134e626935825a9a403fb3d74dd16.
+
+          ROOT CAUSE C
+          ------------
+          Frozen B строит influence metadata как origin + 26 точек только на внешней сфере.
+          В сложной BSP-топологии многие точки попадают в solid/непредставительные leafs, поэтому
+          реальный световой объём может получить слишком мало уникальных cluster/area пар.
+          Это вызывает позднее/последовательное residency при перемещении камеры, хотя MAX_DLIGHTS
+          и final candidate addition ранее уже были исключены как первичная причина.
+
+          C MODE 1
+          --------
+          Внутри того же r_staticPromoteInfluenceRadius renderer рекурсивно проходит BSP planes
+          сферой и собирает уникальные видимые leaf cluster/area пары. Radius не увеличивается.
+          PVS и areamask НЕ обходятся. Hold остаётся 8000 ms. maxLights/MAX_DLIGHTS не повышаются.
+          B recognition/association/native de-dup не меняются. A Native Multi-Area не меняется.
+
+          ПОРЯДОК ТЕСТОВ
+          --------------
+          1. RUN_SPR_V02_01_FACTORY_BASELINE.cmd
+          2. RUN_SPR_V02_02_FACTORY_FIX.cmd
+             Оба раза пройти совершенно одинаковый tunnel route и с одинаковой скоростью.
+             Сравнить, исчезает ли последовательное включение физически видимых ламп.
+
+          3. RUN_SPR_V02_03_ESCAPE1_BASELINE.cmd
+          4. RUN_SPR_V02_04_ESCAPE1_FIX.cmd
+             Оба раза выполнить один маршрут:
+             - стартовые native torches как общий контроль;
+             - furnace: внутри -> doorway -> снаружи -> обратно;
+             - проверить две видимые wall lamps в/около furnace room;
+             - пройти кабинет доктора;
+             - остановиться примерно за 5-10 м до guard-room lamp row и смотреть прямо на ряд;
+             - медленно войти и пройти под лампами;
+             - повернуть вправо в следующий коридор;
+             - вернуться назад и снова посмотреть на ряд.
+             В C=1 ряд не должен включаться только по одной лампе непосредственно под игроком,
+             если соответствующий физический свет уже должен быть resident по видимой BSP области.
+
+          5. RUN_SPR_V02_05_CRYPT1_FIX_CONTROL.cmd
+             Проверить несколько native torches и их point shadows. Это regression control:
+             поведение принятого A/B не должно ухудшиться.
+
+          ЛОГИ
+          ----
+          SPR_V02_META: mode, radius, visitedLeaves, influencePairs, overflow для каждого fixture.
+          PLR_FACTORY_*: существующая Factory frame residency диагностика.
+          PLR_V01_*: frozen B recognition/source-route proof.
+          PLR_NATIVE_*: frozen A native-delivery proof.
+          PLR_PERF: performance windows.
+          STATIC_PROMOTE_STATUS_LINES: изменение итогового resident/active состояния.
+
+          ACCEPTANCE
+          ----------
+          Factory + Escape1 candidate должны показать более устойчивое residency без изменения
+          light energy/radius и без обхода PVS/areamask. Furnace native DLight должен сохранить A fix.
+          B physical recognition/source routing должен остаться прежним. Crypt1 не должен регрессировать.
+          Желательно overflow=0 для значимых fixtures; overflow=1 требует отдельного анализа.
+          Существенная новая потеря FPS также является причиной не принимать C.
+
+          После каждого теста полностью закрыть игру. Launcher автоматически создаёт ZIP в
+          SPR_V02_RESULTS. Загрузить все пять ZIP в ChatGPT.
+
+          Green GitHub Actions = только CI COMPILE CONFIRMED.
+          C становится RUNTIME ACCEPTED только после анализа runtime результатов.
+          EOF
+
+          cp apply_static_promotion_residency_v0_2_candidate.py "$stage/docs/"
+          cp "generated-patches/$C_DELTA_NAME" "$stage/docs/$C_DELTA_NAME"
+          cp "generated-patches/$C_CUMULATIVE_NAME" "$stage/docs/$C_CUMULATIVE_NAME"
+          cp c-changed-files.txt "$stage/docs/STATIC_PROMOTION_RESIDENCY_V0_2_CHANGED_FILES.txt"
+          cp c-delta.sha256 "$stage/docs/STATIC_PROMOTION_RESIDENCY_V0_2_DELTA.sha256"
+          cp c-cumulative.sha256 "$stage/docs/STATIC_PROMOTION_RESIDENCY_V0_2_CUMULATIVE.sha256"
+          cp .c_frozen_before.sha256 "$stage/docs/STATIC_PROMOTION_RESIDENCY_V0_2_FROZEN_PARENT_BEFORE.sha256"
+          cp .c_frozen_after.sha256 "$stage/docs/STATIC_PROMOTION_RESIDENCY_V0_2_FROZEN_PARENT_AFTER.sha256"
+
+          cat > "$stage/STATIC_PROMOTION_RESIDENCY_V0_2_BUILD_INFO.txt" <<EOF
+          DarkWolf ioRTCW Rend2 SP - Static Promotion Residency v0.2 Candidate
+          parent_stage=B_PHYSICAL_LIGHT_RECOGNITION_V0_1_RUNTIME_ACCEPTED
+          parent_run_id=$PARENT_RUN_ID
+          parent_head_sha=$PARENT_RUN_HEAD_SHA
+          parent_artifact_id=$PARENT_ARTIFACT_ID
+          parent_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          parent_release_zip_sha256=$PARENT_RELEASE_ZIP_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          changed_source=SP/code/rend2/tr_scene.c_ONLY
+          candidate_cvar=r_staticPromoteResidencyV02
+          candidate_default=0_SAFE_TEST_LAUNCHERS_EXPLICIT_0_OR_1
+          baseline_mode=0_CENTER_PLUS_26_SHELL_PROBES_EXACT_B_POLICY
+          candidate_mode=1_BSP_TOPOLOGY_SPHERE_TRAVERSAL
+          influence_radius_changed=NO
+          influence_radius_parent_default=320
+          pvs_logic_changed=NO
+          areamask_logic_changed=NO
+          pvs_hold_changed=NO_8000MS_PARENT
+          max_lights_changed=NO
+          MAX_DLIGHTS_changed=NO
+          emitted_light_energy_changed=NO
+          emitted_light_radius_changed=NO
+          A_native_multi_area_changed=NO_FROZEN_RUNTIME_ACCEPTED
+          B_physical_recognition_changed=NO_FROZEN_RUNTIME_ACCEPTED
+          B_native_dedup_changed=NO
+          shadows_changed=NO
+          volumetrics_changed=NO
+          bloom_tonemap_exposure_changed=NO
+          fire_volumetric=FROZEN_NOT_STARTED
+          influence_pair_capacity=128_METADATA_ONLY
+          packaged_exe_sha256=$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')
+          packaged_qagame_sha256=$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')
+          packaged_cgame_sha256=$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')
+          packaged_renderer_sha256=$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')
+          c_delta_sha256=$(sha256sum "generated-patches/$C_DELTA_NAME" | awk '{print $1}')
+          c_cumulative_sha256=$(sha256sum "generated-patches/$C_CUMULATIVE_NAME" | awk '{print $1}')
+          EOF
+
+          # Parent runtime carriers except Rend2 remain byte-identical to accepted B artifact.
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$stage/Main/$PARENT_PROFILE_NAME" | awk '{print $1}')" = "$PARENT_PROFILE_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" != "$PARENT_RENDERER_SHA256"
+
+          if find "$stage" -type f -iname 'pak*.pk3' | grep -q .; then
+            echo "ERROR: commercial pak*.pk3 must not be packaged" >&2; exit 1
+          fi
+          (cd "$stage" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$stage/STATIC_PROMOTION_RESIDENCY_V0_2_MANIFEST.sha256"
+          cp -a "$stage" "dist/$RELEASE_BASENAME"
+          (cd dist && zip -qr "${RELEASE_BASENAME}.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+          echo "Packaged $RELEASE_BASENAME"
+
+      - name: Final C residency release contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="dist/$RELEASE_BASENAME"
+          test -s "dist/${RELEASE_BASENAME}.zip"
+          test -s "dist/${RELEASE_BASENAME}.zip.sha256"
+          test -s "$stage/ioWolfSP.x64.exe"
+          test -s "$stage/Main/qagame_sp_x64.dll"
+          test -s "$stage/Main/cgame_sp_x64.dll"
+          test -s "$stage/renderer_sp_rend2_x64.dll"
+          test -s "$stage/Main/$C_PROFILE_NAME"
+          test -s "$stage/README_STATIC_PROMOTION_RESIDENCY_V0_2_RU.txt"
+          test -s "$stage/SPR_V02_ACCEPTANCE_CONTRACT.txt"
+          test -s "$stage/docs/$C_DELTA_NAME"
+          test -s "$stage/docs/$C_CUMULATIVE_NAME"
+          for f in RUN_SPR_V02_01_FACTORY_BASELINE.cmd RUN_SPR_V02_02_FACTORY_FIX.cmd RUN_SPR_V02_03_ESCAPE1_BASELINE.cmd RUN_SPR_V02_04_ESCAPE1_FIX.cmd RUN_SPR_V02_05_CRYPT1_FIX_CONTROL.cmd RUN_SPR_V02_CORE.cmd; do test -s "$stage/$f"; done
+          if grep -Eq '^[[:space:]]*(set|seta)[[:space:]]+r_staticPromoteResidencyV02' "$stage/Main/$C_PROFILE_NAME"; then
+            echo "ERROR: profile must not override baseline/fix C launcher mode" >&2; exit 1
+          fi
+          grep -Fq '+set g_dlightPVSMultiAreaFix 1' "$stage/RUN_SPR_V02_CORE.cmd"
+          grep -Fq '+set g_dlightPVSRadius 256' "$stage/RUN_SPR_V02_CORE.cmd"
+          grep -Fq '+set r_staticPromotePhysicalRecognition 1' "$stage/RUN_SPR_V02_CORE.cmd"
+          grep -Fq '+set r_staticPromoteResidencyV02 %MODE%' "$stage/RUN_SPR_V02_CORE.cmd"
+          grep -Fq 'rtcwconsole.log' "$stage/RUN_SPR_V02_CORE.cmd"
+          grep -Fq 'influence_radius_changed=NO' "$stage/STATIC_PROMOTION_RESIDENCY_V0_2_BUILD_INFO.txt"
+          grep -Fq 'pvs_hold_changed=NO_8000MS_PARENT' "$stage/STATIC_PROMOTION_RESIDENCY_V0_2_BUILD_INFO.txt"
+          grep -Fq 'A_native_multi_area_changed=NO_FROZEN_RUNTIME_ACCEPTED' "$stage/STATIC_PROMOTION_RESIDENCY_V0_2_BUILD_INFO.txt"
+          grep -Fq 'B_physical_recognition_changed=NO_FROZEN_RUNTIME_ACCEPTED' "$stage/STATIC_PROMOTION_RESIDENCY_V0_2_BUILD_INFO.txt"
+          grep -Fxq 'SP/code/rend2/tr_scene.c' "$stage/docs/STATIC_PROMOTION_RESIDENCY_V0_2_CHANGED_FILES.txt"
+          test "$(wc -l < "$stage/docs/STATIC_PROMOTION_RESIDENCY_V0_2_CHANGED_FILES.txt")" = "1"
+          diff -u "$stage/docs/STATIC_PROMOTION_RESIDENCY_V0_2_FROZEN_PARENT_BEFORE.sha256" "$stage/docs/STATIC_PROMOTION_RESIDENCY_V0_2_FROZEN_PARENT_AFTER.sha256"
+
+          echo '### C - Static Promotion Residency v0.2 Candidate' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Exact parent B: PLR v0.1 runtime-accepted run 32950584939; A is frozen inside B lineage' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Source delta: SP/code/rend2/tr_scene.c only' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Mode 0: exact B center + 26 shell probes; Mode 1: BSP topology sphere traversal' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Same influence radius; existing PVS/areamask/8000ms hold/final selection remain frozen' >> "$GITHUB_STEP_SUMMARY"
+          echo '- No light energy/radius, MAX_DLIGHTS, shadows, volumetrics, Bloom/ToneMap/Exposure changes' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Runtime suite: Factory baseline/fix, Escape1 baseline/fix, Crypt1 fix control' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Green CI = CI COMPILE CONFIRMED only; five runtime ZIPs decide C acceptance' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload C Static Promotion Residency v0.2 Candidate release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
