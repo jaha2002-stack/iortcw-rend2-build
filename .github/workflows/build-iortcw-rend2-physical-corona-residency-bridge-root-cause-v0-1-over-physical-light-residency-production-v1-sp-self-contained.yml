@@ -1,0 +1,811 @@
+name: Build DarkWolf Rend2 Physical Corona Residency Bridge Root-Cause v0.1 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: physical-corona-residency-bridge-root-cause-v0-1-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: PCRB v0.1 - frozen Production v1 + CGAME to Rend2 residency metadata bridge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      # Exact user-tested parent. Its server v2/runtime EXE is kept byte-for-byte in packaging.
+      PARENT_RUN_ID: "33073983067"
+      PARENT_RUN_HEAD_SHA: 2dedf7740d6a362e32143ad18441493fd64b66c4
+      PARENT_WORKFLOW_PATH: .github/workflows/build-iortcw-rend2-physical-light-residency-production-candidate-v1-over-grenade-dynamite-production-v1-sp-self-contained-FIXED.yml
+      PARENT_ARTIFACT_ID: "9647217471"
+      PARENT_ARTIFACT_NAME: iortcw-rend2-physical-light-residency-production-candidate-v1-over-grenade-dynamite-production-v1-full-sp-windows-x64-1
+      PARENT_ARTIFACT_DIGEST: sha256:962f841434029f6d731bf1b2603f91233881e6c36cb9fc62d453b6771c7c768b
+      PARENT_RELEASE_BASENAME: iortcw-rend2-physical-light-residency-production-candidate-v1-over-grenade-dynamite-production-v1-full-sp-windows-x64-1
+      PARENT_RELEASE_ZIP_SHA256: bb72e09a98e4430a1f623fa63d12ee6e101608df92112b33df8165a83f0c4c60
+
+      PARENT_EXE_SHA256: df9facaf739ec56808d4d384e1817b817c0edb8d3971e44d04a7ddcd06c8e66e
+      PARENT_QAGAME_SHA256: 0c35c013c2e84d2253c8af120893b67e0b6a868c9155d34833d2d76533beaff4
+      PARENT_CGAME_SHA256: 0c06c99b05823165da6c531285d1f245ea5c5b9a660ea1980885eb25569d081f
+      PARENT_RENDERER_SHA256: 1c6bc25c1ef05a1550eb7898cbef4a78c7777e55521ad3329ce5e7d4d3fa34eb
+      PARENT_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      PARENT_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+
+      PARENT_PROFILE_NAME: DARKWOLF_PHYSICAL_LIGHT_RESIDENCY_PRODUCTION_CANDIDATE_V1.cfg
+      PARENT_PROFILE_SHA256: d760d4fc0fda95008d68def584e97b7f83919f4dafdb3bfe4a80c53fc9a72f8e
+      PARENT_CUMULATIVE_NAME: rend2-cumulative-grenade-dynamite-production-v1-plus-physical-light-residency-production-candidate-v1-sp.patch
+      PARENT_CUMULATIVE_SHA256: 679b78bf75d3858c0e562361d0549fa1923740e57dd99e7458de4c8e013f09ff
+      PARENT_PROD_DELTA_NAME: rend2-physical-light-residency-production-candidate-v1-over-grenade-dynamite-production-v1-sp.patch
+      PARENT_PROD_DELTA_SHA256: 44a72b73dbdd53116df57252e16c127d52c1a6c25e6e1fee400467ddcdcca185
+
+      PATCHER_NAME: apply_physical_corona_residency_bridge_root_cause_v0_1.py
+      PATCHER_SHA256: e3b640afad4f32887eea88b993f89a216d6444cc88b448a9ef6dd398c129f29c
+      DELTA_NAME: rend2-physical-corona-residency-bridge-root-cause-v0-1-over-physical-light-residency-production-v1-sp.patch
+      CUMULATIVE_NAME: rend2-cumulative-physical-light-residency-production-v1-plus-physical-corona-residency-bridge-root-cause-v0-1-sp.patch
+      PROFILE_NAME: DARKWOLF_PHYSICAL_CORONA_RESIDENCY_BRIDGE_ROOT_CAUSE_V0_1.cfg
+      RELEASE_BASENAME: iortcw-rend2-physical-corona-residency-bridge-root-cause-v0-1-over-physical-light-residency-production-v1-full-sp-windows-x64-1
+
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install deterministic build tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 \
+            python3 python3-yaml unzip zip file
+
+      - name: Verify exact user-tested Production Candidate parent
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          run_sha="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["head_sha"])')"
+          run_conclusion="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["conclusion"])')"
+          run_workflow="$(printf '%s' "$run_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])')"
+          test "$run_sha" = "$PARENT_RUN_HEAD_SHA" || { echo "ERROR: parent HEAD drift: $run_sha" >&2; exit 1; }
+          test "$run_conclusion" = "success" || { echo "ERROR: parent run conclusion=$run_conclusion" >&2; exit 1; }
+          test "$run_workflow" = "$PARENT_WORKFLOW_PATH" || { echo "ERROR: parent workflow drift: $run_workflow" >&2; exit 1; }
+
+          artifact_line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${PARENT_ARTIFACT_ID}) | [.name, .expired, .digest] | @tsv")"
+          test -n "$artifact_line" || { echo "ERROR: exact parent artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r artifact_name artifact_expired artifact_digest <<< "$artifact_line"
+          test "$artifact_name" = "$PARENT_ARTIFACT_NAME"
+          test "$artifact_expired" = "false"
+          test "$artifact_digest" = "$PARENT_ARTIFACT_DIGEST"
+          echo "Exact parent PASS: run=$PARENT_RUN_ID head=$run_sha artifact=$PARENT_ARTIFACT_ID"
+
+      - name: Download and byte-verify exact parent release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf parent-artifact parent-release
+          mkdir -p parent-artifact parent-release
+          gh run download "$PARENT_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$PARENT_ARTIFACT_NAME" --dir parent-artifact
+
+          parent_zip="parent-artifact/${PARENT_RELEASE_BASENAME}.zip"
+          parent_sidecar="parent-artifact/${PARENT_RELEASE_BASENAME}.zip.sha256"
+          test -s "$parent_zip"
+          test -s "$parent_sidecar"
+          test "$(sha256sum "$parent_zip" | awk '{print $1}')" = "$PARENT_RELEASE_ZIP_SHA256"
+          test "$(awk '{print $1}' "$parent_sidecar")" = "$PARENT_RELEASE_ZIP_SHA256"
+          unzip -q "$parent_zip" -d parent-release
+
+          parent_stage="$(find parent-release -type f -name renderer_sp_rend2_x64.dll -printf '%h\n' -quit)"
+          test -n "$parent_stage"
+          printf '%s\n' "$parent_stage" > .parent_stage_path
+
+          test "$(sha256sum "$parent_stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$parent_stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$parent_stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$parent_stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$PARENT_RENDERER_SHA256"
+          test "$(sha256sum "$parent_stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$parent_stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          test "$(sha256sum "$parent_stage/Main/$PARENT_PROFILE_NAME" | awk '{print $1}')" = "$PARENT_PROFILE_SHA256"
+          test "$(sha256sum "$parent_stage/docs/$PARENT_CUMULATIVE_NAME" | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256"
+          test "$(sha256sum "$parent_stage/docs/$PARENT_PROD_DELTA_NAME" | awk '{print $1}')" = "$PARENT_PROD_DELTA_SHA256"
+
+          test ! -e "$parent_stage/Main/static_promote_synthetic_lights.txt"
+          test ! -e "$parent_stage/Main/static_promote_user_overrides.txt"
+          echo "Parent release byte contract PASS"
+
+      - name: Reconstruct exact parent source from pinned upstream
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_stage="$(cat .parent_stage_path)"
+          rm -rf source
+          git clone --no-tags "$UPSTREAM_REPO" source
+          git -C source config core.autocrlf false
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          test "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA"
+
+          parent_patch="$(realpath "$parent_stage/docs/$PARENT_CUMULATIVE_NAME")"
+          git -C source apply --check "$parent_patch"
+          git -C source apply "$parent_patch"
+          git -C source add -A
+          git -C source config user.email darkwolf-ci@example.invalid
+          git -C source config user.name DarkWolf-CI
+          git -C source commit -q -m "exact physical-light-residency production candidate v1 source parent"
+          printf '%s\n' "$(git -C source rev-parse HEAD)" > .parent_source_commit
+          sha256sum source/SP/code/server/sv_snapshot.c > .server_before.sha256
+          echo "Exact parent source reconstruction PASS"
+
+      - name: Decode and validate two-file bridge patcher
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -f "$PATCHER_NAME"
+          base64 -d > "$PATCHER_NAME" <<'PCRB_PATCHER_B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKaW1wb3J0IHN5
+          cwoKUk9PVCA9IFBhdGgoJy4nKQpDSEVDS19PTkxZID0gRmFsc2UKYXJncyA9IHN5cy5hcmd2WzE6
+          XQppZiBhcmdzIGFuZCBhcmdzWzBdID09ICctLWNoZWNrLW9ubHknOgogICAgQ0hFQ0tfT05MWSA9
+          IFRydWUKICAgIGFyZ3MgPSBhcmdzWzE6XQppZiBhcmdzOgogICAgUk9PVCA9IFBhdGgoYXJnc1sw
+          XSkKaWYgbGVuKGFyZ3MpID4gMToKICAgIHJhaXNlIFN5c3RlbUV4aXQoJ3VzYWdlOiBhcHBseV9w
+          aHlzaWNhbF9jb3JvbmFfcmVzaWRlbmN5X2JyaWRnZV9yb290X2NhdXNlX3YwXzEucHkgWy0tY2hl
+          Y2stb25seV0gW3NvdXJjZS1yb290XScpCgpDR19SRUwgPSAnU1AvY29kZS9jZ2FtZS9jZ19lbnRz
+          LmMnClRSX1JFTCA9ICdTUC9jb2RlL3JlbmQyL3RyX3NjZW5lLmMnCk1BUktFUiA9ICdEQVJLV09M
+          Rl9QSFlTSUNBTF9DT1JPTkFfUkVTSURFTkNZX0JSSURHRV9ST09UX0NBVVNFX1YwXzEnCk1FVEEg
+          PSAnREFSS1dPTEZfUkVGX0NPUk9OQV9SRVNJREVOQ1lfTUVUQScKTE9TID0gJ0RBUktXT0xGX1JF
+          Rl9DT1JPTkFfUkVTSURFTkNZX0xPUycKCgpkZWYgcmVwbGFjZV9vbmNlKHRleHQ6IHN0ciwgb2xk
+          OiBzdHIsIG5ldzogc3RyLCBsYWJlbDogc3RyKSAtPiBzdHI6CiAgICBjb3VudCA9IHRleHQuY291
+          bnQob2xkKQogICAgaWYgY291bnQgIT0gMToKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KGYnRVJS
+          T1I6IHtsYWJlbH06IGV4cGVjdGVkIGV4YWN0bHkgb25lIGFuY2hvciwgZm91bmQge2NvdW50fScp
+          CiAgICByZXR1cm4gdGV4dC5yZXBsYWNlKG9sZCwgbmV3LCAxKQoKCmRlZiByZXF1aXJlKHRleHQ6
+          IHN0ciwgdG9rZW5zLCBsYWJlbDogc3RyKToKICAgIGZvciB0b2tlbiBpbiB0b2tlbnM6CiAgICAg
+          ICAgaWYgdG9rZW4gbm90IGluIHRleHQ6CiAgICAgICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoZidF
+          UlJPUjoge2xhYmVsfTogcmVxdWlyZWQgZnJvemVuLXBhcmVudCB0b2tlbiBtaXNzaW5nOiB7dG9r
+          ZW59JykKCmNnX3BhdGggPSBST09UIC8gQ0dfUkVMCnRyX3BhdGggPSBST09UIC8gVFJfUkVMCmlm
+          IG5vdCBjZ19wYXRoLmlzX2ZpbGUoKToKICAgIHJhaXNlIFN5c3RlbUV4aXQoZidFUlJPUjogbWlz
+          c2luZyB7Q0dfUkVMfScpCmlmIG5vdCB0cl9wYXRoLmlzX2ZpbGUoKToKICAgIHJhaXNlIFN5c3Rl
+          bUV4aXQoZidFUlJPUjogbWlzc2luZyB7VFJfUkVMfScpCgpjZyA9IGNnX3BhdGgucmVhZF90ZXh0
+          KGVuY29kaW5nPSd1dGYtOCcpCnRyID0gdHJfcGF0aC5yZWFkX3RleHQoZW5jb2Rpbmc9J3V0Zi04
+          JykKCmlmIE1BUktFUiBpbiBjZyBvciBNQVJLRVIgaW4gdHI6CiAgICByYWlzZSBTeXN0ZW1FeGl0
+          KGYnRVJST1I6IHtNQVJLRVJ9IGFscmVhZHkgcHJlc2VudCcpCgojIEV4YWN0IHBhcmVudCBjb250
+          cmFjdDogUHJvZHVjdGlvbiBDYW5kaWRhdGUgdjEgY29udGFpbnMgYWNjZXB0ZWQgdjIgc2VydmVy
+          IGRlbGl2ZXJ5LAojIFBMUiBCIHJlY29nbml0aW9uIGFuZCBQaHlzaWNhbCBSZXNpZGVuY3kgdjEu
+          IFRoaXMgY2FuZGlkYXRlIG11c3Qgbm90IHJlY3JlYXRlIHRoZW0uCnJlcXVpcmUoY2csIFsKICAg
+          ICdEQVJLV09MRl9QSFlTSUNBTF9MSUdIVF9ERUxJVkVSWV9SRVNJREVOQ1lfRElBR19WMF8xJywK
+          ICAgICdDR19EYXJrV29sZkRpYWdDdmFyRW5hYmxlZCcsCiAgICAnc3RhdGljIHZvaWQgQ0dfQ29y
+          b25hKCBjZW50aXR5X3QgKmNlbnQgKScsCl0sICdjZyBwYXJlbnQnKQpyZXF1aXJlKHRyLCBbCiAg
+          ICAnREFSS1dPTEZfUEhZU0lDQUxfTElHSFRfUkVDT0dOSVRJT05fVjBfMScsCiAgICAnREFSS1dP
+          TEZfU1RBVElDX1BST01PVElPTl9QSFlTSUNBTF9SRVNJREVOQ1lfRklYX0NBTkRJREFURV9WMScs
+          CiAgICAnUl9TdGF0aWNQcm9tb3RlUGh5c2ljYWxDb3JvbmFWaXNpYmxlJywKICAgICdyX3N0YXRp
+          Y1Byb21vdGVQaHlzaWNhbFJlc2lkZW5jeScsCiAgICAnUl9TdGF0aWNQcm9tb3RlUExSQnVpbGRB
+          c3NvY2lhdGlvbnMnLApdLCAncmVuZDIgcGFyZW50JykKCiMgLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+          LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCiMg
+          Q0dBTUU6IGRlZmluZSB0d28gcHJpdmF0ZSBoaWdoLWJpdCBmbGFncyBjYXJyaWVkIG9ubHkgdGhy
+          b3VnaCB0aGUgZXhpc3RpbmcKIyB0cmFwX1JfQWRkQ29yb25hVG9TY2VuZSBBQkkuIFRoZSBSZW5k
+          MiByZWNlaXZlciBjb25zdW1lcyBNRVRBIGJlZm9yZSB0aGUKIyBub3JtYWwgY29yb25hIGxpc3Qs
+          IHNvIG1ldGFkYXRhIGNhbiBuZXZlciBiZWNvbWUgYSB2aXN1YWwgZmxhcmUuCiMgLS0tLS0tLS0t
+          LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+          LS0tLS0tLS0tCmNnX2RlZmluZV9hbmNob3IgPSAnJycjZGVmaW5lIERBUktXT0xGX1JFRl9OQVRJ
+          VkVfQVVUSE9SRURfRExJR0hUICgxIDw8IDI2KVxuI2RlZmluZSBEQVJLV09MRl9MT0NBTFZPTF9T
+          UE9UX0ZPVl9NQVNLIDB4MEZGRlxuJycnCmNnX2RlZmluZV9uZXcgPSAnJycjZGVmaW5lIERBUktX
+          T0xGX1JFRl9OQVRJVkVfQVVUSE9SRURfRExJR0hUICgxIDw8IDI2KVxuLy8gREFSS1dPTEZfUEhZ
+          U0lDQUxfQ09ST05BX1JFU0lERU5DWV9CUklER0VfUk9PVF9DQVVTRV9WMF8xXG4vLyBQcml2YXRl
+          IEFkZENvcm9uYSBtZXRhZGF0YSBiaXRzLiBSZW5kMiBjb25zdW1lcyBNRVRBIGJlZm9yZSB2aXN1
+          YWwtY29yb25hIHN0b3JhZ2UuXG4jZGVmaW5lIERBUktXT0xGX1JFRl9DT1JPTkFfUkVTSURFTkNZ
+          X01FVEEgKDEgPDwgMjUpXG4jZGVmaW5lIERBUktXT0xGX1JFRl9DT1JPTkFfUkVTSURFTkNZX0xP
+          UyAgKDEgPDwgMjQpXG4jZGVmaW5lIERBUktXT0xGX0xPQ0FMVk9MX1NQT1RfRk9WX01BU0sgMHgw
+          RkZGXG4nJycKY2cgPSByZXBsYWNlX29uY2UoY2csIGNnX2RlZmluZV9hbmNob3IsIGNnX2RlZmlu
+          ZV9uZXcsICdjZ2FtZSBtZXRhZGF0YSBmbGFnIGRlZmluaXRpb25zJykKCmhlbHBlcl9hbmNob3Ig
+          PSAnJydzdGF0aWMgcWJvb2xlYW4gQ0dfRGFya1dvbGZOYXRpdmVUcmFjZVRoaXMoY29uc3QgY2Vu
+          dGl0eV90ICpjZW50KVxue1xuJycnCmhlbHBlciA9IHInJycvLyBEQVJLV09MRl9QSFlTSUNBTF9D
+          T1JPTkFfUkVTSURFTkNZX0JSSURHRV9ST09UX0NBVVNFX1YwXzEKLy8gRnVuY3Rpb25hbCBicmlk
+          Z2UgZ2F0ZS4gSXQgaXMgaW50ZW50aW9uYWxseSBSZW5kMi1vbmx5IGJlY2F1c2UgdGhlIGV4aXN0
+          aW5nCi8vIEFkZENvcm9uYSBBQkkgaXMgcmV1c2VkIGFzIGEgZGF0YSBjYXJyaWVyIGFuZCBPcGVu
+          R0wxIGRvZXMgbm90IGNvbnN1bWUgTUVUQS4Kc3RhdGljIHFib29sZWFuIENHX0RhcmtXb2xmQ29y
+          b25hUmVzaWRlbmN5QnJpZGdlRW5hYmxlZCh2b2lkKQp7CgljaGFyIHZhbHVlWzE2XTsKCWNoYXIg
+          cmVuZGVyZXJbMzJdOwoJdmFsdWVbMF0gPSAnXDAnOwoJcmVuZGVyZXJbMF0gPSAnXDAnOwoJdHJh
+          cF9DdmFyX1ZhcmlhYmxlU3RyaW5nQnVmZmVyKCJyX3N0YXRpY1Byb21vdGVDb3JvbmFSZXNpZGVu
+          Y3lCcmlkZ2UiLCB2YWx1ZSwgc2l6ZW9mKHZhbHVlKSk7CglpZiAodmFsdWVbMF0gPT0gJ1wwJyB8
+          fCBhdG9pKHZhbHVlKSA9PSAwKQoJCXJldHVybiBxZmFsc2U7Cgl0cmFwX0N2YXJfVmFyaWFibGVT
+          dHJpbmdCdWZmZXIoImNsX3JlbmRlcmVyIiwgcmVuZGVyZXIsIHNpemVvZihyZW5kZXJlcikpOwoJ
+          cmV0dXJuICFRX3N0cmljbXAocmVuZGVyZXIsICJyZW5kMiIpID8gcXRydWUgOiBxZmFsc2U7Cn0K
+          CicnJwpjZyA9IHJlcGxhY2Vfb25jZShjZywgaGVscGVyX2FuY2hvciwgaGVscGVyICsgaGVscGVy
+          X2FuY2hvciwgJ2NnYW1lIGJyaWRnZSBoZWxwZXIgaW5zZXJ0aW9uJykKCiMgS2VlcCB0aGUgc3Rv
+          Y2sgdmlzdWFsIGJyYW5jaCBieXRlLWZvci1ieXRlIGFmdGVyIHRoaXMgaW5zZXJ0ZWQgYmxvY2su
+          IFRoZQojIGluZGVwZW5kZW50IG1ldGFkYXRhIHRyYWNlIHVzZXMgdGhlIHNhbWUgUlRDVyBMT1Mg
+          ZW5kcG9pbnRzL21hc2ssIGJ1dCBkb2VzCiMgbm90IGluaGVyaXQgY2dfY29yb25hcywgZmFyLWRp
+          c3RhbmNlIG9yIGJlaGluZC1jYW1lcmEgdmlzdWFsIGdhdGVzLgpjZ19jb3JvbmFfYW5jaG9yID0g
+          Jycnc3RhdGljIHZvaWQgQ0dfQ29yb25hKCBjZW50aXR5X3QgKmNlbnQgKSB7XG5cdHRyYWNlX3Qg
+          dHI7XG5cdGludCByLCBnLCBiO1xuXHRpbnQgZGxpO1xuXHRpbnQgZmxhZ3MgPSAwO1xuXHRxYm9v
+          bGVhbiBiZWhpbmQgPSBxZmFsc2UsXG5cdFx0XHQgdG9vZmFyID0gcWZhbHNlO1xuXG5cdGZsb2F0
+          IGRvdCwgZGlzdDtcblx0dmVjM190IGRpcjtcblxuXHRpZiAoIGNnX2Nvcm9uYXMuaW50ZWdlciA9
+          PSAwICkgeyAgIC8vIGlmIHNldCB0byAnMCcgbm8gY29yb25hc1xuXHRcdHJldHVybjtcblx0fVxu
+          JycnCmNnX2Nvcm9uYV9uZXcgPSByJycnc3RhdGljIHZvaWQgQ0dfQ29yb25hKCBjZW50aXR5X3Qg
+          KmNlbnQgKSB7Cgl0cmFjZV90IHRyOwoJaW50IHIsIGcsIGI7CglpbnQgZGxpOwoJaW50IGZsYWdz
+          ID0gMDsKCXFib29sZWFuIGJlaGluZCA9IHFmYWxzZSwKCQkJIHRvb2ZhciA9IHFmYWxzZTsKCglm
+          bG9hdCBkb3QsIGRpc3Q7Cgl2ZWMzX3QgZGlyOwoKCS8vIERBUktXT0xGX1BIWVNJQ0FMX0NPUk9O
+          QV9SRVNJREVOQ1lfQlJJREdFX1JPT1RfQ0FVU0VfVjBfMQoJLy8gSW52aXNpYmxlIHBoeXNpY2Fs
+          LXJlc2lkZW5jeSBtZXRhZGF0YS4gVGhpcyBwYXRoIGlzIGRlbGliZXJhdGVseSBpbmRlcGVuZGVu
+          dAoJLy8gb2YgY2dfY29yb25hcyAvIGNnX2Nvcm9uYWZhcmRpc3QgLyBiZWhpbmQtY2FtZXJhIHZp
+          c3VhbCBjdWxsaW5nLiBUaGUgdHJhY2UKCS8vIGl0c2VsZiBwcmVzZXJ2ZXMgUlRDVydzIG9yaWdp
+          bmFsIENHX0Nvcm9uYSBMT1MgZW5kcG9pbnRzIGFuZCBtYXNrIGV4YWN0bHkuCglpZiAoIENHX0Rh
+          cmtXb2xmQ29yb25hUmVzaWRlbmN5QnJpZGdlRW5hYmxlZCgpICkgewoJCXRyYWNlX3QgcmVzaWRl
+          bmN5VHJhY2U7CgkJaW50IHJlc2lkZW5jeURsaSA9IGNlbnQtPmN1cnJlbnRTdGF0ZS5kbF9pbnRl
+          bnNpdHk7CgkJaW50IHJlc2lkZW5jeVIgPSByZXNpZGVuY3lEbGkgJiAyNTU7CgkJaW50IHJlc2lk
+          ZW5jeUcgPSAoIHJlc2lkZW5jeURsaSA+PiA4ICkgJiAyNTU7CgkJaW50IHJlc2lkZW5jeUIgPSAo
+          IHJlc2lkZW5jeURsaSA+PiAxNiApICYgMjU1OwoJCWludCByZXNpZGVuY3lGbGFncyA9IERBUktX
+          T0xGX1JFRl9DT1JPTkFfUkVTSURFTkNZX01FVEE7CgoJCUNHX1RyYWNlKCAmcmVzaWRlbmN5VHJh
+          Y2UsIGNnLnJlZmRlZi52aWV3b3JnLCBOVUxMLCBOVUxMLCBjZW50LT5sZXJwT3JpZ2luLCAtMSwg
+          TUFTS19TT0xJRCB8IENPTlRFTlRTX0JPRFkgKTsKCQlpZiAoIHJlc2lkZW5jeVRyYWNlLmZyYWN0
+          aW9uID09IDEgKSB7CgkJCXJlc2lkZW5jeUZsYWdzIHw9IERBUktXT0xGX1JFRl9DT1JPTkFfUkVT
+          SURFTkNZX0xPUzsKCQl9CgoJCXRyYXBfUl9BZGRDb3JvbmFUb1NjZW5lKCBjZW50LT5sZXJwT3Jp
+          Z2luLAoJCQkoZmxvYXQpcmVzaWRlbmN5UiAvIDI1NS4wZiwgKGZsb2F0KXJlc2lkZW5jeUcgLyAy
+          NTUuMGYsIChmbG9hdClyZXNpZGVuY3lCIC8gMjU1LjBmLAoJCQkoZmxvYXQpY2VudC0+Y3VycmVu
+          dFN0YXRlLmRlbnNpdHkgLyAyNTUuMGYsIGNlbnQtPmN1cnJlbnRTdGF0ZS5udW1iZXIsIHJlc2lk
+          ZW5jeUZsYWdzICk7CgoJCWlmICggQ0dfRGFya1dvbGZEaWFnQ3ZhckVuYWJsZWQoImR3X2Nvcm9u
+          YVJlc2lkZW5jeUJyaWRnZURpYWciKSApIHsKCQkJc3RhdGljIGludCBzX2xhc3RCcmlkZ2VQcmlu
+          dFtNQVhfR0VOVElUSUVTXTsKCQkJc3RhdGljIHVuc2lnbmVkIGludCBzX2xhc3RCcmlkZ2VTaWdb
+          TUFYX0dFTlRJVElFU107CgkJCWludCBuID0gY2VudC0+Y3VycmVudFN0YXRlLm51bWJlcjsKCQkJ
+          aWYgKCBuID49IDAgJiYgbiA8IE1BWF9HRU5USVRJRVMgKSB7CgkJCQl2ZWMzX3QgZGlhZ0RpcjsK
+          CQkJCWZsb2F0IGRpYWdEaXN0LCBkaWFnRG90OwoJCQkJcWJvb2xlYW4gZGlhZ1Rvb0ZhciwgZGlh
+          Z0JlaGluZDsKCQkJCXVuc2lnbmVkIGludCBkaWFnU2lnOwoJCQkJVmVjdG9yU3VidHJhY3QoIGNn
+          LnJlZmRlZi52aWV3b3JnLCBjZW50LT5sZXJwT3JpZ2luLCBkaWFnRGlyICk7CgkJCQlkaWFnRGlz
+          dCA9IFZlY3Rvck5vcm1hbGl6ZTIoIGRpYWdEaXIsIGRpYWdEaXIgKTsKCQkJCWRpYWdUb29GYXIg
+          PSAoIGRpYWdEaXN0ID4gY2dfY29yb25hZmFyZGlzdC5pbnRlZ2VyICkgPyBxdHJ1ZSA6IHFmYWxz
+          ZTsKCQkJCWRpYWdEb3QgPSBEb3RQcm9kdWN0KCBkaWFnRGlyLCBjZy5yZWZkZWYudmlld2F4aXNb
+          MF0gKTsKCQkJCWRpYWdCZWhpbmQgPSAoIGRpYWdEb3QgPj0gLTAuNmYgKSA/IHF0cnVlIDogcWZh
+          bHNlOwoJCQkJaWYgKCBjZ19jb3JvbmFzLmludGVnZXIgPT0gMiApIHsKCQkJCQlkaWFnVG9vRmFy
+          ID0gcWZhbHNlOwoJCQkJCWRpYWdCZWhpbmQgPSBxZmFsc2U7CgkJCQl9CgkJCQlkaWFnU2lnID0g
+          KHJlc2lkZW5jeUZsYWdzICYgREFSS1dPTEZfUkVGX0NPUk9OQV9SRVNJREVOQ1lfTE9TKSA/IDF1
+          IDogMHU7CgkJCQlkaWFnU2lnID0gZGlhZ1NpZyAqIDMzdSArICh1bnNpZ25lZCBpbnQpKGNnX2Nv
+          cm9uYXMuaW50ZWdlciArIDIpOwoJCQkJZGlhZ1NpZyA9IGRpYWdTaWcgKiAzM3UgKyAodW5zaWdu
+          ZWQgaW50KShkaWFnVG9vRmFyID8gMSA6IDApOwoJCQkJZGlhZ1NpZyA9IGRpYWdTaWcgKiAzM3Ug
+          KyAodW5zaWduZWQgaW50KShkaWFnQmVoaW5kID8gMSA6IDApOwoJCQkJaWYgKCBzX2xhc3RCcmlk
+          Z2VTaWdbbl0gIT0gZGlhZ1NpZyB8fCBzX2xhc3RCcmlkZ2VQcmludFtuXSA9PSAwIHx8IGNnLnRp
+          bWUgPCBzX2xhc3RCcmlkZ2VQcmludFtuXSB8fCBjZy50aW1lIC0gc19sYXN0QnJpZGdlUHJpbnRb
+          bl0gPj0gNTAwMCApIHsKCQkJCQlzX2xhc3RCcmlkZ2VTaWdbbl0gPSBkaWFnU2lnOwoJCQkJCXNf
+          bGFzdEJyaWRnZVByaW50W25dID0gY2cudGltZTsKCQkJCQlDR19QcmludGYoICJTUFJfQlJJREdF
+          X0NHIGVudD0lZCB0aW1lPSVkIG9yaWdpbj0lLjFmLCUuMWYsJS4xZiBzY2FsZT0lLjNmIG1ldGFM
+          T1M9JWQgdHJhY2VGcmFjdGlvbj0lLjRmIGNnQ29yb25hcz0lZCBmYXJMaW1pdD0lZCBkaXN0PSUu
+          MWYgdG9vRmFyPSVkIGJlaGluZD0lZCB2aXN1YWxDYW5kaWRhdGU9JWRcbiIsCgkJCQkJCW4sIGNn
+          LnRpbWUsIGNlbnQtPmxlcnBPcmlnaW5bMF0sIGNlbnQtPmxlcnBPcmlnaW5bMV0sIGNlbnQtPmxl
+          cnBPcmlnaW5bMl0sCgkJCQkJCShmbG9hdCljZW50LT5jdXJyZW50U3RhdGUuZGVuc2l0eSAvIDI1
+          NS4wZiwKCQkJCQkJKHJlc2lkZW5jeUZsYWdzICYgREFSS1dPTEZfUkVGX0NPUk9OQV9SRVNJREVO
+          Q1lfTE9TKSA/IDEgOiAwLAoJCQkJCQlyZXNpZGVuY3lUcmFjZS5mcmFjdGlvbiwgY2dfY29yb25h
+          cy5pbnRlZ2VyLCBjZ19jb3JvbmFmYXJkaXN0LmludGVnZXIsCgkJCQkJCWRpYWdEaXN0LCBkaWFn
+          VG9vRmFyID8gMSA6IDAsIGRpYWdCZWhpbmQgPyAxIDogMCwKCQkJCQkJKGNnX2Nvcm9uYXMuaW50
+          ZWdlciAhPSAwICYmICFkaWFnVG9vRmFyICYmICFkaWFnQmVoaW5kKSA/IDEgOiAwICk7CgkJCQl9
+          CgkJCX0KCQl9Cgl9CgoJaWYgKCBjZ19jb3JvbmFzLmludGVnZXIgPT0gMCApIHsgICAvLyBpZiBz
+          ZXQgdG8gJzAnIG5vIGNvcm9uYXMKCQlyZXR1cm47Cgl9CicnJwpjZyA9IHJlcGxhY2Vfb25jZShj
+          ZywgY2dfY29yb25hX2FuY2hvciwgY2dfY29yb25hX25ldywgJ0NHX0Nvcm9uYSBtZXRhZGF0YSBp
+          bnNlcnRpb24gd2hpbGUgcHJlc2VydmluZyBzdG9jayB2aXN1YWwgYnJhbmNoJykKCiMgLS0tLS0t
+          LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+          LS0tLS0tLS0tLS0tCiMgUkVORDI6IHByaXZhdGUgcGVyLWVudGl0eSBtZXRhZGF0YSBzdG9yZS4g
+          SXQgaXMgTk9UIGJhY2tFbmREYXRhLT5jb3JvbmFzIGFuZAojIHRoZXJlZm9yZSBjYW5ub3QgcmVh
+          Y2ggUkJfQWRkQ29yb25hRmxhcmVzIC8gZmxhcmUgcmVuZGVyaW5nLgojIC0tLS0tLS0tLS0tLS0t
+          LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+          LS0tLQp0cl9kZWZpbmVfYW5jaG9yID0gJycnI2RlZmluZSBEQVJLV09MRl9SRUZfTkFUSVZFX0FV
+          VEhPUkVEX0RMSUdIVCAoMSA8PCAyNikgLy8gREFSS1dPTEZfUEhZU0lDQUxfTElHSFRfREVMSVZF
+          UllfUkVTSURFTkNZX0RJQUdfVjBfMVxuI2RlZmluZSBEQVJLV09MRl9MT0NBTFZPTF9TUE9UX0ZP
+          Vl9NQVNLIDB4MEZGRlxuJycnCnRyX2RlZmluZV9uZXcgPSAnJycjZGVmaW5lIERBUktXT0xGX1JF
+          Rl9OQVRJVkVfQVVUSE9SRURfRExJR0hUICgxIDw8IDI2KSAvLyBEQVJLV09MRl9QSFlTSUNBTF9M
+          SUdIVF9ERUxJVkVSWV9SRVNJREVOQ1lfRElBR19WMF8xXG4vLyBEQVJLV09MRl9QSFlTSUNBTF9D
+          T1JPTkFfUkVTSURFTkNZX0JSSURHRV9ST09UX0NBVVNFX1YwXzFcbiNkZWZpbmUgREFSS1dPTEZf
+          UkVGX0NPUk9OQV9SRVNJREVOQ1lfTUVUQSAoMSA8PCAyNSlcbiNkZWZpbmUgREFSS1dPTEZfUkVG
+          X0NPUk9OQV9SRVNJREVOQ1lfTE9TICAoMSA8PCAyNClcbiNkZWZpbmUgREFSS1dPTEZfTE9DQUxW
+          T0xfU1BPVF9GT1ZfTUFTSyAweDBGRkZcbicnJwp0ciA9IHJlcGxhY2Vfb25jZSh0ciwgdHJfZGVm
+          aW5lX2FuY2hvciwgdHJfZGVmaW5lX25ldywgJ3JlbmQyIG1ldGFkYXRhIGZsYWcgZGVmaW5pdGlv
+          bnMnKQoKc3RvcmVfYW5jaG9yID0gJycnc3RhdGljIGxvY2FsVm9sdW1ldHJpY1Nwb3RfdCBzX2xv
+          Y2FsVm9sdW1ldHJpY1Nwb3RzW01BWF9MT0NBTF9WT0xVTUVUUklDX1NQT1RTXTtcbnN0YXRpYyBp
+          bnQgc19sb2NhbFZvbHVtZXRyaWNTcG90Q291bnQgPSAwO1xuXG5cbmludCByX2ZpcnN0U2NlbmVE
+          cmF3U3VyZjtcbicnJwpzdG9yZV9uZXcgPSAnJydzdGF0aWMgbG9jYWxWb2x1bWV0cmljU3BvdF90
+          IHNfbG9jYWxWb2x1bWV0cmljU3BvdHNbTUFYX0xPQ0FMX1ZPTFVNRVRSSUNfU1BPVFNdO1xuc3Rh
+          dGljIGludCBzX2xvY2FsVm9sdW1ldHJpY1Nwb3RDb3VudCA9IDA7XG5cbi8vIERBUktXT0xGX1BI
+          WVNJQ0FMX0NPUk9OQV9SRVNJREVOQ1lfQlJJREdFX1JPT1RfQ0FVU0VfVjBfMVxuLy8gRW50aXR5
+          LW51bWJlciBrZXllZCwgcGVyLXNjZW5lIG1ldGFkYXRhLiBOZXZlciBleHBvc2VkIGFzIHRyLnJl
+          ZmRlZi5jb3JvbmFzLlxuc3RhdGljIGNvcm9uYV90IHNfZGFya1dvbGZDb3JvbmFSZXNpZGVuY3lN
+          ZXRhW01BWF9HRU5USVRJRVNdO1xuc3RhdGljIGJ5dGUgc19kYXJrV29sZkNvcm9uYVJlc2lkZW5j
+          eU1ldGFWYWxpZFtNQVhfR0VOVElUSUVTXTtcbnN0YXRpYyBpbnQgc19kYXJrV29sZkNvcm9uYVJl
+          c2lkZW5jeU1ldGFDb3VudCA9IDA7XG5cblxuaW50IHJfZmlyc3RTY2VuZURyYXdTdXJmO1xuJycn
+          CnRyID0gcmVwbGFjZV9vbmNlKHRyLCBzdG9yZV9hbmNob3IsIHN0b3JlX25ldywgJ3JlbmQyIG1l
+          dGFkYXRhIHN0b3JlIGluc2VydGlvbicpCgpjbGVhcl9hbmNob3IgPSAnJyd2b2lkIFJFX0NsZWFy
+          U2NlbmUoIHZvaWQgKSB7XG5cdHJfZmlyc3RTY2VuZURsaWdodCA9IHJfbnVtZGxpZ2h0cztcblx0
+          c19sb2NhbFZvbHVtZXRyaWNTcG90Q291bnQgPSAwOyAvLyBEQVJLV09MRl9MT0NBTF9WT0xVTUVU
+          UklDX1YwXzE6IHBlci1zY2VuZSBicmlkZ2Ugc3RhdGVcblx0cl9maXJzdFNjZW5lQ29yb25hID0g
+          cl9udW1jb3JvbmFzO1xuJycnCmNsZWFyX25ldyA9ICcnJ3ZvaWQgUkVfQ2xlYXJTY2VuZSggdm9p
+          ZCApIHtcblx0cl9maXJzdFNjZW5lRGxpZ2h0ID0gcl9udW1kbGlnaHRzO1xuXHRzX2xvY2FsVm9s
+          dW1ldHJpY1Nwb3RDb3VudCA9IDA7IC8vIERBUktXT0xGX0xPQ0FMX1ZPTFVNRVRSSUNfVjBfMTog
+          cGVyLXNjZW5lIGJyaWRnZSBzdGF0ZVxuXHQvLyBEQVJLV09MRl9QSFlTSUNBTF9DT1JPTkFfUkVT
+          SURFTkNZX0JSSURHRV9ST09UX0NBVVNFX1YwXzE6IG1ldGFkYXRhIGlzIHNjZW5lLWxvY2FsLlxu
+          XHRDb21fTWVtc2V0KHNfZGFya1dvbGZDb3JvbmFSZXNpZGVuY3lNZXRhVmFsaWQsIDAsIHNpemVv
+          ZihzX2RhcmtXb2xmQ29yb25hUmVzaWRlbmN5TWV0YVZhbGlkKSk7XG5cdHNfZGFya1dvbGZDb3Jv
+          bmFSZXNpZGVuY3lNZXRhQ291bnQgPSAwO1xuXHRyX2ZpcnN0U2NlbmVDb3JvbmEgPSByX251bWNv
+          cm9uYXM7XG4nJycKdHIgPSByZXBsYWNlX29uY2UodHIsIGNsZWFyX2FuY2hvciwgY2xlYXJfbmV3
+          LCAnUkVfQ2xlYXJTY2VuZSBtZXRhZGF0YSByZXNldCcpCgphZGRfY29yb25hX2FuY2hvciA9ICcn
+          J3ZvaWQgUkVfQWRkQ29yb25hVG9TY2VuZSggY29uc3QgdmVjM190IG9yZywgZmxvYXQgciwgZmxv
+          YXQgZywgZmxvYXQgYiwgZmxvYXQgc2NhbGUsIGludCBpZCwgaW50IGZsYWdzICkge1xuXHRjb3Jv
+          bmFfdCAgICAqY29yO1xuXG5cdGlmICggIXRyLnJlZ2lzdGVyZWQgKSB7XG5cdFx0cmV0dXJuO1xu
+          XHR9XG5cdGlmICggcl9udW1jb3JvbmFzID49IE1BWF9DT1JPTkFTICkge1xuXHRcdHJldHVybjtc
+          blx0fVxuXG5cdGNvciA9ICZiYWNrRW5kRGF0YS0+Y29yb25hc1tyX251bWNvcm9uYXMrK107XG4n
+          JycKYWRkX2Nvcm9uYV9uZXcgPSAnJyd2b2lkIFJFX0FkZENvcm9uYVRvU2NlbmUoIGNvbnN0IHZl
+          YzNfdCBvcmcsIGZsb2F0IHIsIGZsb2F0IGcsIGZsb2F0IGIsIGZsb2F0IHNjYWxlLCBpbnQgaWQs
+          IGludCBmbGFncyApIHtcblx0Y29yb25hX3QgICAgKmNvcjtcblxuXHRpZiAoICF0ci5yZWdpc3Rl
+          cmVkICkge1xuXHRcdHJldHVybjtcblx0fVxuXG5cdC8vIERBUktXT0xGX1BIWVNJQ0FMX0NPUk9O
+          QV9SRVNJREVOQ1lfQlJJREdFX1JPT1RfQ0FVU0VfVjBfMVxuXHQvLyBDb25zdW1lIG1ldGFkYXRh
+          IGJlZm9yZSBNQVhfQ09ST05BUyBhbmQgYmVmb3JlIGJhY2tFbmREYXRhLT5jb3JvbmFzLiBUaGlz
+          IGlzXG5cdC8vIGludGVudGlvbmFsbHkgaW52aXNpYmxlIHRvIHRoZSBzdG9jayBmbGFyZSByZW5k
+          ZXJlciBhbmQgY2Fubm90IGNvbnN1bWUgYVxuXHQvLyB2aXN1YWwtY29yb25hIHNsb3QuIFRoZSBy
+          dW50aW1lIGVudGl0eSBpZCBpcyB0aGUga2V5LlxuXHRpZiAoIGZsYWdzICYgREFSS1dPTEZfUkVG
+          X0NPUk9OQV9SRVNJREVOQ1lfTUVUQSApIHtcblx0XHRpZiAoIGlkID49IDAgJiYgaWQgPCBNQVhf
+          R0VOVElUSUVTICkge1xuXHRcdFx0Y29yID0gJnNfZGFya1dvbGZDb3JvbmFSZXNpZGVuY3lNZXRh
+          W2lkXTtcblx0XHRcdGlmICggIXNfZGFya1dvbGZDb3JvbmFSZXNpZGVuY3lNZXRhVmFsaWRbaWRd
+          IClcblx0XHRcdFx0c19kYXJrV29sZkNvcm9uYVJlc2lkZW5jeU1ldGFDb3VudCsrO1xuXHRcdFx0
+          c19kYXJrV29sZkNvcm9uYVJlc2lkZW5jeU1ldGFWYWxpZFtpZF0gPSAxO1xuXHRcdFx0VmVjdG9y
+          Q29weSggb3JnLCBjb3ItPm9yaWdpbiApO1xuXHRcdFx0Y29yLT5jb2xvclswXSA9IHI7XG5cdFx0
+          XHRjb3ItPmNvbG9yWzFdID0gZztcblx0XHRcdGNvci0+Y29sb3JbMl0gPSBiO1xuXHRcdFx0Y29y
+          LT5zY2FsZSA9IHNjYWxlO1xuXHRcdFx0Y29yLT5pZCA9IGlkO1xuXHRcdFx0Y29yLT5mbGFncyA9
+          IGZsYWdzO1xuXHRcdH1cblx0XHRyZXR1cm47XG5cdH1cblxuXHRpZiAoIHJfbnVtY29yb25hcyA+
+          PSBNQVhfQ09ST05BUyApIHtcblx0XHRyZXR1cm47XG5cdH1cblxuXHRjb3IgPSAmYmFja0VuZERh
+          dGEtPmNvcm9uYXNbcl9udW1jb3JvbmFzKytdO1xuJycnCnRyID0gcmVwbGFjZV9vbmNlKHRyLCBh
+          ZGRfY29yb25hX2FuY2hvciwgYWRkX2Nvcm9uYV9uZXcsICdSRV9BZGRDb3JvbmFUb1NjZW5lIG1l
+          dGFkYXRhIGludGVyY2VwdGlvbicpCgpvbGRfcGh5c2ljYWwgPSByJycnc3RhdGljIHFib29sZWFu
+          IFJfU3RhdGljUHJvbW90ZVBoeXNpY2FsQ29yb25hVmlzaWJsZShjb25zdCBzdGF0aWNQcm9tb3Rl
+          UGVyc2lzdGVudExpZ2h0X3QgKmxpZ2h0LAoJcWJvb2xlYW4gKnByZXNlbnRPdXQsIGludCAqZmxh
+          Z3NPdXQpCnsKCWludCBpOwoJcWJvb2xlYW4gcHJlc2VudCA9IHFmYWxzZTsKCWludCBmbGFncyA9
+          IDA7CgoJaWYgKHByZXNlbnRPdXQpICpwcmVzZW50T3V0ID0gcWZhbHNlOwoJaWYgKGZsYWdzT3V0
+          KSAqZmxhZ3NPdXQgPSAwOwoJaWYgKCFsaWdodCB8fCAhbGlnaHQtPnBoeXNpY2FsUmVjb2duaXRp
+          b25BY2NlcHRlZCB8fAoJCWxpZ2h0LT5waHlzaWNhbFNvdXJjZVJvdXRlICE9IFBMUl9WMDFfU09V
+          UkNFX1BST01PVEVEIHx8CgkJbGlnaHQtPnBoeXNpY2FsQ29yb25hT3JkaW5hbCA8IDApCgkJcmV0
+          dXJuIHFmYWxzZTsKCglmb3IgKGkgPSByX2ZpcnN0U2NlbmVDb3JvbmE7IGkgPCByX251bWNvcm9u
+          YXM7ICsraSkKCXsKCQljb25zdCBjb3JvbmFfdCAqY29yID0gJmJhY2tFbmREYXRhLT5jb3JvbmFz
+          W2ldOwoJCWlmIChjb3ItPmlkICE9IGxpZ2h0LT5waHlzaWNhbENvcm9uYU9yZGluYWwpCgkJCWNv
+          bnRpbnVlOwoJCXByZXNlbnQgPSBxdHJ1ZTsKCQlmbGFncyB8PSBjb3ItPmZsYWdzOwoJCWlmIChj
+          b3ItPmZsYWdzICYgMSkKCQl7CgkJCWlmIChwcmVzZW50T3V0KSAqcHJlc2VudE91dCA9IHF0cnVl
+          OwoJCQlpZiAoZmxhZ3NPdXQpICpmbGFnc091dCA9IGZsYWdzOwoJCQlyZXR1cm4gcXRydWU7CgkJ
+          fQoJfQoJaWYgKHByZXNlbnRPdXQpICpwcmVzZW50T3V0ID0gcHJlc2VudDsKCWlmIChmbGFnc091
+          dCkgKmZsYWdzT3V0ID0gZmxhZ3M7CglyZXR1cm4gcWZhbHNlOwp9CicnJwpuZXdfcGh5c2ljYWwg
+          PSByJycnc3RhdGljIHFib29sZWFuIFJfU3RhdGljUHJvbW90ZVBoeXNpY2FsQ29yb25hVmlzaWJs
+          ZShjb25zdCBzdGF0aWNQcm9tb3RlUGVyc2lzdGVudExpZ2h0X3QgKmxpZ2h0LAoJcWJvb2xlYW4g
+          KnByZXNlbnRPdXQsIGludCAqZmxhZ3NPdXQpCnsKCWludCBpOwoJaW50IGNvcm9uYUlkOwoJcWJv
+          b2xlYW4gbWV0YWRhdGFQcmVzZW50ID0gcWZhbHNlOwoJcWJvb2xlYW4gbWV0YWRhdGFMT1MgPSBx
+          ZmFsc2U7CglxYm9vbGVhbiB2aXN1YWxQcmVzZW50ID0gcWZhbHNlOwoJcWJvb2xlYW4gdmlzdWFs
+          TE9TID0gcWZhbHNlOwoJcWJvb2xlYW4gcGh5c2ljYWxWaXNpYmxlID0gcWZhbHNlOwoJaW50IHZp
+          c3VhbEZsYWdzID0gMDsKCWludCBmbGFncyA9IDA7CglxYm9vbGVhbiBicmlkZ2VEaWFnOwoKCWlm
+          IChwcmVzZW50T3V0KSAqcHJlc2VudE91dCA9IHFmYWxzZTsKCWlmIChmbGFnc091dCkgKmZsYWdz
+          T3V0ID0gMDsKCWlmICghbGlnaHQgfHwgIWxpZ2h0LT5waHlzaWNhbFJlY29nbml0aW9uQWNjZXB0
+          ZWQgfHwKCQlsaWdodC0+cGh5c2ljYWxTb3VyY2VSb3V0ZSAhPSBQTFJfVjAxX1NPVVJDRV9QUk9N
+          T1RFRCB8fAoJCWxpZ2h0LT5waHlzaWNhbENvcm9uYU9yZGluYWwgPCAwKQoJCXJldHVybiBxZmFs
+          c2U7CgoJY29yb25hSWQgPSBsaWdodC0+cGh5c2ljYWxDb3JvbmFPcmRpbmFsOwoJYnJpZGdlRGlh
+          ZyA9IHJpLkN2YXJfR2V0KCJkd19jb3JvbmFSZXNpZGVuY3lCcmlkZ2VEaWFnIiwgIjAiLCAwKS0+
+          aW50ZWdlciA/IHF0cnVlIDogcWZhbHNlOwoKCS8vIERBUktXT0xGX1BIWVNJQ0FMX0NPUk9OQV9S
+          RVNJREVOQ1lfQlJJREdFX1JPT1RfQ0FVU0VfVjBfMQoJLy8gTWV0YWRhdGEgaXMgYXV0aG9yaXRh
+          dGl2ZSB3aGVuIHByZXNlbnQuIEl0cyBMT1MgYml0IGNvbWVzIGZyb20gdGhlIGV4YWN0CgkvLyBz
+          dG9jayBDR19Db3JvbmEgdHJhY2UgZW5kcG9pbnRzL21hc2ssIGJ1dCBpcyBpbmRlcGVuZGVudCBv
+          ZiB2aXN1YWwgY3VsbGluZy4KCWlmIChjb3JvbmFJZCA+PSAwICYmIGNvcm9uYUlkIDwgTUFYX0dF
+          TlRJVElFUyAmJiBzX2RhcmtXb2xmQ29yb25hUmVzaWRlbmN5TWV0YVZhbGlkW2Nvcm9uYUlkXSkK
+          CXsKCQljb25zdCBjb3JvbmFfdCAqbWV0YSA9ICZzX2RhcmtXb2xmQ29yb25hUmVzaWRlbmN5TWV0
+          YVtjb3JvbmFJZF07CgkJbWV0YWRhdGFQcmVzZW50ID0gcXRydWU7CgkJbWV0YWRhdGFMT1MgPSAo
+          bWV0YS0+ZmxhZ3MgJiBEQVJLV09MRl9SRUZfQ09ST05BX1JFU0lERU5DWV9MT1MpID8gcXRydWUg
+          OiBxZmFsc2U7CgkJZmxhZ3MgPSBtZXRhLT5mbGFnczsKCQkvLyBQcmVzZXJ2ZSB0aGUgZXhpc3Rp
+          bmcgZG93bnN0cmVhbSBkaWFnbm9zdGljIGNvbnRyYWN0OiBiaXQgMCBjb250aW51ZXMgdG8KCQkv
+          LyBtZWFuIHRoZSBwaHlzaWNhbCBMT1MgcmVzdWx0IHNlbGVjdGVkIGJ5IHRoaXMgZnVuY3Rpb24u
+          CgkJZmxhZ3MgJj0gfjE7CgkJaWYgKG1ldGFkYXRhTE9TKQoJCQlmbGFncyB8PSAxOwoJfQoKCS8v
+          IFdpdGggYnJpZGdlIE9GRiB0aGlzIGlzIHRoZSBleGFjdCBwcmUtY2FuZGlkYXRlIHNvdXJjZSBv
+          ZiB0cnV0aC4gV2l0aCBicmlkZ2UKCS8vIE9OIHdlIG9ubHkgc2NhbiBpdCBmb3IgQS9CIGRpYWdu
+          b3N0aWNzOyBpdCBuZXZlciBvdmVycmlkZXMgbWV0YWRhdGEuCglpZiAoIW1ldGFkYXRhUHJlc2Vu
+          dCB8fCBicmlkZ2VEaWFnKQoJewoJCWZvciAoaSA9IHJfZmlyc3RTY2VuZUNvcm9uYTsgaSA8IHJf
+          bnVtY29yb25hczsgKytpKQoJCXsKCQkJY29uc3QgY29yb25hX3QgKmNvciA9ICZiYWNrRW5kRGF0
+          YS0+Y29yb25hc1tpXTsKCQkJaWYgKGNvci0+aWQgIT0gY29yb25hSWQpCgkJCQljb250aW51ZTsK
+          CQkJdmlzdWFsUHJlc2VudCA9IHF0cnVlOwoJCQl2aXN1YWxGbGFncyB8PSBjb3ItPmZsYWdzOwoJ
+          CQlpZiAoY29yLT5mbGFncyAmIDEpCgkJCQl2aXN1YWxMT1MgPSBxdHJ1ZTsKCQl9Cgl9CgoJaWYg
+          KG1ldGFkYXRhUHJlc2VudCkKCQlwaHlzaWNhbFZpc2libGUgPSBtZXRhZGF0YUxPUzsKCWVsc2UK
+          CXsKCQlwaHlzaWNhbFZpc2libGUgPSB2aXN1YWxMT1M7CgkJZmxhZ3MgPSB2aXN1YWxGbGFnczsK
+          CX0KCglpZiAoYnJpZGdlRGlhZyAmJiBjb3JvbmFJZCA+PSAwICYmIGNvcm9uYUlkIDwgTUFYX0dF
+          TlRJVElFUykKCXsKCQlzdGF0aWMgaW50IHNfbGFzdEJyaWRnZVByaW50W01BWF9HRU5USVRJRVNd
+          OwoJCXN0YXRpYyB1bnNpZ25lZCBpbnQgc19sYXN0QnJpZGdlU2lnW01BWF9HRU5USVRJRVNdOwoJ
+          CWludCBub3cgPSByaS5NaWxsaXNlY29uZHMoKTsKCQl1bnNpZ25lZCBpbnQgZGlhZ1NpZyA9IG1l
+          dGFkYXRhUHJlc2VudCA/IDF1IDogMHU7CgkJZGlhZ1NpZyA9IGRpYWdTaWcgKiAzM3UgKyAodW5z
+          aWduZWQgaW50KShtZXRhZGF0YUxPUyA/IDEgOiAwKTsKCQlkaWFnU2lnID0gZGlhZ1NpZyAqIDMz
+          dSArICh1bnNpZ25lZCBpbnQpKHZpc3VhbFByZXNlbnQgPyAxIDogMCk7CgkJZGlhZ1NpZyA9IGRp
+          YWdTaWcgKiAzM3UgKyAodW5zaWduZWQgaW50KSh2aXN1YWxMT1MgPyAxIDogMCk7CgkJZGlhZ1Np
+          ZyA9IGRpYWdTaWcgKiAzM3UgKyAodW5zaWduZWQgaW50KShwaHlzaWNhbFZpc2libGUgPyAxIDog
+          MCk7CgkJaWYgKHNfbGFzdEJyaWRnZVNpZ1tjb3JvbmFJZF0gIT0gZGlhZ1NpZyB8fCBzX2xhc3RC
+          cmlkZ2VQcmludFtjb3JvbmFJZF0gPT0gMCB8fAoJCQlub3cgPCBzX2xhc3RCcmlkZ2VQcmludFtj
+          b3JvbmFJZF0gfHwgbm93IC0gc19sYXN0QnJpZGdlUHJpbnRbY29yb25hSWRdID49IDUwMDApCgkJ
+          ewoJCQlzX2xhc3RCcmlkZ2VTaWdbY29yb25hSWRdID0gZGlhZ1NpZzsKCQkJc19sYXN0QnJpZGdl
+          UHJpbnRbY29yb25hSWRdID0gbm93OwoJCQlyaS5QcmludGYoUFJJTlRfQUxMLAoJCQkJIlNQUl9C
+          UklER0VfUkVORCBtYXA9JXMgZml4dHVyZT0lZCBjb3JvbmFJZD0lZCBtZXRhUHJlc2VudD0lZCBt
+          ZXRhTE9TPSVkIHZpc3VhbFByZXNlbnQ9JWQgdmlzdWFsTE9TPSVkIHBoeXNpY2FsVmlzaWJsZT0l
+          ZCBtZXRhQ291bnQ9JWRcbiIsCgkJCQl0ci53b3JsZCA/IHRyLndvcmxkLT5iYXNlTmFtZSA6ICI8
+          bm9uZT4iLCBsaWdodC0+Y2FuZGlkYXRlLmVudGl0eU9yZGluYWwsIGNvcm9uYUlkLAoJCQkJbWV0
+          YWRhdGFQcmVzZW50ID8gMSA6IDAsIG1ldGFkYXRhTE9TID8gMSA6IDAsIHZpc3VhbFByZXNlbnQg
+          PyAxIDogMCwKCQkJCXZpc3VhbExPUyA/IDEgOiAwLCBwaHlzaWNhbFZpc2libGUgPyAxIDogMCwg
+          c19kYXJrV29sZkNvcm9uYVJlc2lkZW5jeU1ldGFDb3VudCk7CgkJfQoJfQoKCWlmIChwcmVzZW50
+          T3V0KSAqcHJlc2VudE91dCA9IG1ldGFkYXRhUHJlc2VudCA/IHF0cnVlIDogdmlzdWFsUHJlc2Vu
+          dDsKCWlmIChmbGFnc091dCkgKmZsYWdzT3V0ID0gZmxhZ3M7CglyZXR1cm4gcGh5c2ljYWxWaXNp
+          YmxlOwp9CicnJwp0ciA9IHJlcGxhY2Vfb25jZSh0ciwgb2xkX3BoeXNpY2FsLCBuZXdfcGh5c2lj
+          YWwsICdwaHlzaWNhbCBjb3JvbmEgdmlzaWJpbGl0eSBzb3VyY2Ugc3dhcCcpCgojIEZpbmFsIGV4
+          YWN0LXNjb3BlIGNvbnRyYWN0Lgpmb3IgdG9rZW4gaW4gW01BUktFUiwgTUVUQSwgTE9TLCAnU1BS
+          X0JSSURHRV9DRycsICdyX3N0YXRpY1Byb21vdGVDb3JvbmFSZXNpZGVuY3lCcmlkZ2UnXToKICAg
+          IGlmIHRva2VuIG5vdCBpbiBjZzoKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KGYnRVJST1I6IHBh
+          dGNoZWQgY2dhbWUgbWlzc2luZyB0b2tlbjoge3Rva2VufScpCmZvciB0b2tlbiBpbiBbTUFSS0VS
+          LCBNRVRBLCBMT1MsICdzX2RhcmtXb2xmQ29yb25hUmVzaWRlbmN5TWV0YScsICdTUFJfQlJJREdF
+          X1JFTkQnXToKICAgIGlmIHRva2VuIG5vdCBpbiB0cjoKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0
+          KGYnRVJST1I6IHBhdGNoZWQgcmVuZDIgbWlzc2luZyB0b2tlbjoge3Rva2VufScpCgojIEV4cGxp
+          Y2l0bHkgcmVqZWN0IGNoYW5nZXMgdGhhdCB3b3VsZCB2aW9sYXRlIHRoaXMgZXhwZXJpbWVudCdz
+          IHNpbmdsZSBxdWVzdGlvbi4KZm9yIGZvcmJpZGRlbiBpbiBbCiAgICAnU1ZGX0JST0FEQ0FTVCcs
+          CiAgICAnTUFYX0RMSUdIVFMgPScsCl06CiAgICAjIERvIG5vdCByZWplY3QgcGFyZW50IG9jY3Vy
+          cmVuY2VzIGdsb2JhbGx5OyB0aGlzIHBhdGNoZXIgbmV2ZXIgaW5zZXJ0cyB0aGVtLgogICAgcGFz
+          cwoKaWYgQ0hFQ0tfT05MWToKICAgIHByaW50KCdQQ1JCIHYwLjEgY2hlY2stb25seSBQQVNTOiBl
+          eGFjdCBQcm9kdWN0aW9uIENhbmRpZGF0ZSB2MSBhbmNob3JzIHByZXNlbnQ7IHR3by1maWxlIGJy
+          aWRnZSBwYXRjaCBpcyBhcHBsaWNhYmxlJykKICAgIHJhaXNlIFN5c3RlbUV4aXQoMCkKCmNnX3Bh
+          dGgud3JpdGVfdGV4dChjZywgZW5jb2Rpbmc9J3V0Zi04JywgbmV3bGluZT0nJykKdHJfcGF0aC53
+          cml0ZV90ZXh0KHRyLCBlbmNvZGluZz0ndXRmLTgnLCBuZXdsaW5lPScnKQpwcmludChmJ1BDUkIg
+          djAuMSBhcHBsaWVkOiB7Q0dfUkVMfSArIHtUUl9SRUx9JykK
+          PCRB_PATCHER_B64
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256"
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" --check-only source
+          echo "Patcher payload/syntax/parent-anchor contract PASS"
+
+      - name: Apply PCRB v0.1 and enforce exact minimal source delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_commit="$(cat .parent_source_commit)"
+          python3 "$PATCHER_NAME" source
+
+          mapfile -t changed < <(git -C source diff --name-only "$parent_commit" -- | LC_ALL=C sort)
+          expected=(SP/code/cgame/cg_ents.c SP/code/rend2/tr_scene.c)
+          test "${#changed[@]}" -eq "${#expected[@]}" || { printf 'ERROR changed files:\n%s\n' "${changed[*]}" >&2; exit 1; }
+          for i in "${!expected[@]}"; do
+            test "${changed[$i]}" = "${expected[$i]}" || { echo "ERROR: changed-file allowlist mismatch: ${changed[$i]}" >&2; exit 1; }
+          done
+
+          sha256sum -c .server_before.sha256
+          grep -F "DARKWOLF_PHYSICAL_CORONA_RESIDENCY_BRIDGE_ROOT_CAUSE_V0_1" source/SP/code/cgame/cg_ents.c >/dev/null
+          grep -F "DARKWOLF_PHYSICAL_CORONA_RESIDENCY_BRIDGE_ROOT_CAUSE_V0_1" source/SP/code/rend2/tr_scene.c >/dev/null
+          grep -F "SPR_BRIDGE_CG" source/SP/code/cgame/cg_ents.c >/dev/null
+          grep -F "SPR_BRIDGE_REND" source/SP/code/rend2/tr_scene.c >/dev/null
+          grep -F "r_staticPromoteCoronaResidencyBridge" source/SP/code/cgame/cg_ents.c >/dev/null
+
+          # Frozen architectural contracts: no server, radii, MAX_DLIGHTS, shadow, Bloom, GI or volumetric source edit.
+          test -z "$(git -C source diff --name-only "$parent_commit" -- SP/code/server SP/code/game SP/code/qcommon SP/code/rend2/glsl)"
+          mkdir -p generated-patches
+          git -C source diff --binary "$parent_commit" -- . > "generated-patches/$DELTA_NAME"
+          test -s "generated-patches/$DELTA_NAME"
+          if grep -F "SP/code/server/sv_snapshot.c" "generated-patches/$DELTA_NAME" >/dev/null; then
+            echo "ERROR: server v2 was touched" >&2; exit 1
+          fi
+          if grep -F "SVF_BROADCAST" "generated-patches/$DELTA_NAME" >/dev/null; then
+            echo "ERROR: candidate introduced SVF_BROADCAST text" >&2; exit 1
+          fi
+
+          git -C source add -A
+          git -C source diff --binary "$UPSTREAM_SHA" -- . > "generated-patches/$CUMULATIVE_NAME"
+          test -s "generated-patches/$CUMULATIVE_NAME"
+          git -C source apply --reverse --check "$(realpath "generated-patches/$DELTA_NAME")"
+          sha256sum "generated-patches/$DELTA_NAME" > "generated-patches/$DELTA_NAME.sha256"
+          sha256sum "generated-patches/$CUMULATIVE_NAME" > "generated-patches/$CUMULATIVE_NAME.sha256"
+          echo "Two-file minimal delta PASS"
+
+      - name: Independently replay parent plus bridge cumulative from clean upstream
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_stage="$(cat .parent_stage_path)"
+          rm -rf replay
+          git clone --no-tags "$UPSTREAM_REPO" replay
+          git -C replay config core.autocrlf false
+          git -C replay checkout --detach "$UPSTREAM_SHA"
+
+          git -C replay apply --check "$(realpath "$parent_stage/docs/$PARENT_CUMULATIVE_NAME")"
+          git -C replay apply "$(realpath "$parent_stage/docs/$PARENT_CUMULATIVE_NAME")"
+          git -C replay apply --check "$(realpath "generated-patches/$DELTA_NAME")"
+          git -C replay apply "$(realpath "generated-patches/$DELTA_NAME")"
+
+          cmp source/SP/code/cgame/cg_ents.c replay/SP/code/cgame/cg_ents.c
+          cmp source/SP/code/rend2/tr_scene.c replay/SP/code/rend2/tr_scene.c
+
+          # Parent cumulative creates files; stage replay tree so explicit-base git diff
+          # includes those formerly-untracked files in canonical cumulative output.
+          git -C replay add -A
+          git -C replay diff --binary "$UPSTREAM_SHA" -- . > .pcrb_replay_cumulative.patch
+          cmp "generated-patches/$CUMULATIVE_NAME" .pcrb_replay_cumulative.patch
+          git -C replay apply --reverse --check "$(realpath "generated-patches/$CUMULATIVE_NAME")"
+          echo "Independent apply/replay/reverse canonicalization PASS"
+
+      - name: Build canonical Windows x64 full SP
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify affected modules and runtime bridge markers
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t cgame_candidates < <(find source/SP/build -type f -name 'cgame_sp_x64.dll' -print)
+          mapfile -t renderer_candidates < <(find source/SP/build -type f -name 'renderer_sp_rend2_x64.dll' -print)
+          test "${#cgame_candidates[@]}" -eq 1 || { echo "ERROR: cgame candidates=${#cgame_candidates[@]}" >&2; exit 1; }
+          test "${#renderer_candidates[@]}" -eq 1 || { echo "ERROR: Rend2 candidates=${#renderer_candidates[@]}" >&2; exit 1; }
+          new_cgame="${cgame_candidates[0]}"
+          new_renderer="${renderer_candidates[0]}"
+          test -s "$new_cgame"; test -s "$new_renderer"
+          printf '%s\n' "$new_cgame" > .new_cgame_path
+          printf '%s\n' "$new_renderer" > .new_renderer_path
+
+          file "$new_cgame" | grep -F "PE32+" >/dev/null
+          file "$new_renderer" | grep -F "PE32+" >/dev/null
+          strings "$new_cgame" > .cgame_strings.txt
+          strings "$new_renderer" > .renderer_strings.txt
+          grep -F "r_staticPromoteCoronaResidencyBridge" .cgame_strings.txt >/dev/null
+          grep -F "SPR_BRIDGE_CG" .cgame_strings.txt >/dev/null
+          grep -F "SPR_BRIDGE_REND" .renderer_strings.txt >/dev/null
+          grep -F "dw_coronaResidencyBridgeDiag" .renderer_strings.txt >/dev/null
+
+          test "$(sha256sum "$new_cgame" | awk '{print $1}')" != "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$new_renderer" | awk '{print $1}')" != "$PARENT_RENDERER_SHA256"
+          echo "Affected-module compile/marker contract PASS"
+
+      - name: Package root-cause candidate over exact tested parent
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_stage="$(cat .parent_stage_path)"
+          new_cgame="$(cat .new_cgame_path)"
+          new_renderer="$(cat .new_renderer_path)"
+
+          rm -rf release dist
+          stage="release/$RELEASE_BASENAME"
+          mkdir -p release dist
+          cp -a "$parent_stage" "$stage"
+
+          # Strong freeze: only the two modules produced from the two-file source delta replace parent runtime bytes.
+          cp -f "$new_cgame" "$stage/Main/cgame_sp_x64.dll"
+          cp -f "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+
+          mkdir -p "$stage/docs"
+          cp -f "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp -f "generated-patches/$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp -f "generated-patches/$DELTA_NAME.sha256" "$stage/docs/$DELTA_NAME.sha256"
+          cp -f "generated-patches/$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          cp -f "generated-patches/$CUMULATIVE_NAME.sha256" "$stage/docs/$CUMULATIVE_NAME.sha256"
+
+          cat > "$stage/Main/$PROFILE_NAME" <<'CFG'
+          // DarkWolf / ioRTCW Rend2 SP - Physical Corona Residency Bridge Root-Cause v0.1
+          // Parent: exact user-tested Physical Light Residency Production Candidate v1.
+          // This profile is an A/B harness. Launchers override bridge 0/1 after exec.
+          exec DARKWOLF_PHYSICAL_LIGHT_RESIDENCY_PRODUCTION_CANDIDATE_V1.cfg
+
+          // Freeze the accepted server delivery and existing physical-recognition/residency routes.
+          seta g_physicalCoronaDeliveryV2 "1"
+          seta r_staticPromotePhysicalRecognition "1"
+          seta r_staticPromotePhysicalResidency "1"
+
+          // Single experimental variable.
+          seta r_staticPromoteCoronaResidencyBridge "0"
+
+          // Keep visual corona behavior at stock RTCW test values. Bridge metadata is independent of these gates.
+          seta cg_coronas "1"
+          seta cg_coronafardist "1536"
+
+          // Root-cause telemetry; no renderer energy/radius/shadow-quality parameters are changed.
+          seta dw_coronaResidencyBridgeDiag "1"
+          seta dw_staticPromotePhysicalResidencyDiag "1"
+          seta dw_physicalLightDiag "1"
+          seta dw_physicalLightDiagAllNative "0"
+          CFG
+
+          cat > "$stage/RUN_PCRB_CORE.cmd" <<'CMD'
+          @echo off
+          setlocal EnableExtensions
+          if "%~3"=="" exit /b 2
+          cd /d "%~dp0"
+          set "LABEL=%~1"
+          set "MAP=%~2"
+          set "BRIDGE=%~3"
+          set "TESTHOME=%CD%\PCRB_HOME\%LABEL%"
+          set "RESULTDIR=%CD%\PCRB_RESULTS"
+          set "RESULTZIP=%RESULTDIR%\%LABEL%.zip"
+          if exist "%TESTHOME%" rmdir /s /q "%TESTHOME%"
+          mkdir "%TESTHOME%\Main" 2>nul
+          if not exist "%RESULTDIR%" mkdir "%RESULTDIR%" 2>nul
+          if exist "%RESULTZIP%" del /q "%RESULTZIP%"
+          > "%TESTHOME%\TEST_CONTRACT.txt" (
+            echo DarkWolf PCRB v0.1 root-cause test
+            echo label=%LABEL%
+            echo map=%MAP%
+            echo r_staticPromoteCoronaResidencyBridge=%BRIDGE%
+            echo g_physicalCoronaDeliveryV2=1
+            echo r_staticPromotePhysicalRecognition=1
+            echo r_staticPromotePhysicalResidency=1
+            echo cg_coronas=1
+            echo cg_coronafardist=1536
+            echo Server EXE is frozen byte-for-byte from parent run 33073983067.
+            echo Only cgame_sp_x64.dll and renderer_sp_rend2_x64.dll are replaced.
+          )
+          echo.
+          echo PCRB test: %LABEL%  map=%MAP%  bridge=%BRIDGE%
+          echo Isolated home: %TESTHOME%
+          ioWolfSP.x64.exe +set fs_homepath "%TESTHOME%" +set com_recommendedSet 1 +set cl_renderer rend2 +set developer 1 +set logfile 2 +exec DARKWOLF_PHYSICAL_CORONA_RESIDENCY_BRIDGE_ROOT_CAUSE_V0_1.cfg +set r_staticPromoteCoronaResidencyBridge %BRIDGE% +spdevmap %MAP%
+          set "LOG=%TESTHOME%\Main\rtcwconsole.log"
+          if exist "%LOG%" (
+            findstr /C:"SPR_BRIDGE_CG" /C:"SPR_BRIDGE_REND" /C:"SPR_FIXV1_FRAME" /C:"SPR_FIXV2_SV" /C:"PLR_PERF" /C:"PLR_NATIVE_SHADOW" "%LOG%" > "%TESTHOME%\PCRB_RELEVANT_LINES.txt"
+          ) else (
+            > "%TESTHOME%\PCRB_RELEVANT_LINES.txt" echo rtcwconsole.log was not found.
+          )
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -LiteralPath '%TESTHOME%' -DestinationPath '%RESULTZIP%' -Force" >nul
+          echo Result ZIP: %RESULTZIP%
+          echo Upload this ZIP after the route is completed.
+          endlocal
+          CMD
+
+          cat > "$stage/RUN_PCRB_01_FACTORY_BASELINE.cmd" <<'CMD'
+          @call "%~dp0RUN_PCRB_CORE.cmd" 01_FACTORY_BASELINE factory 0
+          CMD
+          cat > "$stage/RUN_PCRB_02_FACTORY_BRIDGE.cmd" <<'CMD'
+          @call "%~dp0RUN_PCRB_CORE.cmd" 02_FACTORY_BRIDGE factory 1
+          CMD
+          cat > "$stage/RUN_PCRB_03_ESCAPE1_BASELINE.cmd" <<'CMD'
+          @call "%~dp0RUN_PCRB_CORE.cmd" 03_ESCAPE1_BASELINE escape1 0
+          CMD
+          cat > "$stage/RUN_PCRB_04_ESCAPE1_BRIDGE.cmd" <<'CMD'
+          @call "%~dp0RUN_PCRB_CORE.cmd" 04_ESCAPE1_BRIDGE escape1 1
+          CMD
+          cat > "$stage/RUN_PCRB_05_CRYPT1_BASELINE.cmd" <<'CMD'
+          @call "%~dp0RUN_PCRB_CORE.cmd" 05_CRYPT1_BASELINE crypt1 0
+          CMD
+          cat > "$stage/RUN_PCRB_06_CRYPT1_BRIDGE.cmd" <<'CMD'
+          @call "%~dp0RUN_PCRB_CORE.cmd" 06_CRYPT1_BRIDGE crypt1 1
+          CMD
+
+          # Normalize CMD launchers to CRLF for Windows cmd.exe.
+          for cmd in "$stage"/RUN_PCRB*.cmd; do
+            sed -i 's/$/\r/' "$cmd"
+          done
+
+          cat > "$stage/README_PCRB_ROOT_CAUSE_V0_1_RU.txt" <<'TXT'
+          DarkWolf / ioRTCW Rend2 Single Player
+          Physical Corona Residency Bridge Root-Cause Candidate v0.1
+
+          ЕДИНСТВЕННЫЙ ВОПРОС:
+          Может ли server-delivered ET_CORONA передать в Rend2 отдельный невидимый
+          residency-сигнал, не зависящий от stock CG_Corona behind/toofar visual gate,
+          сохранив штатный RTCW visual flare и штатный LOS trace?
+
+          ЧТО ИЗМЕНЕНО:
+          - SP/code/cgame/cg_ents.c
+          - SP/code/rend2/tr_scene.c
+          Серверный v2, EXE, qagame, OpenGL1, UI и все прочие source-файлы заморожены.
+
+          МАТРИЦА:
+          1 RUN_PCRB_01_FACTORY_BASELINE.cmd
+          2 RUN_PCRB_02_FACTORY_BRIDGE.cmd
+          3 RUN_PCRB_03_ESCAPE1_BASELINE.cmd
+          4 RUN_PCRB_04_ESCAPE1_BRIDGE.cmd
+          5 RUN_PCRB_05_CRYPT1_BASELINE.cmd
+          6 RUN_PCRB_06_CRYPT1_BRIDGE.cmd
+
+          Factory: посмотреть ряд ламп издалека, пройти под ним, повернуть в боковой
+          коридор и вернуться. F12: издалека / под рядом / после возврата.
+
+          Escape1: непрерывно furnace -> wall lamps -> doctor office -> 5-10m до ряда
+          у guard room -> медленно войти -> правый коридор -> вернуться. F12 furnace,
+          перед рядом и после возврата.
+
+          Crypt1: контроль native torch DLight + point shadows. Сравнить baseline/bridge.
+
+          Каждый launcher использует отдельный чистый fs_homepath и после выхода игры
+          создаёт PCRB_RESULTS\<test>.zip. Загрузить все 6 ZIP.
+
+          PASS гипотезы: baseline сохраняет старый sequential on/off, а bridge=1 делает
+          Factory/Escape1 стабильными без изменения визуального flare и без Crypt1 regression.
+          TXT
+
+          delta_sha="$(sha256sum "generated-patches/$DELTA_NAME" | awk '{print $1}')"
+          cumulative_sha="$(sha256sum "generated-patches/$CUMULATIVE_NAME" | awk '{print $1}')"
+          new_cgame_sha="$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')"
+          new_renderer_sha="$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')"
+          cat > "$stage/docs/PCRB_ROOT_CAUSE_V0_1_BUILD_INFO.txt" <<EOF
+          DarkWolf / ioRTCW Rend2 SP - Physical Corona Residency Bridge Root-Cause v0.1
+          status_after_CI=CI_COMPILE_CONFIRMED_ONLY_RUNTIME_TEST_REQUIRED
+          parent_run=$PARENT_RUN_ID
+          parent_head=$PARENT_RUN_HEAD_SHA
+          parent_artifact_id=$PARENT_ARTIFACT_ID
+          parent_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          upstream_sha=$UPSTREAM_SHA
+          exact_source_delta=SP/code/cgame/cg_ents.c + SP/code/rend2/tr_scene.c
+          frozen_server_exe_sha256=$PARENT_EXE_SHA256
+          frozen_qagame_sha256=$PARENT_QAGAME_SHA256
+          frozen_opengl1_sha256=$PARENT_OPENGL1_SHA256
+          frozen_ui_sha256=$PARENT_UI_SHA256
+          parent_cgame_sha256=$PARENT_CGAME_SHA256
+          parent_rend2_sha256=$PARENT_RENDERER_SHA256
+          candidate_cgame_sha256=$new_cgame_sha
+          candidate_rend2_sha256=$new_renderer_sha
+          patcher_sha256=$PATCHER_SHA256
+          delta_sha256=$delta_sha
+          cumulative_sha256=$cumulative_sha
+          root_cause_question=separate server-delivered ET_CORONA physical residency metadata from stock CG_Corona visual behind/toofar gating
+          visual_contract=stock cg_coronas/cg_coronafardist/behind/visual flare path remains unchanged
+          los_contract=metadata uses the same CG_Trace endpoints and MASK_SOLID|CONTENTS_BODY as stock CG_Corona
+          metadata_contract=Rend2 intercepts private AddCorona high-bit metadata before backEndData->coronas; metadata is never a visual flare
+          server_contract=sv_snapshot.c and packaged ioWolfSP.x64.exe are byte-for-byte frozen from parent
+          EOF
+
+          # Frozen runtime bytes MUST remain exactly the user-tested parent.
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          test "$(sha256sum "$stage/Main/$PARENT_PROFILE_NAME" | awk '{print $1}')" = "$PARENT_PROFILE_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" != "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" != "$PARENT_RENDERER_SHA256"
+
+          bad_asset="$(find "$stage" -type f \( -iname '*.pk3' -o -iname '*.pak' \) -print -quit)"
+          test -z "$bad_asset" || { echo "ERROR: commercial game asset unexpectedly packaged: $bad_asset" >&2; exit 1; }
+          test ! -e "$stage/Main/static_promote_synthetic_lights.txt"
+          test ! -e "$stage/Main/static_promote_user_overrides.txt"
+
+          (
+            cd "$stage"
+            find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          )
+
+          (
+            cd release
+            zip -X -q -r "../dist/${RELEASE_BASENAME}.zip" "$RELEASE_BASENAME"
+          )
+          sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+          unzip -tq "dist/${RELEASE_BASENAME}.zip" >/dev/null
+          echo "PCRB package PASS"
+
+      - name: Final root-cause guardrail audit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="release/$RELEASE_BASENAME"
+          test -s "dist/${RELEASE_BASENAME}.zip"
+          test -s "dist/${RELEASE_BASENAME}.zip.sha256"
+          test "$(sha256sum "dist/${RELEASE_BASENAME}.zip" | awk '{print $1}')" = "$(awk '{print $1}' "dist/${RELEASE_BASENAME}.zip.sha256")"
+
+          # Exact runtime replacement set: cgame + Rend2 only.
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          grep -F "SPR_BRIDGE_CG" .cgame_strings.txt >/dev/null
+          grep -F "SPR_BRIDGE_REND" .renderer_strings.txt >/dev/null
+          test -s "$stage/RUN_PCRB_01_FACTORY_BASELINE.cmd"
+          test -s "$stage/RUN_PCRB_02_FACTORY_BRIDGE.cmd"
+          test -s "$stage/RUN_PCRB_03_ESCAPE1_BASELINE.cmd"
+          test -s "$stage/RUN_PCRB_04_ESCAPE1_BRIDGE.cmd"
+          test -s "$stage/RUN_PCRB_05_CRYPT1_BASELINE.cmd"
+          test -s "$stage/RUN_PCRB_06_CRYPT1_BRIDGE.cmd"
+          echo "FINAL GUARDRAIL PASS"
+          echo "STATUS: CI compile/package confirmation only. Runtime acceptance requires the six-run A/B matrix."
+
+      - name: Upload PCRB v0.1 full SP artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
