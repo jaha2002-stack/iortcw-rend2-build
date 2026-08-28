@@ -1,0 +1,659 @@
+name: Build DarkWolf Rend2 PCRB E2E v0.7 Visible Surface Influence Audit SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: pcrb-e2e-v0-7-visible-surface-influence-audit-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: PCRB E2E v0.7 - exact successful v0.6 R2 + read-only visible surface influence audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      PARENT_RUN_ID: "33171970215"
+      PARENT_RUN_HEAD_SHA: 0522feefafe80ea3ac6895a8a3eeda96643d5332
+      PARENT_WORKFLOW_PATH: '.github/workflows/build-iortcw-rend2-pcrb-v0-6-r2-multipoint-physical-fixture-residency-fallback-ab-over-pcrb-v0-5-r2-sp-self-contained.yml'
+      PARENT_ARTIFACT_ID: "9686020893"
+      PARENT_ARTIFACT_NAME: iortcw-rend2-pcrb-v0-6-r2-multipoint-physical-fixture-residency-fallback-ab-over-pcrb-v0-5-r2-full-sp-windows-x64-1
+      PARENT_ARTIFACT_DIGEST: sha256:ced9b52db58b85196dff48398712844274f63c2e470181695429fcda1ffbf194
+      PARENT_RELEASE_BASENAME: iortcw-rend2-pcrb-v0-6-r2-multipoint-physical-fixture-residency-fallback-ab-over-pcrb-v0-5-r2-full-sp-windows-x64-1
+      PARENT_INNER_ZIP_SHA256: a4b4e69c3be153480dfdd939d83ad897752f4edbec97ad3013ddf503459d27e9
+
+      PARENT_EXE_SHA256: cb540efa22b3892087ca8132ff83fd656c5e7d158f4a8b7d4fa326dbee8e277a
+      PARENT_QAGAME_SHA256: c7da4c1c5f66fc1d0781500ee1e7c21dea77cbabd29f2a1b15f03179c9261b0d
+      PARENT_CGAME_SHA256: 507ba7a7fcdc5665f3e39e858c9b079d21434fc50e291af28582d64f7e515d39
+      PARENT_RENDERER_SHA256: 658749afc28b20d26cf89ff16d9fb8bedd424fad0382d6296c072903b8631baf
+      PARENT_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      PARENT_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      PARENT_PROFILE_A_SHA256: 6c0b9501fae8cc66aa850d5c0d0e9c2f86b163bc12a6a0bb29ca0f3adbacc128
+      PARENT_PROFILE_B_SHA256: 108f8b22dc59fde2b4fba38176cbd2c8eec5159e4eb7ccb8349ab1d8af12dd63
+
+      PARENT_CUMULATIVE_NAME: rend2-cumulative-pcrb-v0-5-r2-plus-pcrb-v0-6-r2-multipoint-physical-fixture-residency-fallback-ab-sp.patch
+      PARENT_CUMULATIVE_SHA256: 0fb1ec10d6b996dfc9d7926e862cdc61111c66264c774663d14a56101e54edc6
+
+      PATCHER_NAME: apply_pcrb_e2e_v0_7_visible_surface_influence_audit.py
+      PATCHER_SHA256: 3eba780a6ef1e1c7fb3791323e9c6a263e6ece4797f4f671a4ca73c3a644a698
+      PATCHER_GZ_SHA256: dc025b0474c743e6f3d2b4c305b4291567bd6192a6bde70253a58c48c339dcba
+      DELTA_NAME: rend2-pcrb-e2e-v0-7-visible-surface-influence-volume-leaf-audit-over-pcrb-v0-6-r2-sp.patch
+      CUMULATIVE_NAME: rend2-cumulative-pcrb-v0-6-r2-plus-pcrb-e2e-v0-7-visible-surface-influence-volume-leaf-audit-sp.patch
+      PROFILE_NAME: DARKWOLF_PCRB_E2E_V0_7_VISIBLE_SURFACE_INFLUENCE.cfg
+      RELEASE_BASENAME: iortcw-rend2-pcrb-e2e-v0-7-visible-surface-influence-volume-leaf-audit-over-pcrb-v0-6-r2-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git gzip \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Verify exact successful PCRB v0.6 R2 parent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          run_sha="$(jq -r '.head_sha' <<<"$run_json")"
+          run_conclusion="$(jq -r '.conclusion' <<<"$run_json")"
+          run_workflow="$(jq -r '.path' <<<"$run_json")"
+          test "$run_sha" = "$PARENT_RUN_HEAD_SHA" || { echo "ERROR: parent HEAD drift: $run_sha" >&2; exit 1; }
+          test "$run_conclusion" = "success" || { echo "ERROR: parent conclusion=$run_conclusion" >&2; exit 1; }
+          test "$run_workflow" = "$PARENT_WORKFLOW_PATH" || { echo "ERROR: parent workflow drift: $run_workflow" >&2; exit 1; }
+          artifact_line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${PARENT_ARTIFACT_ID}) | [.name, .expired, .digest] | @tsv")"
+          test -n "$artifact_line" || { echo "ERROR: exact v0.6 R2 artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r artifact_name artifact_expired artifact_digest <<< "$artifact_line"
+          test "$artifact_name" = "$PARENT_ARTIFACT_NAME"
+          test "$artifact_expired" = "false"
+          test "$artifact_digest" = "$PARENT_ARTIFACT_DIGEST"
+          echo "Exact PCRB v0.6 R2 parent PASS: run=$PARENT_RUN_ID head=$PARENT_RUN_HEAD_SHA artifact=$PARENT_ARTIFACT_ID"
+
+      - name: Download and byte-verify exact PCRB v0.6 R2 runtime/source parent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf parent-artifact parent-release
+          mkdir -p parent-artifact parent-release
+          gh run download "$PARENT_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$PARENT_ARTIFACT_NAME" --dir parent-artifact
+          parent_zip="parent-artifact/${PARENT_RELEASE_BASENAME}.zip"
+          parent_sidecar="parent-artifact/${PARENT_RELEASE_BASENAME}.zip.sha256"
+          test -s "$parent_zip"; test -s "$parent_sidecar"
+          test "$(sha256sum "$parent_zip" | awk '{print $1}')" = "$PARENT_INNER_ZIP_SHA256"
+          grep -F "$PARENT_INNER_ZIP_SHA256" "$parent_sidecar" >/dev/null
+          unzip -q "$parent_zip" -d parent-release
+          parent_stage="parent-release/$PARENT_RELEASE_BASENAME"
+          test -d "$parent_stage"
+          test "$(sha256sum "$parent_stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$parent_stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$parent_stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$parent_stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$PARENT_RENDERER_SHA256"
+          test "$(sha256sum "$parent_stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$parent_stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          test "$(sha256sum "$parent_stage/Main/DARKWOLF_PCRB_V0_6_A_CORONA_ONLY.cfg" | awk '{print $1}')" = "$PARENT_PROFILE_A_SHA256"
+          test "$(sha256sum "$parent_stage/Main/DARKWOLF_PCRB_V0_6_B_MULTIPOINT_FIXTURE.cfg" | awk '{print $1}')" = "$PARENT_PROFILE_B_SHA256"
+          cumulative="$parent_stage/docs/$PARENT_CUMULATIVE_NAME"
+          test -s "$cumulative"
+          test "$(sha256sum "$cumulative" | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256"
+          printf '%s\n' "$parent_stage" > .parent_stage_path
+          echo "Exact successful v0.6 R2 runtime/source payload PASS"
+
+      - name: Reconstruct exact successful PCRB v0.6 R2 source tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_stage="$(cat .parent_stage_path)"
+          rm -rf source
+          git clone "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source reset --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$parent_stage/docs/$PARENT_CUMULATIVE_NAME" .parent-cumulative.patch
+          git -C source apply --check --binary ../.parent-cumulative.patch
+          git -C source apply --binary ../.parent-cumulative.patch
+          git -C source add -A
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > .parent-rebuilt.patch
+          test -s .parent-rebuilt.patch
+          test "$(sha256sum .parent-rebuilt.patch | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256" || {
+            echo "ERROR: rebuilt v0.6 R2 cumulative SHA drift" >&2; exit 1;
+          }
+          cmp .parent-cumulative.patch .parent-rebuilt.patch || {
+            echo "ERROR: v0.6 R2 source reconstruction drift" >&2; exit 1;
+          }
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source config user.name "DarkWolf CI"
+          git -C source commit -m "Exact successful PCRB v0.6 R2 parent tree"
+          test -z "$(git -C source status --porcelain)" || { echo "ERROR: parent tree not clean" >&2; exit 1; }
+          git -C source rev-parse HEAD > .parent_source_commit
+          echo "Exact v0.6 R2 source reconstruction PASS"
+
+      - name: Materialize and apply PCRB E2E v0.7 read-only audit patcher
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > .patcher.b64 <<'B64'
+          H4sIAAAAAAAC/9U9a3PayLLf+RVjb20MtsBg72722sYpgnHCWQxcwM5uOS5KRoPRRkisJPw4if/7
+          7Z6HNKMH4DzOvTeVSsQ8enp6+jU9rdFPW/vLwN+/td196t6TxVM489zDwtT35mRhhjPHviX2fOH5
+          IenDz4J4Dp6CQmHQ641InZUXdwJv6U/oTqnQfAdlrGqf7Az7+xPPovuTO3OO/46pGwaVyU5h2Gx1
+          WxkNfepaB/uhPw4m1KXY8kNv0Dlb1fLB8x0LW140Bn+0BtB05wyePvQ65+N+c/B23Dpoja+q49fj
+          q/aw/bbTGg8vB+eNZmvc7p53LltdeGpcnrVHO4VCwaJTYtm0OA/ujkgQ+iVSPiVdz6VHBQJ/fNMO
+          KBk+BSGdtx7tsDjdaQ0GvcER+Qw9nmH6HIRPTauI9Dti5GFQABoHYk+J64WMvBU7GE9thxZLvAr/
+          4PDTnbkdBLZ7RzhdCTaCQbAPjsJwoeHSdzkYHG8c0sewSF2gDnSs7yzDafn3CKMH3w6pgpJBsHnW
+          HBlA1pxDxH8MkoRrEJc+OLZL6zvKrBeOOaFjz53QYgTeIJ5jiSfoI54c85Y68fARcSbe0g1hDbF7
+          hf0oQveSJByv3qqTWpJgnxnE5yNCHxd0ElILHsxJ6DwRmBkx3cnMg2Gn0N8inxmYBCHZiGIKOCbD
+          1iA1nN3kDlBii9p8Vyow3pQFjJNLBcaFsozxLPQDhAVT2i4BGJ6v/OZQtCIGhE8MJ7VzX628JnPT
+          /0R9YjoI+oksfBqAFB3DSNMlYxHAmZohMRcL5wnX4idS/p5/AF7zXeOidUSWwPvhjEpUygvfu6cu
+          ASx/JU/UcbyH/TufUnd/8mS6Eu876s1p6D8Z5HYZwiQBnDKtsufCCs1BoInlmw+k1+38xcYA2LcO
+          nZPQ9O8oTA5WTazTLZ16PkcEVgnAHbwmoQ+LRhzPW1TIaGYHBP5atnnnekFoT/ggCGJiuih65nQK
+          LALM5HuuSQA90zJDs/LdKQcKL4AJID9P7ipT27VAUYYmoETuPdsCuo7PgAwfPGeKmuqq+utZhHSR
+          AH+Edvg0DskuPpIS+QzLy5SopUL86CZgNtm8sgEYRCJVQvaMMDwhVeRFAR1+KWy4Ck1gY29BmUJj
+          ssUxvHW8ySeG47Uc4YiDvikUPCYoOzs7H0Pfc1CQUgMcDqCiSHyQUntO2xYpHRc+hoBvkWyxPl++
+          kK1Ur18GwJbn9iOwCR0CSVQIBnmFVKJAhJLgpOMCwEzP7e3Sdqy2O3WWoPNo37PBZBUJ61xx7LtZ
+          2ARaUtAlC1aFqMFcCqAs/u/Man+ffJ0N5H0vUrJJwRGgPowEJcHMewgIq0QhDB+8SFoFYkKyggoH
+          1w6J5dGAMUnoLScz1g/0mG0BiZ8iASTB8nZuh0x3m75jg/YApRgzdKkiyaUQCVmxeW/6LdcEFKwi
+          2bYexouJfwtTrr7mM+kBrttAoVevAACsT7QAYEgOfz2AcqKV/Xbw+w/iEi5yTDwU66YYNG7MmL8k
+          qVqWFoDZsNi+oZnlhgQk0CLTpTsJbc+NjVx6oOekeIoW2WZPEdTnQsSpAZfn5aLvw8xgYFArSQl4
+          /g5M+AelC8YoYvrBAn2SgNuRYLlAQxhIM0BmQPPyvecsgW4Hr8uM6sAm3DJ8K99ovLCGCi9aYdUI
+          CvP2n15l5tqAnj6SivqG7EVd2OM119xHNz/CtRi0umcHJHb4j+KljTSMQ+9MUBPMz4jWdoF0J1Ow
+          +RZ5mIF7DMBSPgW4AeAD2vcU3QImUNaSkQ/dKMueoOr06dy03YAA9VA3Uev7+wGKICH3bE0tpuqZ
+          nmBPoV/hDuSXL0xDbfl2BZlz/I6GRcmYwu5uG2S7Cv9US+VTZL076sf8+TGcm4susha40AJo+fTW
+          DCgWpizVD8fmG3UA8xR9Co5nwJefrzDnjWNig2LFfSD1QT+AEMPgchMSa4YsjpEKIWtiSfn/VnLH
+          uwVld8QK2c5ISOKOFAF1npyTpUAA26J7jxR82+k1/0CYOMDX0xh7JrzkOx/VShlsZDhDM+5Tx0SB
+          qcAOkdybYO6gdL5YomqaAd2ZiKHrTy0EF3pkSqFqyD3Svu/NPSZvAXWoUFwzNmvhfEdegIHu5wAw
+          s6wOcuLIGzKNUPgJtpawzyRyatXX41Fj8K41GpKDzMpeX054SH7PanHR+HN82W3/92Vr3Gk1gGiN
+          9mBIfq0dFArhEyhZ2MrCfhQUBYn4Ybj0p7B47+1wHICiZ7tRF80QK24DCz4eR6Xc7e4u53ERaKGl
+          6ZwxGXtrh8eF50zYUJGLwojthKLh/7n1wGWEfRZXcMd6oXAdYgQi/yYumnKfsufDvt50jsX2GzYT
+          ZDIzfbKLLqnS2geOHtlzpejepg9NZxmAn6MXNmB/yEvu6eQQ9h+eb9/ZLi8CATQjfAamZS8DtWIC
+          w/jmmQ22CAQlhmtLX6uJdi49XaHYmSfWvxomGnBu64u9c1Zdp5fss5g9BWAinHPg71tz8ilRPaOO
+          QkzO39QaOl6oLLtlUYuveoJHpkjzMzqxUawVMAsUqt499R1z0aHmPQ2SlZeu/c+S9k3bT1VdATRY
+          9ux+ojKzIxbioLAED+pSsh6CP5VOwlBeran/gOowt/YtWmgnXa2Kyog3zYKxUPggU5SwzXWOXrjR
+          BFBIFgqf2EmnqkgQ24brtCYCeKIno2nctmMGIfMQV3ZauoF954LazOg9tO9W9o34Uek31F3TOvln
+          ajoBCFOBusu5UCAK0LNWEyxFrwta8Y9u70MXelSN3EYgXdKyrGj0/q9hu9nojJu9Qa/bGIN45Td+
+          3+qc5dd2e+NBa9g+A8P1V36rZqcxHELDf7Wao9YKaMPe5QAMYLcxal+1Cs/xmquqb6Bt9xgEKato
+          2Iu4TpYoKBU4PYMHO4StbTEux9LPUZhyAl7BOnoeyV3AtlK4fbwBjDS5FVjpyk1g4qrEQPDXJr3U
+          1Yp7q6WbQNFXM4ajl28CSVvvGJBWrMABy2sunTBuKERCNHkuPG/KMEIXjcCcM54J4t+onOC/JOfw
+          sgyuGZ6PUW3FSOGv5OSh0btBW6EV/spoNBq0G913nZbCIFHRKkL0Ru9bgwwysKhjxvwHYGvDc/Qa
+          ithETrbpzccXdA51RUVjgX9tkMD+N/WmanGpdKyMxB2ErKFUZ6LI14X34Q4obZquZVsmHmmQ3Yn8
+          IVESHgnrPQSDT1V/ZG67aSdlbj6mC32lhG2slIEkVQUxq5Xq9FicKEWjoj8/1tAeKJVvVlSWT7ln
+          fgSAX0vIEeJpuBdR1Zvcqhhm7b8OInSjiWcAjare5FbFQA8P8mgAIn7RLyplwBuVWnVqkFrl1+q0
+          lEaE94hKDPLbLxVsDx59Je6gkEN0kCVRhwhESUUM4yNyJfkeEMx1+ER20ywjlledgkGUcdQBYr6O
+          THiWFmH+WRtjiQE4mMFb3J5JHte8ayPFigbRmgEeqSLzMdClwALHe/gPOgDR8ogKxUN7tCXjw56t
+          iD+xwzGrICfk8Jjs7eFzUpmhVHBkr7H6BtoiUvxHLCRxB6aIAHbcipSJCuFYb8qR36tDp12JMddX
+          8omCH5TG45RRYj0eWqey0ulFeDyrvFIUjU/qkt0kX5VAkP6BTSCKi3TgNmQaYWq49yyYZS4MEKpA
+          fDSUDZ/OSBoTJdhDUW8IhMWL8KF8ihH8lKKLHE/Zi7edLB0HNnReBU0eeUWal51Ou3veG/c7DTxN
+          1amPlD/zwI9mm7yixDIBauGYLq24nj83nRIsTmY1EvtY40c87CoLysNkLOAFOXF1SRPziZdxg0m9
+          7f25QhKqyEkCgdMk1rdM3K9rN9jsyxcNpbj/nux/ktO/uqJ/bbPxayv6bzJ+bv+DzcY/WNF/k/EP
+          br7fgg774Aq1stZ0i+vrIFLYEbdKlZwA7XhgPXrZHC34cAO8NTdyNymPOd5ktvu4wl/MxAMVVNpr
+          XI9yrMnQpGQosYZlxaEOtuOa8FiTwY2QT00jMkm7oi7glbtYK5/ZwYhUYyyUpBgvm1suG1iHN0Tb
+          ZWctrRzh2r4h9bpEBs8O2WCiGJ8zF8xO8hgfjpzW14YmU1q1XBPROokSh3VDIrR4PUcsrjSjuJwY
+          vbS3pzkuAqcyqR1v4OGD4+NesSM3HnEShsanU2ADNDNTy9DjM1E4ZZfndairsoBlbsoJrSPJzbHW
+          r8EmumGn26eQsl4ifrVpPz471nv3nrk8XVAIOiJNkb5UPVa5LbaZ4qxFZLXEj+VTHsbVzl+S636c
+          3EApk1A3UEpxqRQb7IRT3r8asoPvVGl0zoHV8akGTvnVqwglibcSBEZerrJOGXUnCih3OZcrHc+R
+          k1Qfby8T1K7SSvD7W1iVQBA6kmttwCh+41nQkgm8Vu/y8gzhZ1XIs+BuTQHsK6UfdgLJV1wKwQhx
+          HFgLGiMIsTQYltOVJy4SNoBZebjLCAPUKM1ed9Tqjobjbu+spasWbGa7OSAiuleRqfTC0/q61cgH
+          v7X5LkUunrpBSfKPdhBgCDz5VkU84x4lD7EUO2YE0KWO48mNfGkwoXSdydFIJrGJzY4KshlZn0gb
+          GeRVpBBKOgUjJGBtSplESUflcRIaEC6OZAsfrhOre0oOb8BfKdbIyUmSH16R16VSgp4JrlTstMpT
+          sgWMGtMiknml6ISgGr1o9MeNQasxfvvXqDUEof1dVR/MCE0t3mNuBp+uVZhZE2A1X4f9ltLkhZyk
+          HamonKQtJBKhlOIKaV9kMzTBNc1l08dSTnagZcQ92d5KXB3rLBUvObh9U8qeEhsHZ7TWEztXz6qy
+          wmt9YH3YWIHGYke3TFfig5E8a2SHYKrRF9LfdMxAjZyx3im3Z8WJhfBiFGhMwodaEBCL7emTyKUr
+          8kHiUdnv8qk89huyzOuBtwR7D2q43xmMr6o1PZ7MNCvv5ppov8+WC4ellQzFoT21NpqGBlUx2eqE
+          tupkOIIGzXF/0LvojVoiSt5oNlv90UbD6OHz1NSjM1bBIl3vYSOwymFFDFNd8khLaIUnyfn0W4Nh
+          e4jWjjli5+0/R5eD1lDVG0HCXRGLNZBpBPKwFlC/Vge72Wwi6ZOSFJHw3FcMtxmL4smJ5mWvOzbZ
+          xPfu+3QBGjHX5V4nn7vywNrQjq+b6l4pcnzQ+QINOH3R0X+u7xtnF5Gt3AScvNyiTJeYsRvYEt+a
+          OuZdgJZjcHYONGWJ+BfgN3XIF4JFwz/+etv7s98bjBqdUhoYz1kQs01rEJZc0HaxcmhOKRsTW3v+
+          ndAjqptajyG9iR5jQ3wUbeMk3fJ6MMvHm2eagqRMRKvdzN3QbqS+0dfNhc2apn3fRJ6JLJ6biyYw
+          k3IalZloEh3vM4Ol+9DJLAvAThJQVv8d/xQRTYs6oZnwnBIO7FX1l5ZItuTb02I6k0v3+IQiiA4F
+          KjzhRyTSgOOn5meLmWOph/uxNR42PytLkSsmCEy7GCcr13kCM4iSVvbbwe8YPa7i6Y3usiiAxM5A
+          KdFjESLVYK3DpKZGxMBuKmJHm9rm5LWXSeR1Dcs6ulYZkfB10BR6ZDFlXjc9KQr6rl7sDfDgLwPo
+          PJ47ukyygh6oXMIo32pVr7TS0VTzuq6K6om1N/65AqHwwMlcPBVTVIiC8DmAeX1p43WKzubWHu++
+          SuJSSmI8XN5i2neo6meD5E6B6YgNMNUz0wBVPlqHunfhrLgpFD2PLWawrPy2NdKSSHnLgBX7cRtM
+          T02RA1jrPK2m2l6zA6tHAJ+K1PV94GZDnaNtxzDrK1L7Go2QzOfbYI6qN7nJDNE3jJdB9RTjvsx6
+          /82t999ovVXXC43133knkOxkQrS+/puFmxMbpXQfhq1uNf8+TrW4Bbn/pBc/Zxye5k07MUA6F3Kl
+          mUjkSGo6ALaellgctY22d1utzpWta7Z20Xe3fN9KbAX2JpHvKXsVKxuJkrbl50enebl6KT9tVVKf
+          blbBlWZ102J/0IYdVKPT0d2W7WF/IEw77LsGo8s+ofzll3oteq8kJkVzZrp3UFflrzD17wN8EQ1T
+          4qH5vZz8VC3U8kGVCnHy3JfvXNTZq7ljICwjt+gwlq+KEnwh4wr0toRb/U0K4rkHe3KrN52+fQK2
+          wLei67WPH93tknKstL9PmtCcvTuD731O0S7i2wD8bBjWs7l0ZOJpsURmJr4lMqELJCu2E+jiG6MI
+          LAYQhPhOTAJtAYHrY8zhDAP+6jG+tA09oegWymhYKeRt5nq3AfXvJeGKqZN6PavcEBEVDjzKKQ/U
+          uIqSg6zmqCs+s36Ev/rIgTmOPnMW+qY/Dyp20Pf8EGipHMnqLaKN2FUfdl3vG2e9DxeNPuzC8PdZ
+          qz96zwtFCWzI3vfeDRr99+1mqZSPBUNYi16L6bFgKKs9yarc0+PdsjweKEElPG8s8dHKGfBK6k6M
+          n/cQdKjT3jMq9DAp1bnnYXzHpWiRm4wzBJE/nVHDU6eBF/LioPph07q9SHz2ouV5q1FQgUu2Zk2k
+          oXBWTpwJZJ8DlJJ4cxCbIpydn56M3kYChYZ00DpvdUft0V/dy4uxeH8/KzKfldquAsb8olUd9az3
+          JErR+iRtYvJkLdXghBwepOLrxaKaWV7KUBksyL7EKHseZFUadddC4zbdFqkTX5HPr07/OZMQMs8/
+          IVvqKz5C7iPh1WPxOsrZLwrsztgcXimDXicR2NtL5HhBn0gfSK2Rfh1Ia60wXPIdIa1d4mUhPLiP
+          SP2G1DDNM51StknIEJhATPyMhqbtiOhhrjpSU8TyScftkW+6n6QFyk44S79hFMxMi/r8VblkXSjy
+          phVrpZya44olg4npFeERjkL+kiXPQdN2QTVAzBxo57+y/XUKtOCWeIZoVHhiDi+TfCt/4wnCnF5X
+          b3Brk66ARd8+cT2XnooUbEmfGC5L+IHOG+SiqylCCLnb68p88pVupOpCcvnDyF7954DFN9j/MtRS
+          /9mS0X58xEL8H9kE/1dphb8jecAfjLqsFaMAwlWy5/En5ki13alXrz7+/Jh8uw578sSvC9ut/1w5
+          mBrRP7LCfExWKJlYmVXcMrEqwpIJu8ydhIJfsJn4h1dhkAAqDqfom8bkywgsxvbPY0ne2s94zVN2
+          sm0ZKbOnx67iLlFUyWDkN9KCYCQUlFHIU1xZllIqJUNhdyNiUEPzsRJZdUamxsvtoqYzGqtyDY1V
+          iYDrwNdWga+tAl9bCV7hsKwB1Ora6uoVg+TkGarZsVmDa/W1fPBau4M8OJhmW9rkGIttvu1/Z51j
+          5Wxn3OgNxf8nZ0r4DEhjDNiuXNhAp4DCbK2g+L+6i/A9L7ywg7kZTmYZ1XyDH703k9ECuNG+9U0e
+          gQyYp7261YU+lP7So32nH+XYX7VziYmvzA4tZNQ/I2yquNXZGwdyuvoIIkGrF4yXTshYN1YG1eMD
+          kw02Dl83w+Qq4pBZmCQ2IBtsAdCirMYtC69YO9l4fYm+zSmuoL2wVGrkkEHAf3fJ4eGS7OVBy1ir
+          PVL7Gkg5a/Bt0LQd6dfCYvHrb6GRGgjeIwdfAyPFwjocFgXKesE6vMEMGcbsqG5P6ySvWYJLsXU5
+          t/EJOfiVAc14LztkMXiYxLrARB7wemzOMprJIbh2/KpAb6d19q41eKmTHp90cXdXOVLEanlSyPx5
+          NWwjnOOU2GFD/XyLOffpVM24WMmFiwu1ZLxUcaKxmj3JJqWeV8UFnR5DL3k4hGUoDQyewtX4O8mh
+          nIpK6BxpnAiaMfJmyr1S80Hue7RgERsyrUEZ9RUzx1YmCstH1oivZ6SqATV9T/ID9yUv3JvIIv2c
+          NRucwpGGVoh8mRNUzIaUbyRiMDrvGitSdjVuNvLzO1fB0LjcWOErGCvyhbMH0M94U/OMD2hlVTbJ
+          kgepKUCqHcmZqiJTRm7wUe+77laGmNcUWSzlMZAmhMYaJ8TYOBhsrI74Gi91kAzdl80katIBzWyU
+          5a+90dy4CzHC9kVj1Hy/jWJ+1j4/3+YhosZ2KZFIpSKWF3Fda6wSBguveR43G5fDF0eWMsxONcs8
+          ZduMb9DNKdUP9h+T/PK07Q/WuF+pdVeoylwVldBCm4jOdxWf76UUVk8QN0fkTaoDY9x+D5ka858v
+          2sNhK0qDHp912u/ej5Qb1656ncsL8VZZs9E9a581RngzWx8DB60zkLYfM0IX5Gl4eX7ebrZb3dF2
+          ST9vSKaSJo89Ei8XrCB6xumCOETQD1bsGz27Qjm/wMvsCow1x+IWzDrZ0QNIWjouv1wkI3L00f38
+          0V198546jEHiO/X2EjXxvXzQhvBLMW03oH4oruNT7nZkBxcwmOeH17XfDn//5QZvCGSlM4qB0evD
+          6uuDm+gWUS1s9VXBplLyQseXoPAtdzOuvu8lutf4e83wpXcosjXEuwVpmFijZEZ3KuMLe2KgkKX0
+          xEnyeoL8sU6CzqAPXtcIr5qFbiVG3cRAA7Ym7anIqinyzBu8EcQFy49em29b7Pcjz6w2xMV+wuVM
+          rPN/ZhrffH/n0DUXwQyvfVaujWeaWL2LVd6YpV7tjilAZXToo2ycB9P5VMlmPfkyxOq5/phFeSlr
+          LjiuuUpkMB6wG00x/6mI7xD6c3Z7NJOo4laR6FKUEqK0TlgB8RuXV0bvcxKt4jVkOmD/lplyEiXl
+          zGCDA2tOXba21MpZ3eiMQIrWS+jwYs0hp6Stzw+891h8vuSIzDzvk0pInmw2hR1ZWMY7+fkRy52e
+          rmYCKCVdLTtDjXXhxxEiPy2VmfbDbjz+yUZf2KJkG+bKjrAqs+0C/Nnf1fk0p+E3XW4r8up8vKTW
+          ni8cOqcsd9J2lRun8c7aT3jXOOxmhf+zH2kkfrs+tMePiDAOqhToI9DOJT84me84plH8bRGFh1lh
+          kod5S09Om2OaUDBAF/CrkbXAwbLYgMBWKNC77GpzK8KBlMju/md2BbRSWE8lQBI+L7XjcbqXBplF
+          almr56S6+g/i9y3qj/XGHFd+b7Kk+ZE6jM2/eQBqz57aKG38PvOJiJtUGJj1LCQS5/zKZOn7wDmt
+          mHkslWFeRvKXctXCC8Iyh1eWKkfOmuvId0vTt3zw/ANkauA8sAEgXAuMD1C/UsAFZV/p4R8fQrG6
+          LvKb8Nl3SUoGKUaaGErY/7KQIQGFPE31JvqUkvh6DtLZ5h/xyf0ykPo5Hfl9Ja5rGYp8EudRIjS5
+          A9nHe8TNkFxcDkfipnj5BR6mb5egUe0QTZdP/1naIMJjaXGuGRo799ErGOn3CduJ9zSYAwMdxMsq
+          peMdvk/diW4tW+f3ya8Z4Lcuopi2fPNdQuMHHuIlBccMwiQeFwFeR4b3dF8EslNi5IZlRfGmog17
+          vOTrNUbUMXWnd1G5Ti95PdLEczyfJSjwp1r0hMkGg9b5+LyHb0rz3S9sGSIBxjrYwjU6sA8e4wV8
+          jHw3jOtcSi2H6XF9meIPcvEGgouUupiN4gx5gg4cYwC2SQUeEO8P4mcH0nx1RD5z8Oz7YPxDXM13
+          jOHFL/YNKcnvooy5MpLdC+zu+uIOagi2EWWsLFgrksYoTE3MJXAlH519FwqUzxE5TH0SSfm4WAC4
+          /Q9XkbxVDW4AAA==
+          B64
+          sed -i 's/^[[:space:]]*//' .patcher.b64
+          base64 -d .patcher.b64 > .patcher.gz
+          test "$(sha256sum .patcher.gz | awk '{print $1}')" = "$PATCHER_GZ_SHA256"
+          gzip -dc .patcher.gz > "$PATCHER_NAME"
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256"
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME"
+          grep -F 'DARKWOLF_PCRB_E2E_V0_7_VISIBLE_SURFACE_INFLUENCE_AUDIT' source/SP/code/cgame/cg_ents.c >/dev/null
+          grep -F 'SPR_E2E07_LEDGER' source/SP/code/rend2/tr_scene.c >/dev/null
+          grep -F 'SPR_E2E07_ROOT_CAUSE' source/SP/code/rend2/tr_scene.c >/dev/null
+          grep -F 'R_DarkWolfPCRBE2E07ObserveSurface' source/SP/code/rend2/tr_world.c >/dev/null
+          echo "PCRB E2E v0.7 diagnostic patch materialization PASS"
+
+      - name: Validate v0.7 three-file delta cumulative replay and functional Guardrail
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_commit="$(cat .parent_source_commit)"
+          git -C source diff --check "$parent_commit" -- .
+          mapfile -t changed < <(git -C source diff --name-only "$parent_commit" -- . | sort)
+          expected=(
+            SP/code/cgame/cg_ents.c
+            SP/code/rend2/tr_scene.c
+            SP/code/rend2/tr_world.c
+          )
+          test "${#changed[@]}" -eq "${#expected[@]}" || { printf 'changed: %s\n' "${changed[@]}" >&2; exit 1; }
+          for i in "${!expected[@]}"; do
+            test "${changed[$i]}" = "${expected[$i]}" || { echo "ERROR: changed-file allowlist mismatch" >&2; exit 1; }
+          done
+          removed="$(git -C source diff -U0 "$parent_commit" -- SP/code/rend2/tr_scene.c | grep '^-' | grep -v '^---' || true)"
+          for protected in \
+            'visibleNow = R_StaticPromoteInfluenceVisible(fd, vis, light);' \
+            'R_StaticPromotePhysicalResidencyEnabled() && physicalVisible' \
+            'now - light->lastInfluenceVisibleMs <= holdMs' \
+            'R_StaticPromoteAddCandidate(i, &light->candidate,' \
+            'RE_AddLightToScene(candidate->origin, radius, color[0], color[1], color[2], REF_FORCE_DLIGHT | DARKWOLF_REF_LOCALVOL_LAMP);'; do
+            if grep -F "$protected" <<<"$removed" >/dev/null; then
+              echo "ERROR: v0.7 removed/modified protected functional gate: $protected" >&2; exit 1
+            fi
+          done
+          git -C source diff --binary "$parent_commit" -- . > "$DELTA_NAME"
+          test -s "$DELTA_NAME"
+          git -C source apply --reverse --check "../$DELTA_NAME"
+          git -C source add -A
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > "$CUMULATIVE_NAME"
+          test -s "$CUMULATIVE_NAME"
+          rm -rf replay-v07
+          git clone "$UPSTREAM_REPO" replay-v07
+          git -C replay-v07 checkout --detach "$UPSTREAM_SHA"
+          git -C replay-v07 reset --hard "$UPSTREAM_SHA"
+          git -C replay-v07 clean -fdx
+          git -C replay-v07 apply --check --binary "../$CUMULATIVE_NAME"
+          git -C replay-v07 apply --binary "../$CUMULATIVE_NAME"
+          git -C replay-v07 add -A
+          git -C replay-v07 diff --cached --binary "$UPSTREAM_SHA" -- . > .v07-replayed-cumulative.patch
+          cmp "$CUMULATIVE_NAME" .v07-replayed-cumulative.patch || { echo "ERROR: v0.7 cumulative replay drift" >&2; exit 1; }
+          if python3 "$PATCHER_NAME" >/dev/null 2>&1; then
+            echo "ERROR: v0.7 repeat-apply unexpectedly succeeded" >&2; exit 1
+          fi
+          echo "PCRB E2E v0.7 three-file delta + cumulative replay Guardrail PASS"
+
+      - name: Build canonical Windows x64 full SP
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          chmod +x source/SP/cross-make-mingw64.sh
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify v0.7 cgame renderer markers and frozen-runtime contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t cgame_candidates < <(find source/SP/build -type f -name 'cgame_sp_x64.dll' -print)
+          mapfile -t renderer_candidates < <(find source/SP/build -type f -name 'renderer_sp_rend2_x64.dll' -print)
+          mapfile -t exe_candidates < <(find source/SP/build -type f -name 'ioWolfSP.x64.exe' -print)
+          mapfile -t qagame_candidates < <(find source/SP/build -type f -name 'qagame_sp_x64.dll' -print)
+          test "${#cgame_candidates[@]}" -eq 1
+          test "${#renderer_candidates[@]}" -eq 1
+          test "${#exe_candidates[@]}" -eq 1
+          test "${#qagame_candidates[@]}" -eq 1
+          new_cgame="${cgame_candidates[0]}"
+          new_renderer="${renderer_candidates[0]}"
+          strings -a "$new_cgame" > .e2e07_cgame_strings.txt
+          strings -a "$new_renderer" > .e2e07_renderer_strings.txt
+          grep -F 'dw_pcrbE2E07MarkerOnly' .e2e07_cgame_strings.txt >/dev/null
+          grep -F 'SPR_PCRB06_STARTUP' .e2e07_cgame_strings.txt >/dev/null
+          grep -F 'SPR_E2E07_STARTUP' .e2e07_renderer_strings.txt >/dev/null
+          grep -F 'SPR_E2E07_LEDGER' .e2e07_renderer_strings.txt >/dev/null
+          grep -F 'SPR_E2E07_ROOT_CAUSE' .e2e07_renderer_strings.txt >/dev/null
+          grep -F 'SPR_E2E07_SURFACE' .e2e07_renderer_strings.txt >/dev/null
+          grep -F 'POINT_PVS_MISSES_VISIBLE_DLIGHT_INFLUENCE_VOLUME_LEAF_CANDIDATE_SUPPORTED' .e2e07_renderer_strings.txt >/dev/null
+          for pe in "$new_cgame" "$new_renderer"; do
+            if x86_64-w64-mingw32-objdump -p "$pe" | awk '/DLL Name:/ {print tolower($3)}' | \
+              grep -E 'pthread|winpthread|libgcc|libstdc\+\+|libssp' >/dev/null; then
+              echo "ERROR: forbidden MinGW runtime dependency in $pe" >&2; exit 1
+            fi
+          done
+          printf '%s\n' "$new_cgame" > .new_cgame_path
+          printf '%s\n' "$new_renderer" > .new_renderer_path
+          echo "PCRB E2E v0.7 compile/marker/dependency contract PASS"
+
+      - name: Package two-test E2E audit kit over exact successful v0.6 R2 runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_stage="$(cat .parent_stage_path)"
+          new_cgame="$(cat .new_cgame_path)"
+          new_renderer="$(cat .new_renderer_path)"
+          rm -rf release dist
+          stage="release/$RELEASE_BASENAME"
+          mkdir -p "$stage" dist
+          cp -a "$parent_stage/." "$stage/"
+
+          # Runtime delta is intentionally exactly TWO binaries.
+          cp "$new_cgame" "$stage/Main/cgame_sp_x64.dll"
+          cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" != "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" != "$PARENT_RENDERER_SHA256"
+
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          sha256sum "$stage/docs/$PATCHER_NAME" > "$stage/docs/$PATCHER_NAME.sha256"
+          sha256sum "$stage/docs/$DELTA_NAME" > "$stage/docs/$DELTA_NAME.sha256"
+          sha256sum "$stage/docs/$CUMULATIVE_NAME" > "$stage/docs/$CUMULATIVE_NAME.sha256"
+
+          cat > "$stage/Main/$PROFILE_NAME" <<'CFG'
+          // PCRB E2E v0.7 - read-only end-to-end visible surface influence audit.
+          // Functional baseline is exact v0.6 A (corona-only); v0.6 multipoint rescue is forced OFF.
+          exec DARKWOLF_PCRB_V0_6_A_CORONA_ONLY.cfg
+          seta r_staticPromoteCoronaResidencyBridge "1"
+          seta g_physicalCoronaDeliveryV2 "1"
+          seta r_staticPromotePVS "1"
+          seta dw_pcrbV06MultiPointFallback "0"
+          seta dw_pcrbV06Diag "0"
+          seta dw_pcrbV04MultiPointDiag "1"
+          seta dw_pcrbV05Diag "1"
+          seta dw_pcrbV05Markers "1"
+          seta dw_pcrbE2E07MarkerOnly "1"
+          seta dw_pcrbSpatialBindDiag "1"
+          seta dw_staticPromotePhysicalResidencyDiag "1"
+          seta dw_physicalCoronaDeliveryV2Diag "1"
+          seta dw_physicalLightDiag "0"
+          seta dw_pcrbE2E07Diag "1"
+          CFG
+
+          cat > "$stage/PCRB_E2E07_COLLECT.ps1" <<'PS1'
+          param(
+            [Parameter(Mandatory=$true)][string]$Log,
+            [Parameter(Mandatory=$true)][string]$OutDir,
+            [Parameter(Mandatory=$true)][string]$Map,
+            [Parameter(Mandatory=$true)][int]$TargetId,
+            [Parameter(Mandatory=$true)][int]$TargetFixture
+          )
+          $ErrorActionPreference = 'Stop'
+          $stats = [ordered]@{
+            startup=0; ledger=0; near=0; pvs_on=0; pvs_off=0; root_cause=0;
+            volume_candidate=0; volume_not_sufficient=0; pair_overflow=0;
+            server_delivery=0; binding=0; selected=0; no_residency=0;
+            touched_when_pvs_off=0; max_touched_when_pvs_off=0
+          }
+          $relevant = Join-Path $OutDir 'PCRB_E2E07_RELEVANT_LINES.txt'
+          $roots = Join-Path $OutDir 'PCRB_E2E07_ROOT_CAUSE_LINES.txt'
+          $writer = [IO.StreamWriter]::new($relevant,$false,[Text.UTF8Encoding]::new($false))
+          $rootWriter = [IO.StreamWriter]::new($roots,$false,[Text.UTF8Encoding]::new($false))
+          try {
+            if (!(Test-Path -LiteralPath $Log)) { throw "rtcwconsole.log not found: $Log" }
+            foreach ($physical in [IO.File]::ReadLines($Log)) {
+              foreach ($line in [regex]::Split($physical, '\\n')) {
+                if ($line.Contains('SPR_E2E07_') -or $line.Contains('SPR_FIXV2_SV') -or
+                    $line.Contains('SPR_BIND_CG') -or $line.Contains('SPR_BIND_REND') -or
+                    $line.Contains('SPR_LOS04_FIXTURE') -or $line.Contains('SPR_FIXV1_FRAME')) {
+                  $writer.WriteLine($line)
+                }
+                if ($line.Contains('SPR_E2E07_STARTUP')) { $stats.startup++ }
+                if ($line.Contains('SPR_FIXV2_SV') -and $line.Contains("runtimeId=$TargetId ") -and
+                    $line.Contains('delivery=ET_CORONA_BYPASS_AREA_PVS')) { $stats.server_delivery++ }
+                if ($line.Contains('SPR_BIND_REND') -and $line.Contains("fixture=$TargetFixture ") -and
+                    $line.Contains("matchedRuntimeId=$TargetId ") -and $line.Contains('unambiguous=1')) { $stats.binding++ }
+                if ($line.Contains('SPR_E2E07_LEDGER') -and $line.Contains("runtimeId=$TargetId ") -and
+                    $line.Contains("fixture=$TargetFixture ")) {
+                  $stats.ledger++
+                  if ($line -match 'cameraDist=([0-9.]+)') { if ([double]$Matches[1] -le 500.0) { $stats.near++ } }
+                  $pvsOff = $line.Contains('productionPointPVS=0')
+                  if ($pvsOff) { $stats.pvs_off++ } else { $stats.pvs_on++ }
+                  if ($line -match 'spherePairOverflow=([0-9]+)' -and [int]$Matches[1] -gt 0) { $stats.pair_overflow++ }
+                  if ($line -match 'selectedSlot=(-?[0-9]+)' -and [int]$Matches[1] -ge 0) { $stats.selected++ }
+                  if ($line.Contains('finalDecision=NO_RESIDENCY')) { $stats.no_residency++ }
+                  if ($pvsOff -and $line -match 'touchedVisibleSurfaces=([0-9]+)') {
+                    $tv=[int]$Matches[1]
+                    if ($tv -gt 0) { $stats.touched_when_pvs_off++ }
+                    if ($tv -gt $stats.max_touched_when_pvs_off) { $stats.max_touched_when_pvs_off=$tv }
+                  }
+                }
+                if ($line.Contains('SPR_E2E07_ROOT_CAUSE') -and $line.Contains("runtimeId=$TargetId ")) {
+                  $stats.root_cause++; $rootWriter.WriteLine($line)
+                  if ($line.Contains('VOLUME_LEAF_CANDIDATE_SUPPORTED')) { $stats.volume_candidate++ }
+                  if ($line.Contains('VOLUME_LEAF_CANDIDATE_NOT_SUFFICIENT')) { $stats.volume_not_sufficient++ }
+                }
+                if ($line.Contains('SPR_E2E07_SURFACE') -and $line.Contains("runtimeId=$TargetId ")) { $rootWriter.WriteLine($line) }
+              }
+            }
+          } finally { $writer.Dispose(); $rootWriter.Dispose() }
+          $capture = if ($stats.startup -gt 0 -and $stats.ledger -gt 0 -and $stats.near -gt 0 -and
+                         $stats.pvs_on -gt 0 -and $stats.pvs_off -gt 0 -and
+                         $stats.server_delivery -gt 0 -and $stats.binding -gt 0) { 'VALID' } else { 'INCOMPLETE' }
+          if ($stats.root_cause -gt 0 -and $stats.volume_candidate -gt 0) {
+            $evidence='ROOT_CAUSE_AND_VOLUME_LEAF_CANDIDATE_CONFIRMED'
+          } elseif ($stats.root_cause -gt 0 -and $stats.volume_not_sufficient -gt 0) {
+            $evidence='VISIBLE_SURFACE_MISMATCH_CONFIRMED_VOLUME_LEAF_NOT_SUFFICIENT'
+          } elseif ($stats.pvs_off -gt 0) {
+            $evidence='PVS_OFF_CAPTURED_NO_VISIBLE_SURFACE_MISMATCH'
+          } else { $evidence='TRANSITION_NOT_CAPTURED' }
+          @(
+            "capture_status=$capture", "map=$Map", "target_runtimeId=$TargetId", "target_fixture=$TargetFixture",
+            "evidence=$evidence", "startup=$($stats.startup)", "ledger=$($stats.ledger)", "near_samples=$($stats.near)",
+            "pvs_on=$($stats.pvs_on)", "pvs_off=$($stats.pvs_off)", "root_cause=$($stats.root_cause)",
+            "volume_leaf_candidate=$($stats.volume_candidate)", "volume_not_sufficient=$($stats.volume_not_sufficient)",
+            "sphere_pair_overflow=$($stats.pair_overflow)", "server_delivery=$($stats.server_delivery)", "binding=$($stats.binding)",
+            "selected=$($stats.selected)", "no_residency=$($stats.no_residency)",
+            "touched_when_pvs_off=$($stats.touched_when_pvs_off)", "max_touched_when_pvs_off=$($stats.max_touched_when_pvs_off)"
+          ) | Set-Content -LiteralPath (Join-Path $OutDir 'PCRB_E2E07_TEST_STATUS.txt') -Encoding ASCII
+          Write-Host "PCRB E2E v0.7 capture: $capture / $evidence"
+          PS1
+
+          cat > "$stage/RUN_PCRB_E2E07_CORE.cmd" <<'CMD'
+          @echo off
+          setlocal EnableExtensions
+          if "%~3"=="" exit /b 2
+          cd /d "%~dp0"
+          set "LABEL=%~1"
+          set "MAP=%~2"
+          set "TARGET_ID=%~3"
+          set "PROFILE=DARKWOLF_PCRB_E2E_V0_7_VISIBLE_SURFACE_INFLUENCE.cfg"
+          if /I "%MAP%"=="factory" (
+            set "TARGET_FIXTURE=300"
+            set "TARGET_ROLE=PROBLEM_FACTORY"
+          ) else if /I "%MAP%"=="escape1" (
+            set "TARGET_FIXTURE=918"
+            set "TARGET_ROLE=PROBLEM_ESCAPE1"
+          ) else (
+            echo ERROR: unsupported map %MAP%
+            exit /b 2
+          )
+          set "TESTHOME=%CD%\PCRB_E2E07_HOME\%LABEL%"
+          set "RESULTDIR=%CD%\PCRB_E2E07_RESULTS"
+          set "RESULTZIP=%RESULTDIR%\%LABEL%.zip"
+          if exist "%TESTHOME%" rmdir /s /q "%TESTHOME%"
+          mkdir "%TESTHOME%\Main" 2>nul
+          if not exist "%RESULTDIR%" mkdir "%RESULTDIR%" 2>nul
+          if exist "%RESULTZIP%" del /q "%RESULTZIP%"
+          > "%TESTHOME%\TEST_CONTRACT.txt" (
+            echo DarkWolf PCRB E2E v0.7 Visible Surface Influence / Volume Leaf Audit
+            echo label=%LABEL%
+            echo map=%MAP%
+            echo target=%TARGET_ROLE% runtimeId=%TARGET_ID% fixture=%TARGET_FIXTURE%
+            echo exact_parent_run=33171970215
+            echo runtime_binary_delta=Main/cgame_sp_x64.dll + renderer_sp_rend2_x64.dll only
+            echo functional_changes=NONE
+            echo hypothesis=27-point sampled PVS may miss a PVS/area-visible BSP leaf/surface inside the continuous promoted DLight sphere
+            echo marker=ONLY problem target; yellow corona, green light center, cyan body midpoint
+          )
+          echo.
+          echo PCRB E2E v0.7 - %MAP%
+          echo ONLY marked fixture is the problem target: %TARGET_ROLE% runtimeId=%TARGET_ID% fixture=%TARGET_FIXTURE%
+          echo Yellow=corona  Green=light center  Cyan=body midpoint.
+          echo Test sequence: VISIBLE -^> slow transition -^> DISAPPEARED -^> remain 10 sec -^> return until visible.
+          echo F12 in visible, transition, disappeared, after 10 sec, and return states.
+          ioWolfSP.x64.exe +set fs_homepath "%TESTHOME%" +set com_recommendedSet 1 +set cl_renderer rend2 +set developer 1 +set logfile 2 +exec "%PROFILE%" +spdevmap %MAP%
+          set "LOG=%TESTHOME%\Main\rtcwconsole.log"
+          powershell -NoProfile -ExecutionPolicy Bypass -File "%CD%\PCRB_E2E07_COLLECT.ps1" -Log "%LOG%" -OutDir "%TESTHOME%" -Map "%MAP%" -TargetId %TARGET_ID% -TargetFixture %TARGET_FIXTURE%
+          if errorlevel 1 echo WARNING: collector reported an error; raw TESTHOME is preserved.
+          set "TAROK=0"
+          where tar.exe >nul 2>nul
+          if not errorlevel 1 (
+            for %%I in ("%TESTHOME%") do tar.exe -a -c -f "%RESULTZIP%" -C "%%~dpI" "%%~nxI"
+            if not errorlevel 1 set "TAROK=1"
+          )
+          if "%TAROK%"=="0" powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -LiteralPath '%TESTHOME%' -DestinationPath '%RESULTZIP%' -Force"
+          echo.
+          echo Result ZIP: %RESULTZIP%
+          if exist "%TESTHOME%\PCRB_E2E07_TEST_STATUS.txt" type "%TESTHOME%\PCRB_E2E07_TEST_STATUS.txt"
+          echo.
+          endlocal
+          CMD
+
+          cat > "$stage/RUN_PCRB_E2E07_01_FACTORY_VISIBLE_SURFACE.cmd" <<'CMD'
+          @call "%~dp0RUN_PCRB_E2E07_CORE.cmd" 01_FACTORY_VISIBLE_SURFACE factory 352
+          CMD
+          cat > "$stage/RUN_PCRB_E2E07_02_ESCAPE1_VISIBLE_SURFACE.cmd" <<'CMD'
+          @call "%~dp0RUN_PCRB_E2E07_CORE.cmd" 02_ESCAPE1_VISIBLE_SURFACE escape1 628
+          CMD
+
+          cat > "$stage/README_PCRB_E2E_V0_7_RU.txt" <<'TXT'
+          DarkWolf / ioRTCW Rend2 SP
+          PCRB E2E v0.7 - Visible Surface Influence / Volume Leaf Correlation
+
+          ЦЕЛЬ
+          Последний read-only root-cause capture после полного end-to-end audit.
+          Функциональная логика ламп НЕ ИЗМЕНЯЕТСЯ.
+
+          Проверяются одновременно:
+          1) production 27-point PVS;
+          2) непрерывная сфера фактического promoted DLight против BSP leaf bounds с тем же camera PVS + area mask;
+          3) реально прошедшие штатный Rend2 frustum/surface cull поверхности и exact R_DlightSurface geometry;
+          4) server delivery, spatial binding, residency/hold, selection и final DLight index.
+
+          НУЖНЫ РОВНО ДВА ТЕСТА:
+          1. RUN_PCRB_E2E07_01_FACTORY_VISIBLE_SURFACE.cmd
+             Problem = runtimeId 352 / fixture 300.
+          2. RUN_PCRB_E2E07_02_ESCAPE1_VISIBLE_SURFACE.cmd
+             Problem = runtimeId 628 / fixture 918.
+
+          ВАЖНО: v0.7 показывает marker triplet ТОЛЬКО для problem target.
+          Yellow = corona; Green = renderer light center; Cyan = body midpoint.
+          Контрольную лампу искать НЕ НУЖНО.
+
+          Для каждой карты:
+          - подойти к отмеченной проблемной лампе;
+          - F12 в явно VISIBLE состоянии;
+          - медленно пройти известную границу исчезновения и F12 в TRANSITION;
+          - сразу после исчезновения F12;
+          - оставаться в этой зоне минимум 10 секунд и снова F12;
+          - вернуться назад до повторного появления и F12.
+
+          После выхода launcher создаёт PCRB_E2E07_TEST_STATUS.txt и ZIP в PCRB_E2E07_RESULTS.
+          Capture считается VALID только если действительно получены near-target samples <=500 units,
+          оба состояния productionPointPVS=1 и =0, server delivery и unambiguous spatial binding.
+
+          Ключевой smoking gun:
+          productionPointPVS=0 + touchedVisibleSurfaces>0.
+          Если одновременно sphereVisiblePairs>0, production fix candidate будет volume-aware leaf coverage
+          вместо дискретных 27 sample points.
+          TXT
+
+          cat > "$stage/PCRB_E2E_V0_7_BUILD_INFO.txt" <<EOF
+          DarkWolf PCRB E2E v0.7 Visible Surface Influence Audit
+          parent_run=$PARENT_RUN_ID
+          parent_head=$PARENT_RUN_HEAD_SHA
+          parent_artifact_id=$PARENT_ARTIFACT_ID
+          parent_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          parent_inner_zip_sha256=$PARENT_INNER_ZIP_SHA256
+          parent_cumulative_sha256=$PARENT_CUMULATIVE_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          source_delta=SP/code/cgame/cg_ents.c + SP/code/rend2/tr_scene.c + SP/code/rend2/tr_world.c
+          runtime_binary_delta=Main/cgame_sp_x64.dll + renderer_sp_rend2_x64.dll
+          functional_changes=NONE; diagnostics only
+          v06_multipoint_fallback=forced OFF
+          tests=Factory problem 352/300 + Escape1 problem 628/918 only
+          EOF
+
+          manifest_tmp="$(mktemp)"
+          (cd "$stage" && find . -type f ! -name 'SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum) > "$manifest_tmp"
+          mv "$manifest_tmp" "$stage/SHA256SUMS.txt"
+          (cd "$stage" && sha256sum -c SHA256SUMS.txt >/dev/null)
+
+          (cd release && zip -q -r -9 "../dist/$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          unzip -t "dist/$RELEASE_BASENAME.zip" >/dev/null
+          sha256sum "dist/$RELEASE_BASENAME.zip" > "dist/$RELEASE_BASENAME.zip.sha256"
+          echo "PCRB E2E v0.7 two-test package PASS"
+
+      - name: Upload PCRB E2E v0.7 runtime test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
