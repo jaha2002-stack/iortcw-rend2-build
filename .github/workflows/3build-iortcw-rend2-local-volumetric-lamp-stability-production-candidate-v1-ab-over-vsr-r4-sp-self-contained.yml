@@ -1,0 +1,616 @@
+name: Build DarkWolf Rend2 Local Volumetric Lamp Stability Production Candidate v1 A-B SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: local-volumetric-lamp-stability-production-candidate-v1-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Local Volumetric Lamp Stability v1 - exact successful VSR R4 + A-B candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      PARENT_RUN_ID: "33240072351"
+      PARENT_RUN_HEAD_SHA: 691a59af999d1718fb1fe44855ae45921cd71217
+      PARENT_WORKFLOW_PATH: '.github/workflows/2build-iortcw-rend2-visible-surface-residency-production-candidate-v1-r4-ab-over-pcrb-e2e-v0-7-sp-self-contained.yml'
+      PARENT_ARTIFACT_ID: "9711092645"
+      PARENT_ARTIFACT_NAME: iortcw-rend2-visible-surface-residency-production-candidate-v1-r4-ab-over-pcrb-e2e-v0-7-full-sp-windows-x64-1
+      PARENT_ARTIFACT_DIGEST: sha256:b436a2f24b68b2240f0df5d9a6ae0646549d41a429f55286accf8c27e8b71c4b
+      PARENT_RELEASE_BASENAME: iortcw-rend2-visible-surface-residency-production-candidate-v1-r4-ab-over-pcrb-e2e-v0-7-full-sp-windows-x64-1
+      PARENT_INNER_ZIP_SHA256: 9127f68ff2be71022bec353f2b4c3bc973b5cd49171f71a6aca7f351b80ecc05
+
+      PARENT_EXE_SHA256: cb540efa22b3892087ca8132ff83fd656c5e7d158f4a8b7d4fa326dbee8e277a
+      PARENT_QAGAME_SHA256: c7da4c1c5f66fc1d0781500ee1e7c21dea77cbabd29f2a1b15f03179c9261b0d
+      PARENT_CGAME_SHA256: 9a733bfe0e43f6d40c5e3b1715d539019093d6c0eada2702a16780003610e0a8
+      PARENT_RENDERER_SHA256: 31f1da61aea42ea2de76beddf5ba142acd45dd231b7eaa56963fd030241e95e4
+      PARENT_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      PARENT_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      PARENT_VSR_B_PROFILE_SHA256: 8b287e842460a897190cd6bd4d80954c50cdd11c009b95d7f6282eee4db54bca
+      PARENT_UNIFIED_VOL_PROFILE_SHA256: a83c98b2298b8da851b14dcc2399e1f731b1978a1bd097f4d011a6412ff734cd
+
+      PARENT_CUMULATIVE_NAME: rend2-cumulative-pcrb-e2e-v0-7-plus-visible-surface-residency-production-candidate-v1-sp.patch
+      PARENT_CUMULATIVE_SHA256: 28e22b3e44ee9468a10a49a710d71dfbed46a3b85df672d6ec6a1df211d515c6
+
+      PATCHER_NAME: apply_local_volumetric_lamp_stability_production_candidate_v1.py
+      PATCHER_SHA256: d2688c7c76c8bf7c218f6ed86457d5ec016fe9e57308b7708f19bfd0b100ef17
+      PATCHER_GZ_SHA256: 454cca725ea9d35ec43b91859d40b33fecd32094cde721a5f944a9f45c1f30cd
+      DELTA_NAME: rend2-local-volumetric-lamp-stability-production-candidate-v1-over-vsr-r4-sp.patch
+      CUMULATIVE_NAME: rend2-cumulative-vsr-r4-plus-local-volumetric-lamp-stability-production-candidate-v1-sp.patch
+      PROFILE_A: DARKWOLF_LOCAL_VOLUMETRIC_STABILITY_A_BASELINE.cfg
+      PROFILE_B: DARKWOLF_LOCAL_VOLUMETRIC_STABILITY_B_STABLE.cfg
+      RELEASE_BASENAME: iortcw-rend2-local-volumetric-lamp-stability-production-candidate-v1-ab-over-vsr-r4-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Preflight workflow shell and path contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: cannot resolve current workflow file: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY'
+          from pathlib import Path
+          import sys
+          p = Path(sys.argv[1])
+          lines = p.read_text(encoding='utf-8').splitlines()
+          bad = []
+          for n, line in enumerate(lines, 1):
+              if line.endswith(r'\\'):
+                  bad.append((n, 'double-backslash shell continuation', line))
+              if "IFS=$'\\\\t'" in line:
+                  bad.append((n, 'over-escaped ANSI-C tab', line))
+              if "printf '%s\\\\n'" in line:
+                  bad.append((n, 'over-escaped printf newline', line))
+              if 'git -C ' in line and '>' in line:
+                  redirect = line.split('>', 1)[1].strip().lstrip('"\'')
+                  if redirect.startswith('../'):
+                      bad.append((n, 'git -C redirect escapes workflow cwd', line))
+          if bad:
+              for n, why, line in bad:
+                  print(f'ERROR: line {n}: {why}: {line}', file=sys.stderr)
+              raise SystemExit(1)
+          print('Workflow shell/path preflight PASS')
+          PY
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64 build-essential ca-certificates g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git gzip libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq python3 python3-yaml unzip zip file
+
+      - name: Validate every bash run block before source reconstruction
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          python3 - "$workflow_rel" <<'PY'
+          from pathlib import Path
+          import subprocess, sys, yaml
+          p = Path(sys.argv[1])
+          doc = yaml.safe_load(p.read_text(encoding='utf-8'))
+          checked = 0
+          for job_name, job in (doc.get('jobs') or {}).items():
+              for index, step in enumerate(job.get('steps') or [], 1):
+                  script = step.get('run')
+                  shell = step.get('shell', 'bash')
+                  if not script or not str(shell).lower().startswith('bash'):
+                      continue
+                  proc = subprocess.run(['bash', '-n'], input=script, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  if proc.returncode != 0:
+                      print(f"ERROR: bash -n failed: job={job_name} step={index} name={step.get('name')}", file=sys.stderr)
+                      print(proc.stderr, file=sys.stderr)
+                      raise SystemExit(proc.returncode)
+                  checked += 1
+          if checked < 1:
+              raise SystemExit('ERROR: no bash run blocks discovered')
+          print(f'All bash run blocks syntax PASS: {checked}')
+          PY
+
+      - name: Verify exact successful VSR R4 parent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          run_sha="$(jq -r '.head_sha' <<<"$run_json")"
+          run_conclusion="$(jq -r '.conclusion' <<<"$run_json")"
+          run_workflow="$(jq -r '.path' <<<"$run_json")"
+          test "$run_sha" = "$PARENT_RUN_HEAD_SHA" || { echo "ERROR: parent HEAD drift: $run_sha" >&2; exit 1; }
+          test "$run_conclusion" = "success" || { echo "ERROR: parent conclusion=$run_conclusion" >&2; exit 1; }
+          test "$run_workflow" = "$PARENT_WORKFLOW_PATH" || { echo "ERROR: parent workflow drift: $run_workflow" >&2; exit 1; }
+          artifact_line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${PARENT_ARTIFACT_ID}) | [.name, .expired, .digest] | @tsv")"
+          test -n "$artifact_line" || { echo "ERROR: exact R4 artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r artifact_name artifact_expired artifact_digest <<< "$artifact_line"
+          test "$artifact_name" = "$PARENT_ARTIFACT_NAME" || { echo "ERROR: parent artifact name drift" >&2; exit 1; }
+          test "$artifact_expired" = "false" || { echo "ERROR: parent artifact expired" >&2; exit 1; }
+          test "$artifact_digest" = "$PARENT_ARTIFACT_DIGEST" || { echo "ERROR: parent artifact digest drift: $artifact_digest" >&2; exit 1; }
+          echo "Exact successful VSR R4 parent PASS: run=$PARENT_RUN_ID head=$PARENT_RUN_HEAD_SHA artifact=$PARENT_ARTIFACT_ID"
+
+      - name: Download and byte-verify exact VSR R4 runtime/source parent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf parent-artifact parent-release
+          mkdir -p parent-artifact parent-release
+          gh run download "$PARENT_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$PARENT_ARTIFACT_NAME" --dir parent-artifact
+          parent_zip="parent-artifact/${PARENT_RELEASE_BASENAME}.zip"
+          parent_sidecar="parent-artifact/${PARENT_RELEASE_BASENAME}.zip.sha256"
+          test -s "$parent_zip" || { echo "ERROR: parent inner ZIP missing" >&2; exit 1; }
+          test -s "$parent_sidecar" || { echo "ERROR: parent ZIP sidecar missing" >&2; exit 1; }
+          test "$(sha256sum "$parent_zip" | awk '{print $1}')" = "$PARENT_INNER_ZIP_SHA256" || { echo "ERROR: parent inner ZIP SHA drift" >&2; exit 1; }
+          grep -Fq "$PARENT_INNER_ZIP_SHA256" "$parent_sidecar" || { echo "ERROR: parent sidecar SHA mismatch" >&2; exit 1; }
+          unzip -q "$parent_zip" -d parent-release
+          parent_stage="parent-release/$PARENT_RELEASE_BASENAME"
+          test -d "$parent_stage" || { echo "ERROR: parent stage missing" >&2; exit 1; }
+          test "$(sha256sum "$parent_stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$parent_stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$parent_stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$parent_stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$PARENT_RENDERER_SHA256"
+          test "$(sha256sum "$parent_stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$parent_stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          test "$(sha256sum "$parent_stage/Main/DARKWOLF_VISIBLE_SURFACE_RESIDENCY_B_CANDIDATE.cfg" | awk '{print $1}')" = "$PARENT_VSR_B_PROFILE_SHA256"
+          test "$(sha256sum "$parent_stage/Main/DARKWOLF_UNIFIED_VOLUMETRIC_PRODUCTION_V1.cfg" | awk '{print $1}')" = "$PARENT_UNIFIED_VOL_PROFILE_SHA256"
+          cumulative="$parent_stage/docs/$PARENT_CUMULATIVE_NAME"
+          test -s "$cumulative" || { echo "ERROR: parent cumulative patch missing" >&2; exit 1; }
+          test "$(sha256sum "$cumulative" | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256" || { echo "ERROR: parent cumulative SHA drift" >&2; exit 1; }
+          printf '%s\n' "$parent_stage" > .parent_stage_path
+          echo "Exact successful VSR R4 runtime/source payload PASS"
+
+      - name: Reconstruct exact successful VSR R4 source tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_stage="$(cat .parent_stage_path)"
+          rm -rf source
+          git clone "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source reset --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$parent_stage/docs/$PARENT_CUMULATIVE_NAME" .parent-cumulative.patch
+          git -C source apply --check --binary ../.parent-cumulative.patch
+          git -C source apply --binary ../.parent-cumulative.patch
+          git -C source add -A
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > .parent-rebuilt.patch
+          test -s .parent-rebuilt.patch || { echo "ERROR: rebuilt parent patch empty" >&2; exit 1; }
+          test "$(sha256sum .parent-rebuilt.patch | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256" || { echo "ERROR: rebuilt R4 cumulative SHA drift" >&2; exit 1; }
+          cmp .parent-cumulative.patch .parent-rebuilt.patch || { echo "ERROR: R4 source reconstruction drift" >&2; exit 1; }
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source config user.name "DarkWolf CI"
+          git -C source commit -m "Exact successful VSR R4 parent tree"
+          test -z "$(git -C source status --porcelain)" || { echo "ERROR: parent tree not clean" >&2; exit 1; }
+          git -C source rev-parse HEAD > .parent_source_commit
+          echo "Exact VSR R4 source reconstruction PASS"
+
+      - name: Materialize and apply Local Volumetric Lamp Stability Production Candidate v1
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > .patcher.b64 <<'B64'
+          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
+          kfe4AO16r7jlao3/ATpXh4uOPwAA
+          B64
+          base64 -d .patcher.b64 > .patcher.gz
+          test "$(sha256sum .patcher.gz | awk '{print $1}')" = "$PATCHER_GZ_SHA256" || { echo "ERROR: embedded patcher gzip SHA mismatch" >&2; exit 1; }
+          gzip -dc .patcher.gz > "$PATCHER_NAME"
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: embedded patcher SHA mismatch" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME"
+          backend=source/SP/code/rend2/tr_backend.c
+          grep -Fq 'DARKWOLF_LOCAL_VOLUMETRIC_LAMP_STABILITY_PRODUCTION_CANDIDATE_V1' "$backend" || { echo "ERROR: candidate source marker missing" >&2; exit 1; }
+          grep -Fq 'r_volumetricLocalLampStability' "$backend" || { echo "ERROR: A-B stability cvar missing" >&2; exit 1; }
+          grep -Fq 'RB_LocalVolumetricSelectStableLamp' "$backend" || { echo "ERROR: stable selector missing" >&2; exit 1; }
+          grep -Fq 'bestScore > currentScore * switchRatio' "$backend" || { echo "ERROR: hysteresis contract missing" >&2; exit 1; }
+          grep -Fq 'previousLampWeight' "$backend" || { echo "ERROR: cross-fade contract missing" >&2; exit 1; }
+          echo "Local Volumetric Lamp Stability v1 patch materialization PASS"
+
+      - name: Validate one-file functional delta cumulative replay and Guardrail
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_commit="$(cat .parent_source_commit)"
+          mapfile -t changed < <(git -C source diff --name-only "$parent_commit" -- | sort)
+          printf 'candidate changed: %s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 1 || { echo "ERROR: expected exactly 1 changed source file" >&2; exit 1; }
+          test "${changed[0]}" = "SP/code/rend2/tr_backend.c" || { echo "ERROR: unexpected changed file: ${changed[0]}" >&2; exit 1; }
+          git -C source diff --check "$parent_commit" --
+          git -C source diff --binary "$parent_commit" -- . > "$DELTA_NAME"
+          test -s "$DELTA_NAME" || { echo "ERROR: candidate delta patch empty/missing" >&2; exit 1; }
+          git -C source apply --reverse --check "../$DELTA_NAME"
+
+          backend=source/SP/code/rend2/tr_backend.c
+          require_fixed() {
+            local needle="$1" label="$2"
+            grep -Fq -- "$needle" "$backend" || { echo "ERROR: missing Guardrail anchor: $label" >&2; exit 1; }
+          }
+          require_fixed 'static int RB_LocalVolumetricSelectLamp(qboolean requireShadow, int *shadowSlot, qboolean *marked)' 'original score selector retained'
+          require_fixed 'return radiusSquared * (0.25f + luminance) /' 'original camera-distance score retained for A'
+          require_fixed 'DARKWOLF_LOCAL_VOLUMETRIC_LAMP_STABILITY_PRODUCTION_CANDIDATE_V1' 'candidate identity'
+          require_fixed 'r_volumetricLocalLampStability' 'A-B toggle'
+          require_fixed 'r_volumetricLocalLampSwitchRatio' 'switch ratio cvar'
+          require_fixed 'r_volumetricLocalLampHoldMs' 'hold cvar'
+          require_fixed 'r_volumetricLocalLampFadeMs' 'fade cvar'
+          require_fixed 'bestScore > currentScore * switchRatio' 'hysteresis comparison'
+          require_fixed 'RB_LocalVolumetricFindLampIdentity' 'stable identity remap across dlight indices'
+          require_fixed 'previousLamp && previousLampWeight > 0.001f' 'previous-source fade-out'
+          require_fixed 'lamp && lampWeight > 0.001f' 'current-source fade-in'
+          require_fixed 'if (lamp && lampShadow)' 'exact A baseline hard shadow-slot requirement retained'
+          require_fixed 'RB_LocalVolumetricRender(srcFbo, srcBox, 3, lamp, lampSlot, NULL, lampWeight);' 'B continuity render independent of lampShadow gate'
+          require_fixed 'shadowSlot=-1 is intentionally the shader' 'unshadowed continuity fallback documented'
+
+          if grep -E '^\+.*(runtimeId=352|fixture=300|runtimeId=628|fixture=918)' "$DELTA_NAME" >/dev/null; then
+            echo "ERROR: map-specific lamp identity leaked into production candidate" >&2; exit 1
+          fi
+          if git -C source diff --name-only "$parent_commit" -- | grep -Ev '^SP/code/rend2/tr_backend.c$' | grep .; then
+            echo "ERROR: forbidden source delta outside tr_backend.c" >&2; exit 1
+          fi
+          if git -C source diff "$parent_commit" -- SP/code/rend2/tr_backend.c | grep -E '^\+.*(r_dlightMode|r_dlightShadowMaxLights)' >/dev/null; then
+            echo "ERROR: candidate must not change dlight/shadow-mode policy" >&2; exit 1
+          fi
+
+          git -C source add -A
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > "$CUMULATIVE_NAME"
+          test -s "$CUMULATIVE_NAME" || { echo "ERROR: cumulative candidate patch missing" >&2; exit 1; }
+          test ! -e "../$CUMULATIVE_NAME" || { echo "ERROR: cumulative patch leaked above workflow cwd" >&2; exit 1; }
+
+          rm -rf replay
+          cp -a source replay
+          git -C replay reset --hard "$UPSTREAM_SHA"
+          git -C replay clean -fdx
+          git -C replay apply --check --binary "../$CUMULATIVE_NAME"
+          git -C replay apply --binary "../$CUMULATIVE_NAME"
+          git -C replay add -A
+          git -C replay diff --cached --binary "$UPSTREAM_SHA" -- . > .cumulative-replay.patch
+          cmp "$CUMULATIVE_NAME" .cumulative-replay.patch || { echo "ERROR: independent cumulative replay drift" >&2; exit 1; }
+          echo "Local Volumetric Lamp Stability v1 one-file functional Guardrail PASS"
+
+      - name: Build canonical Windows x64 full SP
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"
+          if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify candidate renderer runtime strings dependencies and frozen contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t renderer_candidates < <(find source/SP/build -type f -name 'renderer_sp_rend2_x64.dll' -print | sort)
+          if [ "${#renderer_candidates[@]}" -ne 1 ]; then
+            printf 'ERROR: expected exactly one candidate Rend2 DLL, found %d\n' "${#renderer_candidates[@]}" >&2
+            printf '  candidate: %s\n' "${renderer_candidates[@]:-<none>}" >&2
+            exit 1
+          fi
+          new_renderer="${renderer_candidates[0]}"
+          test -s "$new_renderer" || { echo "ERROR: candidate Rend2 DLL missing/empty" >&2; exit 1; }
+          grep -Fq 'DARKWOLF_LOCAL_VOLUMETRIC_LAMP_STABILITY_PRODUCTION_CANDIDATE_V1' source/SP/code/rend2/tr_backend.c || { echo "ERROR: source-only candidate marker missing after build" >&2; exit 1; }
+          strings -a "$new_renderer" > .lvstable_renderer_strings.txt
+          require_binary_string() {
+            local needle="$1" label="$2"
+            grep -Fq -- "$needle" .lvstable_renderer_strings.txt || { echo "ERROR: candidate Rend2 missing runtime string [$label]: $needle" >&2; exit 1; }
+          }
+          require_binary_string 'r_volumetricLocalLampStability' 'A-B stability cvar'
+          require_binary_string 'r_volumetricLocalLampSwitchRatio' 'hysteresis cvar'
+          require_binary_string 'r_volumetricLocalLampHoldMs' 'hold cvar'
+          require_binary_string 'r_volumetricLocalLampFadeMs' 'fade cvar'
+          require_binary_string 'LVSTABLE acquire' 'stable ownership telemetry string'
+          require_binary_string 'LVSTABLE switch' 'stable switch telemetry string'
+          require_binary_string 'r_volumetricLocal' 'parent local volumetric path'
+          x86_64-w64-mingw32-objdump -p "$new_renderer" | awk '/DLL Name:/ {print tolower($3)}' > .lvstable_renderer_imports.txt
+          if grep -E 'pthread|winpthread|libgcc|libstdc\+\+|libssp' .lvstable_renderer_imports.txt >/dev/null; then
+            echo "ERROR: forbidden MinGW runtime dependency in candidate Rend2" >&2
+            cat .lvstable_renderer_imports.txt >&2
+            exit 1
+          fi
+          new_renderer_sha="$(sha256sum "$new_renderer" | awk '{print $1}')"
+          test -n "$new_renderer_sha" || { echo "ERROR: could not compute candidate Rend2 SHA" >&2; exit 1; }
+          test "$new_renderer_sha" != "$PARENT_RENDERER_SHA256" || { echo "ERROR: candidate Rend2 is byte-identical to R4 parent" >&2; exit 1; }
+          printf '%s\n' "$new_renderer" > .new_renderer_path
+          printf '%s\n' "$new_renderer_sha" > .new_renderer_sha256
+          echo "Local Volumetric Lamp Stability v1 renderer verification PASS: $new_renderer_sha"
+
+      - name: Package A-B local volumetric stability production-candidate kit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_stage="$(cat .parent_stage_path)"
+          new_renderer="$(cat .new_renderer_path)"
+          rm -rf release dist
+          stage="release/$RELEASE_BASENAME"
+          mkdir -p "$stage" dist
+          cp -a "$parent_stage/." "$stage/"
+          cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" != "$PARENT_RENDERER_SHA256"
+
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          sha256sum "$stage/docs/$PATCHER_NAME" > "$stage/docs/$PATCHER_NAME.sha256"
+          sha256sum "$stage/docs/$DELTA_NAME" > "$stage/docs/$DELTA_NAME.sha256"
+          sha256sum "$stage/docs/$CUMULATIVE_NAME" > "$stage/docs/$CUMULATIVE_NAME.sha256"
+
+          cat > "$stage/Main/$PROFILE_A" <<'CFG'
+          // DarkWolf Local Volumetric Lamp Stability Production Candidate v1 - A_BASELINE
+          // Exact successful R4 local-volumetric behavior; stability candidate disabled.
+          exec DARKWOLF_VISIBLE_SURFACE_RESIDENCY_B_CANDIDATE.cfg
+          seta r_volumetricLocal "1"
+          seta r_volumetricLocalMode "5"
+          seta r_volumetricLocalTrace "0"
+          seta r_dlightMode "2"
+          seta r_volumetricLocalLampStability "0"
+          seta r_volumetricLocalLampSwitchRatio "1.30"
+          seta r_volumetricLocalLampHoldMs "1500"
+          seta r_volumetricLocalLampFadeMs "650"
+          seta r_volumetricLocalLampStabilityTrace "0"
+          seta dw_staticPromoteVisibleSurfaceResidencyDiag "0"
+          seta dw_pcrbE2E07Diag "0"
+          seta dw_pcrbE2E07MarkerOnly "0"
+          seta dw_pcrbV04MultiPointDiag "0"
+          seta dw_pcrbV05Diag "0"
+          seta dw_pcrbV05Markers "0"
+          seta dw_pcrbSpatialBindDiag "0"
+          seta dw_staticPromotePhysicalResidencyDiag "0"
+          seta dw_physicalCoronaDeliveryV2Diag "0"
+          vid_restart
+          CFG
+
+          cat > "$stage/Main/$PROFILE_B" <<'CFG'
+          // DarkWolf Local Volumetric Lamp Stability Production Candidate v1 - B_STABLE
+          // Mode 5 keeps stable physical-lamp identity, score hysteresis and 650ms cross-fade.
+          // If the selected physical lamp temporarily has no shadow slot, volumetric continuity is retained unshadowed instead of hard OFF.
+          exec DARKWOLF_VISIBLE_SURFACE_RESIDENCY_B_CANDIDATE.cfg
+          seta r_volumetricLocal "1"
+          seta r_volumetricLocalMode "5"
+          seta r_volumetricLocalTrace "0"
+          seta r_dlightMode "2"
+          seta r_volumetricLocalLampStability "1"
+          seta r_volumetricLocalLampSwitchRatio "1.30"
+          seta r_volumetricLocalLampHoldMs "1500"
+          seta r_volumetricLocalLampFadeMs "650"
+          seta r_volumetricLocalLampStabilityTrace "0"
+          seta dw_staticPromoteVisibleSurfaceResidencyDiag "0"
+          seta dw_pcrbE2E07Diag "0"
+          seta dw_pcrbE2E07MarkerOnly "0"
+          seta dw_pcrbV04MultiPointDiag "0"
+          seta dw_pcrbV05Diag "0"
+          seta dw_pcrbV05Markers "0"
+          seta dw_pcrbSpatialBindDiag "0"
+          seta dw_staticPromotePhysicalResidencyDiag "0"
+          seta dw_physicalCoronaDeliveryV2Diag "0"
+          vid_restart
+          CFG
+
+          cat > "$stage/RUN_LVSTABLE01_CORE.cmd" <<'CMD'
+          @echo off
+          setlocal EnableExtensions
+          if "%~4"=="" exit /b 2
+          cd /d "%~dp0"
+          set "LABEL=%~1"
+          set "MAP=%~2"
+          set "PROFILE=%~3"
+          set "MODE=%~4"
+          set "TESTHOME=%CD%\LVSTABLE01_HOME\%LABEL%"
+          if exist "%TESTHOME%" rmdir /s /q "%TESTHOME%"
+          mkdir "%TESTHOME%\Main" 2>nul
+          > "%TESTHOME%\TEST_CONTRACT.txt" (
+            echo DarkWolf Local Volumetric Lamp Stability Production Candidate v1
+            echo map=%MAP%
+            echo mode=%MODE%
+            echo r_dlightMode=2
+            echo r_volumetricLocal=1
+            echo A=exact current R4 Mode 5 selection
+            echo B=stable identity + hysteresis + crossfade + no hard-OFF on temporary shadow-slot loss
+            echo expected_B=volumetric halo present, player/NPC shadows present, no abrupt ON/OFF when moving toward/away from target lamp
+          )
+          echo.
+          echo ============================================================
+          echo DarkWolf Local Volumetric Lamp Stability v1 - %MODE% - %MAP%
+          echo r_dlightMode 2 and r_volumetricLocal 1 are forced by the profile.
+          echo The profile performs vid_restart automatically because r_volumetricLocal is latched.
+          echo Console diagnostic flood is disabled.
+          echo ============================================================
+          ioWolfSP.x64.exe +set fs_homepath "%TESTHOME%" +set com_recommendedSet 1 +set cl_renderer rend2 +set developer 0 +set logfile 1 +exec "%PROFILE%" +spdevmap %MAP%
+          exit /b 0
+          CMD
+
+          cat > "$stage/RUN_LVSTABLE01_01_FACTORY_A_BASELINE.cmd" <<'CMD'
+          @echo off
+          call "%~dp0RUN_LVSTABLE01_CORE.cmd" 01_FACTORY_A_BASELINE factory DARKWOLF_LOCAL_VOLUMETRIC_STABILITY_A_BASELINE.cfg A_BASELINE
+          CMD
+          cat > "$stage/RUN_LVSTABLE01_02_FACTORY_B_STABLE.cmd" <<'CMD'
+          @echo off
+          call "%~dp0RUN_LVSTABLE01_CORE.cmd" 02_FACTORY_B_STABLE factory DARKWOLF_LOCAL_VOLUMETRIC_STABILITY_B_STABLE.cfg B_STABLE
+          CMD
+          cat > "$stage/RUN_LVSTABLE01_03_ESCAPE1_A_BASELINE.cmd" <<'CMD'
+          @echo off
+          call "%~dp0RUN_LVSTABLE01_CORE.cmd" 03_ESCAPE1_A_BASELINE escape1 DARKWOLF_LOCAL_VOLUMETRIC_STABILITY_A_BASELINE.cfg A_BASELINE
+          CMD
+          cat > "$stage/RUN_LVSTABLE01_04_ESCAPE1_B_STABLE.cmd" <<'CMD'
+          @echo off
+          call "%~dp0RUN_LVSTABLE01_CORE.cmd" 04_ESCAPE1_B_STABLE escape1 DARKWOLF_LOCAL_VOLUMETRIC_STABILITY_B_STABLE.cfg B_STABLE
+          CMD
+
+          cat > "$stage/README_LOCAL_VOLUMETRIC_LAMP_STABILITY_PRODUCTION_CANDIDATE_V1_RU.txt" <<'TXT'
+          DarkWolf / ioRTCW Rend2 SP
+          Local Volumetric Lamp Stability Production Candidate v1
+
+          Доказанный пользовательским A/B root cause наблюдаемого яркого ON/OFF:
+            r_dlightMode 2 + r_volumetricLocal 0 + vid_restart -> pop исчезает, тени остаются.
+            r_dlightMode 2 + r_volumetricLocal 1 + vid_restart -> pop возвращается в том же месте, тени остаются.
+
+          A_BASELINE:
+            Точный текущий R4 Mode 5 local-volumetric selection.
+            r_volumetricLocalLampStability 0.
+
+          B_STABLE:
+            r_volumetricLocalLampStability 1.
+            Stable physical-lamp identity по origin/radius/color вместо scene dlight index.
+            Новый источник должен быть минимум на 30% сильнее по существующему score.
+            Минимальное ownership hold = 1500 ms.
+            Переключение источника = additive cross-fade 650 ms.
+            Временная потеря shadow slot больше не выключает весь local volumetric raymarch:
+            Mode 3 продолжает источник с отключенным shadow sampling до возврата cubemap.
+
+          Point-light shadows НЕ отключаются:
+            r_dlightMode 2 сохраняется.
+
+          Основной тест:
+            1. RUN_LVSTABLE01_02_FACTORY_B_STABLE.cmd
+               Проверить лампу runtimeId=352 / fixture=300.
+            2. RUN_LVSTABLE01_04_ESCAPE1_B_STABLE.cmd
+               Проверить runtimeId=628 / fixture=918.
+
+          PASS:
+            - яркий local-volumetric эффект присутствует;
+            - тени игрока/NPC присутствуют;
+            - при приближении/удалении яркий ореол не прыгает резко ON/OFF;
+            - допустимо плавное изменение/переход яркости при реальной смене доминирующего источника.
+
+          A-проходы включены только как контроль. Повторять A необязательно, если поведение текущего R4 уже известно.
+          TXT
+
+          cat > "$stage/LOCAL_VOLUMETRIC_LAMP_STABILITY_PRODUCTION_CANDIDATE_V1_BUILD_INFO.txt" <<EOF
+          DarkWolf Local Volumetric Lamp Stability Production Candidate v1
+          parent_run=$PARENT_RUN_ID
+          parent_head=$PARENT_RUN_HEAD_SHA
+          parent_artifact_id=$PARENT_ARTIFACT_ID
+          parent_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          parent_inner_zip_sha256=$PARENT_INNER_ZIP_SHA256
+          parent_renderer_sha256=$PARENT_RENDERER_SHA256
+          parent_cumulative_sha256=$PARENT_CUMULATIVE_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          source_delta=SP/code/rend2/tr_backend.c only
+          runtime_binary_delta=renderer_sp_rend2_x64.dll only
+          A=r_volumetricLocalLampStability 0 exact R4 Mode 5 behavior
+          B=r_volumetricLocalLampStability 1 stable identity + 1.30 switch ratio + 1500ms hold + 650ms crossfade
+          shadows=r_dlightMode 2 retained
+          test_targets=Factory 352/300 + Escape1 628/918
+          EOF
+
+          # Profile contract checks before packaging.
+          grep -Fq 'seta r_volumetricLocalLampStability "0"' "$stage/Main/$PROFILE_A"
+          grep -Fq 'seta r_volumetricLocalLampStability "1"' "$stage/Main/$PROFILE_B"
+          grep -Fq 'seta r_dlightMode "2"' "$stage/Main/$PROFILE_A"
+          grep -Fq 'seta r_dlightMode "2"' "$stage/Main/$PROFILE_B"
+          grep -Fq 'seta r_volumetricLocal "1"' "$stage/Main/$PROFILE_A"
+          grep -Fq 'seta r_volumetricLocal "1"' "$stage/Main/$PROFILE_B"
+          grep -Fq 'vid_restart' "$stage/Main/$PROFILE_A"
+          grep -Fq 'vid_restart' "$stage/Main/$PROFILE_B"
+
+          manifest_tmp="$(mktemp)"
+          (cd "$stage" && find . -type f ! -name 'SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum) > "$manifest_tmp"
+          mv "$manifest_tmp" "$stage/SHA256SUMS.txt"
+          (cd "$stage" && sha256sum -c SHA256SUMS.txt)
+          (cd release && zip -q -r -9 "../dist/$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          unzip -t "dist/$RELEASE_BASENAME.zip" >/dev/null
+          sha256sum "dist/$RELEASE_BASENAME.zip" > "dist/$RELEASE_BASENAME.zip.sha256"
+          echo "Packaged $RELEASE_BASENAME"
+
+      - name: Upload Local Volumetric Lamp Stability production-candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
