@@ -1,0 +1,638 @@
+name: Build DarkWolf Rend2 Lamp Volumetric Clean Production Candidate Release v1 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: lamp-volumetric-clean-production-candidate-release-v1-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Clean production release - exact successful LVMS v2 + baked defaults + no test kit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      PARENT_RUN_ID: "33254623336"
+      PARENT_RUN_HEAD_SHA: 2ed7f04efe3dbf0c040f74524d1c1828c5c8eb2f
+      PARENT_WORKFLOW_PATH: '.github/workflows/4build-iortcw-rend2-local-volumetric-lamp-multi-source-stability-production-candidate-v2-ab-over-local-volumetric-stability-v1-sp-self-contained.yml'
+      PARENT_ARTIFACT_ID: "9715435415"
+      PARENT_ARTIFACT_NAME: iortcw-rend2-local-volumetric-lamp-multi-source-stability-production-candidate-v2-over-v1-full-sp-windows-x64-1
+      PARENT_ARTIFACT_DIGEST: sha256:d4a058b18778c8cb9ea32dc2e5885a5d014e1b66a05bb578da037cc4b714efa6
+      PARENT_RELEASE_BASENAME: iortcw-rend2-local-volumetric-lamp-multi-source-stability-production-candidate-v2-over-v1-full-sp-windows-x64-1
+      PARENT_INNER_ZIP_SHA256: 6b4112047c7b1ee99877812632cacd13d165606fedc80157860bc2482d778d22
+
+      PARENT_EXE_SHA256: cb540efa22b3892087ca8132ff83fd656c5e7d158f4a8b7d4fa326dbee8e277a
+      PARENT_QAGAME_SHA256: c7da4c1c5f66fc1d0781500ee1e7c21dea77cbabd29f2a1b15f03179c9261b0d
+      PARENT_CGAME_SHA256: 9a733bfe0e43f6d40c5e3b1715d539019093d6c0eada2702a16780003610e0a8
+      PARENT_RENDERER_SHA256: 04b2c9ed31f5784b0dfe26cbb2eda2b296fda8cf0852822d4790c21bcd2f5094
+      PARENT_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      PARENT_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      PARENT_B_PROFILE_SHA256: 603d00ef5cec0ce3eb3390edb07f2662691a50198026ab1106f35a4649899c50
+
+      PARENT_CUMULATIVE_NAME: rend2-cumulative-local-volumetric-stability-v1-plus-multi-source-stability-v2-sp.patch
+      PARENT_CUMULATIVE_SHA256: 24e63bc02fdbeb68482662a1d00d1ca845e55a8ad43388a9069f051d2564e2f7
+
+      PATCHER_NAME: apply_lamp_volumetric_clean_production_candidate_release_v1.py
+      PATCHER_SHA256: 2fe8b081a73c1d0c2aaa4825e0b0220e90bfb4afda323dba440044312cf5d37d
+      PATCHER_GZ_SHA256: c5388b212af68961c9aae89f9e4bbb58c4b04680b1f7fe4c35f277452f89c6c3
+      DELTA_NAME: darkwolf-lamp-volumetric-clean-production-candidate-release-v1-over-lvms-v2-sp.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-lamp-volumetric-clean-production-candidate-release-v1-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-lamp-volumetric-clean-production-candidate-release-v1-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Preflight workflow shell and package contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: cannot resolve current workflow: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY2'
+          from pathlib import Path
+          import sys
+          p=Path(sys.argv[1])
+          lines=p.read_text(encoding='utf-8').splitlines()
+          bad=[]
+          for n,line in enumerate(lines,1):
+              if line.endswith(r'\\'):
+                  bad.append((n,'double-backslash continuation',line))
+              if 'git -C ' in line and '>' in line:
+                  redirect=line.split('>',1)[1].strip().lstrip('"\'')
+                  if redirect.startswith('../'):
+                      bad.append((n,'git -C redirect escapes cwd',line))
+          if bad:
+              for x in bad: print('ERROR:',x,file=sys.stderr)
+              raise SystemExit(1)
+          print('Workflow shell/path preflight PASS')
+          PY2
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git gzip \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Validate every bash run block
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          python3 - "$workflow_rel" <<'PY2'
+          from pathlib import Path
+          import subprocess,sys,yaml
+          doc=yaml.safe_load(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          checked=0
+          for job_name,job in (doc.get('jobs') or {}).items():
+              for index,step in enumerate(job.get('steps') or [],1):
+                  script=step.get('run'); shell=step.get('shell','bash')
+                  if not script or not str(shell).lower().startswith('bash'): continue
+                  p=subprocess.run(['bash','-n'],input=script,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                  if p.returncode:
+                      print(f'ERROR: bash -n failed: {job_name} step={index} {step.get("name")}',file=sys.stderr)
+                      print(p.stderr,file=sys.stderr); raise SystemExit(p.returncode)
+                  checked+=1
+          test=checked > 0
+          if not test: raise SystemExit('ERROR: no bash blocks')
+          print(f'All bash blocks PASS: {checked}')
+          PY2
+
+      - name: Verify exact successful LVMS v2 parent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$PARENT_RUN_HEAD_SHA" || { echo "ERROR: parent HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo "ERROR: parent not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$PARENT_WORKFLOW_PATH" || { echo "ERROR: parent workflow drift" >&2; exit 1; }
+          artifact_line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${PARENT_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$artifact_line" || { echo "ERROR: exact parent artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r artifact_name artifact_expired artifact_digest <<< "$artifact_line"
+          test "$artifact_name" = "$PARENT_ARTIFACT_NAME"
+          test "$artifact_expired" = "false"
+          test "$artifact_digest" = "$PARENT_ARTIFACT_DIGEST"
+          echo "Exact successful LVMS v2 parent PASS"
+
+      - name: Download and byte-verify exact successful LVMS v2 parent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf parent-artifact parent-release
+          mkdir -p parent-artifact parent-release
+          gh run download "$PARENT_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$PARENT_ARTIFACT_NAME" --dir parent-artifact
+          parent_zip="parent-artifact/${PARENT_RELEASE_BASENAME}.zip"
+          parent_sidecar="parent-artifact/${PARENT_RELEASE_BASENAME}.zip.sha256"
+          test -s "$parent_zip"; test -s "$parent_sidecar"
+          test "$(sha256sum "$parent_zip" | awk '{print $1}')" = "$PARENT_INNER_ZIP_SHA256"
+          grep -Fq "$PARENT_INNER_ZIP_SHA256" "$parent_sidecar"
+          unzip -q "$parent_zip" -d parent-release
+          parent_stage="parent-release/$PARENT_RELEASE_BASENAME"
+          test -d "$parent_stage"
+          test "$(sha256sum "$parent_stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$parent_stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$parent_stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$parent_stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$PARENT_RENDERER_SHA256"
+          test "$(sha256sum "$parent_stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$parent_stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          test "$(sha256sum "$parent_stage/Main/DARKWOLF_LOCAL_VOLUMETRIC_MULTI_SOURCE_V2_B_MULTI_SOURCE.cfg" | awk '{print $1}')" = "$PARENT_B_PROFILE_SHA256"
+          cumulative="$parent_stage/docs/$PARENT_CUMULATIVE_NAME"
+          test -s "$cumulative"
+          test "$(sha256sum "$cumulative" | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256"
+          printf '%s\n' "$parent_stage" > .parent_stage_path
+          echo "Exact LVMS v2 payload PASS"
+
+      - name: Reconstruct exact successful LVMS v2 source tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_stage="$(cat .parent_stage_path)"
+          rm -rf source
+          git clone "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source reset --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$parent_stage/docs/$PARENT_CUMULATIVE_NAME" .parent-cumulative.patch
+          git -C source apply --check --binary ../.parent-cumulative.patch
+          git -C source apply --binary ../.parent-cumulative.patch
+          git -C source add -A
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > .parent-rebuilt.patch
+          test "$(sha256sum .parent-rebuilt.patch | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256"
+          cmp .parent-cumulative.patch .parent-rebuilt.patch
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source config user.name "DarkWolf CI"
+          git -C source commit -m "Exact successful LVMS v2 parent tree"
+          git -C source rev-parse HEAD > .parent_source_commit
+          test -z "$(git -C source status --porcelain)"
+          echo "Exact LVMS v2 source reconstruction PASS"
+
+      - name: Materialize and apply clean production release delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > .patcher.b64 <<'B64'
+          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
+          OXgfeErifwGNEd+rh3QAAA==
+          B64
+          base64 -d .patcher.b64 > .patcher.gz
+          test "$(sha256sum .patcher.gz | awk '{print $1}')" = "$PATCHER_GZ_SHA256" || { echo "ERROR: patcher gzip SHA mismatch" >&2; exit 1; }
+          gzip -dc .patcher.gz > "$PATCHER_NAME"
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: patcher SHA mismatch" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME"
+          echo "Clean production source delta materialized"
+
+      - name: Validate production source Guardrail and baked defaults
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_commit="$(cat .parent_source_commit)"
+          mapfile -t changed < <(git -C source diff --name-only "$parent_commit" -- | sort)
+          printf 'production changed: %s\n' "${changed[@]}"
+          expected=(
+            SP/code/cgame/cg_ents.c
+            SP/code/client/cl_main.c
+            SP/code/game/g_main.c
+            SP/code/game/g_misc.c
+            SP/code/qcommon/cm_trace.c
+            SP/code/rend2/tr_backend.c
+            SP/code/rend2/tr_init.c
+            SP/code/rend2/tr_local.h
+            SP/code/rend2/tr_main.c
+            SP/code/rend2/tr_scene.c
+            SP/code/server/sv_snapshot.c
+          )
+          test "${#changed[@]}" -eq "${#expected[@]}" || { echo "ERROR: changed-file count drift" >&2; exit 1; }
+          for i in "${!expected[@]}"; do test "${changed[$i]}" = "${expected[$i]}" || { echo "ERROR: changed file drift: ${changed[$i]}" >&2; exit 1; }; done
+          git -C source diff --check "$parent_commit" --
+          git -C source diff --binary "$parent_commit" -- . > "$DELTA_NAME"
+          test -s "$DELTA_NAME"
+          git -C source apply --reverse --check "../$DELTA_NAME"
+
+          init=source/SP/code/rend2/tr_init.c
+          backend=source/SP/code/rend2/tr_backend.c
+          scene=source/SP/code/rend2/tr_scene.c
+          cgame=source/SP/code/cgame/cg_ents.c
+          server=source/SP/code/server/sv_snapshot.c
+          client=source/SP/code/client/cl_main.c
+
+          grep -Fq 'r_cubeMapping = ri.Cvar_Get( "r_cubeMapping", "1"' "$init"
+          grep -Fq 'r_pbr = ri.Cvar_Get("r_pbr", "1"' "$init"
+          grep -Fq 'r_softParticles = ri.Cvar_Get( "r_softParticles", "1"' "$init"
+          grep -Fq 'r_fxStage9Enable = ri.Cvar_Get( "r_fxStage9Enable", "1"' "$init"
+          grep -Fq 'r_volumetricSun = ri.Cvar_Get( "r_volumetricSun", "1"' "$init"
+          grep -Fq 'r_volumetricLocal = ri.Cvar_Get( "r_volumetricLocal", "1"' "$init"
+          grep -Fq 'r_volumetricLocalMode = ri.Cvar_Get( "r_volumetricLocalMode", "5"' "$init"
+          grep -Fq 'r_volumetricLocalStrength = ri.Cvar_Get( "r_volumetricLocalStrength", "1.20"' "$init"
+          grep -Fq 'r_volumetricLocalSpotSamples = ri.Cvar_Get( "r_volumetricLocalSpotSamples", "48"' "$init"
+          grep -Fq 'r_volumetricLocalSpotJitter = ri.Cvar_Get( "r_volumetricLocalSpotJitter", "0.06"' "$init"
+          grep -Fq 'cl_renderer = Cvar_Get("cl_renderer", "rend2"' "$client"
+          grep -Fq 'Cvar_Set("r_dlightMode", "2");' "$client"
+          grep -Fq 'Cvar_Set("r_dlightShadowMaxLights", "3");' "$client"
+          grep -Fq 'Cvar_Set("r_staticPromoteMaxLights", "24");' "$client"
+          grep -Fq 'Cvar_Set("r_volumetricSun", "1");' "$client"
+          grep -Fq 'Cvar_Set("r_volumetricLocal", "1");' "$client"
+          grep -Fq 'Cvar_Set("r_volumetricLocalMode", "5");' "$client"
+          grep -Fq 'Cvar_Set("r_volumetricLocalStrength", "1.20");' "$client"
+          grep -Fq 'Cvar_Set("r_volumetricLocalLampMaxActive", "4");' "$client"
+          grep -Fq 'Cvar_Set("r_volumetricLocalLampFullRadius", "768");' "$client"
+          grep -Fq 'Cvar_Set("r_volumetricLocalLampActiveRadius", "1536");' "$client"
+          grep -Fq 'DARKWOLF_LAMP_VOLUMETRIC_PRODUCTION_CANDIDATE_RELEASE_V1' "$backend"
+          grep -Fq 'r_volumetricLocalLampMaxActive", "4"' "$backend"
+          grep -Fq 'r_volumetricLocalLampFullRadius", "768"' "$backend"
+          grep -Fq 'r_volumetricLocalLampActiveRadius", "1536"' "$backend"
+          grep -Fq 'r_volumetricLocalLampHoldMs", "1500"' "$backend"
+          grep -Fq 'r_volumetricLocalLampFadeMs", "650"' "$backend"
+          grep -Fq 'multiLampCount = RB_LocalVolumetricSelectStableLampPool' "$backend"
+          grep -Fq 'bridgeOn = qtrue;' "$scene"
+          grep -Fq 'static qboolean CG_DarkWolfCoronaResidencyBridgeEnabled(void)' "$cgame"
+          grep -Fq 'static qboolean SV_DarkWolfPhysicalCoronaDeliveryV2Enabled' "$server"
+
+          banned=(
+            'ri.Cvar_Get("r_volumetricLocalLampStability"'
+            'ri.Cvar_Get("r_volumetricLocalLampSwitchRatio"'
+            'ri.Cvar_Get("r_volumetricLocalLampStabilityTrace"'
+            'ri.Cvar_Get("r_volumetricLocalLampMultiSource"'
+            'ri.Cvar_Get("r_volumetricLocalLampMultiSourceTrace"'
+            'r_volumetricLocalTrace = ri.Cvar_Get'
+            'r_volumetricSunPerfTrace = ri.Cvar_Get'
+            'Cvar_Get("r_staticPromoteManualOverride"'
+            'Cvar_Get("r_dlightShadowAutoTest"'
+            'Cvar_Get("r_dlightMaterialAutoTest"'
+            'Cvar_Get("r_dlightFootprintAutoTest"'
+            'ri.Cvar_Get( "r_dlightDiag'
+            'ri.Cvar_Get( "r_materialDebug"'
+            'ri.Cvar_Get( "r_materialTrace"'
+            'ri.Cvar_Get( "r_ssgiDebug"'
+            'ri.Cvar_Get( "r_ssgiTrace"'
+            'ri.Cvar_Get( "r_softParticleDebug"'
+            'ri.Cvar_Get( "r_indirectLightingDebug"'
+            'ri.Cvar_Get( "r_staticPromoteIndex0"'
+            'ri.Cvar_Get( "r_staticPromoteIndex1"'
+            'ri.Cvar_Get( "r_staticPromoteDump"'
+          )
+          for needle in "${banned[@]}"; do
+            if grep -R -Fq -- "$needle" source/SP/code; then echo "ERROR: test/trace cvar registration remains: $needle" >&2; exit 1; fi
+          done
+          if grep -R -E '(Cvar_VariableIntegerValue|trap_Cvar_VariableIntegerValue|ri\.Cvar_Get|trap_Cvar_VariableStringBuffer).*dw_' source/SP/code --include='*.c' --include='*.h' >/dev/null; then
+            echo "ERROR: retired dw_* diagnostic cvar read remains in production source" >&2
+            grep -R -n -E '(Cvar_VariableIntegerValue|trap_Cvar_VariableIntegerValue|ri\.Cvar_Get|trap_Cvar_VariableStringBuffer).*dw_' source/SP/code --include='*.c' --include='*.h' >&2 || true
+            exit 1
+          fi
+
+          git -C source add -A
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > "$CUMULATIVE_NAME"
+          test -s "$CUMULATIVE_NAME"
+          echo "Production source Guardrail PASS"
+
+      - name: Build canonical Windows x64 full SP
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify clean production runtime binaries
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          find_one() {
+            local name="$1" out="$2"
+            mapfile -t a < <(find source/SP/build -type f -name "$name" -print | sort)
+            test "${#a[@]}" -eq 1 || { printf 'ERROR: expected one %s, got %d\n' "$name" "${#a[@]}" >&2; exit 1; }
+            test -s "${a[0]}"; printf '%s\n' "${a[0]}" > "$out"
+          }
+          find_one ioWolfSP.x64.exe .new_exe_path
+          find_one cgame_sp_x64.dll .new_cgame_path
+          find_one renderer_sp_rend2_x64.dll .new_renderer_path
+
+          new_exe="$(cat .new_exe_path)"; new_cgame="$(cat .new_cgame_path)"; new_renderer="$(cat .new_renderer_path)"
+          test "$(sha256sum "$new_exe" | awk '{print $1}')" != "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$new_cgame" | awk '{print $1}')" != "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$new_renderer" | awk '{print $1}')" != "$PARENT_RENDERER_SHA256"
+
+          strings -a "$new_renderer" > .prod_renderer_strings.txt
+          for need in r_volumetricLocalLampMaxActive r_volumetricLocalLampFullRadius r_volumetricLocalLampActiveRadius r_volumetricLocalLampHoldMs r_volumetricLocalLampFadeMs r_volumetricLocalStrength; do
+            grep -Fq "$need" .prod_renderer_strings.txt || { echo "ERROR: production renderer missing $need" >&2; exit 1; }
+          done
+          for banned in r_volumetricLocalLampStability r_volumetricLocalLampSwitchRatio r_volumetricLocalLampStabilityTrace r_volumetricLocalLampMultiSourceTrace r_volumetricLocalTrace r_volumetricSunPerfTrace r_staticPromoteVisibleSurfaceResidency r_staticPromoteCoronaResidencyBridge; do
+            if grep -Fq "$banned" .prod_renderer_strings.txt; then echo "ERROR: production renderer still exposes test/trace cvar $banned" >&2; exit 1; fi
+          done
+          # r_volumetricLocalLampMultiSource must also be absent as an exact cvar string; MaxActive is allowed.
+          if grep -Fxq 'r_volumetricLocalLampMultiSource' .prod_renderer_strings.txt; then echo "ERROR: A-B multi-source toggle remains" >&2; exit 1; fi
+
+          strings -a "$new_cgame" > .prod_cgame_strings.txt
+          for banned in 'SPR_BIND_STARTUP' 'dw_pcrbRequestedMode' 'r_staticPromoteCoronaResidencyBridge'; do
+            if grep -Fq "$banned" .prod_cgame_strings.txt; then echo "ERROR: cgame startup A-B contract remains: $banned" >&2; exit 1; fi
+          done
+
+          strings -a "$new_exe" > .prod_exe_strings.txt
+          for banned in 'g_physicalCoronaDeliveryV2' 'g_dlightPVSMultiAreaFix' 'dw_physicalCoronaDeliveryV2Diag' 'SPR_FIXV2_SV' 'PLR_NATIVE_AREA_FIX'; do
+            if grep -Fq "$banned" .prod_exe_strings.txt; then echo "ERROR: server experiment/diag cvar or telemetry remains: $banned" >&2; exit 1; fi
+          done
+
+          x86_64-w64-mingw32-objdump -p "$new_renderer" | awk '/DLL Name:/ {print tolower($3)}' > .prod_renderer_imports.txt
+          if grep -E 'pthread|winpthread|libgcc|libstdc\+\+|libssp' .prod_renderer_imports.txt >/dev/null; then
+            echo "ERROR: forbidden MinGW runtime dependency" >&2; cat .prod_renderer_imports.txt >&2; exit 1
+          fi
+          echo "Clean production runtime binary verification PASS"
+
+      - name: Package clean direct-EXE production candidate release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_stage="$(cat .parent_stage_path)"
+          new_exe="$(cat .new_exe_path)"
+          new_cgame="$(cat .new_cgame_path)"
+          new_renderer="$(cat .new_renderer_path)"
+          rm -rf release dist
+          stage="release/$RELEASE_BASENAME"
+          mkdir -p "$stage/Main" "$stage/docs" dist
+
+          # Runtime payload only. No inherited test kit, cfg chain, collectors or launchers.
+          cp "$new_exe" "$stage/ioWolfSP.x64.exe"
+          cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+          cp "$new_cgame" "$stage/Main/cgame_sp_x64.dll"
+          cp "$parent_stage/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cp "$parent_stage/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cp "$parent_stage/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cp "$parent_stage/OpenAL64.dll" "$stage/OpenAL64.dll"
+          cp "$parent_stage/SDL264.dll" "$stage/SDL264.dll"
+
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          sha256sum "$stage/docs/$PATCHER_NAME" > "$stage/docs/$PATCHER_NAME.sha256"
+          sha256sum "$stage/docs/$DELTA_NAME" > "$stage/docs/$DELTA_NAME.sha256"
+          sha256sum "$stage/docs/$CUMULATIVE_NAME" > "$stage/docs/$CUMULATIVE_NAME.sha256"
+
+          cat > "$stage/docs/README_DARKWOLF_LAMP_VOLUMETRIC_PRODUCTION_CANDIDATE_RU.txt" <<'TXT'
+          DarkWolf / ioRTCW Rend2 Single Player
+          Lamp + Volumetric Clean Production Candidate Release v1
+
+          Основа: успешно протестированный Local Volumetric Lamp Multi-Source Stability Production Candidate v2.
+          Пользователь подтвердил Factory и Escape1 как визуально/функционально правильные.
+
+          Запуск:
+            Запускайте ioWolfSP.x64.exe напрямую. CMD/тестовые CFG больше не нужны и в архив не включены.
+
+          Штатные production defaults:
+            renderer = rend2
+            r_dlightMode = 2
+            r_volumetricSun = 1
+            r_volumetricLocal = 1
+            r_volumetricLocalMode = 5
+            r_volumetricLocalStrength = 1.20
+            r_volumetricLocalLampMaxActive = 4
+            r_volumetricLocalLampFullRadius = 768
+            r_volumetricLocalLampActiveRadius = 1536
+            r_volumetricLocalLampHoldMs = 1500
+            r_volumetricLocalLampFadeMs = 650
+
+          Mode 5 всегда использует проверенный persistent physical-lamp pool. A/B toggles удалены.
+          Visible Surface Residency и spatial corona residency bridge являются штатными production paths, не A/B режимами.
+          Point-light shadows r_dlightMode 2 сохранены.
+
+          Производительность можно регулировать без пересборки:
+            r_volumetricLocalLampMaxActive 1..4
+            r_volumetricLocalStrength
+            r_volumetricLocalLampFullRadius
+            r_volumetricLocalLampActiveRadius
+          TXT
+
+          cat > "$stage/docs/PRODUCTION_DEFAULTS.txt" <<'TXT'
+          cl_renderer rend2
+          r_dlightMode 2
+          r_cubeMapping 1
+          r_pbr 1
+          r_softParticles 1
+          r_fxStage9Enable 1
+          r_volumetricSun 1
+          r_volumetricLocal 1
+          r_volumetricLocalMode 5
+          r_volumetricLocalStrength 1.20
+          r_volumetricLocalLampMaxActive 4
+          r_volumetricLocalLampFullRadius 768
+          r_volumetricLocalLampActiveRadius 1536
+          r_volumetricLocalLampHoldMs 1500
+          r_volumetricLocalLampFadeMs 650
+          TXT
+
+          cat > "$stage/docs/PRODUCTION_BUILD_INFO.txt" <<EOF
+          DarkWolf Lamp + Volumetric Clean Production Candidate Release v1
+          parent_run=$PARENT_RUN_ID
+          parent_head=$PARENT_RUN_HEAD_SHA
+          parent_artifact_id=$PARENT_ARTIFACT_ID
+          parent_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          parent_inner_zip_sha256=$PARENT_INNER_ZIP_SHA256
+          parent_cumulative_sha256=$PARENT_CUMULATIVE_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          validated_parent_behavior=LVMS v2 B_MULTI_SOURCE on Factory and Escape1
+          launch=ioWolfSP.x64.exe directly
+          cmd_files=0
+          cfg_files=0
+          diagnostic_collectors=0
+          production_multi_source=always_on_in_mode5
+          production_max_active_default=4
+          production_strength_default=1.20
+          EOF
+
+          cat > "$stage/docs/RUNTIME_FILE_MANIFEST.txt" <<'TXT'
+          ioWolfSP.x64.exe
+          renderer_sp_rend2_x64.dll
+          renderer_sp_opengl1_x64.dll
+          OpenAL64.dll
+          SDL264.dll
+          Main/cgame_sp_x64.dll
+          Main/qagame_sp_x64.dll
+          Main/ui_sp_x64.dll
+          TXT
+
+          # Absolute package cleanliness contract.
+          if find "$stage" -type f \( -iname '*.cmd' -o -iname '*.bat' -o -iname '*.cfg' -o -iname '*.ps1' \) -print | grep .; then
+            echo "ERROR: test/config/collector file leaked into clean release" >&2; exit 1
+          fi
+          while IFS= read -r f; do
+            rel="${f#$stage/}"
+            mime="$(file -b --mime-type "$f")"
+            case "$mime" in
+              text/*|application/json|application/xml|application/x-python|application/x-shellscript)
+                case "$rel" in docs/*) ;; *) echo "ERROR: text file outside docs/: $rel ($mime)" >&2; exit 1;; esac
+                ;;
+            esac
+          done < <(find "$stage" -type f -print)
+
+          # No historical test-profile names may remain in the runtime tree.
+          if find "$stage/Main" -type f ! -name '*.dll' -print | grep .; then echo "ERROR: non-DLL file leaked into Main" >&2; exit 1; fi
+          if find "$stage" -maxdepth 1 -type f | grep -E '\.(txt|sha256|patch|py|glsl|cfg|cmd|ps1)$' >/dev/null; then
+            echo "ERROR: root-level text/test file leaked into release" >&2; exit 1
+          fi
+
+          manifest_tmp="$(mktemp)"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum) > "$manifest_tmp"
+          mv "$manifest_tmp" "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && sha256sum -c docs/SHA256SUMS.txt)
+
+          (cd release && zip -X -q -r "../dist/$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          unzip -t "dist/$RELEASE_BASENAME.zip" >/dev/null
+          sha256sum "dist/$RELEASE_BASENAME.zip" > "dist/$RELEASE_BASENAME.zip.sha256"
+          echo "Clean direct-EXE production candidate release packaged"
+
+      - name: Upload clean production candidate release
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: dist/${{ env.RELEASE_BASENAME }}.zip
+          if-no-files-found: error
+          compression-level: 0
