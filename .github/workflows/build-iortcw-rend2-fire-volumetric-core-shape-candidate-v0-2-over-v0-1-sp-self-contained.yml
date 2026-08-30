@@ -1,0 +1,709 @@
+name: Build DarkWolf Rend2 Fire Volumetric Core + Shape Candidate v0.2 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-fire-volumetric-core-shape-v0-2-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Fire Volumetric v0.2 - independent core + localized plume + turbulence over runtime-tested v0.1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      # Direct runtime-tested parent: successful Fire Volumetric v0.1 run used for the user's A-E tests.
+      BASE_RUN_ID: "33299908535"
+      BASE_RUN_HEAD_SHA: 819a6d2950b86f0204bf5454ea147be0e0ebc411
+      BASE_WORKFLOW_PATH: '.github/workflows/build-iortcw-rend2-fire-volumetric-v0-1-source-routing-diagnostic-over-final-clean-r2-sp-self-contained.yml'
+      BASE_WORKFLOW_SHA256: 2819a7363e4ed6722d37a20214a803a74b00bdbbdef4d591706a74ddaaa4519a
+      BASE_WORKFLOW_BLOB_SHA: e0277dd5c10c2955ccd0d2d6536aec5ff00f4773
+      BASE_ARTIFACT_ID: "9728604159"
+      BASE_ARTIFACT_NAME: iortcw-rend2-fire-volumetric-v0-1-source-routing-diagnostic-over-final-clean-r2-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:1579a80b69dfe49b00c76dfa742ade12d9b4b4dc3587c9e0bf23353a3a2865fd
+      BASE_RELEASE_BASENAME: iortcw-rend2-fire-volumetric-v0-1-source-routing-diagnostic-over-final-clean-r2-full-sp-windows-x64-1
+      BASE_INNER_ZIP_SHA256: d393a134e50f51ae953eb3f186fd9c56bfde1b6410a0ab07de8bb767d1b17ad0
+
+      BASE_EXE_SHA256: e10fe66316d12594da8d497d0c996ae30b47af19d6fe1ccd08537407328c01ba
+      BASE_QAGAME_SHA256: b4d6b72bb43a6bb8ccce0eeaf95515da5a88dd4f048c5cf6db05e566f5dfa60a
+      BASE_CGAME_SHA256: dbcfe16805248a2d017a6f35450688caba89750b1044e16547c0c0911eec1e16
+      BASE_RENDERER_SHA256: aa438f782df37baf97d98c67412f8855e400593bea64e2c1ea775ef2e8dae12a
+      BASE_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      BASE_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      BASE_OPENAL_SHA256: 396f88738ce20905e933cb7d8c696351e41bd7e72e80b8cfdadf20ab613420b4
+      BASE_SDL_SHA256: f34cd90b131ceb45b7f32d41680a13fd4b13e5f48f0d1649cbf441833105310c
+
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-1-source-routing-diagnostic-sp.patch
+      BASE_CUMULATIVE_SHA256: 8a23ee5fe04b9e450f51ed558a42f38e0bb1df6de2802821c236bd21718f2414
+
+      PATCHER_NAME: apply_fire_volumetric_v0_2_core_shape.py
+      PATCHER_SHA256: 61a0d1b1b1f583b68b7143131d821ca6719459d385c0f68093df4e85a44d2dfc
+      PATCHER_GZ_SHA256: d8fa2ba818fed651f67b7e1884b884ab05646e39217aef6ecc211d36ea6453af
+      DELTA_NAME: darkwolf-fire-volumetric-v0-2-core-shape-over-v0-1.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-2-core-shape-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-fire-volumetric-core-shape-candidate-v0-2-over-v0-1-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Preflight workflow YAML and bash contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: cannot resolve workflow: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY'
+          from pathlib import Path
+          import subprocess, sys, yaml
+          p = Path(sys.argv[1])
+          doc = yaml.safe_load(p.read_text(encoding='utf-8'))
+          expected = 'Build DarkWolf Rend2 Fire Volumetric Core + Shape Candidate v0.2 SP'
+          if doc.get('name') != expected:
+              raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+          checked = 0
+          for job_name, job in (doc.get('jobs') or {}).items():
+              for index, step in enumerate(job.get('steps') or [], 1):
+                  script = step.get('run')
+                  shell = step.get('shell', 'bash')
+                  if not script or not str(shell).lower().startswith('bash'):
+                      continue
+                  proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                      print(proc.stderr, file=sys.stderr)
+                      raise SystemExit(proc.returncode)
+                  checked += 1
+          if checked < 1:
+              raise SystemExit('ERROR: no bash blocks found')
+          print(f'Workflow YAML + bash syntax PASS: {checked} bash blocks')
+          PY
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git gzip \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Verify exact runtime-tested Fire Volumetric v0.1 parent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: base HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo "ERROR: base run not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: base workflow drift" >&2; exit 1; }
+          workflow_blob="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${BASE_WORKFLOW_PATH}?ref=${BASE_RUN_HEAD_SHA}" --jq '.sha')"
+          test "$workflow_blob" = "$BASE_WORKFLOW_BLOB_SHA" || { echo "ERROR: exact v0.1 workflow blob drift" >&2; exit 1; }
+          workflow_sha="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${BASE_WORKFLOW_PATH}?ref=${BASE_RUN_HEAD_SHA}" --jq '.content' | tr -d '\n' | base64 -d | sha256sum | awk '{print $1}')"
+          test "$workflow_sha" = "$BASE_WORKFLOW_SHA256" || { echo "ERROR: exact v0.1 workflow SHA256 drift" >&2; exit 1; }
+          line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$line" || { echo "ERROR: exact base artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$line"
+          test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: base artifact name drift" >&2; exit 1; }
+          test "$expired" = "false" || { echo "ERROR: base artifact expired" >&2; exit 1; }
+          test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: base artifact digest drift" >&2; exit 1; }
+          echo "Exact runtime-tested Fire Volumetric v0.1 provenance PASS"
+
+      - name: Download and byte-verify exact Fire Volumetric v0.1 payload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          base_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+          test -s "$base_zip" || { echo "ERROR: base inner ZIP missing" >&2; find base-artifact -maxdepth 2 -type f -print; exit 1; }
+          test "$(sha256sum "$base_zip" | awk '{print $1}')" = "$BASE_INNER_ZIP_SHA256" || { echo "ERROR: base inner ZIP SHA drift" >&2; exit 1; }
+          unzip -q "$base_zip" -d base-release
+          base_stage="base-release/$BASE_RELEASE_BASENAME"
+          test -d "$base_stage" || { echo "ERROR: base stage missing" >&2; exit 1; }
+          check_sha() { test "$(sha256sum "$1" | awk '{print $1}')" = "$2" || { echo "ERROR: SHA drift: $1" >&2; exit 1; }; }
+          check_sha "$base_stage/ioWolfSP.x64.exe" "$BASE_EXE_SHA256"
+          check_sha "$base_stage/Main/qagame_sp_x64.dll" "$BASE_QAGAME_SHA256"
+          check_sha "$base_stage/Main/cgame_sp_x64.dll" "$BASE_CGAME_SHA256"
+          check_sha "$base_stage/renderer_sp_rend2_x64.dll" "$BASE_RENDERER_SHA256"
+          check_sha "$base_stage/renderer_sp_opengl1_x64.dll" "$BASE_OPENGL1_SHA256"
+          check_sha "$base_stage/Main/ui_sp_x64.dll" "$BASE_UI_SHA256"
+          check_sha "$base_stage/OpenAL64.dll" "$BASE_OPENAL_SHA256"
+          check_sha "$base_stage/SDL264.dll" "$BASE_SDL_SHA256"
+          check_sha "$base_stage/docs/$BASE_CUMULATIVE_NAME" "$BASE_CUMULATIVE_SHA256"
+          printf '%s\n' "$base_stage" > .base_stage_path
+          echo "Exact Fire Volumetric v0.1 runtime/source payload PASS"
+
+      - name: Reconstruct exact Fire Volumetric v0.1 source tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          rm -rf source replay
+          git clone "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source reset --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" .base-cumulative.patch
+          test "$(sha256sum .base-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          git -C source apply --check --binary ../.base-cumulative.patch
+          git -C source apply --binary ../.base-cumulative.patch
+          git -C source add -A
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > .rebuilt-base-cumulative.patch
+          test -s .rebuilt-base-cumulative.patch
+          test "$(sha256sum .rebuilt-base-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256" || { echo "ERROR: reconstructed base cumulative SHA drift" >&2; exit 1; }
+          cmp .base-cumulative.patch .rebuilt-base-cumulative.patch || { echo "ERROR: exact base source reconstruction drift" >&2; exit 1; }
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source config user.name "DarkWolf CI"
+          git -C source commit -m "Exact runtime-tested Fire Volumetric v0.1 source base"
+          git -C source rev-parse HEAD > .base_source_commit
+          test -z "$(git -C source status --porcelain)" || { echo "ERROR: reconstructed base source not clean" >&2; exit 1; }
+          echo "Exact Fire Volumetric v0.1 source reconstruction PASS"
+
+      - name: Apply Fire Volumetric v0.2 Core + Shape delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > .patcher.b64 <<'B64'
+          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
+          xyPrx7UAAA
+          B64
+          tr -d '\r\n' < .patcher.b64 | base64 -d > .patcher.gz
+          test "$(sha256sum .patcher.gz | awk '{print $1}')" = "$PATCHER_GZ_SHA256" || { echo "ERROR: v0.2 patcher gzip SHA drift" >&2; exit 1; }
+          gzip -dc .patcher.gz > "$PATCHER_NAME"
+          chmod +x "$PATCHER_NAME"
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: v0.2 patcher SHA drift" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+
+          parent_commit="$(cat .base_source_commit)"
+          python3 "$PATCHER_NAME" source --check-only
+          python3 "$PATCHER_NAME" source
+
+          mapfile -t changed < <(git -C source diff --name-only "$parent_commit" -- . | sort)
+          expected=(
+            SP/code/rend2/glsl/volumetriclocal_fp.glsl
+            SP/code/rend2/tr_backend.c
+            SP/code/rend2/tr_glsl.c
+          )
+          if [ "${#changed[@]}" -ne "${#expected[@]}" ]; then
+            printf 'ERROR: expected %d v0.2 changed files, got %d\n' "${#expected[@]}" "${#changed[@]}" >&2
+            printf '  %s\n' "${changed[@]}" >&2
+            exit 1
+          fi
+          for i in "${!expected[@]}"; do
+            test "${changed[$i]}" = "${expected[$i]}" || { echo "ERROR: v0.2 allowlist drift" >&2; printf '  %s\n' "${changed[@]}" >&2; exit 1; }
+          done
+
+          git -C source diff --check "$parent_commit" -- .
+          git -C source diff --binary "$parent_commit" -- . > "$DELTA_NAME"
+          test -s "$DELTA_NAME"
+          git -C source apply --check --reverse --binary "../$DELTA_NAME"
+          if python3 "$PATCHER_NAME" source --check-only >/dev/null 2>&1; then
+            echo "ERROR: repeat-apply guard failed; v0.2 patcher still accepts modified source" >&2
+            exit 1
+          fi
+
+          git -C source add -A
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > "$CUMULATIVE_NAME"
+          test -s "$CUMULATIVE_NAME"
+          sha256sum "$DELTA_NAME" > "$DELTA_NAME.sha256"
+          sha256sum "$CUMULATIVE_NAME" > "$CUMULATIVE_NAME.sha256"
+          echo "Fire Volumetric v0.2 Core + Shape source delta PASS"
+
+      - name: Guardrail Fire v0.2 core independence, shaping and frozen systems
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          scene=source/SP/code/rend2/tr_scene.c
+          localh=source/SP/code/rend2/tr_local.h
+          backend=source/SP/code/rend2/tr_backend.c
+          glsl=source/SP/code/rend2/tr_glsl.c
+          fp=source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+
+          # v0.1 source recognition is frozen and remains authoritative.
+          grep -Fq 'qboolean fireVolumetricSource;' "$localh" || { echo "ERROR: v0.1 fire identity lost" >&2; exit 1; }
+          grep -Fq 'R_DarkWolfFireVolumetricSourceMatch' "$scene" || { echo "ERROR: v0.1 strict fire matcher lost" >&2; exit 1; }
+          grep -Fq 'PLR_V01_MARKER_SPEAKER' "$scene" || { echo "ERROR: v0.1 fire-speaker evidence lost" >&2; exit 1; }
+
+          # Core fix: shared point-volume shader is no longer gated by r_volumetricLocal.
+          grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_2_CORE_SHAPE: the point-volume core is shared infrastructure.' "$glsl" || { echo "ERROR: v0.2 shared-core init missing" >&2; exit 1; }
+          grep -Fq 'fireIndependent=1' "$glsl" || { echo "ERROR: v0.2 independent-core startup marker missing" >&2; exit 1; }
+          if grep -F 'if (r_volumetricLocal->integer)' "$glsl" -A4 | grep -Fq 'GLSL_InitGPUShader(&tr.volumetricLocalShader'; then
+            echo "ERROR: shared point-volume shader is still gated by r_volumetricLocal" >&2; exit 1
+          fi
+
+          # Shape candidate: new modes 5/6 only, preserving existing local modes 1..4.
+          grep -Fq 'float fireShapeMask' "$fp" || { echo "ERROR: fire shape function missing" >&2; exit 1; }
+          grep -Fq 'mode == 5 || mode == 6' "$fp" || { echo "ERROR: fire-shape GLSL mode gate missing" >&2; exit 1; }
+          grep -Fq 'mode == 3 || mode == 6' "$fp" || { echo "ERROR: shadow-aware fire shape missing" >&2; exit 1; }
+          grep -Fq 'r_volumetricFirePlumeRadius", "0.42"' "$backend" || { echo "ERROR: plume radius default missing" >&2; exit 1; }
+          grep -Fq 'r_volumetricFirePlumeHeight", "0.95"' "$backend" || { echo "ERROR: plume height default missing" >&2; exit 1; }
+          grep -Fq 'r_volumetricFireTurbulence", "0.35"' "$backend" || { echo "ERROR: turbulence default missing" >&2; exit 1; }
+          grep -Fq 'r_volumetricFireStrength", "1.00"' "$backend" || { echo "ERROR: fire strength default missing" >&2; exit 1; }
+          grep -Fq 'FIREVOL02_DIAG' "$backend" || { echo "ERROR: truthful v0.2 telemetry missing" >&2; exit 1; }
+          grep -Fq 'renderedCount' "$backend" || { echo "ERROR: actual-render counter missing" >&2; exit 1; }
+          grep -Fq 'shaderReady=%d' "$backend" || { echo "ERROR: shader readiness telemetry missing" >&2; exit 1; }
+
+          # Accepted local lamp, Sun, ToneMap and point-shadow paths remain present.
+          grep -Fq 'multiLampCount = RB_LocalVolumetricSelectStableLampPool' "$backend" || { echo "ERROR: accepted 4-lamp stable pool lost" >&2; exit 1; }
+          grep -Fq 'r_volumetricLocalLampMaxActive", "4"' "$backend" || { echo "ERROR: accepted lamp max-active lost" >&2; exit 1; }
+          grep -Fq 'RB_VolumetricSun(srcFbo, srcBox);' "$backend" || { echo "ERROR: Sun Volumetric call lost" >&2; exit 1; }
+          grep -Fq 'RB_ToneMap' "$backend" || { echo "ERROR: ToneMap path lost" >&2; exit 1; }
+          grep -Fq 'localDlightVisibility' "$fp" || { echo "ERROR: existing dlight volumetric shadow sampler lost" >&2; exit 1; }
+
+          # Functional delta is exactly three Rend2 files. No cgame/game/server/client, no FBO, no scene/classifier delta.
+          parent_commit="$(cat .base_source_commit)"
+          test -z "$(git -C source diff --name-only "$parent_commit" -- . | grep -E '^SP/code/(cgame|game|server|client)/')" || { echo "ERROR: v0.2 altered non-renderer code" >&2; exit 1; }
+          test -z "$(git -C source diff --name-only "$parent_commit" -- . | grep -E 'tr_(scene|fbo|init|world|main)\.c$')" || { echo "ERROR: v0.2 touched frozen renderer subsystem" >&2; exit 1; }
+          echo "Fire Volumetric v0.2 frozen-system Guardrail PASS"
+
+      - name: Independent cumulative replay from pinned upstream
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf replay
+          git -C source worktree add --detach ../replay "$UPSTREAM_SHA"
+          git -C replay apply --check --binary "../$CUMULATIVE_NAME"
+          git -C replay apply --binary "../$CUMULATIVE_NAME"
+          git -C replay add -A
+          git -C replay diff --cached --binary "$UPSTREAM_SHA" -- . > .replayed-cumulative.patch
+          cmp "$CUMULATIVE_NAME" .replayed-cumulative.patch || { echo "ERROR: cumulative replay drift" >&2; exit 1; }
+          test "$(sha256sum .replayed-cumulative.patch | awk '{print $1}')" = "$(sha256sum "$CUMULATIVE_NAME" | awk '{print $1}')"
+          echo "Independent cumulative replay PASS"
+
+      - name: Build canonical Windows x64 full SP Core + Shape candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify rebuilt Rend2 and freeze unaffected Fire v0.1 runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          find_one() {
+            local name="$1" out="$2"
+            mapfile -t a < <(find source/SP/build -type f -name "$name" -print | sort)
+            test "${#a[@]}" -eq 1 || { printf 'ERROR: expected one %s, got %d\n' "$name" "${#a[@]}" >&2; exit 1; }
+            test -s "${a[0]}" || { echo "ERROR: empty build output $name" >&2; exit 1; }
+            printf '%s\n' "${a[0]}" > "$out"
+          }
+          find_one ioWolfSP.x64.exe .rebuilt_exe_path
+          find_one qagame_sp_x64.dll .rebuilt_qagame_path
+          find_one cgame_sp_x64.dll .rebuilt_cgame_path
+          find_one renderer_sp_rend2_x64.dll .new_renderer_path
+          find_one renderer_sp_opengl1_x64.dll .rebuilt_opengl1_path
+          find_one ui_sp_x64.dll .rebuilt_ui_path
+
+          new_renderer="$(cat .new_renderer_path)"
+          file "$new_renderer" > .new_renderer_file.txt
+          grep -Fq 'PE32+ executable' .new_renderer_file.txt || { echo "ERROR: rebuilt Rend2 not PE32+" >&2; cat .new_renderer_file.txt >&2; exit 1; }
+          grep -Fq 'x86-64' .new_renderer_file.txt || { echo "ERROR: rebuilt Rend2 not x86-64" >&2; cat .new_renderer_file.txt >&2; exit 1; }
+          grep -Fq '(DLL)' .new_renderer_file.txt || { echo "ERROR: rebuilt Rend2 not DLL" >&2; cat .new_renderer_file.txt >&2; exit 1; }
+          strings -a "$new_renderer" > .new_renderer_strings.txt
+          for need in r_volumetricFire r_volumetricFireShape r_volumetricFireStrength r_volumetricFireDensity r_volumetricFirePlumeRadius r_volumetricFirePlumeHeight r_volumetricFireTurbulence r_volumetricFireSpeed FIREVOL02_DIAG fireIndependent=1 r_volumetricLocalLampMaxActive; do
+            grep -Fq "$need" .new_renderer_strings.txt || { echo "ERROR: rebuilt Rend2 missing $need" >&2; exit 1; }
+          done
+
+          base_stage="$(cat .base_stage_path)"
+          check_base() { local rel="$1" sha="$2"; test "$(sha256sum "$base_stage/$rel" | awk '{print $1}')" = "$sha" || { echo "ERROR: frozen v0.1 runtime drift: $rel" >&2; exit 1; }; }
+          check_base ioWolfSP.x64.exe "$BASE_EXE_SHA256"
+          check_base Main/qagame_sp_x64.dll "$BASE_QAGAME_SHA256"
+          check_base Main/cgame_sp_x64.dll "$BASE_CGAME_SHA256"
+          check_base renderer_sp_opengl1_x64.dll "$BASE_OPENGL1_SHA256"
+          check_base Main/ui_sp_x64.dll "$BASE_UI_SHA256"
+          printf '%s\n' "$(sha256sum "$new_renderer" | awk '{print $1}')" > .new_renderer_sha256
+          echo "Rebuilt Fire v0.2 Rend2 verification PASS; unaffected runtime frozen from tested v0.1"
+
+      - name: Package Fire Volumetric v0.2 comprehensive test kit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          new_renderer="$(cat .new_renderer_path)"
+          rm -rf release dist
+          stage="release/$RELEASE_BASENAME"
+          mkdir -p "$stage/Main" "$stage/docs" dist
+
+          # Preserve every non-Rend2 runtime module from the tested v0.1 artifact.
+          cp "$base_stage/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cp "$base_stage/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cp "$base_stage/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cp "$base_stage/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cp "$base_stage/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cp "$base_stage/OpenAL64.dll" "$stage/OpenAL64.dll"
+          cp "$base_stage/SDL264.dll" "$stage/SDL264.dll"
+          cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          printf '%s  %s\n' "$PATCHER_SHA256" "$PATCHER_NAME" > "$stage/docs/$PATCHER_NAME.sha256"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$DELTA_NAME.sha256" "$stage/docs/$DELTA_NAME.sha256"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          cp "$CUMULATIVE_NAME.sha256" "$stage/docs/$CUMULATIVE_NAME.sha256"
+          cp .base-cumulative.patch "$stage/docs/$BASE_CUMULATIVE_NAME"
+
+          cat > "$stage/docs/EXACT_BASE.txt" <<EOF
+          DarkWolf / ioRTCW Rend2 Single Player
+          Fire Volumetric v0.2 direct runtime-tested parent
+          run=$BASE_RUN_ID
+          head=$BASE_RUN_HEAD_SHA
+          workflow=$BASE_WORKFLOW_PATH
+          workflow_sha256=$BASE_WORKFLOW_SHA256
+          workflow_blob_sha=$BASE_WORKFLOW_BLOB_SHA
+          artifact=$BASE_ARTIFACT_ID
+          artifact_name=$BASE_ARTIFACT_NAME
+          artifact_digest=$BASE_ARTIFACT_DIGEST
+          inner_zip_sha256=$BASE_INNER_ZIP_SHA256
+          cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          upstream=$UPSTREAM_SHA
+          runtime_policy=replace renderer_sp_rend2_x64.dll only; preserve every other tested v0.1 runtime binary byte-identical
+          EOF
+
+          write_common_fire_cfg() {
+            cat <<'EOF'
+          seta r_volumetricFireSourceMode "0"
+          seta r_volumetricFireMaxActive "1"
+          seta r_volumetricFireDiag "1"
+          seta r_volumetricFireStrength "1.00"
+          seta r_volumetricFireDensity "0.0060"
+          seta r_volumetricFireSamples "24"
+          seta r_volumetricFirePlumeRadius "0.42"
+          seta r_volumetricFirePlumeHeight "0.95"
+          seta r_volumetricFireSpeed "1.40"
+          seta r_volumetricLocalMode "5"
+          seta r_volumetricLocalStrength "1.20"
+          seta cg_drawFPS "1"
+          EOF
+          }
+
+          { write_common_fire_cfg; cat <<'EOF'
+          seta r_volumetricFire "1"
+          seta r_volumetricFireMode "3"
+          seta r_volumetricFireShape "0"
+          seta r_volumetricFireTurbulence "0.00"
+          seta r_volumetricLocal "1"
+          echo FIREVOL02_MODE=A_V01_SPHERE_REFERENCE local=1 shape=0 shadow=1
+          EOF
+          } > "$stage/Main/FIREVOL02_A_V01_SPHERE_REFERENCE.cfg"
+
+          { write_common_fire_cfg; cat <<'EOF'
+          seta r_volumetricFire "1"
+          seta r_volumetricFireMode "3"
+          seta r_volumetricFireShape "0"
+          seta r_volumetricFireTurbulence "0.00"
+          seta r_volumetricLocal "0"
+          echo FIREVOL02_MODE=B_CORE_FIRE_ONLY local=0 shape=0 shadow=1
+          EOF
+          } > "$stage/Main/FIREVOL02_B_CORE_FIRE_ONLY.cfg"
+
+          { write_common_fire_cfg; cat <<'EOF'
+          seta r_volumetricFire "1"
+          seta r_volumetricFireMode "3"
+          seta r_volumetricFireShape "1"
+          seta r_volumetricFireTurbulence "0.00"
+          seta r_volumetricLocal "0"
+          echo FIREVOL02_MODE=C_PLUME_STATIC local=0 shape=1 turbulence=0 shadow=1
+          EOF
+          } > "$stage/Main/FIREVOL02_C_PLUME_STATIC.cfg"
+
+          { write_common_fire_cfg; cat <<'EOF'
+          seta r_volumetricFire "1"
+          seta r_volumetricFireMode "3"
+          seta r_volumetricFireShape "1"
+          seta r_volumetricFireTurbulence "0.35"
+          seta r_volumetricLocal "0"
+          echo FIREVOL02_MODE=D_PLUME_TURBULENT_SHADOW local=0 shape=1 turbulence=0.35 shadow=1
+          EOF
+          } > "$stage/Main/FIREVOL02_D_PLUME_TURBULENT_SHADOW.cfg"
+
+          { write_common_fire_cfg; cat <<'EOF'
+          seta r_volumetricFire "1"
+          seta r_volumetricFireMode "2"
+          seta r_volumetricFireShape "1"
+          seta r_volumetricFireTurbulence "0.35"
+          seta r_volumetricLocal "0"
+          echo FIREVOL02_MODE=E_PLUME_TURBULENT_NOSHADOW local=0 shape=1 turbulence=0.35 shadow=0
+          EOF
+          } > "$stage/Main/FIREVOL02_E_PLUME_TURBULENT_NOSHADOW.cfg"
+
+          cat > "$stage/FIREVOL02_COLLECT.ps1" <<'PS1'
+          param([string]$Mode,[string]$TestHome,[string]$Root)
+          $ErrorActionPreference='Stop'
+          $results=Join-Path $Root 'FIREVOL02_RESULTS'
+          New-Item -ItemType Directory -Force -Path $results | Out-Null
+          $work=Join-Path $results $Mode
+          if(Test-Path $work){Remove-Item -Recurse -Force $work}
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          "mode=$Mode" | Set-Content -Encoding ASCII (Join-Path $work 'MODE.txt')
+          $logs=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'rtcwconsole.log' -ErrorAction SilentlyContinue
+          if($logs.Count -gt 0){
+            Copy-Item $logs[0].FullName (Join-Path $work 'rtcwconsole.log') -Force
+          }
+          $logPath=Join-Path $work 'rtcwconsole.log'
+          if(Test-Path $logPath){
+            Select-String -Path $logPath -Pattern 'FIREVOL02_DIAG|FIREVOL02_MODE=|Fire Volumetric v0.2: shared point-volume core loaded|PLR_V01_SUMMARY' | ForEach-Object {$_.Line} | Set-Content -Encoding UTF8 (Join-Path $work 'FIREVOL02_RELEVANT_LINES.txt')
+            $diag=(Select-String -Path $logPath -Pattern 'FIREVOL02_DIAG' | Measure-Object).Count
+            $selected=(Select-String -Path $logPath -Pattern 'FIREVOL02_DIAG.*selected=[1-9]' | Measure-Object).Count
+            $rendered=(Select-String -Path $logPath -Pattern 'FIREVOL02_DIAG.*rendered=[1-9]' | Measure-Object).Count
+            $ready=(Select-String -Path $logPath -Pattern 'FIREVOL02_DIAG.*shaderReady=1' | Measure-Object).Count
+            $localoff=(Select-String -Path $logPath -Pattern 'FIREVOL02_DIAG.*localEnabled=0' | Measure-Object).Count
+            $shape=(Select-String -Path $logPath -Pattern 'FIREVOL02_DIAG.*shape=1' | Measure-Object).Count
+            $shadow=(Select-String -Path $logPath -Pattern 'FIREVOL02_DIAG.*shadow=1' | Measure-Object).Count
+            $activation=(Select-String -Path $logPath -Pattern ("FIREVOL02_MODE=" + $Mode) | Measure-Object).Count
+            @(
+              "activation_valid=" + [int]($activation -gt 0),
+              "diag_records=$diag",
+              "selected_records=$selected",
+              "rendered_records=$rendered",
+              "shader_ready_records=$ready",
+              "local_off_records=$localoff",
+              "shape_records=$shape",
+              "shadow_records=$shadow"
+            ) | Set-Content -Encoding ASCII (Join-Path $work 'FIREVOL02_TEST_SUMMARY.txt')
+          } else {
+            'console_log_missing=1' | Set-Content -Encoding ASCII (Join-Path $work 'FIREVOL02_TEST_SUMMARY.txt')
+          }
+          $shots=Get-ChildItem -Path $TestHome -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.Extension -match '^\.(tga|jpg|jpeg|png)$'}
+          if($shots){
+            $shotDir=Join-Path $work 'screenshots'
+            New-Item -ItemType Directory -Force -Path $shotDir | Out-Null
+            foreach($s in $shots){ Copy-Item $s.FullName (Join-Path $shotDir $s.Name) -Force }
+          }
+          $cfg=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'wolfconfig.cfg' -ErrorAction SilentlyContinue
+          if($cfg.Count -gt 0){ Copy-Item $cfg[0].FullName (Join-Path $work 'wolfconfig.cfg') -Force }
+          $zip=Join-Path $results ($Mode + '.zip')
+          if(Test-Path $zip){Remove-Item -Force $zip}
+          Compress-Archive -Path (Join-Path $work '*') -DestinationPath $zip -Force
+          Write-Host "Fire Volumetric v0.2 result: $zip"
+          PS1
+
+          make_launcher() {
+            local file="$1" mode="$2" cfg="$3" local_on="$4" fire_on="$5" shape="$6" map="$7"
+            cat > "$stage/$file" <<EOF
+          @echo off
+          setlocal
+          cd /d "%~dp0"
+          set "MODE=$mode"
+          set "TESTHOME=%~dp0FIREVOL02_TEST_HOME\%MODE%"
+          if exist "%TESTHOME%" rmdir /s /q "%TESTHOME%"
+          mkdir "%TESTHOME%"
+          echo Running Fire Volumetric v0.2 $mode on $map...
+          echo Use the same torch, camera position and angle for A-E. Wait 4-6 seconds and press F12 twice.
+          ioWolfSP.x64.exe +set fs_homepath "%TESTHOME%" +set com_recommendedSet 1 +set cl_renderer rend2 +set logfile 2 +set r_volumetricLocal "$local_on" +set r_volumetricFire "$fire_on" +set r_volumetricFireShape "$shape" +exec $cfg +map $map
+          powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0FIREVOL02_COLLECT.ps1" -Mode "$mode" -TestHome "%TESTHOME%" -Root "%~dp0"
+          pause
+          EOF
+          }
+          make_launcher RUN_FIREVOL02_01_A_V01_SPHERE_REFERENCE.cmd A_V01_SPHERE_REFERENCE FIREVOL02_A_V01_SPHERE_REFERENCE.cfg 1 1 0 crypt1
+          make_launcher RUN_FIREVOL02_02_B_CORE_FIRE_ONLY.cmd B_CORE_FIRE_ONLY FIREVOL02_B_CORE_FIRE_ONLY.cfg 0 1 0 crypt1
+          make_launcher RUN_FIREVOL02_03_C_PLUME_STATIC.cmd C_PLUME_STATIC FIREVOL02_C_PLUME_STATIC.cfg 0 1 1 crypt1
+          make_launcher RUN_FIREVOL02_04_D_PLUME_TURBULENT_SHADOW.cmd D_PLUME_TURBULENT_SHADOW FIREVOL02_D_PLUME_TURBULENT_SHADOW.cfg 0 1 1 crypt1
+          make_launcher RUN_FIREVOL02_05_E_PLUME_TURBULENT_NOSHADOW.cmd E_PLUME_TURBULENT_NOSHADOW FIREVOL02_E_PLUME_TURBULENT_NOSHADOW.cfg 0 1 1 crypt1
+
+          cat > "$stage/README_FIRE_VOLUMETRIC_V0_2_RU.txt" <<'EOF'
+          DARKWOLF / ioRTCW Rend2 SP — FIRE VOLUMETRIC CORE + SHAPE v0.2
+          =================================================================
+          ROOT QUESTION
+          Может ли уже доказанный strict Fire source из v0.1:
+          1) рендериться независимо от r_volumetricLocal=0;
+          2) вместо большого сферического оранжевого тумана формировать локальный вертикальный plume;
+          3) получить заметную, но стабильную анимированную turbulence;
+          4) сохранить уже доказанный point-light shadow cubemap path?
+
+          EXACT PARENT
+          Успешный и протестированный Fire Volumetric v0.1: run 33299908535.
+          В v0.2 не меняются source recognition, PLR, Static Promotion, lamp pool, Sun, Bloom,
+          ToneMap/Exposure, PVS/residency, shadows architecture, CGAME/QAGAME/server/client.
+
+          TEST ORDER — crypt1, один и тот же факел, одинаковая камера
+          01 A_V01_SPHERE_REFERENCE
+             Контроль: воспроизводит v0.1 E — shape OFF, Local ON, Fire shadow-aware.
+          02 B_CORE_FIRE_ONLY
+             Core proof: shape OFF, Local OFF. FIREVOL02_DIAG должен показать shaderReady=1,
+             localEnabled=0, rendered=1. Визуально Fire sphere должен остаться.
+          03 C_PLUME_STATIC
+             Local OFF, shape ON, turbulence=0. Проверяет только localized vertical plume.
+          04 D_PLUME_TURBULENT_SHADOW
+             Основной candidate: Local OFF, plume + animated turbulence + point shadow.
+          05 E_PLUME_TURBULENT_NOSHADOW
+             Control: тот же plume/turbulence без cubemap shadow; сравнить с D.
+
+          В КАЖДОМ A-E
+          - выберите тот же факел crypt1;
+          - стойте примерно в том же месте и смотрите тем же углом;
+          - ждите 4-6 секунд;
+          - F12;
+          - немного поверните камеру в сторону коридора, F12;
+          - выйдите из игры.
+          Launcher автоматически создаёт FIREVOL02_RESULTS\<MODE>.zip.
+
+          EXPECTED VISUAL
+          A: старый большой orange sphere/fog reference.
+          B: примерно тот же Fire contribution при Local=0 — это доказывает core independence.
+          C: большая часть room-wide orange fog должна исчезнуть; светорассеяние концентрируется
+             вокруг факела и вытягивается вверх.
+          D: форма C должна слегка изгибаться/пульсировать со временем, без хаотичного мерцания всей комнаты.
+          E: форма примерно как D, но геометрическое shadow-cutoff должно быть слабее/отсутствовать.
+
+          DECISION TABLE
+          B rendered=1 + shaderReady=1 + localEnabled=0 и Fire визуально есть:
+            CORE FIX CONFIRMED.
+          B selected=1, rendered=0 или shaderReady=0:
+            core independence failed; shape result не интерпретировать.
+          B PASS, C намного локальнее A/B:
+            localized plume architecture confirmed.
+          C PASS, D имеет мягкое живое движение без room-wide flicker:
+            turbulence architecture confirmed.
+          D shadow=1 и D/E отличаются ожидаемо:
+            shaped Fire + point-shadow architecture confirmed -> переход к quality tuning.
+          C/D слишком слабые, но rendered=1:
+            architecture PASS; только tuning Strength/Density/Radius/Height.
+          C/D всё ещё заполняют комнату:
+            shape mask слишком широк; уменьшать PlumeRadius/Height, а не менять source routing.
+          EOF
+
+          cat > "$stage/docs/TEST_MATRIX.txt" <<'EOF'
+          A_V01_SPHERE_REFERENCE: fire=1 mode=3 shape=0 local=1 turbulence=0.00 — visually-proven v0.1 E reference.
+          B_CORE_FIRE_ONLY: fire=1 mode=3 shape=0 local=0 turbulence=0.00 — proves shared shader/core independence.
+          C_PLUME_STATIC: fire=1 mode=3 shape=1 local=0 turbulence=0.00 — isolates localized vertical shaping.
+          D_PLUME_TURBULENT_SHADOW: fire=1 mode=3 shape=1 local=0 turbulence=0.35 speed=1.40 — primary candidate.
+          E_PLUME_TURBULENT_NOSHADOW: fire=1 mode=2 shape=1 local=0 turbulence=0.35 speed=1.40 — shadow control.
+          Common shape start: Strength=1.00 Density=0.0060 Samples=24 PlumeRadius=0.42 PlumeHeight=0.95 MaxActive=1.
+          No new texture/noise asset/FBO/history buffer is introduced; turbulence is analytic and time-driven.
+          EOF
+
+          find "$stage" -type f ! -name 'SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > "$stage/docs/SHA256SUMS.txt"
+          (cd release && zip -qr "../dist/${RELEASE_BASENAME}.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+          unzip -t "dist/${RELEASE_BASENAME}.zip" >/dev/null
+          echo "Fire Volumetric v0.2 comprehensive test kit packaged"
+
+      - name: Final Fire Volumetric v0.2 package audit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="release/$RELEASE_BASENAME"
+          zipfile="dist/${RELEASE_BASENAME}.zip"
+          test -s "$zipfile"
+          new_renderer_sha="$(cat .new_renderer_sha256)"
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$new_renderer_sha"
+          test "$new_renderer_sha" != "$BASE_RENDERER_SHA256" || { echo "ERROR: v0.2 renderer unexpectedly equals v0.1 parent" >&2; exit 1; }
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$BASE_OPENGL1_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+
+          for f in             RUN_FIREVOL02_01_A_V01_SPHERE_REFERENCE.cmd             RUN_FIREVOL02_02_B_CORE_FIRE_ONLY.cmd             RUN_FIREVOL02_03_C_PLUME_STATIC.cmd             RUN_FIREVOL02_04_D_PLUME_TURBULENT_SHADOW.cmd             RUN_FIREVOL02_05_E_PLUME_TURBULENT_NOSHADOW.cmd             FIREVOL02_COLLECT.ps1 README_FIRE_VOLUMETRIC_V0_2_RU.txt; do
+            test -s "$stage/$f" || { echo "ERROR: missing v0.2 test-kit file $f" >&2; exit 1; }
+          done
+          for f in FIREVOL02_A_V01_SPHERE_REFERENCE.cfg FIREVOL02_B_CORE_FIRE_ONLY.cfg FIREVOL02_C_PLUME_STATIC.cfg FIREVOL02_D_PLUME_TURBULENT_SHADOW.cfg FIREVOL02_E_PLUME_TURBULENT_NOSHADOW.cfg; do
+            test -s "$stage/Main/$f" || { echo "ERROR: missing v0.2 mode CFG $f" >&2; exit 1; }
+          done
+
+          # Prevent recurrence of the v0.1 PowerShell $HOME failure.
+          ! grep -Eq 'param\([^)]*\$Home([,)]|\s)' "$stage/FIREVOL02_COLLECT.ps1" || { echo "ERROR: collector reintroduced reserved PowerShell Home parameter" >&2; exit 1; }
+          grep -Fq '$TestHome' "$stage/FIREVOL02_COLLECT.ps1" || { echo "ERROR: collector TestHome parameter missing" >&2; exit 1; }
+          grep -Fq -- '-TestHome "%TESTHOME%"' "$stage/RUN_FIREVOL02_02_B_CORE_FIRE_ONLY.cmd" || { echo "ERROR: corrected collector invocation missing" >&2; exit 1; }
+          grep -Fq '+set r_volumetricLocal "0"' "$stage/RUN_FIREVOL02_02_B_CORE_FIRE_ONLY.cmd" || { echo "ERROR: Local=0 not established before renderer init in core test" >&2; exit 1; }
+
+          strings -a "$stage/renderer_sp_rend2_x64.dll" > .final_renderer_strings.txt
+          for need in r_volumetricFireShape r_volumetricFirePlumeRadius r_volumetricFirePlumeHeight r_volumetricFireTurbulence FIREVOL02_DIAG fireIndependent=1; do
+            grep -Fq "$need" .final_renderer_strings.txt || { echo "ERROR: packaged Rend2 missing $need" >&2; exit 1; }
+          done
+          if find "$stage" -type f \( -iname '*.pk3' -o -iname '*.bsp' -o -iname '*.roq' -o -iname '*.wav' -o -iname '*.mp3' -o -iname '*.ogg' \) -print -quit | grep -q .; then
+            echo "ERROR: commercial/game asset detected in v0.2 package" >&2; exit 1
+          fi
+          unzip -t "$zipfile" >/dev/null
+          echo "FINAL FIRE VOLUMETRIC v0.2 PACKAGE AUDIT PASS"
+
+      - name: Upload Fire Volumetric v0.2 Core + Shape candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
