@@ -1,0 +1,1062 @@
+name: Build DarkWolf Rend2 Fire Volumetric v0.7.1 Latched Flame Anchor Isolation SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-fire-volumetric-v0-7-1-latched-anchor-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Fire Volumetric v0.7.1 - latched world anchor isolation over exact tested v0.7
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      # Exact runtime-tested v0.7 parent used for the user's B/C observations.
+      BASE_RUN_ID: "33395377544"
+      BASE_RUN_HEAD_SHA: 5956df8d25fbb5e247317b74e1e4d782e139b2c7
+      BASE_WORKFLOW_PATH: '.github/workflows/10build-iortcw-rend2-fire-volumetric-rendered-flame-anchor-multisource-v0-7-runtime-safe-over-v0-6-sp-self-contained-FIXED.yml'
+      BASE_ARTIFACT_ID: "9759164439"
+      BASE_ARTIFACT_NAME: iortcw-rend2-fire-volumetric-rendered-flame-anchor-multisource-v0-7-runtime-safe-over-v0-6-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:5dc45f8b369c73a1ea1ffcee0af107e3b4be9d9b557290cdab029b58a0622c95
+      BASE_RELEASE_BASENAME: iortcw-rend2-fire-volumetric-rendered-flame-anchor-multisource-v0-7-runtime-safe-over-v0-6-full-sp-windows-x64-1
+      BASE_INNER_ZIP_SHA256: 5c28e767c0b404a4c518e364e4a80e591dc74786c1b943f3a10457adca9531c9
+
+      BASE_EXE_SHA256: e10fe66316d12594da8d497d0c996ae30b47af19d6fe1ccd08537407328c01ba
+      BASE_RENDERER_SHA256: 26ed11e788fafcde1d534c9e76bd8aa6e17a296538d16afc98e50086aabff1de
+      BASE_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      BASE_QAGAME_SHA256: b4d6b72bb43a6bb8ccce0eeaf95515da5a88dd4f048c5cf6db05e566f5dfa60a
+      BASE_CGAME_SHA256: dbcfe16805248a2d017a6f35450688caba89750b1044e16547c0c0911eec1e16
+      BASE_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      BASE_OPENAL_SHA256: 396f88738ce20905e933cb7d8c696351e41bd7e72e80b8cfdadf20ab613420b4
+      BASE_SDL_SHA256: f34cd90b131ceb45b7f32d41680a13fd4b13e5f48f0d1649cbf441833105310c
+
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-7-runtime-safe-backend-capture-sp.patch
+      BASE_CUMULATIVE_SHA256: 06b42ef42a984deb0230bc3aca1cb1d0121b9b13d586dbab7c3dce8210bdd3d9
+
+      PATCHER_NAME: apply_fire_volumetric_v0_7_1_latched_anchor.py
+      PATCHER_SHA256: d199ef0bfb0599117a321516ecca59002184681cc2e44fc0faf176a96a1920bb
+      DELTA_NAME: darkwolf-fire-volumetric-v0-7-1-latched-anchor-over-v0-7.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-7-1-latched-anchor-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-fire-volumetric-v0-7-1-latched-flame-anchor-isolation-over-v0-7-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Preflight workflow YAML and bash contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: cannot resolve workflow: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY'
+          from pathlib import Path
+          import subprocess, sys, yaml
+          p = Path(sys.argv[1])
+          doc = yaml.safe_load(p.read_text(encoding='utf-8'))
+          expected = 'Build DarkWolf Rend2 Fire Volumetric v0.7.1 Latched Flame Anchor Isolation SP'
+          if doc.get('name') != expected:
+              raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+          checked = 0
+          for job_name, job in (doc.get('jobs') or {}).items():
+              for index, step in enumerate(job.get('steps') or [], 1):
+                  script = step.get('run')
+                  shell = step.get('shell', 'bash')
+                  if not script or not str(shell).lower().startswith('bash'):
+                      continue
+                  proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                      print(proc.stderr, file=sys.stderr)
+                      raise SystemExit(proc.returncode)
+                  checked += 1
+          if checked < 1:
+              raise SystemExit('ERROR: no bash run blocks found')
+          print(f'Workflow YAML + bash syntax PASS: {checked} bash blocks')
+          PY
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Verify exact tested Fire Volumetric v0.7 parent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: v0.7 base HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo "ERROR: v0.7 base run is not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: v0.7 workflow path drift" >&2; exit 1; }
+          line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$line" || { echo "ERROR: exact v0.7 artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$line"
+          test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: v0.7 artifact name drift" >&2; exit 1; }
+          test "$expired" = "false" || { echo "ERROR: v0.7 artifact expired" >&2; exit 1; }
+          test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: v0.7 artifact digest drift" >&2; exit 1; }
+          echo "Exact tested Fire Volumetric v0.7 provenance PASS"
+
+      - name: Download and byte-verify exact v0.7 runtime/source payload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          base_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+          test -s "$base_zip" || { echo "ERROR: v0.7 inner ZIP missing" >&2; find base-artifact -maxdepth 2 -type f -print; exit 1; }
+          test "$(sha256sum "$base_zip" | awk '{print $1}')" = "$BASE_INNER_ZIP_SHA256" || { echo "ERROR: v0.7 inner ZIP SHA drift" >&2; exit 1; }
+          unzip -q "$base_zip" -d base-release
+          mapfile -t roots < <(find base-release/release -mindepth 1 -maxdepth 1 -type d -print)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one v0.7 release root" >&2; find base-release -maxdepth 3 -type d -print; exit 1; }
+          base_stage="${roots[0]}"
+          check_sha() {
+            local file="$1" expected="$2"
+            test "$(sha256sum "$file" | awk '{print $1}')" = "$expected" || { echo "ERROR: SHA drift: $file" >&2; exit 1; }
+          }
+          check_sha "$base_stage/ioWolfSP.x64.exe" "$BASE_EXE_SHA256"
+          check_sha "$base_stage/renderer_sp_rend2_x64.dll" "$BASE_RENDERER_SHA256"
+          check_sha "$base_stage/renderer_sp_opengl1_x64.dll" "$BASE_OPENGL1_SHA256"
+          check_sha "$base_stage/Main/qagame_sp_x64.dll" "$BASE_QAGAME_SHA256"
+          check_sha "$base_stage/Main/cgame_sp_x64.dll" "$BASE_CGAME_SHA256"
+          check_sha "$base_stage/Main/ui_sp_x64.dll" "$BASE_UI_SHA256"
+          check_sha "$base_stage/OpenAL64.dll" "$BASE_OPENAL_SHA256"
+          check_sha "$base_stage/SDL264.dll" "$BASE_SDL_SHA256"
+          check_sha "$base_stage/docs/$BASE_CUMULATIVE_NAME" "$BASE_CUMULATIVE_SHA256"
+          printf '%s\n' "$base_stage" > .base_stage_path
+          echo "Exact v0.7 payload PASS"
+
+      - name: Reconstruct exact v0.7 source tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          rm -rf source replay-delta replay-cumulative
+          git clone "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source reset --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" .base-v07-cumulative.patch
+          test "$(sha256sum .base-v07-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          git -C source apply --check --binary ../.base-v07-cumulative.patch
+          git -C source apply --binary ../.base-v07-cumulative.patch
+          git -C source add -A
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source config user.name "DarkWolf CI"
+          git -C source commit -m "Exact tested Fire Volumetric v0.7 source base"
+          git -C source rev-parse HEAD > .base_source_commit
+          test -z "$(git -C source status --porcelain)" || { echo "ERROR: reconstructed v0.7 source is not clean" >&2; exit 1; }
+          echo "Exact tested v0.7 source reconstruction PASS"
+
+      - name: Apply Fire Volumetric v0.7.1 latched-anchor isolation delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sha256sum source/SP/code/rend2/tr_local.h source/SP/code/rend2/tr_main.c > .v07_command_structures.sha256
+          cat > "$PATCHER_NAME" <<'PY'
+          from pathlib import Path
+          import sys
+
+          ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('.')
+          REL = 'SP/code/rend2/tr_backend.c'
+          MARK = 'DARKWOLF_FIRE_VOLUMETRIC_V0_7_1_LATCHED_ANCHOR_ISOLATION'
+          V07_MARK = 'DARKWOLF_FIRE_VOLUMETRIC_V0_7_RUNTIME_SAFE_BACKEND_CAPTURE'
+
+
+          def read(rel):
+              return (ROOT / rel).read_text(encoding='utf-8')
+
+
+          def write(rel, text):
+              (ROOT / rel).write_text(text, encoding='utf-8', newline='')
+
+
+          def replace_one(text, old, new, label):
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f'ERROR: {label}: expected exactly one anchor, found {n}')
+              return text.replace(old, new, 1)
+
+
+          s = read(REL)
+          if MARK in s:
+              print('Fire Volumetric v0.7.1 latched-anchor isolation already applied')
+              raise SystemExit(0)
+          if V07_MARK not in s or 'FIREVOL07_DIAG' not in s:
+              raise SystemExit('ERROR: exact Fire Volumetric v0.7 backend contract not found')
+
+          old = '''// DARKWOLF_FIRE_VOLUMETRIC_V0_7_RUNTIME_SAFE_BACKEND_CAPTURE
+          #define FIREVOL07_MAX_POOL 4
+
+          typedef struct
+          {
+          \tqboolean valid;
+          \tint nativeOrdinal;
+          \tint speakerOrdinal;
+          \tint createdMs;
+          \tint lastSeenMs;
+          \tint missingSinceMs;
+          } fireVolumetricV07PoolSlot_t;
+
+          typedef struct
+          {
+          \tint dlightIndex;
+          \tint shadowSlot;
+          \tint anchorIndex;
+          \tint poolSlot;
+          \tfloat dlightToFlame;
+          \tfloat speakerToFlame;
+          \tfloat secondDistance;
+          \tint anchorCandidates;
+          \tint ambiguity;
+          } fireVolumetricV07Selection_t;
+
+          static fireVolumetricV07PoolSlot_t s_fireV07Pool[FIREVOL07_MAX_POOL];
+          static char s_fireV07PoolMap[MAX_QPATH] = "";
+          static int s_fireV07PoolChangeCount = 0;
+          static qboolean s_fireV07SingleValid = qfalse;
+          static int s_fireV07SingleNativeOrdinal = -1;
+          static char s_fireV07SingleMap[MAX_QPATH] = "";
+          '''
+          new = '''// DARKWOLF_FIRE_VOLUMETRIC_V0_7_RUNTIME_SAFE_BACKEND_CAPTURE
+          // DARKWOLF_FIRE_VOLUMETRIC_V0_7_1_LATCHED_ANCHOR_ISOLATION
+          #define FIREVOL07_MAX_POOL 4
+
+          typedef struct
+          {
+          \tqboolean valid;
+          \tint nativeOrdinal;
+          \tint speakerOrdinal;
+          \tint createdMs;
+          \tint lastSeenMs;
+          \tint missingSinceMs;
+          \tqboolean latchValid;
+          \tint latchedFlameSurface;
+          \tvec3_t latchedFlameOrigin;
+          \tchar latchedShader[MAX_QPATH];
+          \tint latchedAtMs;
+          } fireVolumetricV07PoolSlot_t;
+
+          typedef struct
+          {
+          \tint dlightIndex;
+          \tint shadowSlot;
+          \tint anchorIndex; // current rendered candidate only; never moves the latched render origin
+          \tint poolSlot;
+          \tfloat dlightToFlame;
+          \tfloat speakerToFlame;
+          \tfloat secondDistance;
+          \tint anchorCandidates;
+          \tint ambiguity;
+          \tqboolean latchValid;
+          \tint latchedFlameSurface;
+          \tvec3_t latchedFlameOrigin;
+          \tchar latchedShader[MAX_QPATH];
+          \tint latchedAtMs;
+          \tint anchorVisibleNow;
+          } fireVolumetricV07Selection_t;
+
+          static fireVolumetricV07PoolSlot_t s_fireV07Pool[FIREVOL07_MAX_POOL];
+          static char s_fireV07PoolMap[MAX_QPATH] = "";
+          static int s_fireV07PoolChangeCount = 0;
+          static qboolean s_fireV07SingleValid = qfalse;
+          static int s_fireV07SingleNativeOrdinal = -1;
+          static char s_fireV07SingleMap[MAX_QPATH] = "";
+          static qboolean s_fireV071SingleLatchValid = qfalse;
+          static int s_fireV071SingleLatchedFlameSurface = -1;
+          static vec3_t s_fireV071SingleLatchedFlameOrigin;
+          static char s_fireV071SingleLatchedShader[MAX_QPATH] = "";
+          static int s_fireV071SingleLatchedAtMs = 0;
+          '''
+          s = replace_one(s, old, new, 'v071 state structures')
+
+          old = '''static void RB_FireV07ResetStateForMap(void)
+          {
+          \tconst char *mapName = tr.world ? tr.world->baseName : "<none>";
+          \tif (Q_stricmp(s_fireV07PoolMap, mapName))
+          \t{
+          \t\tmemset(s_fireV07Pool, 0, sizeof(s_fireV07Pool));
+          \t\tQ_strncpyz(s_fireV07PoolMap, mapName, sizeof(s_fireV07PoolMap));
+          \t\ts_fireV07PoolChangeCount = 0;
+          \t}
+          \tif (Q_stricmp(s_fireV07SingleMap, mapName))
+          \t{
+          \t\tQ_strncpyz(s_fireV07SingleMap, mapName, sizeof(s_fireV07SingleMap));
+          \t\ts_fireV07SingleValid = qfalse;
+          \t\ts_fireV07SingleNativeOrdinal = -1;
+          \t}
+          }
+          '''
+          new = '''static void RB_FireV07ResetStateForMap(void)
+          {
+          \tconst char *mapName = tr.world ? tr.world->baseName : "<none>";
+          \tif (Q_stricmp(s_fireV07PoolMap, mapName))
+          \t{
+          \t\tmemset(s_fireV07Pool, 0, sizeof(s_fireV07Pool));
+          \t\tQ_strncpyz(s_fireV07PoolMap, mapName, sizeof(s_fireV07PoolMap));
+          \t\ts_fireV07PoolChangeCount = 0;
+          \t}
+          \tif (Q_stricmp(s_fireV07SingleMap, mapName))
+          \t{
+          \t\tQ_strncpyz(s_fireV07SingleMap, mapName, sizeof(s_fireV07SingleMap));
+          \t\ts_fireV07SingleValid = qfalse;
+          \t\ts_fireV07SingleNativeOrdinal = -1;
+          \t\ts_fireV071SingleLatchValid = qfalse;
+          \t\ts_fireV071SingleLatchedFlameSurface = -1;
+          \t\tVectorClear(s_fireV071SingleLatchedFlameOrigin);
+          \t\ts_fireV071SingleLatchedShader[0] = '\\0';
+          \t\ts_fireV071SingleLatchedAtMs = 0;
+          \t}
+          }
+
+          static int RB_FireV071FindLatchedRenderedIndex(int surfaceIndex, const char *shaderName, const vec3_t origin)
+          {
+          \tint i;
+          \tfor (i = 0; i < s_fireV07AnchorCount && i < FIREVOL07_MAX_RENDERED_ANCHORS; ++i)
+          \t{
+          \t\tconst fireVolumetricV07Anchor_t *anchor = &s_fireV07Anchors[i];
+          \t\tvec3_t delta;
+          \t\tif (!anchor->semanticFire || anchor->surfaceIndex != surfaceIndex)
+          \t\t\tcontinue;
+          \t\tif (Q_stricmp(anchor->shaderName, shaderName))
+          \t\t\tcontinue;
+          \t\tVectorSubtract(anchor->origin, origin, delta);
+          \t\tif (DotProduct(delta, delta) <= 4.0f)
+          \t\t\treturn i;
+          \t}
+          \treturn -1;
+          }
+
+          static void RB_FireV071CopyPoolLatchToSelection(const fireVolumetricV07PoolSlot_t *pool,
+          \tfireVolumetricV07Selection_t *sel)
+          {
+          \tif (!pool || !sel || !pool->latchValid)
+          \t\treturn;
+          \tsel->latchValid = qtrue;
+          \tsel->latchedFlameSurface = pool->latchedFlameSurface;
+          \tVectorCopy(pool->latchedFlameOrigin, sel->latchedFlameOrigin);
+          \tQ_strncpyz(sel->latchedShader, pool->latchedShader, sizeof(sel->latchedShader));
+          \tsel->latchedAtMs = pool->latchedAtMs;
+          \tsel->anchorVisibleNow = RB_FireV071FindLatchedRenderedIndex(pool->latchedFlameSurface,
+          \t\tpool->latchedShader, pool->latchedFlameOrigin) >= 0 ? 1 : 0;
+          }
+          '''
+          s = replace_one(s, old, new, 'v071 reset and latch helpers')
+
+          old = '''\tif (variant == 1)
+          \t{
+          \t\tint index = -1, shadowSlot = -1;
+          \t\tint ignoredStrict = 0, ignoredNative = 0;
+          \t\tif (s_fireV07SingleValid)
+          \t\t\tindex = RB_FireVolumetricFindOwner(sourceMode, s_fireV07SingleNativeOrdinal, -1, &shadowSlot);
+          \t\telse
+          \t\t{
+          \t\t\t// B deliberately locks the same current-selector identity model used by v0.6,
+          \t\t\t// then changes ONLY the volume anchor. This keeps A/B causally comparable.
+          \t\t\tindex = RB_FireVolumetricSelect(sourceMode, NULL, 0, &shadowSlot, &ignoredStrict, &ignoredNative);
+          \t\t\tif (index >= 0)
+          \t\t\t{
+          \t\t\t\ts_fireV07SingleValid = qtrue;
+          \t\t\t\ts_fireV07SingleNativeOrdinal = backEnd.refdef.dlights[index].fireVolumetricNativeOrdinal;
+          \t\t\t}
+          \t\t}
+          \t\tif (index >= 0)
+          \t\t{
+          \t\t\tdlight_t *dl = &backEnd.refdef.dlights[index];
+          \t\t\tfloat second = -1.0f;
+          \t\t\tint candidates = 0, ambiguity = 0;
+          \t\t\tint anchor = RB_FireV07FindRenderedAnchor(dl, NULL, 0, maxDistance,
+          \t\t\t\t&selected[0].dlightToFlame, &selected[0].speakerToFlame, &candidates, &second, &ambiguity);
+          \t\t\tfallbackDl = dl;
+          \t\t\tif (anchor >= 0)
+          \t\t\t{
+          \t\t\t\tselected[0].dlightIndex = index;
+          \t\t\t\tselected[0].shadowSlot = shadowSlot;
+          \t\t\t\tselected[0].anchorIndex = anchor;
+          \t\t\t\tselected[0].poolSlot = 0;
+          \t\t\t\tselected[0].anchorCandidates = candidates;
+          \t\t\t\tselected[0].secondDistance = second;
+          \t\t\t\tselected[0].ambiguity = ambiguity;
+          \t\t\t\tselectedCount = 1;
+          \t\t\t\tusedAnchors[usedAnchorCount++] = anchor;
+          \t\t\t}
+          \t\t}
+          \t}
+          '''
+          new = '''\tif (variant == 1)
+          \t{
+          \t\tint index = -1, shadowSlot = -1;
+          \t\tint ignoredStrict = 0, ignoredNative = 0;
+          \t\tif (s_fireV07SingleValid)
+          \t\t\tindex = RB_FireVolumetricFindOwner(sourceMode, s_fireV07SingleNativeOrdinal, -1, &shadowSlot);
+          \t\telse
+          \t\t{
+          \t\t\t// B keeps the exact v0.7 single DLight identity policy. v0.7.1 changes only anchor persistence.
+          \t\t\tindex = RB_FireVolumetricSelect(sourceMode, NULL, 0, &shadowSlot, &ignoredStrict, &ignoredNative);
+          \t\t\tif (index >= 0)
+          \t\t\t{
+          \t\t\t\ts_fireV07SingleValid = qtrue;
+          \t\t\t\ts_fireV07SingleNativeOrdinal = backEnd.refdef.dlights[index].fireVolumetricNativeOrdinal;
+          \t\t\t}
+          \t\t}
+          \t\tif (index >= 0)
+          \t\t{
+          \t\t\tdlight_t *dl = &backEnd.refdef.dlights[index];
+          \t\t\tfloat second = -1.0f;
+          \t\t\tint candidates = 0, ambiguity = 0;
+          \t\t\tint anchor = RB_FireV07FindRenderedAnchor(dl, NULL, 0, maxDistance,
+          \t\t\t\t&selected[0].dlightToFlame, &selected[0].speakerToFlame, &candidates, &second, &ambiguity);
+          \t\t\tfallbackDl = dl;
+          \t\t\tif (!s_fireV071SingleLatchValid && anchor >= 0)
+          \t\t\t{
+          \t\t\t\tconst fireVolumetricV07Anchor_t *first = &s_fireV07Anchors[anchor];
+          \t\t\t\ts_fireV071SingleLatchValid = qtrue;
+          \t\t\t\ts_fireV071SingleLatchedFlameSurface = first->surfaceIndex;
+          \t\t\t\tVectorCopy(first->origin, s_fireV071SingleLatchedFlameOrigin);
+          \t\t\t\tQ_strncpyz(s_fireV071SingleLatchedShader, first->shaderName, sizeof(s_fireV071SingleLatchedShader));
+          \t\t\t\ts_fireV071SingleLatchedAtMs = nowMs;
+          \t\t\t}
+          \t\t\tif (s_fireV071SingleLatchValid)
+          \t\t\t{
+          \t\t\t\tselected[0].dlightIndex = index;
+          \t\t\t\tselected[0].shadowSlot = shadowSlot;
+          \t\t\t\tselected[0].anchorIndex = anchor;
+          \t\t\t\tselected[0].poolSlot = 0;
+          \t\t\t\tselected[0].anchorCandidates = candidates;
+          \t\t\t\tselected[0].secondDistance = second;
+          \t\t\t\tselected[0].ambiguity = ambiguity;
+          \t\t\t\tselected[0].latchValid = qtrue;
+          \t\t\t\tselected[0].latchedFlameSurface = s_fireV071SingleLatchedFlameSurface;
+          \t\t\t\tVectorCopy(s_fireV071SingleLatchedFlameOrigin, selected[0].latchedFlameOrigin);
+          \t\t\t\tQ_strncpyz(selected[0].latchedShader, s_fireV071SingleLatchedShader, sizeof(selected[0].latchedShader));
+          \t\t\t\tselected[0].latchedAtMs = s_fireV071SingleLatchedAtMs;
+          \t\t\t\tselected[0].anchorVisibleNow = RB_FireV071FindLatchedRenderedIndex(
+          \t\t\t\t\ts_fireV071SingleLatchedFlameSurface, s_fireV071SingleLatchedShader,
+          \t\t\t\t\ts_fireV071SingleLatchedFlameOrigin) >= 0 ? 1 : 0;
+          \t\t\t\tselectedCount = 1;
+          \t\t\t\tif (anchor >= 0) usedAnchors[usedAnchorCount++] = anchor;
+          \t\t\t}
+          \t\t}
+          \t}
+          '''
+          s = replace_one(s, old, new, 'v071 B single latch')
+
+          old = '''\t\t// First retain existing physical identities. Camera score never replaces a live slot.
+          \t\tfor (slot = 0; slot < maxActive; ++slot)
+          \t\t{
+          \t\t\tfireVolumetricV07PoolSlot_t *pool = &s_fireV07Pool[slot];
+          \t\t\tint index, shadowSlot = -1, anchor, candidates = 0, ambiguity = 0;
+          \t\t\tfloat dlightDistance = -1.0f, speakerDistance = -1.0f, secondDistance = -1.0f;
+          \t\t\tif (!pool->valid)
+          \t\t\t\tcontinue;
+          \t\t\tindex = RB_FireVolumetricFindOwner(sourceMode, pool->nativeOrdinal, -1, &shadowSlot);
+          \t\t\tif (index >= 0)
+          \t\t\t{
+          \t\t\t\tdlight_t *dl = &backEnd.refdef.dlights[index];
+          \t\t\t\tanchor = RB_FireV07FindRenderedAnchor(dl, usedAnchors, usedAnchorCount, maxDistance,
+          \t\t\t\t\t&dlightDistance, &speakerDistance, &candidates, &secondDistance, &ambiguity);
+          \t\t\t\tif (!fallbackDl) fallbackDl = dl;
+          \t\t\t\tif (anchor >= 0)
+          \t\t\t\t{
+          \t\t\t\t\tpool->lastSeenMs = nowMs;
+          \t\t\t\t\tpool->missingSinceMs = 0;
+          \t\t\t\t\tselected[selectedCount].dlightIndex = index;
+          \t\t\t\t\tselected[selectedCount].shadowSlot = shadowSlot;
+          \t\t\t\t\tselected[selectedCount].anchorIndex = anchor;
+          \t\t\t\t\tselected[selectedCount].poolSlot = slot;
+          \t\t\t\t\tselected[selectedCount].dlightToFlame = dlightDistance;
+          \t\t\t\t\tselected[selectedCount].speakerToFlame = speakerDistance;
+          \t\t\t\t\tselected[selectedCount].anchorCandidates = candidates;
+          \t\t\t\t\tselected[selectedCount].secondDistance = secondDistance;
+          \t\t\t\t\tselected[selectedCount].ambiguity = ambiguity;
+          \t\t\t\t\tselectedCount++;
+          \t\t\t\t\tusedAnchors[usedAnchorCount++] = anchor;
+          \t\t\t\t\tcontinue;
+          \t\t\t\t}
+          \t\t\t}
+          \t\t\tif (!pool->missingSinceMs) pool->missingSinceMs = nowMs;
+          \t\t\tif (nowMs - pool->missingSinceMs >= graceMs)
+          \t\t\t{
+          \t\t\t\tmemset(pool, 0, sizeof(*pool));
+          \t\t\t\ts_fireV07PoolChangeCount++;
+          \t\t\t}
+          \t\t}
+          '''
+          new = '''\t\t// Retain DLight identity exactly as v0.7, but once a flame anchor is latched it is never
+          \t\t// replaced by a different currently-rendered surface. Visibility is diagnostic-only.
+          \t\tfor (slot = 0; slot < maxActive; ++slot)
+          \t\t{
+          \t\t\tfireVolumetricV07PoolSlot_t *pool = &s_fireV07Pool[slot];
+          \t\t\tint index, shadowSlot = -1, anchor = -1, candidates = 0, ambiguity = 0;
+          \t\t\tfloat dlightDistance = -1.0f, speakerDistance = -1.0f, secondDistance = -1.0f;
+          \t\t\tif (!pool->valid)
+          \t\t\t\tcontinue;
+          \t\t\tindex = RB_FireVolumetricFindOwner(sourceMode, pool->nativeOrdinal, -1, &shadowSlot);
+          \t\t\tif (index >= 0)
+          \t\t\t{
+          \t\t\t\tdlight_t *dl = &backEnd.refdef.dlights[index];
+          \t\t\t\tanchor = RB_FireV07FindRenderedAnchor(dl, usedAnchors, usedAnchorCount, maxDistance,
+          \t\t\t\t\t&dlightDistance, &speakerDistance, &candidates, &secondDistance, &ambiguity);
+          \t\t\t\tif (!fallbackDl) fallbackDl = dl;
+          \t\t\t\tif (!pool->latchValid && anchor >= 0)
+          \t\t\t\t{
+          \t\t\t\t\tconst fireVolumetricV07Anchor_t *first = &s_fireV07Anchors[anchor];
+          \t\t\t\t\tpool->latchValid = qtrue;
+          \t\t\t\t\tpool->latchedFlameSurface = first->surfaceIndex;
+          \t\t\t\t\tVectorCopy(first->origin, pool->latchedFlameOrigin);
+          \t\t\t\t\tQ_strncpyz(pool->latchedShader, first->shaderName, sizeof(pool->latchedShader));
+          \t\t\t\t\tpool->latchedAtMs = nowMs;
+          \t\t\t\t}
+          \t\t\t\tif (pool->latchValid)
+          \t\t\t\t{
+          \t\t\t\t\tint latchedRenderedIndex;
+          \t\t\t\t\tpool->lastSeenMs = nowMs;
+          \t\t\t\t\tpool->missingSinceMs = 0;
+          \t\t\t\t\tselected[selectedCount].dlightIndex = index;
+          \t\t\t\t\tselected[selectedCount].shadowSlot = shadowSlot;
+          \t\t\t\t\tselected[selectedCount].anchorIndex = anchor;
+          \t\t\t\t\tselected[selectedCount].poolSlot = slot;
+          \t\t\t\t\tselected[selectedCount].dlightToFlame = dlightDistance;
+          \t\t\t\t\tselected[selectedCount].speakerToFlame = speakerDistance;
+          \t\t\t\t\tselected[selectedCount].anchorCandidates = candidates;
+          \t\t\t\t\tselected[selectedCount].secondDistance = secondDistance;
+          \t\t\t\t\tselected[selectedCount].ambiguity = ambiguity;
+          \t\t\t\t\tRB_FireV071CopyPoolLatchToSelection(pool, &selected[selectedCount]);
+          \t\t\t\t\tlatchedRenderedIndex = RB_FireV071FindLatchedRenderedIndex(pool->latchedFlameSurface,
+          \t\t\t\t\t\tpool->latchedShader, pool->latchedFlameOrigin);
+          \t\t\t\t\tselectedCount++;
+          \t\t\t\t\tif (latchedRenderedIndex >= 0) usedAnchors[usedAnchorCount++] = latchedRenderedIndex;
+          \t\t\t\t\tcontinue;
+          \t\t\t\t}
+          \t\t\t}
+          \t\t\t// A live DLight with a valid latch never expires merely because its flame surface left the view.
+          \t\t\t// Expiration remains allowed only when the DLight owner itself disappears beyond the v0.7 grace.
+          \t\t\tif (index < 0)
+          \t\t\t{
+          \t\t\t\tif (!pool->missingSinceMs) pool->missingSinceMs = nowMs;
+          \t\t\t\tif (nowMs - pool->missingSinceMs >= graceMs)
+          \t\t\t\t{
+          \t\t\t\t\tmemset(pool, 0, sizeof(*pool));
+          \t\t\t\t\ts_fireV07PoolChangeCount++;
+          \t\t\t\t}
+          \t\t\t}
+          \t\t}
+          '''
+          s = replace_one(s, old, new, 'v071 C retain latch')
+
+          old = '''\t\t\tpool->valid = qtrue;
+          \t\t\tpool->nativeOrdinal = backEnd.refdef.dlights[index].fireVolumetricNativeOrdinal;
+          \t\t\tpool->speakerOrdinal = backEnd.refdef.dlights[index].fireVolumetricSpeakerOrdinal;
+          \t\t\tpool->createdMs = nowMs;
+          \t\t\tpool->lastSeenMs = nowMs;
+          \t\t\tpool->missingSinceMs = 0;
+          \t\t\ts_fireV07PoolChangeCount++;
+          \t\t\tshadowSlot = RB_FireVolumetricShadowSlotForIndex(index);
+          \t\t\tselected[selectedCount].dlightIndex = index;
+          \t\t\tselected[selectedCount].shadowSlot = shadowSlot;
+          \t\t\tselected[selectedCount].anchorIndex = anchor;
+          \t\t\tselected[selectedCount].poolSlot = slot;
+          \t\t\tselected[selectedCount].dlightToFlame = dlightDistance;
+          \t\t\tselected[selectedCount].speakerToFlame = speakerDistance;
+          \t\t\tselected[selectedCount].anchorCandidates = candidates;
+          \t\t\tselected[selectedCount].secondDistance = secondDistance;
+          \t\t\tselected[selectedCount].ambiguity = ambiguity;
+          \t\t\tselectedCount++;
+          \t\t\tusedAnchors[usedAnchorCount++] = anchor;
+          \t\t\tif (!fallbackDl) fallbackDl = &backEnd.refdef.dlights[index];
+          '''
+          new = '''\t\t\tpool->valid = qtrue;
+          \t\t\tpool->nativeOrdinal = backEnd.refdef.dlights[index].fireVolumetricNativeOrdinal;
+          \t\t\tpool->speakerOrdinal = backEnd.refdef.dlights[index].fireVolumetricSpeakerOrdinal;
+          \t\t\tpool->createdMs = nowMs;
+          \t\t\tpool->lastSeenMs = nowMs;
+          \t\t\tpool->missingSinceMs = 0;
+          \t\t\tpool->latchValid = qtrue;
+          \t\t\tpool->latchedFlameSurface = s_fireV07Anchors[anchor].surfaceIndex;
+          \t\t\tVectorCopy(s_fireV07Anchors[anchor].origin, pool->latchedFlameOrigin);
+          \t\t\tQ_strncpyz(pool->latchedShader, s_fireV07Anchors[anchor].shaderName, sizeof(pool->latchedShader));
+          \t\t\tpool->latchedAtMs = nowMs;
+          \t\t\ts_fireV07PoolChangeCount++;
+          \t\t\tshadowSlot = RB_FireVolumetricShadowSlotForIndex(index);
+          \t\t\tselected[selectedCount].dlightIndex = index;
+          \t\t\tselected[selectedCount].shadowSlot = shadowSlot;
+          \t\t\tselected[selectedCount].anchorIndex = anchor;
+          \t\t\tselected[selectedCount].poolSlot = slot;
+          \t\t\tselected[selectedCount].dlightToFlame = dlightDistance;
+          \t\t\tselected[selectedCount].speakerToFlame = speakerDistance;
+          \t\t\tselected[selectedCount].anchorCandidates = candidates;
+          \t\t\tselected[selectedCount].secondDistance = secondDistance;
+          \t\t\tselected[selectedCount].ambiguity = ambiguity;
+          \t\t\tRB_FireV071CopyPoolLatchToSelection(pool, &selected[selectedCount]);
+          \t\t\tselectedCount++;
+          \t\t\tusedAnchors[usedAnchorCount++] = anchor;
+          \t\t\tif (!fallbackDl) fallbackDl = &backEnd.refdef.dlights[index];
+          '''
+          s = replace_one(s, old, new, 'v071 C admission latch')
+
+          old = '''\tfor (i = 0; i < selectedCount; ++i)
+          \t{
+          \t\tfireVolumetricV07Selection_t *sel = &selected[i];
+          \t\tconst fireVolumetricV07Anchor_t *anchor;
+          \t\tconst dlight_t *fireDl;
+          \t\tdlight_t anchoredDl;
+          \t\tfloat geometryRadius;
+          \t\tint volumeShadowSlot;
+          \t\tif (sel->dlightIndex < 0 || sel->dlightIndex >= backEnd.refdef.num_dlights ||
+          \t\t\tsel->anchorIndex < 0 || sel->anchorIndex >= s_fireV07AnchorCount)
+          \t\t\tcontinue;
+          \t\tfireDl = &backEnd.refdef.dlights[sel->dlightIndex];
+          \t\tanchor = &s_fireV07Anchors[sel->anchorIndex];
+          \t\tgeometryRadius = RB_FireVolumetricGeometryRadius(fireDl, sel->poolSlot, nowMs);
+          \t\tif (!coreReady)
+          \t\t\tcontinue;
+          \t\tanchoredDl = *fireDl;
+          \t\tVectorCopy(anchor->origin, anchoredDl.origin);
+          \t\t// Proof mode 8 is deliberately shadow-independent. In physical modes, never sample a cubemap
+          \t\t// from a displaced origin until the later production-quality regression validates a separated
+          \t\t// light-origin/volume-origin shader contract.
+          \t\tvolumeShadowSlot = (renderMode == 8 || sel->dlightToFlame <= 1.0f) ? sel->shadowSlot : -1;
+          \t\tRB_LocalVolumetricRender(srcFbo, srcBox, renderMode, &anchoredDl, volumeShadowSlot,
+          \t\t\tNULL, 1.0f, (renderMode >= 5 && renderMode <= 8) ? geometryRadius : 0.0f);
+          \t\trenderedCount++;
+          \t\tgreenMarkers += RB_FireV07DrawGreenMarker(srcFbo, srcBox, fireDl, anchor->origin);
+          \t}
+          '''
+          new = '''\tfor (i = 0; i < selectedCount; ++i)
+          \t{
+          \t\tfireVolumetricV07Selection_t *sel = &selected[i];
+          \t\tconst dlight_t *fireDl;
+          \t\tdlight_t anchoredDl;
+          \t\tvec3_t latchDelta;
+          \t\tfloat latchedDistance;
+          \t\tfloat geometryRadius;
+          \t\tint volumeShadowSlot;
+          \t\tif (sel->dlightIndex < 0 || sel->dlightIndex >= backEnd.refdef.num_dlights || !sel->latchValid)
+          \t\t\tcontinue;
+          \t\tfireDl = &backEnd.refdef.dlights[sel->dlightIndex];
+          \t\tgeometryRadius = RB_FireVolumetricGeometryRadius(fireDl, sel->poolSlot, nowMs);
+          \t\tif (!coreReady)
+          \t\t\tcontinue;
+          \t\tanchoredDl = *fireDl;
+          \t\tVectorCopy(sel->latchedFlameOrigin, anchoredDl.origin);
+          \t\tVectorSubtract(sel->latchedFlameOrigin, fireDl->origin, latchDelta);
+          \t\tlatchedDistance = VectorLength(latchDelta);
+          \t\t// v0.7.1 isolation contract: current rendered candidates are telemetry only.
+          \t\t// Both proof volume and GREEN consume the immutable latched world-space origin.
+          \t\tvolumeShadowSlot = (renderMode == 8 || latchedDistance <= 1.0f) ? sel->shadowSlot : -1;
+          \t\tRB_LocalVolumetricRender(srcFbo, srcBox, renderMode, &anchoredDl, volumeShadowSlot,
+          \t\t\tNULL, 1.0f, (renderMode >= 5 && renderMode <= 8) ? geometryRadius : 0.0f);
+          \t\trenderedCount++;
+          \t\tgreenMarkers += RB_FireV07DrawGreenMarker(srcFbo, srcBox, fireDl, sel->latchedFlameOrigin);
+          \t}
+          '''
+          s = replace_one(s, old, new, 'v071 render from latch only')
+
+          old = '''\t\tfor (i = 0; i < selectedCount; ++i)
+          \t\t{
+          \t\t\tfireVolumetricV07Selection_t *sel = &selected[i];
+          \t\t\tconst dlight_t *dl = &backEnd.refdef.dlights[sel->dlightIndex];
+          \t\t\tconst fireVolumetricV07Anchor_t *anchor = &s_fireV07Anchors[sel->anchorIndex];
+          \t\t\tint slotAge = 0;
+          \t\t\tif (variant == 2 && sel->poolSlot >= 0 && sel->poolSlot < FIREVOL07_MAX_POOL && s_fireV07Pool[sel->poolSlot].valid)
+          \t\t\t\tslotAge = nowMs - s_fireV07Pool[sel->poolSlot].createdMs;
+          \t\t\tri.Printf(PRINT_ALL,
+          \t\t\t\t"FIREVOL07_DIAG map=%s variant=%s slot=%d stablePoolSlot=%d slotAgeMs=%d poolChangeCount=%d selectedDlightIndex=%d nativeDlightOrdinal=%d speakerOrdinal=%d flameShader=%s flamePrimitive=%s flameEntity=%d flameSurface=%d flameDraw=%d flameModel=%s flameAnimated=%d flameAnimationFrames=%d flameOrigin=%.1f,%.1f,%.1f dlightOrigin=%.1f,%.1f,%.1f speakerOrigin=%.1f,%.1f,%.1f dlightToFlame=%.2f speakerToFlame=%.2f anchorCandidates=%d secondDistance=%.2f ambiguity=%d shadowSlot=%d renderMode=%d fpsAvg=%.2f\\n",
+          \t\t\t\ttr.world ? tr.world->baseName : "<none>", variant == 1 ? "B_RENDERED_SINGLE" : "C_RENDERED_MULTI",
+          \t\t\t\ti, sel->poolSlot, slotAge, s_fireV07PoolChangeCount, sel->dlightIndex,
+          \t\t\t\tdl->fireVolumetricNativeOrdinal, dl->fireVolumetricSpeakerOrdinal,
+          \t\t\t\tanchor->shaderName, RB_FireV07PrimitiveName(anchor->primitive), anchor->entityNum,
+          \t\t\t\tanchor->surfaceIndex, anchor->drawIndex, anchor->modelName, anchor->animated, anchor->animationFrames,
+          \t\t\t\tanchor->origin[0], anchor->origin[1], anchor->origin[2],
+          \t\t\t\tdl->origin[0], dl->origin[1], dl->origin[2],
+          \t\t\t\tdl->fireVolumetricSpeakerOrigin[0], dl->fireVolumetricSpeakerOrigin[1], dl->fireVolumetricSpeakerOrigin[2],
+          \t\t\t\tsel->dlightToFlame, sel->speakerToFlame, sel->anchorCandidates, sel->secondDistance,
+          \t\t\t\tsel->ambiguity, sel->shadowSlot, renderMode, fpsAvg);
+          \t\t}
+          '''
+          new = '''\t\tfor (i = 0; i < selectedCount; ++i)
+          \t\t{
+          \t\t\tfireVolumetricV07Selection_t *sel = &selected[i];
+          \t\t\tconst dlight_t *dl = &backEnd.refdef.dlights[sel->dlightIndex];
+          \t\t\tconst fireVolumetricV07Anchor_t *candidate =
+          \t\t\t\t(sel->anchorIndex >= 0 && sel->anchorIndex < s_fireV07AnchorCount) ? &s_fireV07Anchors[sel->anchorIndex] : NULL;
+          \t\t\tint slotAge = 0;
+          \t\t\tint candidateSurface = candidate ? candidate->surfaceIndex : -1;
+          \t\t\tconst char *candidateShader = candidate ? candidate->shaderName : "<none>";
+          \t\t\tfloat candidateX = candidate ? candidate->origin[0] : 0.0f;
+          \t\t\tfloat candidateY = candidate ? candidate->origin[1] : 0.0f;
+          \t\t\tfloat candidateZ = candidate ? candidate->origin[2] : 0.0f;
+          \t\t\tif (variant == 2 && sel->poolSlot >= 0 && sel->poolSlot < FIREVOL07_MAX_POOL && s_fireV07Pool[sel->poolSlot].valid)
+          \t\t\t\tslotAge = nowMs - s_fireV07Pool[sel->poolSlot].createdMs;
+          \t\t\telse if (variant == 1 && sel->latchedAtMs > 0)
+          \t\t\t\tslotAge = nowMs - sel->latchedAtMs;
+          \t\t\tri.Printf(PRINT_ALL,
+          \t\t\t\t"FIREVOL071_DIAG map=%s variant=%s slot=%d stablePoolSlot=%d slotAgeMs=%d poolChangeCount=%d selectedDlightIndex=%d nativeDlightOrdinal=%d speakerOrdinal=%d candidateFlameSurface=%d candidateFlameOrigin=%.1f,%.1f,%.1f candidateFlameShader=%s latchedFlameSurface=%d latchedFlameOrigin=%.1f,%.1f,%.1f latchedShader=%s latchedAtMs=%d greenOrigin=%.1f,%.1f,%.1f anchorVisibleNow=%d candidateDlightDistance=%.2f candidateSpeakerDistance=%.2f anchorCandidates=%d secondDistance=%.2f ambiguity=%d shadowSlot=%d renderMode=%d fpsAvg=%.2f\\n",
+          \t\t\t\ttr.world ? tr.world->baseName : "<none>", variant == 1 ? "B_LATCHED_SINGLE" : "C_LATCHED_MULTI",
+          \t\t\t\ti, sel->poolSlot, slotAge, s_fireV07PoolChangeCount, sel->dlightIndex,
+          \t\t\t\tdl->fireVolumetricNativeOrdinal, dl->fireVolumetricSpeakerOrdinal,
+          \t\t\t\tcandidateSurface, candidateX, candidateY, candidateZ, candidateShader,
+          \t\t\t\tsel->latchedFlameSurface, sel->latchedFlameOrigin[0], sel->latchedFlameOrigin[1], sel->latchedFlameOrigin[2],
+          \t\t\t\tsel->latchedShader, sel->latchedAtMs,
+          \t\t\t\tsel->latchedFlameOrigin[0], sel->latchedFlameOrigin[1], sel->latchedFlameOrigin[2], sel->anchorVisibleNow,
+          \t\t\t\tsel->dlightToFlame, sel->speakerToFlame, sel->anchorCandidates, sel->secondDistance,
+          \t\t\t\tsel->ambiguity, sel->shadowSlot, renderMode, fpsAvg);
+          \t\t}
+          '''
+          s = replace_one(s, old, new, 'v071 diagnostic contract')
+
+          required = [
+              MARK,
+              'FIREVOL071_DIAG',
+              'candidateFlameSurface=',
+              'latchedFlameSurface=',
+              'latchedFlameOrigin=',
+              'latchedShader=',
+              'latchedAtMs=',
+              'greenOrigin=',
+              'anchorVisibleNow=',
+              'RB_FireV071FindLatchedRenderedIndex',
+              'VectorCopy(sel->latchedFlameOrigin, anchoredDl.origin)',
+              'RB_FireV07DrawGreenMarker(srcFbo, srcBox, fireDl, sel->latchedFlameOrigin)',
+          ]
+          for token in required:
+              if token not in s:
+                  raise SystemExit(f'ERROR: v0.7.1 required token missing after patch: {token}')
+          for forbidden in (
+              'VectorCopy(anchor->origin, anchoredDl.origin)',
+              'RB_FireV07DrawGreenMarker(srcFbo, srcBox, fireDl, anchor->origin)',
+          ):
+              if forbidden in s:
+                  raise SystemExit(f'ERROR: transient rendered anchor still drives output: {forbidden}')
+
+          write(REL, s)
+          print('Fire Volumetric v0.7.1 Latched Flame Anchor Isolation patch applied')
+          PY
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: embedded v0.7.1 patcher SHA drift" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" source
+
+          # Idempotence and command-structure safety.
+          before="$(sha256sum source/SP/code/rend2/tr_backend.c | awk '{print $1}')"
+          python3 "$PATCHER_NAME" source
+          after="$(sha256sum source/SP/code/rend2/tr_backend.c | awk '{print $1}')"
+          test "$before" = "$after" || { echo "ERROR: v0.7.1 patcher is not idempotent" >&2; exit 1; }
+          sha256sum -c .v07_command_structures.sha256
+
+          base_commit="$(cat .base_source_commit)"
+          git -C source add -A
+          mapfile -t changed < <(git -C source diff --cached --name-only "$base_commit" -- .)
+          test "${#changed[@]}" -eq 1 || { printf 'ERROR: v0.7.1 scope drift: %s\n' "${changed[*]}" >&2; exit 1; }
+          test "${changed[0]}" = 'SP/code/rend2/tr_backend.c' || { printf 'ERROR: v0.7.1 scope drift: %s\n' "${changed[*]}" >&2; exit 1; }
+
+          git -C source diff --cached --binary "$base_commit" -- . > "$DELTA_NAME"
+          test -s "$DELTA_NAME"
+          sha256sum "$DELTA_NAME" > "$DELTA_NAME.sha256"
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > "$CUMULATIVE_NAME"
+          test -s "$CUMULATIVE_NAME"
+          sha256sum "$CUMULATIVE_NAME" > "$CUMULATIVE_NAME.sha256"
+          echo "Fire Volumetric v0.7.1 one-file latch delta created"
+
+      - name: Validate v0.7.1 latch isolation contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          backend=source/SP/code/rend2/tr_backend.c
+          for need in \
+            DARKWOLF_FIRE_VOLUMETRIC_V0_7_1_LATCHED_ANCHOR_ISOLATION \
+            FIREVOL071_DIAG candidateFlameSurface= candidateFlameOrigin= \
+            latchedFlameSurface= latchedFlameOrigin= latchedShader= latchedAtMs= \
+            greenOrigin= anchorVisibleNow= RB_FireV071FindLatchedRenderedIndex; do
+            grep -Fq "$need" "$backend" || { echo "ERROR: v0.7.1 contract token missing: $need" >&2; exit 1; }
+          done
+          grep -Fq 'VectorCopy(sel->latchedFlameOrigin, anchoredDl.origin)' "$backend"
+          grep -Fq 'RB_FireV07DrawGreenMarker(srcFbo, srcBox, fireDl, sel->latchedFlameOrigin)' "$backend"
+          ! grep -Fq 'VectorCopy(anchor->origin, anchoredDl.origin)' "$backend"
+          ! grep -Fq 'RB_FireV07DrawGreenMarker(srcFbo, srcBox, fireDl, anchor->origin)' "$backend"
+          sha256sum -c .v07_command_structures.sha256
+
+          base_commit="$(cat .base_source_commit)"
+          changed="$(git -C source diff --cached --name-only "$base_commit" -- .)"
+          test "$changed" = 'SP/code/rend2/tr_backend.c' || { echo "ERROR: v0.7.1 changed files outside tr_backend.c" >&2; printf '%s\n' "$changed" >&2; exit 1; }
+          if git -C source diff --cached "$base_commit" -- . | grep -E '^\+.*(r_bloom|ToneMap|Exposure|r_ssgi|StaticPromote|LampLearn)' >/dev/null; then
+            echo "ERROR: forbidden parallel subsystem token added by v0.7.1" >&2
+            exit 1
+          fi
+          echo "v0.7.1 latched world-anchor isolation contract PASS"
+
+      - name: Independent delta and cumulative replay verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          git -C source worktree add --detach ../replay-delta "$base_commit"
+          git -C replay-delta apply --check --binary "../$DELTA_NAME"
+          git -C replay-delta apply --binary "../$DELTA_NAME"
+          git -C replay-delta add -A
+          git -C replay-delta diff --cached --binary "$base_commit" -- . > .replayed-delta.patch
+          cmp "$DELTA_NAME" .replayed-delta.patch || { echo "ERROR: v0.7.1 delta replay drift" >&2; exit 1; }
+
+          git -C source worktree add --detach ../replay-cumulative "$UPSTREAM_SHA"
+          git -C replay-cumulative apply --check --binary "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary "../$CUMULATIVE_NAME"
+          git -C replay-cumulative add -A
+          git -C replay-cumulative diff --cached --binary "$UPSTREAM_SHA" -- . > .replayed-cumulative.patch
+          cmp "$CUMULATIVE_NAME" .replayed-cumulative.patch || { echo "ERROR: v0.7.1 cumulative replay drift" >&2; exit 1; }
+          echo "Independent v0.7.1 delta + cumulative replay PASS"
+
+      - name: Build canonical Windows x64 v0.7.1 candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"
+          if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify rebuilt v0.7.1 Rend2 and frozen v0.7 runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          find_one() {
+            local name="$1" out="$2"
+            mapfile -t a < <(find source/SP/build -type f -name "$name" -print | sort)
+            test "${#a[@]}" -eq 1 || { printf 'ERROR: expected one %s, got %d\n' "$name" "${#a[@]}" >&2; exit 1; }
+            test -s "${a[0]}"
+            printf '%s\n' "${a[0]}" > "$out"
+          }
+          find_one renderer_sp_rend2_x64.dll .new_renderer_path
+          new_renderer="$(cat .new_renderer_path)"
+          file "$new_renderer" > .new_renderer_file.txt
+          grep -Fq 'PE32+ executable' .new_renderer_file.txt
+          grep -Fq 'x86-64' .new_renderer_file.txt
+          grep -Fq '(DLL)' .new_renderer_file.txt
+          test "$(sha256sum "$new_renderer" | awk '{print $1}')" != "$BASE_RENDERER_SHA256" || { echo "ERROR: rebuilt renderer unexpectedly equals v0.7 base" >&2; exit 1; }
+          strings -a "$new_renderer" > .new_renderer_strings.txt
+          for need in FIREVOL071_DIAG candidateFlameSurface= latchedFlameSurface= latchedFlameOrigin= greenOrigin= anchorVisibleNow=; do
+            grep -Fq "$need" .new_renderer_strings.txt || { echo "ERROR: rebuilt Rend2 missing $need" >&2; exit 1; }
+          done
+
+          base_stage="$(cat .base_stage_path)"
+          check_base() {
+            local rel="$1" sha="$2"
+            test "$(sha256sum "$base_stage/$rel" | awk '{print $1}')" = "$sha" || { echo "ERROR: frozen v0.7 runtime drift: $rel" >&2; exit 1; }
+          }
+          check_base ioWolfSP.x64.exe "$BASE_EXE_SHA256"
+          check_base renderer_sp_rend2_x64.dll "$BASE_RENDERER_SHA256"
+          check_base renderer_sp_opengl1_x64.dll "$BASE_OPENGL1_SHA256"
+          check_base Main/qagame_sp_x64.dll "$BASE_QAGAME_SHA256"
+          check_base Main/cgame_sp_x64.dll "$BASE_CGAME_SHA256"
+          check_base Main/ui_sp_x64.dll "$BASE_UI_SHA256"
+          check_base OpenAL64.dll "$BASE_OPENAL_SHA256"
+          check_base SDL264.dll "$BASE_SDL_SHA256"
+          printf '%s\n' "$(sha256sum "$new_renderer" | awk '{print $1}')" > .new_renderer_sha256
+          echo "Rebuilt v0.7.1 Rend2 verification PASS"
+
+      - name: Package tiny B/C latched-anchor isolation kit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          new_renderer="$(cat .new_renderer_path)"
+          rm -rf release dist
+          stage="release/$RELEASE_BASENAME"
+          mkdir -p "$stage/Main" "$stage/docs" dist
+
+          # Preserve the tested v0.7 runtime byte-identical except Rend2.
+          cp "$base_stage/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cp "$base_stage/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cp "$base_stage/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cp "$base_stage/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cp "$base_stage/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cp "$base_stage/OpenAL64.dll" "$stage/OpenAL64.dll"
+          cp "$base_stage/SDL264.dll" "$stage/SDL264.dll"
+          cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+
+          # Exact v0.7 B/C settings are reused; only backend latch logic differs.
+          cp "$base_stage/Main/FIREVOL07_B_RENDERED_SINGLE.cfg" "$stage/Main/FIREVOL071_B_LATCHED_SINGLE.cfg"
+          cp "$base_stage/Main/FIREVOL07_C_RENDERED_MULTI4.cfg" "$stage/Main/FIREVOL071_C_LATCHED_MULTI4.cfg"
+
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          sha256sum "$PATCHER_NAME" > "$stage/docs/$PATCHER_NAME.sha256"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$DELTA_NAME.sha256" "$stage/docs/$DELTA_NAME.sha256"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          cp "$CUMULATIVE_NAME.sha256" "$stage/docs/$CUMULATIVE_NAME.sha256"
+          cp .base-v07-cumulative.patch "$stage/docs/$BASE_CUMULATIVE_NAME"
+
+          cat > "$stage/FIREVOL071_COLLECT.ps1" <<'PS1'
+          param([Parameter(Mandatory=$true)][string]$Mode,[Parameter(Mandatory=$true)][string]$TestHome)
+          $ErrorActionPreference='Stop'
+          $root=$PSScriptRoot
+          $results=Join-Path $root 'FIREVOL071_RESULTS'
+          $out=Join-Path $results $Mode
+          $zip=Join-Path $results ($Mode+'.zip')
+          New-Item -ItemType Directory -Force -Path $results | Out-Null
+          if(Test-Path $out){Remove-Item -Recurse -Force $out}
+          if(Test-Path $zip){Remove-Item -Force $zip}
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $log=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'rtcwconsole.log' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if($log){Copy-Item $log.FullName (Join-Path $out 'rtcwconsole.log')}
+          $cfg=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'wolfconfig.cfg' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if($cfg){Copy-Item $cfg.FullName (Join-Path $out 'wolfconfig.cfg')}
+          $shots=Get-ChildItem -Path $TestHome -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.Extension -match '^\.(tga|jpg|jpeg|png)$'}
+          if($shots){$sd=Join-Path $out 'screenshots'; New-Item -ItemType Directory -Force -Path $sd|Out-Null; foreach($s in $shots){Copy-Item $s.FullName (Join-Path $sd $s.Name) -Force}}
+          $all=@(); if($log){$all=Get-Content $log.FullName}
+          $diag=$all | Where-Object {$_ -like '*FIREVOL071_DIAG*'}
+          $scan=$all | Where-Object {$_ -like '*FIREVOL07_SCAN*'}
+          $fallback=$all | Where-Object {$_ -like '*FIREVOL07_FALLBACK*'}
+          $diag | Set-Content -Encoding UTF8 (Join-Path $out 'FIREVOL071_DIAG.txt')
+          $scan | Set-Content -Encoding UTF8 (Join-Path $out 'FIREVOL07_SCAN.txt')
+          $fallback | Set-Content -Encoding UTF8 (Join-Path $out 'FIREVOL07_FALLBACK.txt')
+          $native=@(); $slots=@(); $latches=@(); $candidates=@(); $visible0=0; $visible1=0
+          foreach($line in $diag){
+            if($line -match 'nativeDlightOrdinal=(-?\d+)'){$native += $matches[1]}
+            if($line -match 'stablePoolSlot=(-?\d+)'){$slots += $matches[1]}
+            if($line -match 'candidateFlameSurface=(-?\d+)'){$candidates += $matches[1]}
+            if($line -match 'nativeDlightOrdinal=(-?\d+).*latchedFlameSurface=(-?\d+).*latchedFlameOrigin=([^ ]+)'){$latches += ($matches[1]+':'+$matches[2]+':'+$matches[3])}
+            if($line -match 'anchorVisibleNow=0'){$visible0++}
+            if($line -match 'anchorVisibleNow=1'){$visible1++}
+          }
+          @(
+            "mode=$Mode",
+            "diag_records=$($diag.Count)",
+            "native_ordinals=$((($native | Sort-Object -Unique) -join ','))",
+            "stable_pool_slots=$((($slots | Sort-Object -Unique) -join ','))",
+            "candidate_surfaces=$((($candidates | Sort-Object -Unique) -join ','))",
+            "latched_identity_keys=$((($latches | Sort-Object -Unique) -join ','))",
+            "anchor_visible_0_records=$visible0",
+            "anchor_visible_1_records=$visible1"
+          ) | Set-Content -Encoding UTF8 (Join-Path $out 'FIREVOL071_SUMMARY.txt')
+          Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "Created $zip"
+          PS1
+
+          make_launcher() {
+            local file="$1" mode="$2" cfg="$3" note="$4"
+            cat > "$stage/$file" <<EOF
+          @echo off
+          setlocal
+          cd /d "%~dp0"
+          set "MODE=$mode"
+          set "TESTHOME=%~dp0FIREVOL071_TEST_HOME\%MODE%"
+          if exist "%TESTHOME%" rmdir /s /q "%TESTHOME%"
+          mkdir "%TESTHOME%"
+          echo Running Fire Volumetric v0.7.1 %MODE% on crypt1...
+          echo $note
+          ioWolfSP.x64.exe +set fs_homepath "%TESTHOME%" +set com_recommendedSet 1 +set cl_renderer rend2 +set logfile 2 +set r_swapInterval 0 +set r_volumetricLocal 0 +exec $cfg +map crypt1
+          powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0FIREVOL071_COLLECT.ps1" -Mode "%MODE%" -TestHome "%TESTHOME%"
+          pause
+          EOF
+          }
+          make_launcher RUN_FIREVOL071_01_B_LATCHED_SINGLE.cmd B_LATCHED_SINGLE FIREVOL071_B_LATCHED_SINGLE.cfg "B: first valid rendered flame anchor is latched; candidate may change, GREEN/world origin may not."
+          make_launcher RUN_FIREVOL071_02_C_LATCHED_MULTI4.cmd C_LATCHED_MULTI4 FIREVOL071_C_LATCHED_MULTI4.cfg "C: each persistent DLight slot latches its first valid flame anchor until the DLight owner truly leaves the pool."
+
+          cat > "$stage/README_FIREVOL071_RU.txt" <<'EOF'
+          DARKWOLF / ioRTCW Rend2 SP
+          FIREVOL v0.7.1 — LATCHED FLAME ANCHOR ISOLATION
+          ================================================================
+
+          ЦЕЛЬ
+          Проверить единственную гипотезу, выявленную логами v0.7:
+          DLight identity стабилен, но transient rendered flame candidate меняется вместе с набором
+          поверхностей текущего кадра. В этом build первый удовлетворительный flame anchor (<= текущего
+          r_volumetricFireRenderedMaxDist=256) фиксируется в world space и больше НЕ заменяется другим
+          rendered surface, пока сам DLight owner не исчезнет из persistent slot после grace.
+
+          ЧТО НЕ МЕНЯЛОСЬ
+          Shader, Bloom, ToneMap, Exposure, GI, Static Promotion, Lamp Learn, game/cgame/map.
+          База — exact tested FireVol v0.7 run 33395377544. Меняется только tr_backend.c.
+
+          КЛЮЧЕВОЙ КОНТРАКТ
+          candidateFlameSurface / candidateFlameOrigin продолжают вычисляться каждый кадр ТОЛЬКО для диагностики.
+          latchedFlameSurface / latchedFlameOrigin / latchedShader / latchedAtMs фиксируются один раз.
+          GREEN и proof Fire Volume рисуются ТОЛЬКО из latchedFlameOrigin.
+          anchorVisibleNow=1 означает, что именно latched surface присутствует в текущем rendered capture;
+          anchorVisibleNow=0 разрешен и НЕ должен менять latched origin или GREEN world position.
+
+          ЗАПУСК
+          1. RUN_FIREVOL071_01_B_LATCHED_SINGLE.cmd
+          2. RUN_FIREVOL071_02_C_LATCHED_MULTI4.cmd
+
+          МЕТОДИКА ДЛЯ КАЖДОГО РЕЖИМА
+          1. На crypt1 найдите факел и смотрите прямо на него, пока GREEN не окажется на огне.
+          2. После появления корректного GREEN не перезапускайте режим.
+          3. Повернитесь примерно на 90 градусов.
+          4. Повернитесь примерно на 180 градусов.
+          5. Походите влево/вправо вокруг исходной позиции.
+          6. Отойдите немного назад.
+          7. Вернитесь и снова посмотрите на исходный факел.
+          8. Сделайте F12 в исходном положении, под углом и после возврата.
+          9. Закройте игру штатно — collector создаст FIREVOL071_RESULTS/<MODE>.zip.
+
+          PASS
+          Для одного stablePoolSlot/nativeDlightOrdinal latchedFlameSurface, latchedFlameOrigin,
+          latchedShader и latchedAtMs остаются неизменны на всем тесте.
+          candidateFlameSurface/candidateFlameOrigin МОГУТ меняться — это ожидаемое доказательство transient set.
+          anchorVisibleNow МОЖЕТ менять 1->0->1.
+          greenOrigin всегда численно равен latchedFlameOrigin.
+          Визуально GREEN после latch не скользит с камерой и после возврата остается в той же точке факела.
+
+          ROOT-CAUSE CONFIRMED
+          Если PASS выполнен: проблема v0.7 была в повторном binding к transient rendered surfaces.
+          Следующий production fix — persistent fire fixture/anchor registry, без shader rewrite.
+
+          SECOND DEFECT CONFIRMED
+          Если FIREVOL071_DIAG показывает неизменные latchedFlameOrigin и greenOrigin, но GREEN визуально
+          продолжает двигаться с камерой: upstream binding изолирован, и остается отдельная ошибка ниже
+          по цепочке CPU -> GPU/debug volumetric coordinate path. Только тогда исследуем shader/GPU space.
+          EOF
+
+          cat > "$stage/docs/EXACT_BASE.txt" <<EOF
+          Fire Volumetric v0.7.1 Latched Flame Anchor Isolation
+          base_run=$BASE_RUN_ID
+          base_head=$BASE_RUN_HEAD_SHA
+          base_workflow=$BASE_WORKFLOW_PATH
+          base_artifact_id=$BASE_ARTIFACT_ID
+          base_artifact_name=$BASE_ARTIFACT_NAME
+          base_artifact_digest=$BASE_ARTIFACT_DIGEST
+          base_inner_zip_sha256=$BASE_INNER_ZIP_SHA256
+          base_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          base_renderer_sha256=$BASE_RENDERER_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          source_scope=SP/code/rend2/tr_backend.c only
+          runtime_policy=exact tested v0.7 binaries except rebuilt renderer_sp_rend2_x64.dll
+          isolation_contract=current rendered candidate remains telemetry-only; GREEN and proof volume use immutable latched world-space origin
+          EOF
+
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          zip -q -r "dist/${RELEASE_BASENAME}.zip" "release/${RELEASE_BASENAME}"
+          sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+          echo "Packaged tiny FireVol v0.7.1 latch isolation kit"
+
+      - name: Upload Fire Volumetric v0.7.1 test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
