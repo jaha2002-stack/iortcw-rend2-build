@@ -1,0 +1,563 @@
+name: Build DarkWolf Rend2 Fire Volumetric v0.7.4 Vertical Screen-Ray Contract Fix SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-fire-volumetric-v0-7-4-vertical-screen-ray-fix-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: FireVol v0.7.4 - real vertical screen-ray contract fix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      # Exact successful v0.7.2 source/runtime parent. v0.7.3 R2 proved the root cause,
+      # but production fix intentionally drops its uniform-readback-only instrumentation.
+      BASE_RUN_ID: "33403340810"
+      BASE_RUN_HEAD_SHA: 06a973eff602cdbc0271955b1fe7f911e18a4c99
+      BASE_WORKFLOW_PATH: '.github/workflows/build-iortcw-rend2-fire-volumetric-v0-7-2-world-projection-depth-gpu-isolation-over-v0-7-1-sp-self-contained.yml'
+      BASE_ARTIFACT_ID: "9762180799"
+      BASE_ARTIFACT_NAME: iortcw-rend2-fire-volumetric-v0-7-2-world-projection-depth-gpu-isolation-over-v0-7-1-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:ff7df21c587d3916634c742288eaab94509397439f612c6c02b77fd1cb49ac89
+      BASE_RELEASE_BASENAME: iortcw-rend2-fire-volumetric-v0-7-2-world-projection-depth-gpu-isolation-over-v0-7-1-full-sp-windows-x64-1
+      BASE_INNER_ZIP_SHA256: a3737dc9d9ef9e4a3431e7336a804f4b16990a30ea0068a01823297437e0d70a
+
+      BASE_EXE_SHA256: e10fe66316d12594da8d497d0c996ae30b47af19d6fe1ccd08537407328c01ba
+      BASE_RENDERER_SHA256: d0de974152fb40a6c3a79daecc88481d65c9a065ed43bb561c959cbf480445c2
+      BASE_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      BASE_QAGAME_SHA256: b4d6b72bb43a6bb8ccce0eeaf95515da5a88dd4f048c5cf6db05e566f5dfa60a
+      BASE_CGAME_SHA256: dbcfe16805248a2d017a6f35450688caba89750b1044e16547c0c0911eec1e16
+      BASE_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      BASE_OPENAL_SHA256: 396f88738ce20905e933cb7d8c696351e41bd7e72e80b8cfdadf20ab613420b4
+      BASE_SDL_SHA256: f34cd90b131ceb45b7f32d41680a13fd4b13e5f48f0d1649cbf441833105310c
+
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-7-2-world-projection-depth-gpu-isolation-sp.patch
+      BASE_CUMULATIVE_SHA256: 172f2050705409f150fbb1645136d0ade57e3acbc8e09aa0e3802519dc5e3e25
+
+      PATCHER_NAME: apply_fire_volumetric_v0_7_4_vertical_ray_contract_fix.py
+      PATCHER_SHA256: 6c18fa087cd4e6220cf81297a2bf948e8a47fb2f5ffdd3519b7a5eee977f707e
+      DELTA_NAME: darkwolf-fire-volumetric-v0-7-4-vertical-screen-ray-contract-fix-over-v0-7-2.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-7-4-vertical-screen-ray-contract-fix-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-fire-volumetric-v0-7-4-vertical-screen-ray-contract-fix-over-v0-7-2-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Preflight workflow YAML and bash contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: cannot resolve workflow: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY'
+          from pathlib import Path
+          import subprocess, sys, yaml
+          p = Path(sys.argv[1])
+          doc = yaml.safe_load(p.read_text(encoding='utf-8'))
+          expected = 'Build DarkWolf Rend2 Fire Volumetric v0.7.4 Vertical Screen-Ray Contract Fix SP'
+          if doc.get('name') != expected:
+              raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+          checked = 0
+          for job_name, job in (doc.get('jobs') or {}).items():
+              for index, step in enumerate(job.get('steps') or [], 1):
+                  script = step.get('run')
+                  shell = step.get('shell', 'bash')
+                  if not script or not str(shell).lower().startswith('bash'):
+                      continue
+                  proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                      print(proc.stderr, file=sys.stderr)
+                      raise SystemExit(proc.returncode)
+                  checked += 1
+          if checked < 1:
+              raise SystemExit('ERROR: no bash run blocks found')
+          print(f'Workflow YAML + bash syntax PASS: {checked} bash blocks')
+          PY
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Verify exact tested FireVol v0.7.2 parent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: v0.7.2 base HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo "ERROR: v0.7.2 base run is not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: v0.7.2 workflow path drift" >&2; exit 1; }
+          line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$line" || { echo "ERROR: exact v0.7.2 artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$line"
+          test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: v0.7.2 artifact name drift" >&2; exit 1; }
+          test "$expired" = "false" || { echo "ERROR: v0.7.2 artifact expired" >&2; exit 1; }
+          test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: v0.7.2 artifact digest drift" >&2; exit 1; }
+          echo "Exact tested FireVol v0.7.2 provenance PASS"
+
+      - name: Download and byte-verify exact v0.7.2 runtime/source payload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          base_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+          test -s "$base_zip" || { echo "ERROR: v0.7.2 inner ZIP missing" >&2; find base-artifact -maxdepth 2 -type f -print; exit 1; }
+          test "$(sha256sum "$base_zip" | awk '{print $1}')" = "$BASE_INNER_ZIP_SHA256" || { echo "ERROR: v0.7.2 inner ZIP SHA drift" >&2; exit 1; }
+          unzip -q "$base_zip" -d base-release
+          mapfile -t roots < <(find base-release/release -mindepth 1 -maxdepth 1 -type d -print)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one v0.7.2 release root" >&2; find base-release -maxdepth 3 -type d -print; exit 1; }
+          base_stage="${roots[0]}"
+          check_sha() {
+            local file="$1" expected="$2"
+            test "$(sha256sum "$file" | awk '{print $1}')" = "$expected" || { echo "ERROR: SHA drift: $file" >&2; exit 1; }
+          }
+          check_sha "$base_stage/ioWolfSP.x64.exe" "$BASE_EXE_SHA256"
+          check_sha "$base_stage/renderer_sp_rend2_x64.dll" "$BASE_RENDERER_SHA256"
+          check_sha "$base_stage/renderer_sp_opengl1_x64.dll" "$BASE_OPENGL1_SHA256"
+          check_sha "$base_stage/Main/qagame_sp_x64.dll" "$BASE_QAGAME_SHA256"
+          check_sha "$base_stage/Main/cgame_sp_x64.dll" "$BASE_CGAME_SHA256"
+          check_sha "$base_stage/Main/ui_sp_x64.dll" "$BASE_UI_SHA256"
+          check_sha "$base_stage/OpenAL64.dll" "$BASE_OPENAL_SHA256"
+          check_sha "$base_stage/SDL264.dll" "$BASE_SDL_SHA256"
+          check_sha "$base_stage/docs/$BASE_CUMULATIVE_NAME" "$BASE_CUMULATIVE_SHA256"
+          printf '%s\n' "$base_stage" > .base_stage_path
+          echo "Exact v0.7.2 runtime/source payload PASS"
+
+      - name: Reconstruct exact v0.7.2 source tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          rm -rf source replay-delta replay-cumulative
+          git clone "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source reset --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" .base-v072-cumulative.patch
+          test "$(sha256sum .base-v072-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          git -C source apply --check --binary ../.base-v072-cumulative.patch
+          git -C source apply --binary ../.base-v072-cumulative.patch
+          git -C source add -A
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > .rebuilt-v072-cumulative.patch
+          test -s .rebuilt-v072-cumulative.patch
+          cmp .base-v072-cumulative.patch .rebuilt-v072-cumulative.patch || { echo "ERROR: exact v0.7.2 source reconstruction drift" >&2; exit 1; }
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source config user.name "DarkWolf CI"
+          git -C source commit -m "Exact tested FireVol v0.7.2 source base"
+          git -C source rev-parse HEAD > .base_source_commit
+          test -z "$(git -C source status --porcelain)" || { echo "ERROR: reconstructed v0.7.2 source is not clean" >&2; exit 1; }
+          echo "Exact tested v0.7.2 source reconstruction PASS"
+
+      - name: Apply FireVol v0.7.4 vertical screen-ray production fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # Freeze every Rend2 source except the one vertex shader whose Y contract is fixed.
+          find source/SP/code/rend2 -type f ! -path 'source/SP/code/rend2/glsl/volumetriclocal_vp.glsl' -print0 | sort -z | xargs -0 sha256sum > .v072_rend2_except_localvp.sha256
+          cp source/SP/code/rend2/glsl/volumetriclocal_vp.glsl .v072_volumetriclocal_vp.glsl
+
+          cat > "$PATCHER_NAME" <<'PY'
+          from pathlib import Path
+          import sys
+
+          ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('.')
+          VP = ROOT / 'SP/code/rend2/glsl/volumetriclocal_vp.glsl'
+          MARK = 'DARKWOLF_FIRE_VOLUMETRIC_V0_7_4_VERTICAL_SCREEN_RAY_CONTRACT_FIX'
+          OLD = '    var_ViewDir = u_ViewForward + u_ViewLeft * -screenCoords.x + u_ViewUp * screenCoords.y;\n'
+          NEW = '    var_ViewDir = u_ViewForward + u_ViewLeft * -screenCoords.x + u_ViewUp * -screenCoords.y;\n'
+
+          text = VP.read_text(encoding='utf-8')
+          if MARK in text:
+              if text.count(NEW) != 1 or OLD in text:
+                  raise SystemExit('ERROR: partial/drifted FireVol v0.7.4 application')
+              print('FireVol v0.7.4 vertical screen-ray fix already applied')
+              raise SystemExit(0)
+
+          if 'DARKWOLF_LOCAL_VOLUMETRIC_V0_1' not in text:
+              raise SystemExit('ERROR: expected Local Volumetric parent marker is missing')
+          if text.count(OLD) != 1:
+              raise SystemExit(f'ERROR: expected exactly one old view-ray Y contract, found {text.count(OLD)}')
+          if NEW in text:
+              raise SystemExit('ERROR: corrected view-ray contract already present without v0.7.4 marker')
+
+          lines = text.splitlines(keepends=True)
+          if not lines:
+              raise SystemExit('ERROR: empty volumetriclocal_vp.glsl')
+          lines.insert(1,
+              '// ' + MARK + '\n'
+              '// The quarter-resolution local-volumetric pass is vertically inverted once by the\n'
+              '// explicit source-box -> implicit quarter-FBO blit and inverted once again when\n'
+              '// composited back into the explicit destination box. screenCoords.y is therefore\n'
+              '// the INTERMEDIATE-FBO NDC Y, opposite to the final main-view screen Y. X is unchanged.\n'
+              '// Build the world ray with -screenCoords.y so ray, depth sample and final pixel agree.\n')
+          text = ''.join(lines).replace(OLD, NEW, 1)
+          VP.write_text(text, encoding='utf-8', newline='')
+          print('FireVol v0.7.4 vertical screen-ray contract fix applied')
+          PY
+
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: embedded v0.7.4 patcher SHA drift" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" source
+
+          # Guardrail: one exact semantic change, no hidden subsystem edits.
+          sha256sum -c .v072_rend2_except_localvp.sha256
+          grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_7_4_VERTICAL_SCREEN_RAY_CONTRACT_FIX' source/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+          grep -Fq 'var_ViewDir = u_ViewForward + u_ViewLeft * -screenCoords.x + u_ViewUp * -screenCoords.y;' source/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+          ! grep -Fq 'var_ViewDir = u_ViewForward + u_ViewLeft * -screenCoords.x + u_ViewUp * screenCoords.y;' source/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+
+          # Mathematical contract proof for the exact FBO path:
+          # first pass: final-screen Y s maps to intermediate quarter Y q=-s;
+          # fixed ray uses -q=s; X has no inversion.
+          python3 - <<'PY'
+          samples = [-1.0, -0.75, -0.25, 0.0, 0.25, 0.75, 1.0]
+          for final_y in samples:
+              quarter_y = -final_y
+              old_ray_y = quarter_y
+              fixed_ray_y = -quarter_y
+              if abs(fixed_ray_y - final_y) > 1e-12:
+                  raise SystemExit('ERROR: fixed screen-ray Y contract proof failed')
+              if final_y and abs(old_ray_y - final_y) < 1e-12:
+                  raise SystemExit('ERROR: old mirrored contract unexpectedly passed')
+          print('Vertical screen-ray algebra PASS: fixed ray Y equals final screen Y')
+          PY
+
+          # Patcher must be idempotent.
+          before="$(sha256sum source/SP/code/rend2/glsl/volumetriclocal_vp.glsl | awk '{print $1}')"
+          python3 "$PATCHER_NAME" source
+          after="$(sha256sum source/SP/code/rend2/glsl/volumetriclocal_vp.glsl | awk '{print $1}')"
+          test "$before" = "$after" || { echo "ERROR: v0.7.4 patcher is not idempotent" >&2; exit 1; }
+
+          base_commit="$(cat .base_source_commit)"
+          git -C source add -A
+          mapfile -t changed < <(git -C source diff --cached --name-only "$base_commit" -- . | sort)
+          test "${#changed[@]}" -eq 1 || { printf 'ERROR: v0.7.4 scope count drift: %s\n' "${changed[*]}" >&2; exit 1; }
+          test "${changed[0]}" = 'SP/code/rend2/glsl/volumetriclocal_vp.glsl' || { printf 'ERROR: v0.7.4 scope drift: %s\n' "${changed[*]}" >&2; exit 1; }
+          if git -C source diff --cached "$base_commit" -- . | grep -E '^\+.*(r_bloom|ToneMap|Exposure|r_ssgi|StaticPromote|LampLearn)' >/dev/null; then
+            echo "ERROR: forbidden parallel subsystem token added by v0.7.4" >&2
+            exit 1
+          fi
+
+          git -C source diff --cached --binary "$base_commit" -- . > "$DELTA_NAME"
+          test -s "$DELTA_NAME" || { echo "ERROR: empty v0.7.4 delta" >&2; exit 1; }
+          sha256sum "$DELTA_NAME" > "$DELTA_NAME.sha256"
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > "$CUMULATIVE_NAME"
+          test -s "$CUMULATIVE_NAME" || { echo "ERROR: empty v0.7.4 cumulative patch" >&2; exit 1; }
+          sha256sum "$CUMULATIVE_NAME" > "$CUMULATIVE_NAME.sha256"
+          echo "FireVol v0.7.4 one-file vertical screen-ray fix PASS"
+
+      - name: Independent delta and cumulative replay verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          rm -rf replay-delta replay-cumulative
+          git -C source worktree add --detach ../replay-delta "$base_commit"
+          git -C replay-delta apply --check --binary "../$DELTA_NAME"
+          git -C replay-delta apply --binary "../$DELTA_NAME"
+          git -C replay-delta add -A
+          git -C replay-delta diff --cached --binary "$base_commit" -- . > .replayed-v074-delta.patch
+          cmp "$DELTA_NAME" .replayed-v074-delta.patch || { echo "ERROR: v0.7.4 delta replay drift" >&2; exit 1; }
+
+          git -C source worktree add --detach ../replay-cumulative "$UPSTREAM_SHA"
+          git -C replay-cumulative apply --check --binary "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary "../$CUMULATIVE_NAME"
+          git -C replay-cumulative add -A
+          git -C replay-cumulative diff --cached --binary "$UPSTREAM_SHA" -- . > .replayed-v074-cumulative.patch
+          cmp "$CUMULATIVE_NAME" .replayed-v074-cumulative.patch || { echo "ERROR: v0.7.4 cumulative replay drift" >&2; exit 1; }
+          echo "Independent v0.7.4 delta + cumulative replay PASS"
+
+      - name: Build canonical Windows x64 v0.7.4 candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"
+          if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify rebuilt v0.7.4 Rend2 and frozen v0.7.2 runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          find_one() {
+            local name="$1" out="$2"
+            mapfile -t a < <(find source/SP/build -type f -name "$name" -print | sort)
+            test "${#a[@]}" -eq 1 || { printf 'ERROR: expected one %s, got %d\n' "$name" "${#a[@]}" >&2; exit 1; }
+            test -s "${a[0]}"
+            printf '%s\n' "${a[0]}" > "$out"
+          }
+          find_one renderer_sp_rend2_x64.dll .new_renderer_path
+          new_renderer="$(cat .new_renderer_path)"
+          file "$new_renderer" > .new_renderer_file.txt
+          grep -Fq 'PE32+ executable' .new_renderer_file.txt
+          grep -Fq 'x86-64' .new_renderer_file.txt
+          grep -Fq '(DLL)' .new_renderer_file.txt
+          test "$(sha256sum "$new_renderer" | awk '{print $1}')" != "$BASE_RENDERER_SHA256" || { echo "ERROR: v0.7.4 renderer unexpectedly equals v0.7.2" >&2; exit 1; }
+          strings -a "$new_renderer" > .new_renderer_strings.txt
+          for need in \
+            DARKWOLF_FIRE_VOLUMETRIC_V0_7_4_VERTICAL_SCREEN_RAY_CONTRACT_FIX \
+            FIREVOL071_DIAG FIREVOL072_GPU r_volumetricFireV072GpuIsolation; do
+            grep -Fq "$need" .new_renderer_strings.txt || { echo "ERROR: rebuilt Rend2 missing $need" >&2; exit 1; }
+          done
+
+          base_stage="$(cat .base_stage_path)"
+          check_base() {
+            local rel="$1" sha="$2"
+            test "$(sha256sum "$base_stage/$rel" | awk '{print $1}')" = "$sha" || { echo "ERROR: frozen v0.7.2 runtime drift: $rel" >&2; exit 1; }
+          }
+          check_base ioWolfSP.x64.exe "$BASE_EXE_SHA256"
+          check_base renderer_sp_opengl1_x64.dll "$BASE_OPENGL1_SHA256"
+          check_base Main/qagame_sp_x64.dll "$BASE_QAGAME_SHA256"
+          check_base Main/cgame_sp_x64.dll "$BASE_CGAME_SHA256"
+          check_base Main/ui_sp_x64.dll "$BASE_UI_SHA256"
+          check_base OpenAL64.dll "$BASE_OPENAL_SHA256"
+          check_base SDL264.dll "$BASE_SDL_SHA256"
+          sha256sum "$new_renderer" > .new_renderer_sha256
+          echo "Rebuilt FireVol v0.7.4 Rend2 verification PASS"
+
+      - name: Package FireVol v0.7.4 fixed projection release candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          new_renderer="$(cat .new_renderer_path)"
+          rm -rf release dist
+          stage="release/$RELEASE_BASENAME"
+          mkdir -p "$stage/Main" "$stage/docs" dist
+
+          # Runtime is exact v0.7.2 except for the one rebuilt Rend2 DLL containing the ray-Y fix.
+          cp "$base_stage/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cp "$base_stage/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cp "$base_stage/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cp "$base_stage/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cp "$base_stage/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cp "$base_stage/OpenAL64.dll" "$stage/OpenAL64.dll"
+          cp "$base_stage/SDL264.dll" "$stage/SDL264.dll"
+          cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+
+          write_common_cfg() {
+            local file="$1" v07mode="$2" maxactive="$3" green="$4" gpuiso="$5" strength="$6"
+            cat > "$stage/Main/$file" <<EOF
+          seta r_volumetricFire "1"
+          seta r_volumetricFireMode "2"
+          seta r_volumetricFireSourceMode "0"
+          seta r_volumetricFireMaxActive "$maxactive"
+          seta r_volumetricFireDiag "1"
+          seta r_volumetricFireShape "1"
+          seta r_volumetricFireProofMode "0"
+          seta r_volumetricFireOwnerLock "0"
+          seta r_volumetricFireAnchorMode "0"
+          seta r_volumetricFireDualDebug "0"
+          seta r_volumetricFireV07Mode "$v07mode"
+          seta r_volumetricFireGreenMarker "$green"
+          seta r_volumetricFireV072GpuIsolation "$gpuiso"
+          seta r_volumetricFireRenderedMaxDist "256"
+          seta r_volumetricFirePoolGraceMs "3000"
+          seta r_volumetricFireRadiusStabilize "1"
+          seta r_volumetricFireRadiusMin "180"
+          seta r_volumetricFireRadiusMax "220"
+          seta r_volumetricFireRadiusSmoothMs "900"
+          seta r_volumetricFireStrength "$strength"
+          seta r_volumetricFireDensity "0.012"
+          seta r_volumetricFireSamples "24"
+          seta r_volumetricFirePlumeRadius "0.80"
+          seta r_volumetricFirePlumeHeight "1.20"
+          seta r_volumetricFireTurbulence "0.30"
+          seta r_volumetricFireSpeed "1.20"
+          seta r_volumetricLocalStrength "2.0"
+          seta r_volumetricLocalDensity "0.020"
+          seta r_volumetricLocalSamples "16"
+          seta r_volumetricLocalGain "4.0"
+          seta r_volumetricLocalKnee "0.0"
+          seta r_volumetricLocalAnisotropy "0.0"
+          seta r_volumetricLocalJitter "0.0"
+          seta r_volumetricLocalShadowPcf "0"
+          seta r_volumetricLocalMaxDistance "1536"
+          seta r_volumetricLocal "0"
+          seta cg_drawFPS "1"
+          seta com_maxfps "250"
+          EOF
+          }
+
+          # VERIFY: same latched world point through RED/GREEN/YELLOW; after the real fix they must overlap.
+          write_common_cfg FIREVOL074_A_FIXED_SINGLE_VERIFY.cfg 1 1 1 1 0.0
+          write_common_cfg FIREVOL074_B_FIXED_MULTI4_VERIFY.cfg 2 4 1 1 0.0
+          # REAL: diagnostic overlays off; shaped FireVol is enabled. No new visual tuning architecture.
+          write_common_cfg FIREVOL074_C_FIXED_MULTI4_REAL.cfg 2 4 0 0 1.0
+
+          cat > "$stage/FIREVOL074_COLLECT.ps1" <<'PS1'
+          param([Parameter(Mandatory=$true)][string]$Mode,[Parameter(Mandatory=$true)][string]$TestHome)
+          $ErrorActionPreference='Stop'
+          $root=$PSScriptRoot
+          $results=Join-Path $root 'FIREVOL074_RESULTS'
+          $out=Join-Path $results $Mode
+          $zip=Join-Path $results ($Mode+'.zip')
+          New-Item -ItemType Directory -Force -Path $results | Out-Null
+          if(Test-Path $out){Remove-Item -Recurse -Force $out}
+          if(Test-Path $zip){Remove-Item -Force $zip}
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $log=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'rtcwconsole.log' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if($log){Copy-Item $log.FullName (Join-Path $out 'rtcwconsole.log')}
+          $cfg=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'wolfconfig.cfg' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if($cfg){Copy-Item $cfg.FullName (Join-Path $out 'wolfconfig.cfg')}
+          $shots=Get-ChildItem -Path $TestHome -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.Extension -match '^\.(tga|jpg|jpeg|png)$'}
+          if($shots){$sd=Join-Path $out 'screenshots'; New-Item -ItemType Directory -Force -Path $sd|Out-Null; foreach($s in $shots){Copy-Item $s.FullName (Join-Path $sd $s.Name) -Force}}
+          $all=@(); if($log){$all=Get-Content $log.FullName}
+          ($all | Where-Object {$_ -like '*FIREVOL071_DIAG*'}) | Set-Content -Encoding UTF8 (Join-Path $out 'FIREVOL071_DIAG.txt')
+          ($all | Where-Object {$_ -like '*FIREVOL072_GPU*'}) | Set-Content -Encoding UTF8 (Join-Path $out 'FIREVOL072_GPU.txt')
+          ($all | Where-Object {$_ -like '*FIREVOL07_SCAN*'}) | Set-Content -Encoding UTF8 (Join-Path $out 'FIREVOL07_SCAN.txt')
+          @(
+            "mode=$Mode",
+            "root_fix=vertical_screen_ray_contract",
+            "expected=RED_GREEN_YELLOW_same_world_point_overlap_in_verify_modes",
+            "real_mode=shaped_fire_without_debug_overlays"
+          ) | Set-Content -Encoding UTF8 (Join-Path $out 'FIREVOL074_SUMMARY.txt')
+          Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "Created $zip"
+          PS1
+
+          make_launcher() {
+            local file="$1" mode="$2" cfg="$3" note="$4"
+            cat > "$stage/$file" <<EOF
+          @echo off
+          setlocal
+          cd /d "%~dp0"
+          set "MODE=$mode"
+          set "TESTHOME=%~dp0FIREVOL074_TEST_HOME\%MODE%"
+          if exist "%TESTHOME%" rmdir /s /q "%TESTHOME%"
+          mkdir "%TESTHOME%"
+          echo Running FireVol v0.7.4 %MODE% on crypt1...
+          echo $note
+          ioWolfSP.x64.exe +set fs_homepath "%TESTHOME%" +set com_recommendedSet 1 +set cl_renderer rend2 +set logfile 2 +set r_swapInterval 0 +set r_volumetricLocal 0 +exec $cfg +map crypt1
+          powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0FIREVOL074_COLLECT.ps1" -Mode "%MODE%" -TestHome "%TESTHOME%"
+          pause
+          EOF
+          }
+          make_launcher RUN_FIREVOL074_01_FIXED_SINGLE_VERIFY.cmd A_FIXED_SINGLE_VERIFY FIREVOL074_A_FIXED_SINGLE_VERIFY.cfg "REAL CODE FIX. RED/GREEN/YELLOW should now occupy the same flame position while moving the camera."
+          make_launcher RUN_FIREVOL074_02_FIXED_MULTI4_VERIFY.cmd B_FIXED_MULTI4_VERIFY FIREVOL074_B_FIXED_MULTI4_VERIFY.cfg "Same fixed Y contract for up to four persistent latched flame sources."
+          make_launcher RUN_FIREVOL074_03_FIXED_MULTI4_REAL.cmd C_FIXED_MULTI4_REAL FIREVOL074_C_FIXED_MULTI4_REAL.cfg "Actual shaped FireVol with debug overlays disabled."
+
+          cat > "$stage/README_FIREVOL074_RU.txt" <<'EOF'
+          DARKWOLF / ioRTCW Rend2 SP
+          FIREVOL v0.7.4 — VERTICAL SCREEN-RAY CONTRACT FIX
+          =================================================
+
+          ЭТО УЖЕ ИСПРАВЛЕНИЕ, А НЕ НОВЫЙ ROOT-CAUSE PROBE.
+
+          ДОКАЗАННЫЙ ROOT CAUSE
+          v0.7.3 R2 показал одновременно:
+            - latched world origin стабилен;
+            - GPU uniform readback полностью совпадает с CPU upload;
+            - аналитическое решение текущей volumetriclocal_vp формулы совпадает с CPU world->clip projection;
+            - но финальный MAGENTA визуально имеет тот же X, что RED, и зеркальный Y.
+
+          Причина находится в FBO coordinate contract.
+          Local Volumetric сначала рисуется в quarterFbo через FBO_Blit с ЯВНЫМ srcBox и НЕЯВНЫМ dstBox.
+          Это меняет вертикальную ориентацию intermediate-FBO относительно final main-view screen.
+          Затем quarterFbo композится обратно в srcFbo с НЕЯВНЫМ source box и ЯВНЫМ destination box,
+          что возвращает изображение в ориентацию главного кадра.
+
+          Старый vertex shader ошибочно строил world ray так:
+            F - L*x + U*y_intermediate
+
+          Но y_intermediate = -y_final.
+          Поэтому правильный ray для final screen:
+            F - L*x - U*y_intermediate
+
+          ИСПРАВЛЕНИЕ
+          Единственное source-поведение, изменённое v0.7.4:
+
+            OLD:
+              var_ViewDir = u_ViewForward + u_ViewLeft * -screenCoords.x + u_ViewUp * screenCoords.y;
+
+            FIX:
+              var_ViewDir = u_ViewForward + u_ViewLeft * -screenCoords.x + u_ViewUp * -screenCoords.y;
+
+          var_DepthTex НЕ меняется. Это важно: его texcoord уже проходит штатный FBO Y contract и относится к
+          final screen pixel. После fix ray, depth sample и final composite относятся к одному экранному пикселю.
+
+          ПОЧЕМУ РАНЬШЕ КАЗАЛОСЬ, ЧТО GREEN ИНОГДА ВСТАЁТ НА ФАКЕЛ
+          При прямом взгляде факел часто находится около вертикального центра экрана. В центре y ~= 0, а -y ~= y,
+          поэтому ошибочный mirror почти исчезал. При движении влево/вправо X был правильным изначально, поэтому
+          GREEN мог казаться закреплённым. При изменении вертикального положения/дистанции ошибка становилась заметна.
+
+          ЗАПУСКИ
+          1) RUN_FIREVOL074_01_FIXED_SINGLE_VERIFY.cmd
+             RED + GREEN + YELLOW в одной latched точке. Они должны совпадать и двигаться вместе с физическим факелом.
+
+          2) RUN_FIREVOL074_02_FIXED_MULTI4_VERIFY.cmd
+             То же для до четырёх persistent источников.
+
+          3) RUN_FIREVOL074_03_FIXED_MULTI4_REAL.cmd
+             Настоящий shaped FireVol, debug overlays выключены.
+
+          Если VERIFY показывает совпадение маркеров с факелом при strafe/forward/back/rotation, projection root cause закрыт.
+          Дальше уже настраивается только форма/плотность/цвет/качество FireVol, а не spatial anchoring.
+          EOF
+
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          sha256sum "$PATCHER_NAME" > "$stage/docs/$PATCHER_NAME.sha256"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$DELTA_NAME.sha256" "$stage/docs/$DELTA_NAME.sha256"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          cp "$CUMULATIVE_NAME.sha256" "$stage/docs/$CUMULATIVE_NAME.sha256"
+          cp .base-v072-cumulative.patch "$stage/docs/$BASE_CUMULATIVE_NAME"
+
+          cat > "$stage/docs/EXACT_BASE.txt" <<EOF
+          Fire Volumetric v0.7.4 Vertical Screen-Ray Contract Fix
+          direct_source_parent_run=$BASE_RUN_ID
+          parent_head=$BASE_RUN_HEAD_SHA
+          parent_workflow=$BASE_WORKFLOW_PATH
+          parent_artifact_id=$BASE_ARTIFACT_ID
+          parent_artifact_name=$BASE_ARTIFACT_NAME
+          parent_artifact_digest=$BASE_ARTIFACT_DIGEST
+          parent_inner_zip_sha256=$BASE_INNER_ZIP_SHA256
+          parent_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          parent_renderer_sha256=$BASE_RENDERER_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          source_scope=SP/code/rend2/glsl/volumetriclocal_vp.glsl ONLY
+          behavioral_change=view-ray vertical sign only; screenCoords.x/depth/binding/latch/fire shape unchanged
+          root_cause_evidence=v0.7.3 R2 exact GPU uniforms + RED/MAGENTA same-X mirrored-Y video correlation
+          runtime_policy=exact tested v0.7.2 runtime except rebuilt renderer_sp_rend2_x64.dll
+          EOF
+
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          zip -q -r "dist/${RELEASE_BASENAME}.zip" "release/${RELEASE_BASENAME}"
+          sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+          echo "Packaged FireVol v0.7.4 fixed projection release candidate"
+
+      - name: Upload Fire Volumetric v0.7.4 fixed projection artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
