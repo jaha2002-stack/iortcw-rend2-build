@@ -1,0 +1,681 @@
+name: Build DarkWolf Rend2 Fire Volumetric v0.8 Production Flame Volume SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-fire-volumetric-v0-8-production-flame-volume-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: FireVol v0.8 - production torch flame volume
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      # Exact successful and user-verified v0.7.4 projection-fix parent.
+      BASE_RUN_ID: "33469669619"
+      BASE_RUN_HEAD_SHA: 820e29663f63e4edac632eaea27fb4b8611d8107
+      BASE_WORKFLOW_PATH: '.github/workflows/14build-iortcw-rend2-fire-volumetric-v0-7-4-vertical-screen-ray-contract-fix-over-v0-7-2-sp-self-contained.yml'
+      BASE_ARTIFACT_ID: "9786109772"
+      BASE_ARTIFACT_NAME: iortcw-rend2-fire-volumetric-v0-7-4-vertical-screen-ray-contract-fix-over-v0-7-2-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:7b658216e48da4592802fdd92a63de83db250f2e924d2d9d914e0c73d12016d0
+      BASE_RELEASE_BASENAME: iortcw-rend2-fire-volumetric-v0-7-4-vertical-screen-ray-contract-fix-over-v0-7-2-full-sp-windows-x64-1
+      BASE_INNER_ZIP_SHA256: c2421915f3e830e9d926aa6d2546eb36aad52e1fea1bec2c11009db3f4aa3b52
+
+      BASE_EXE_SHA256: e10fe66316d12594da8d497d0c996ae30b47af19d6fe1ccd08537407328c01ba
+      BASE_RENDERER_SHA256: 76ba76083e2671de0bbff77c57288d55fa0cef7acef07302a8eecf42ef7099cd
+      BASE_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      BASE_QAGAME_SHA256: b4d6b72bb43a6bb8ccce0eeaf95515da5a88dd4f048c5cf6db05e566f5dfa60a
+      BASE_CGAME_SHA256: dbcfe16805248a2d017a6f35450688caba89750b1044e16547c0c0911eec1e16
+      BASE_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      BASE_OPENAL_SHA256: 396f88738ce20905e933cb7d8c696351e41bd7e72e80b8cfdadf20ab613420b4
+      BASE_SDL_SHA256: f34cd90b131ceb45b7f32d41680a13fd4b13e5f48f0d1649cbf441833105310c
+
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-7-4-vertical-screen-ray-contract-fix-sp.patch
+      BASE_CUMULATIVE_SHA256: c54d1df0107a264b9ab97ecec7fb0b0d0d7565b8f0c1d795fdd2a2fbbd4dc403
+
+      PATCHER_NAME: apply_fire_volumetric_v0_8_production_flame.py
+      PATCHER_SHA256: c32c8ce00d3137be9e346ec7d3b8a37cb2dbc428b6b53e3062bc1b08d48aba22
+      DELTA_NAME: darkwolf-fire-volumetric-v0-8-production-flame-volume-over-v0-7-4.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-8-production-flame-volume-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-fire-volumetric-v0-8-production-flame-volume-over-v0-7-4-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Preflight workflow YAML and bash contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: cannot resolve workflow: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY'
+          from pathlib import Path
+          import subprocess, sys, yaml
+          p = Path(sys.argv[1])
+          doc = yaml.safe_load(p.read_text(encoding='utf-8'))
+          expected = 'Build DarkWolf Rend2 Fire Volumetric v0.8 Production Flame Volume SP'
+          if doc.get('name') != expected:
+              raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+          checked = 0
+          for job_name, job in (doc.get('jobs') or {}).items():
+              for index, step in enumerate(job.get('steps') or [], 1):
+                  script = step.get('run')
+                  shell = step.get('shell', 'bash')
+                  if not script or not str(shell).lower().startswith('bash'):
+                      continue
+                  proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                      print(proc.stderr, file=sys.stderr)
+                      raise SystemExit(proc.returncode)
+                  checked += 1
+          if checked < 1:
+              raise SystemExit('ERROR: no bash run blocks found')
+          print(f'Workflow YAML + bash syntax PASS: {checked} bash blocks')
+          PY
+
+      - name: Install canonical MinGW and shader validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            glslang-tools libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Verify exact user-tested FireVol v0.7.4 parent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: v0.7.4 base HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo "ERROR: v0.7.4 base run is not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: v0.7.4 workflow path drift" >&2; exit 1; }
+          line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$line" || { echo "ERROR: exact v0.7.4 artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$line"
+          test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: v0.7.4 artifact name drift" >&2; exit 1; }
+          test "$expired" = "false" || { echo "ERROR: v0.7.4 artifact expired" >&2; exit 1; }
+          test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: v0.7.4 artifact digest drift" >&2; exit 1; }
+          echo "Exact user-tested FireVol v0.7.4 provenance PASS"
+
+      - name: Download and byte-verify exact v0.7.4 runtime and source payload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          base_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+          test -s "$base_zip" || { echo "ERROR: v0.7.4 inner ZIP missing" >&2; find base-artifact -maxdepth 2 -type f -print; exit 1; }
+          test "$(sha256sum "$base_zip" | awk '{print $1}')" = "$BASE_INNER_ZIP_SHA256" || { echo "ERROR: v0.7.4 inner ZIP SHA drift" >&2; exit 1; }
+          unzip -q "$base_zip" -d base-release
+          mapfile -t roots < <(find base-release/release -mindepth 1 -maxdepth 1 -type d -print)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one v0.7.4 release root" >&2; find base-release -maxdepth 3 -type d -print; exit 1; }
+          base_stage="${roots[0]}"
+          check_sha() {
+            local file="$1" expected="$2"
+            test "$(sha256sum "$file" | awk '{print $1}')" = "$expected" || { echo "ERROR: SHA drift: $file" >&2; exit 1; }
+          }
+          check_sha "$base_stage/ioWolfSP.x64.exe" "$BASE_EXE_SHA256"
+          check_sha "$base_stage/renderer_sp_rend2_x64.dll" "$BASE_RENDERER_SHA256"
+          check_sha "$base_stage/renderer_sp_opengl1_x64.dll" "$BASE_OPENGL1_SHA256"
+          check_sha "$base_stage/Main/qagame_sp_x64.dll" "$BASE_QAGAME_SHA256"
+          check_sha "$base_stage/Main/cgame_sp_x64.dll" "$BASE_CGAME_SHA256"
+          check_sha "$base_stage/Main/ui_sp_x64.dll" "$BASE_UI_SHA256"
+          check_sha "$base_stage/OpenAL64.dll" "$BASE_OPENAL_SHA256"
+          check_sha "$base_stage/SDL264.dll" "$BASE_SDL_SHA256"
+          check_sha "$base_stage/docs/$BASE_CUMULATIVE_NAME" "$BASE_CUMULATIVE_SHA256"
+          printf '%s\n' "$base_stage" > .base_stage_path
+          echo "Exact v0.7.4 runtime/source payload PASS"
+
+      - name: Reconstruct exact v0.7.4 source tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          rm -rf source replay-delta replay-cumulative
+          git clone "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source reset --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" .base-v074-cumulative.patch
+          test "$(sha256sum .base-v074-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          git -C source apply --check --binary ../.base-v074-cumulative.patch
+          git -C source apply --binary ../.base-v074-cumulative.patch
+          git -C source add -A
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > .rebuilt-v074-cumulative.patch
+          test -s .rebuilt-v074-cumulative.patch
+          cmp .base-v074-cumulative.patch .rebuilt-v074-cumulative.patch || { echo "ERROR: exact v0.7.4 source reconstruction drift" >&2; exit 1; }
+          grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_7_4_VERTICAL_SCREEN_RAY_CONTRACT_FIX' source/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+          grep -Fq 'var_ViewDir = u_ViewForward + u_ViewLeft * -screenCoords.x + u_ViewUp * -screenCoords.y;' source/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source config user.name "DarkWolf CI"
+          git -C source commit -m "Exact tested FireVol v0.7.4 source base"
+          git -C source rev-parse HEAD > .base_source_commit
+          test -z "$(git -C source status --porcelain)" || { echo "ERROR: reconstructed v0.7.4 source is not clean" >&2; exit 1; }
+          echo "Exact user-tested v0.7.4 source reconstruction PASS"
+
+      - name: Apply FireVol v0.8 production flame shaping and colour delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # Projection/latch/backend are now proven. Freeze every Rend2 source except the fire fragment shader.
+          find source/SP/code/rend2 -type f ! -path 'source/SP/code/rend2/glsl/volumetriclocal_fp.glsl' -print0 | sort -z | xargs -0 sha256sum > .v074_rend2_except_localfp.sha256
+          cp source/SP/code/rend2/glsl/volumetriclocal_fp.glsl .v074_volumetriclocal_fp.glsl
+
+          cat > "$PATCHER_NAME" <<'PY'
+          from pathlib import Path
+          import sys
+
+          ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('.')
+          FP = ROOT / 'SP/code/rend2/glsl/volumetriclocal_fp.glsl'
+          MARK = 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_PRODUCTION_FLAME_VOLUME'
+          PARENT = 'DARKWOLF_FIRE_VOLUMETRIC_V0_7_2_WORLD_PROJECTION_DEPTH_GPU_ISOLATION'
+
+          NEW_SHAPE = r'''// Production torch-fire medium: compact hot core, tapered body, separated tongues,
+          // faint outer scatter and animated upper wisps. The authored flame sprite remains the
+          // visible flame; this medium adds volume without returning to a spherical glow blob.
+          float fireShapeMask(vec3 worldPos, vec3 lightOrigin, float lightRadius)
+          {
+              vec3 rel = worldPos - lightOrigin;
+              float plumeRadius = clamp(u_BaseColor.z, 0.15, 0.90);
+              float plumeHeight = clamp(u_BaseColor.w, 0.35, 1.20);
+              float turbulence = clamp(u_DlightInfo.x, 0.0, 1.0);
+              float speed = clamp(u_DlightInfo.y, 0.0, 4.0);
+              float time = u_ViewInfo.z * speed;
+
+              float height = max(lightRadius * plumeHeight, 1.0);
+              float zNorm = rel.z / height;
+              float z01 = clamp(zNorm, 0.0, 1.0);
+
+              // Fire is almost entirely above the sprite centre and dies before the enclosing
+              // ray sphere reaches its top. This removes the old round/spherical silhouette.
+              float upwardGate = smoothstep(-0.025, 0.040, zNorm);
+              float topFade = 1.0 - smoothstep(0.78, 1.015, zNorm);
+              if (upwardGate * topFade <= 0.00001)
+                  return 0.0;
+
+              // Low-frequency body sway plus a smaller high-frequency tongue motion. Offsets
+              // increase with height so the base stays glued to the physical flame centre.
+              vec2 bend;
+              bend.x = sin(zNorm * 9.7 + time * 1.70) + 0.36 * sin(zNorm * 21.1 - time * 1.05);
+              bend.y = sin(zNorm * 11.3 - time * 1.45) + 0.33 * sin(zNorm * 19.4 + time * 1.25);
+              bend *= lightRadius * 0.028 * turbulence * (0.10 + 0.90 * z01);
+
+              vec2 flutter;
+              flutter.x = sin(zNorm * 23.7 - time * 2.85) + 0.32 * sin(zNorm * 39.1 + time * 1.80);
+              flutter.y = sin(zNorm * 20.3 + time * 2.55) + 0.28 * sin(zNorm * 35.7 - time * 1.65);
+              flutter *= lightRadius * 0.016 * turbulence * z01 * z01;
+
+              // World-space procedural turbulence: stable in space, animated in time, and
+              // deliberately non-binary to avoid quarter-resolution sparkling.
+              float n1 = 0.5 + 0.5 * sin(worldPos.x * 0.115 + worldPos.z * 0.091 + time * 3.15);
+              float n2 = 0.5 + 0.5 * sin(worldPos.y * 0.103 - worldPos.z * 0.078 - time * 2.60);
+              float n3 = 0.5 + 0.5 * sin((worldPos.x + worldPos.y) * 0.057 + worldPos.z * 0.147 + time * 3.85);
+              float n4 = 0.5 + 0.5 * sin((worldPos.x - worldPos.y) * 0.081 - worldPos.z * 0.119 - time * 4.35);
+              float noiseField = clamp(0.25 + 0.30 * n1 + 0.22 * n2 + 0.15 * n3 + 0.08 * n4, 0.0, 1.0);
+              float softNoise = mix(1.0, smoothstep(0.14, 0.88, noiseField), turbulence);
+
+              // 1) Hot core: narrow and anchored. It exists only in the lower half so the
+              // volumetric does not cover the complete torch sprite with one bright disc.
+              vec2 coreXY = rel.xy - bend * 0.22;
+              float coreWidth = max(lightRadius * plumeRadius * mix(0.30, 0.22, z01), 1.0);
+              float coreR = length(coreXY) / coreWidth;
+              float coreRadial = exp(-6.5 * coreR * coreR);
+              float coreVertical = smoothstep(-0.012, 0.045, zNorm) * (1.0 - smoothstep(0.30, 0.50, zNorm));
+              float core = coreRadial * coreVertical * mix(0.96, softNoise, 0.20 * turbulence);
+
+              // 2) Main body: unlike v0.7.x it tapers with height rather than expanding upward.
+              vec2 bodyXY = rel.xy - bend;
+              float bodyWidthScale = mix(0.43, 0.22, smoothstep(0.04, 0.86, z01));
+              float bodyWidth = max(lightRadius * plumeRadius * bodyWidthScale, 1.0);
+              float bodyR = length(bodyXY) / bodyWidth;
+              float bodyRadial = exp(-4.6 * bodyR * bodyR);
+              float bodyVertical = smoothstep(-0.010, 0.055, zNorm) * (1.0 - smoothstep(0.62, 0.91, zNorm));
+              float body = bodyRadial * bodyVertical * mix(1.0, 0.56 + 0.44 * softNoise, turbulence);
+
+              // 3) Two upper flame tongues. Their small opposing offsets create a readable
+              // flame silhouette without a texture or geometry emitter.
+              float tongueGate = smoothstep(0.30, 0.48, zNorm) * (1.0 - smoothstep(0.82, 1.00, zNorm));
+              float tongueOffset = lightRadius * plumeRadius * (0.075 + 0.030 * sin(time * 1.7));
+              vec2 tongueAxis = bend + flutter;
+              vec2 tongue1XY = rel.xy - tongueAxis - vec2(tongueOffset, -0.35 * tongueOffset);
+              vec2 tongue2XY = rel.xy - tongueAxis + vec2(0.78 * tongueOffset, 0.42 * tongueOffset);
+              float tongueWidth = max(lightRadius * plumeRadius * mix(0.22, 0.115, z01), 1.0);
+              float tongue1 = exp(-6.8 * dot(tongue1XY, tongue1XY) / (tongueWidth * tongueWidth));
+              float tongue2 = exp(-7.6 * dot(tongue2XY, tongue2XY) / (tongueWidth * tongueWidth));
+              float tongueBreakup = smoothstep(0.30, 0.83, noiseField);
+              float tongues = (0.62 * tongue1 + 0.48 * tongue2) * tongueGate * mix(0.72, tongueBreakup, 0.35 + 0.55 * turbulence);
+
+              // 4) Very soft outer participating medium. This is intentionally weak: it gives
+              // the fire a volumetric halo without obscuring nearby stonework or creating an orb.
+              vec2 haloXY = rel.xy - bend * 0.70;
+              float haloWidth = max(lightRadius * plumeRadius * mix(0.62, 0.30, z01), 1.0);
+              float haloR = length(haloXY) / haloWidth;
+              float haloRadial = exp(-3.1 * haloR * haloR);
+              float haloVertical = smoothstep(-0.018, 0.055, zNorm) * (1.0 - smoothstep(0.60, 0.92, zNorm));
+              float halo = 0.11 * haloRadial * haloVertical * (0.78 + 0.22 * softNoise);
+
+              float shaped = 1.14 * core + 0.78 * body + 0.56 * tongues + halo;
+              shaped *= upwardGate * topFade;
+
+              // Final tapered guard ensures the enclosing sphere can never become visible.
+              float guardWidth = max(lightRadius * plumeRadius * mix(0.70, 0.32, z01), 1.0);
+              float guardR = length(rel.xy - bend) / guardWidth;
+              float lateralGuard = 1.0 - smoothstep(0.70, 1.06, guardR);
+              return clamp(shaped * lateralGuard, 0.0, 1.0);
+          }
+
+          vec3 fireProductionTint(vec3 worldPos, vec3 lightOrigin, float lightRadius)
+          {
+              float plumeHeight = clamp(u_BaseColor.w, 0.35, 1.20);
+              float height = max(lightRadius * plumeHeight, 1.0);
+              float z01 = clamp((worldPos.z - lightOrigin.z) / height, 0.0, 1.0);
+              float sourcePeak = max(max(u_PrimaryLightColor.r, u_PrimaryLightColor.g),
+                                     max(u_PrimaryLightColor.b, 0.001));
+              vec3 sourceTint = u_PrimaryLightColor / sourcePeak;
+
+              // Warm RTCW-compatible gradient: yellow-gold at the base, orange through the body,
+              // deeper amber/red only in the thin tip. Blend with the authored DLight tint so
+              // map-specific light colour is preserved.
+              vec3 hotTint = vec3(1.00, 0.79, 0.30);
+              vec3 bodyTint = vec3(1.00, 0.43, 0.075);
+              vec3 tipTint = vec3(0.82, 0.19, 0.030);
+              vec3 fireTint = mix(hotTint, bodyTint, smoothstep(0.10, 0.56, z01));
+              fireTint = mix(fireTint, tipTint, smoothstep(0.58, 0.98, z01));
+              return mix(sourceTint, fireTint, 0.58);
+          }
+          '''
+
+          OLD_ACC = '''    float integrated = 0.0;\n    float debugCoverage = 0.0; // v0.5 direct visibility proof; only consumed by mode 8\n'''
+          NEW_ACC = '''    float integrated = 0.0;\n    vec3 integratedFire = vec3(0.0); // v0.8 production per-sample flame tint\n    float debugCoverage = 0.0; // v0.5 direct visibility proof; only consumed by mode 8\n'''
+
+          OLD_SUM = '''        float phase = (mode == 1 || mode == 9) ? 1.0 : phaseHG(clamp(dot(normalize(toLight), rayDir), -1.0, 1.0), g);\n        float transmittance = exp(-density * max(t - segmentStart, 0.0));\n        integrated += attenuation * mediumMask * cone * visibility * phase * transmittance * density * stepLength;\n'''
+          NEW_SUM = '''        float phase = (mode == 1 || mode == 9) ? 1.0 : phaseHG(clamp(dot(normalize(toLight), rayDir), -1.0, 1.0), g);\n        float transmittance = exp(-density * max(t - segmentStart, 0.0));\n        float sampleContribution = attenuation * mediumMask * cone * visibility * phase * transmittance * density * stepLength;\n        integrated += sampleContribution;\n        if (mode >= 5 && mode <= 7)\n            integratedFire += fireProductionTint(worldPos, lightOrigin, lightRadius) * sampleContribution;\n'''
+
+          OLD_FINAL = '''    float scatterAmount = integrated * strength * colorEnergy;\n    if (mode == 1 || mode == 9)\n        scatterAmount *= 2.5; // source-probe boost: diagnostic only; mode 9 differs only by scene-depth bypass\n    if (mode == 7)\n        scatterAmount *= 4.0; // v0.5 exaggerated visibility proof; never a production default\n    scatterAmount *= energyGain;\n    scatterAmount = scatterAmount / (1.0 + kneeStrength * scatterAmount);\n\n    gl_FragColor = vec4(max(lightTint * scatterAmount, vec3(0.0)), 0.0);\n'''
+          NEW_FINAL = '''    if (mode >= 5 && mode <= 7)\n    {\n        vec3 fireScatter = integratedFire * strength * colorEnergy;\n        if (mode == 7)\n            fireScatter *= 4.0; // diagnostic visibility proof remains exaggerated\n        fireScatter *= energyGain;\n        float firePeak = max(max(fireScatter.r, fireScatter.g), fireScatter.b);\n        fireScatter /= (1.0 + kneeStrength * firePeak);\n        gl_FragColor = vec4(max(fireScatter, vec3(0.0)), 0.0);\n        return;\n    }\n\n    float scatterAmount = integrated * strength * colorEnergy;\n    if (mode == 1 || mode == 9)\n        scatterAmount *= 2.5; // source-probe boost: diagnostic only; mode 9 differs only by scene-depth bypass\n    scatterAmount *= energyGain;\n    scatterAmount = scatterAmount / (1.0 + kneeStrength * scatterAmount);\n\n    gl_FragColor = vec4(max(lightTint * scatterAmount, vec3(0.0)), 0.0);\n'''
+
+          text = FP.read_text(encoding='utf-8')
+          if MARK in text:
+              if 'vec3 fireProductionTint' not in text or 'integratedFire' not in text:
+                  raise SystemExit('ERROR: partial/drifted FireVol v0.8 production application')
+              print('FireVol v0.8 production flame volume already applied')
+              raise SystemExit(0)
+          if PARENT not in text:
+              raise SystemExit('ERROR: expected FireVol v0.7.2 fragment parent marker missing')
+
+          start = text.find('float fireShapeMask(vec3 worldPos, vec3 lightOrigin, float lightRadius)\n{')
+          end = text.find('\n#if __VERSION__ >= 130', start)
+          if start < 0 or end < 0:
+              raise SystemExit('ERROR: exact fireShapeMask block not found')
+          if text.count('float fireShapeMask(vec3 worldPos, vec3 lightOrigin, float lightRadius)') != 1:
+              raise SystemExit('ERROR: fireShapeMask multiplicity drift')
+
+          text = text[:start] + NEW_SHAPE.rstrip() + text[end:]
+          for old, new, label in [
+              (OLD_ACC, NEW_ACC, 'integrated accumulator'),
+              (OLD_SUM, NEW_SUM, 'per-sample contribution'),
+              (OLD_FINAL, NEW_FINAL, 'final fire color path'),
+          ]:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'ERROR: {label}: expected one anchor, found {count}')
+              text = text.replace(old, new, 1)
+
+          lines = text.splitlines(keepends=True)
+          lines.insert(2, '// ' + MARK + '\n')
+          text = ''.join(lines)
+          FP.write_text(text, encoding='utf-8', newline='')
+          print('FireVol v0.8 production flame volume applied')
+          PY
+
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: embedded v0.8 patcher SHA drift" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" source
+
+          sha256sum -c .v074_rend2_except_localfp.sha256
+          grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_PRODUCTION_FLAME_VOLUME' source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+          grep -Fq 'vec3 fireProductionTint' source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+          grep -Fq 'integratedFire' source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+          grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_7_4_VERTICAL_SCREEN_RAY_CONTRACT_FIX' source/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+          grep -Fq 'u_ViewUp * -screenCoords.y' source/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+
+          # Standalone GLSL syntax validation. ioRTCW injects common constants at runtime; provide M_PI here.
+          {
+            printf '#version 120\n#define M_PI 3.14159265358979323846\n'
+            cat source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+          } > .firevol080_validate.frag
+          glslangValidator -S frag .firevol080_validate.frag
+
+          # Structural validation independent of glslang diagnostics.
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('source/SP/code/rend2/glsl/volumetriclocal_fp.glsl')
+          s=p.read_text(encoding='utf-8')
+          clean=re.sub(r'//.*', '', s)
+          clean=re.sub(r'/\*.*?\*/', '', clean, flags=re.S)
+          for a,b,label in [('{','}','brace'),('(',')','paren'),('[',']','bracket')]:
+              depth=0
+              for ch in clean:
+                  if ch == a: depth += 1
+                  elif ch == b: depth -= 1
+                  if depth < 0: raise SystemExit(f'ERROR: {label} underflow')
+              if depth != 0: raise SystemExit(f'ERROR: unbalanced {label}: {depth}')
+          if s.count('float fireShapeMask(') != 1 or s.count('vec3 fireProductionTint(') != 1:
+              raise SystemExit('ERROR: production fire function multiplicity drift')
+          print('FireVol v0.8 structural GLSL validation PASS')
+          PY
+
+          # Patcher must be idempotent.
+          before="$(sha256sum source/SP/code/rend2/glsl/volumetriclocal_fp.glsl | awk '{print $1}')"
+          python3 "$PATCHER_NAME" source
+          after="$(sha256sum source/SP/code/rend2/glsl/volumetriclocal_fp.glsl | awk '{print $1}')"
+          test "$before" = "$after" || { echo "ERROR: v0.8 patcher is not idempotent" >&2; exit 1; }
+
+          base_commit="$(cat .base_source_commit)"
+          git -C source add -A
+          mapfile -t changed < <(git -C source diff --cached --name-only "$base_commit" -- . | sort)
+          test "${#changed[@]}" -eq 1 || { printf 'ERROR: v0.8 scope count drift: %s\n' "${changed[*]}" >&2; exit 1; }
+          test "${changed[0]}" = 'SP/code/rend2/glsl/volumetriclocal_fp.glsl' || { printf 'ERROR: v0.8 scope drift: %s\n' "${changed[*]}" >&2; exit 1; }
+          if git -C source diff --cached "$base_commit" -- . | grep -E '^\+.*(r_bloom|ToneMap|Exposure|r_ssgi|StaticPromote|LampLearn)' >/dev/null; then
+            echo "ERROR: forbidden parallel subsystem token added by v0.8" >&2
+            exit 1
+          fi
+
+          git -C source diff --cached --binary "$base_commit" -- . > "$DELTA_NAME"
+          test -s "$DELTA_NAME" || { echo "ERROR: empty v0.8 delta" >&2; exit 1; }
+          sha256sum "$DELTA_NAME" > "$DELTA_NAME.sha256"
+          git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > "$CUMULATIVE_NAME"
+          test -s "$CUMULATIVE_NAME" || { echo "ERROR: empty v0.8 cumulative patch" >&2; exit 1; }
+          sha256sum "$CUMULATIVE_NAME" > "$CUMULATIVE_NAME.sha256"
+          echo "FireVol v0.8 one-file production shaping delta PASS"
+
+      - name: Independent v0.8 delta and cumulative replay verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          rm -rf replay-delta replay-cumulative
+          git -C source worktree add --detach ../replay-delta "$base_commit"
+          git -C replay-delta apply --check --binary "../$DELTA_NAME"
+          git -C replay-delta apply --binary "../$DELTA_NAME"
+          git -C replay-delta add -A
+          git -C replay-delta diff --cached --binary "$base_commit" -- . > .replayed-v080-delta.patch
+          cmp "$DELTA_NAME" .replayed-v080-delta.patch || { echo "ERROR: v0.8 delta replay drift" >&2; exit 1; }
+
+          git -C source worktree add --detach ../replay-cumulative "$UPSTREAM_SHA"
+          git -C replay-cumulative apply --check --binary "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary "../$CUMULATIVE_NAME"
+          git -C replay-cumulative add -A
+          git -C replay-cumulative diff --cached --binary "$UPSTREAM_SHA" -- . > .replayed-v080-cumulative.patch
+          cmp "$CUMULATIVE_NAME" .replayed-v080-cumulative.patch || { echo "ERROR: v0.8 cumulative replay drift" >&2; exit 1; }
+          echo "Independent v0.8 delta + cumulative replay PASS"
+
+      - name: Build canonical Windows x64 FireVol v0.8 candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"
+          if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify rebuilt v0.8 Rend2 and frozen v0.7.4 runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          find_one() {
+            local name="$1" out="$2"
+            mapfile -t a < <(find source/SP/build -type f -name "$name" -print | sort)
+            test "${#a[@]}" -eq 1 || { printf 'ERROR: expected one %s, got %d\n' "$name" "${#a[@]}" >&2; exit 1; }
+            test -s "${a[0]}"
+            printf '%s\n' "${a[0]}" > "$out"
+          }
+          find_one renderer_sp_rend2_x64.dll .new_renderer_path
+          new_renderer="$(cat .new_renderer_path)"
+          file "$new_renderer" > .new_renderer_file.txt
+          grep -Fq 'PE32+ executable' .new_renderer_file.txt
+          grep -Fq 'x86-64' .new_renderer_file.txt
+          grep -Fq '(DLL)' .new_renderer_file.txt
+          test "$(sha256sum "$new_renderer" | awk '{print $1}')" != "$BASE_RENDERER_SHA256" || { echo "ERROR: v0.8 renderer unexpectedly equals v0.7.4" >&2; exit 1; }
+          strings -a "$new_renderer" > .new_renderer_strings.txt
+          for need in \
+            DARKWOLF_FIRE_VOLUMETRIC_V0_7_4_VERTICAL_SCREEN_RAY_CONTRACT_FIX \
+            DARKWOLF_FIRE_VOLUMETRIC_V0_8_PRODUCTION_FLAME_VOLUME \
+            r_volumetricFirePlumeRadius r_volumetricFireTurbulence; do
+            grep -Fq "$need" .new_renderer_strings.txt || { echo "ERROR: rebuilt Rend2 missing $need" >&2; exit 1; }
+          done
+
+          base_stage="$(cat .base_stage_path)"
+          check_base() {
+            local rel="$1" sha="$2"
+            test "$(sha256sum "$base_stage/$rel" | awk '{print $1}')" = "$sha" || { echo "ERROR: frozen v0.7.4 runtime drift: $rel" >&2; exit 1; }
+          }
+          check_base ioWolfSP.x64.exe "$BASE_EXE_SHA256"
+          check_base renderer_sp_opengl1_x64.dll "$BASE_OPENGL1_SHA256"
+          check_base Main/qagame_sp_x64.dll "$BASE_QAGAME_SHA256"
+          check_base Main/cgame_sp_x64.dll "$BASE_CGAME_SHA256"
+          check_base Main/ui_sp_x64.dll "$BASE_UI_SHA256"
+          check_base OpenAL64.dll "$BASE_OPENAL_SHA256"
+          check_base SDL264.dll "$BASE_SDL_SHA256"
+          sha256sum "$new_renderer" > .new_renderer_sha256
+          echo "Rebuilt FireVol v0.8 Rend2 verification PASS"
+
+      - name: Package FireVol v0.8 production flame candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          new_renderer="$(cat .new_renderer_path)"
+          rm -rf release dist
+          stage="release/$RELEASE_BASENAME"
+          mkdir -p "$stage/Main" "$stage/docs" dist
+
+          # Runtime stays byte-identical to the verified v0.7.4 release except the rebuilt Rend2 DLL.
+          cp "$base_stage/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cp "$base_stage/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cp "$base_stage/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cp "$base_stage/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cp "$base_stage/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cp "$base_stage/OpenAL64.dll" "$stage/OpenAL64.dll"
+          cp "$base_stage/SDL264.dll" "$stage/SDL264.dll"
+          cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+
+          write_fire_cfg() {
+            local file="$1" firemode="$2" strength="$3" density="$4" samples="$5" plume_radius="$6" plume_height="$7" turbulence="$8" speed="$9"
+            shift 9
+            local radius_min="$1" radius_max="$2" smooth_ms="$3" gain="$4" knee="$5" anisotropy="$6" jitter="$7" pcf="$8"
+            cat > "$stage/Main/$file" <<EOF
+          seta r_volumetricFire "1"
+          seta r_volumetricFireMode "$firemode"
+          seta r_volumetricFireSourceMode "0"
+          seta r_volumetricFireMaxActive "4"
+          seta r_volumetricFireDiag "0"
+          seta r_volumetricFireShape "1"
+          seta r_volumetricFireProofMode "0"
+          seta r_volumetricFireOwnerLock "0"
+          seta r_volumetricFireAnchorMode "0"
+          seta r_volumetricFireDualDebug "0"
+          seta r_volumetricFireV07Mode "2"
+          seta r_volumetricFireGreenMarker "0"
+          seta r_volumetricFireV072GpuIsolation "0"
+          seta r_volumetricFireRenderedMaxDist "256"
+          seta r_volumetricFirePoolGraceMs "3000"
+          seta r_volumetricFireRadiusStabilize "1"
+          seta r_volumetricFireRadiusMin "$radius_min"
+          seta r_volumetricFireRadiusMax "$radius_max"
+          seta r_volumetricFireRadiusSmoothMs "$smooth_ms"
+          seta r_volumetricFireStrength "$strength"
+          seta r_volumetricFireDensity "$density"
+          seta r_volumetricFireSamples "$samples"
+          seta r_volumetricFirePlumeRadius "$plume_radius"
+          seta r_volumetricFirePlumeHeight "$plume_height"
+          seta r_volumetricFireTurbulence "$turbulence"
+          seta r_volumetricFireSpeed "$speed"
+          seta r_volumetricLocalGain "$gain"
+          seta r_volumetricLocalKnee "$knee"
+          seta r_volumetricLocalAnisotropy "$anisotropy"
+          seta r_volumetricLocalJitter "$jitter"
+          seta r_volumetricLocalShadowPcf "$pcf"
+          seta r_volumetricLocalMaxDistance "1536"
+          seta r_volumetricLocal "0"
+          seta cg_drawFPS "1"
+          seta com_maxfps "250"
+          EOF
+          }
+
+          # Recommended production preset: stable unshadowed volume, compact and warm.
+          write_fire_cfg FIREVOL080_PRODUCTION_BALANCED.cfg 2 1.00 0.0110 20 0.38 0.88 0.55 1.55 96 132 1100 3.20 0.90 0.05 0.04 0
+          # Cinematic: slightly richer plume plus point-shadow sampling where an eligible shadow slot exists.
+          write_fire_cfg FIREVOL080_PRODUCTION_CINEMATIC.cfg 3 1.15 0.0125 28 0.40 0.92 0.62 1.75 104 148 1200 3.40 0.85 0.10 0.06 1
+          # Performance: same production shader, smaller medium and fewer ray steps.
+          write_fire_cfg FIREVOL080_PRODUCTION_PERFORMANCE.cfg 2 0.90 0.0100 16 0.34 0.82 0.45 1.45 88 120 1000 3.00 1.00 0.03 0.02 0
+
+          cat > "$stage/FIREVOL080_COLLECT.ps1" <<'PS1'
+          param([Parameter(Mandatory=$true)][string]$Mode,[Parameter(Mandatory=$true)][string]$TestHome)
+          $ErrorActionPreference='Stop'
+          $root=$PSScriptRoot
+          $results=Join-Path $root 'FIREVOL080_RESULTS'
+          $out=Join-Path $results $Mode
+          $zip=Join-Path $results ($Mode+'.zip')
+          New-Item -ItemType Directory -Force -Path $results | Out-Null
+          if(Test-Path $out){Remove-Item -Recurse -Force $out}
+          if(Test-Path $zip){Remove-Item -Force $zip}
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $log=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'rtcwconsole.log' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if($log){Copy-Item $log.FullName (Join-Path $out 'rtcwconsole.log')}
+          $cfg=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'wolfconfig.cfg' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if($cfg){Copy-Item $cfg.FullName (Join-Path $out 'wolfconfig.cfg')}
+          $shots=Get-ChildItem -Path $TestHome -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.Extension -match '^\.(tga|jpg|jpeg|png)$'}
+          if($shots){$sd=Join-Path $out 'screenshots'; New-Item -ItemType Directory -Force -Path $sd|Out-Null; foreach($s in $shots){Copy-Item $s.FullName (Join-Path $sd $s.Name) -Force}}
+          @(
+            "mode=$Mode",
+            "base=v0.7.4_user_verified_projection_fix",
+            "production_shader=compact_core+tapered_body+dual_tongues+soft_halo+warm_height_tint",
+            "debug_overlays=off"
+          ) | Set-Content -Encoding UTF8 (Join-Path $out 'FIREVOL080_SUMMARY.txt')
+          Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "Created $zip"
+          PS1
+
+          make_launcher() {
+            local file="$1" mode="$2" cfg="$3" note="$4"
+            cat > "$stage/$file" <<EOF
+          @echo off
+          setlocal
+          cd /d "%~dp0"
+          set "MODE=$mode"
+          set "TESTHOME=%~dp0FIREVOL080_TEST_HOME\%MODE%"
+          if exist "%TESTHOME%" rmdir /s /q "%TESTHOME%"
+          mkdir "%TESTHOME%"
+          echo Running FireVol v0.8 %MODE% on crypt1...
+          echo $note
+          ioWolfSP.x64.exe +set fs_homepath "%TESTHOME%" +set com_recommendedSet 1 +set cl_renderer rend2 +set logfile 2 +set r_swapInterval 0 +set r_volumetricLocal 0 +exec $cfg +map crypt1
+          powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0FIREVOL080_COLLECT.ps1" -Mode "%MODE%" -TestHome "%TESTHOME%"
+          pause
+          EOF
+          }
+          make_launcher RUN_FIREVOL080_01_PRODUCTION_BALANCED.cmd PRODUCTION_BALANCED FIREVOL080_PRODUCTION_BALANCED.cfg "RECOMMENDED: compact warm production flame volume; no diagnostic spheres."
+          make_launcher RUN_FIREVOL080_02_PRODUCTION_CINEMATIC.cmd PRODUCTION_CINEMATIC FIREVOL080_PRODUCTION_CINEMATIC.cfg "Higher quality: 28 samples and point-shadow PCF when a shadow slot exists."
+          make_launcher RUN_FIREVOL080_03_PRODUCTION_PERFORMANCE.cmd PRODUCTION_PERFORMANCE FIREVOL080_PRODUCTION_PERFORMANCE.cfg "Lower cost production preset for dense multi-fire scenes."
+
+          cat > "$stage/README_FIREVOL080_RU.txt" <<'EOF'
+          DARKWOLF / ioRTCW Rend2 SP
+          FIREVOL v0.8 — PRODUCTION TORCH FLAME VOLUME
+          =============================================
+
+          БАЗА
+          v0.8 построен непосредственно поверх успешно собранного и визуально подтверждённого v0.7.4.
+          Исправление vertical screen-ray contract сохранено без изменений.
+
+          ЧТО ИЗМЕНЕНО
+          Изменяется только SP/code/rend2/glsl/volumetriclocal_fp.glsl.
+          Binding, latched flame origin, stable pool, source selector, depth path, FBO path и vertex projection не меняются.
+
+          Новая production-форма:
+            - компактное горячее ядро около центра настоящего flame sprite;
+            - основной корпус с СУЖЕНИЕМ кверху вместо расширяющегося шара;
+            - две отдельные верхние flame tongues;
+            - слабый мягкий volumetric halo, который не должен закрывать каменную геометрию;
+            - world-space turbulence, причём основание почти не двигается;
+            - тёплый height-dependent цвет: gold/yellow -> orange -> amber/red tip;
+            - authored DLight colour сохраняется и смешивается с fire tint;
+            - старый enclosing ray sphere остаётся только технической областью пересечения и не должен быть видим как форма.
+
+          ЗАПУСКИ
+          1) RUN_FIREVOL080_01_PRODUCTION_BALANCED.cmd
+             Рекомендуемый основной вариант. 20 samples, компактная форма, без cubemap shadow cost.
+
+          2) RUN_FIREVOL080_02_PRODUCTION_CINEMATIC.cmd
+             28 samples, немного более богатая форма, cubemap shadow + PCF там, где shadow slot доступен.
+
+          3) RUN_FIREVOL080_03_PRODUCTION_PERFORMANCE.cmd
+             16 samples, меньший volume radius. Для участков с большим количеством одновременно видимых огней.
+
+          Во всех трёх режимах RED/GREEN/YELLOW/MAGENTA диагностические маркеры выключены.
+          Основной критерий теперь визуальный: volume должен выглядеть частью факела, а не отдельным шаром,
+          оставаться привязанным к flame center и не заполнять комнату сплошным оранжевым облаком.
+          EOF
+
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          sha256sum "$PATCHER_NAME" > "$stage/docs/$PATCHER_NAME.sha256"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$DELTA_NAME.sha256" "$stage/docs/$DELTA_NAME.sha256"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          cp "$CUMULATIVE_NAME.sha256" "$stage/docs/$CUMULATIVE_NAME.sha256"
+          cp .base-v074-cumulative.patch "$stage/docs/$BASE_CUMULATIVE_NAME"
+
+          cat > "$stage/docs/EXACT_BASE.txt" <<EOF
+          Fire Volumetric v0.8 Production Flame Volume
+          direct_source_parent_run=$BASE_RUN_ID
+          parent_head=$BASE_RUN_HEAD_SHA
+          parent_workflow=$BASE_WORKFLOW_PATH
+          parent_artifact_id=$BASE_ARTIFACT_ID
+          parent_artifact_name=$BASE_ARTIFACT_NAME
+          parent_artifact_digest=$BASE_ARTIFACT_DIGEST
+          parent_inner_zip_sha256=$BASE_INNER_ZIP_SHA256
+          parent_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          parent_renderer_sha256=$BASE_RENDERER_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          source_scope=SP/code/rend2/glsl/volumetriclocal_fp.glsl ONLY
+          preserved_root_fix=DARKWOLF_FIRE_VOLUMETRIC_V0_7_4_VERTICAL_SCREEN_RAY_CONTRACT_FIX
+          behavioral_change=production flame density shape + per-sample warm height tint only
+          runtime_policy=exact user-tested v0.7.4 runtime except rebuilt renderer_sp_rend2_x64.dll
+          EOF
+
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          zip -q -r "dist/${RELEASE_BASENAME}.zip" "release/${RELEASE_BASENAME}"
+          sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+          echo "Packaged FireVol v0.8 production flame candidate"
+
+      - name: Upload Fire Volumetric v0.8 production artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
