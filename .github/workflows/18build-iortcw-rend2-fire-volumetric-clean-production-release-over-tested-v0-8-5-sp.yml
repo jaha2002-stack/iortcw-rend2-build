@@ -1,0 +1,405 @@
+name: Build DarkWolf Rend2 Fire Volumetric Clean Production Release SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-fire-volumetric-clean-production-release-sp
+  cancel-in-progress: false
+
+jobs:
+  package-windows-x64:
+    name: FireVol Clean Production Release - exact tested v0.8.5 runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    env:
+      # Exact successful and user-tested final functional candidate.
+      BASE_RUN_ID: "33496107254"
+      BASE_RUN_HEAD_SHA: c2e33a81abc4129b11a4e09aef9d9d96a3682900
+      BASE_WORKFLOW_PATH: '.github/workflows/17build-iortcw-rend2-fire-volumetric-v0-8-5-visible-hold-weapon-flame-exclusion-over-v0-8-3-sp-self-contained.yml'
+      BASE_ARTIFACT_ID: "9795842358"
+      BASE_ARTIFACT_NAME: iortcw-rend2-fire-volumetric-v0-8-5-visible-hold-weapon-flame-exclusion-over-v0-8-3-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:9a7bb686ec9295c7a99878922c937baf7349e1e21e9e59045e2ff4a88863af1b
+      BASE_RELEASE_BASENAME: iortcw-rend2-fire-volumetric-v0-8-5-visible-hold-weapon-flame-exclusion-over-v0-8-3-full-sp-windows-x64-1
+      BASE_INNER_ZIP_SHA256: c494f0f4f4b404e9e2b00842215e90df9a93a44fa354664598476c0adf927f63
+
+      BASE_EXE_SHA256: e10fe66316d12594da8d497d0c996ae30b47af19d6fe1ccd08537407328c01ba
+      BASE_RENDERER_SHA256: d5dc0df3f4126d34f25442f2508ea27f7f9129b27dc854f035ea24254c692c96
+      BASE_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      BASE_QAGAME_SHA256: b4d6b72bb43a6bb8ccce0eeaf95515da5a88dd4f048c5cf6db05e566f5dfa60a
+      BASE_CGAME_SHA256: dbcfe16805248a2d017a6f35450688caba89750b1044e16547c0c0911eec1e16
+      BASE_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      BASE_OPENAL_SHA256: 396f88738ce20905e933cb7d8c696351e41bd7e72e80b8cfdadf20ab613420b4
+      BASE_SDL_SHA256: f34cd90b131ceb45b7f32d41680a13fd4b13e5f48f0d1649cbf441833105310c
+
+      BASE_BALANCED_SHA256: d4449b575c1e8eeff489241b947625088337d093d79e2e345caf568b74e84551
+      BASE_CINEMATIC_SHA256: c4925caa8811dbb2daf0addf6d731bb84e2c77c876aacdf39c47aa04a2790da3
+      BASE_PERFORMANCE_SHA256: d4b047ca6159aab47052adbcd0a90c1e4ecea8cfa943642d3f456508d06111a0
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-8-5-visible-hold-weapon-flame-exclusion-sp.patch
+      BASE_CUMULATIVE_SHA256: f27dc8f4ee0a802f14a33f565cebd216a9719ee0bc8ae5d7ac4900d95f47e81c
+
+      RELEASE_BASENAME: iortcw-rend2-fire-volumetric-clean-production-sp-windows-x64-1
+
+    steps:
+    - name: Checkout build repository
+      uses: actions/checkout@v5
+
+    - name: Preflight workflow YAML and bash contract
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+        workflow_rel="${workflow_rel%@*}"
+        test -f "$workflow_rel" || { echo "ERROR: cannot resolve workflow: $workflow_rel" >&2; exit 1; }
+        python3 - "$workflow_rel" <<'PY'
+        from pathlib import Path
+        import subprocess, sys, yaml
+
+        p = Path(sys.argv[1])
+        doc = yaml.safe_load(p.read_text(encoding='utf-8'))
+        expected = 'Build DarkWolf Rend2 Fire Volumetric Clean Production Release SP'
+        if doc.get('name') != expected:
+            raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+
+        checked = 0
+        for job_name, job in (doc.get('jobs') or {}).items():
+            for index, step in enumerate(job.get('steps') or [], 1):
+                script = step.get('run')
+                shell = step.get('shell', 'bash')
+                if not script or not str(shell).lower().startswith('bash'):
+                    continue
+                proc = subprocess.run(
+                    ['bash', '-n'], input=script, text=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+                if proc.returncode:
+                    print(
+                        f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}',
+                        file=sys.stderr,
+                    )
+                    print(proc.stderr, file=sys.stderr)
+                    raise SystemExit(proc.returncode)
+                checked += 1
+        if checked < 1:
+            raise SystemExit('ERROR: no bash run blocks found')
+        print(f'Workflow YAML + bash syntax PASS: {checked} bash blocks')
+        PY
+
+    - name: Install packaging and validation dependencies
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          ca-certificates gh jq python3 python3-yaml unzip zip file binutils
+
+    - name: Verify exact successful and user-tested v0.8.5 parent
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -Eeuo pipefail
+        run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+        test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: v0.8.5 HEAD drift" >&2; exit 1; }
+        test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo "ERROR: v0.8.5 parent run is not successful" >&2; exit 1; }
+        test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: v0.8.5 workflow path drift" >&2; exit 1; }
+
+        line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" \
+          --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+        test -n "$line" || { echo "ERROR: exact v0.8.5 artifact missing" >&2; exit 1; }
+        IFS=$'\t' read -r aname expired adigest <<< "$line"
+        test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: v0.8.5 artifact name drift" >&2; exit 1; }
+        test "$expired" = "false" || { echo "ERROR: v0.8.5 artifact expired" >&2; exit 1; }
+        test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: v0.8.5 artifact digest drift" >&2; exit 1; }
+        echo "Exact tested FireVol v0.8.5 provenance PASS"
+
+    - name: Download and byte-verify exact tested v0.8.5 release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -Eeuo pipefail
+        rm -rf base-artifact base-release
+        mkdir -p base-artifact base-release
+        gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+          --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+
+        base_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+        test -s "$base_zip" || { echo "ERROR: v0.8.5 inner ZIP missing" >&2; find base-artifact -maxdepth 2 -type f -print; exit 1; }
+        test "$(sha256sum "$base_zip" | awk '{print $1}')" = "$BASE_INNER_ZIP_SHA256" || { echo "ERROR: v0.8.5 inner ZIP SHA drift" >&2; exit 1; }
+
+        unzip -q "$base_zip" -d base-release
+        mapfile -t roots < <(find base-release/release -mindepth 1 -maxdepth 1 -type d -print)
+        test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one v0.8.5 release root" >&2; find base-release -maxdepth 3 -type d -print; exit 1; }
+        base_stage="${roots[0]}"
+        printf '%s\n' "$base_stage" > .base_stage_path
+
+        check_sha() {
+          local file="$1" expected="$2"
+          test -s "$file" || { echo "ERROR: missing required parent file: $file" >&2; exit 1; }
+          test "$(sha256sum "$file" | awk '{print $1}')" = "$expected" || { echo "ERROR: SHA drift: $file" >&2; exit 1; }
+        }
+
+        check_sha "$base_stage/ioWolfSP.x64.exe" "$BASE_EXE_SHA256"
+        check_sha "$base_stage/renderer_sp_rend2_x64.dll" "$BASE_RENDERER_SHA256"
+        check_sha "$base_stage/renderer_sp_opengl1_x64.dll" "$BASE_OPENGL1_SHA256"
+        check_sha "$base_stage/Main/qagame_sp_x64.dll" "$BASE_QAGAME_SHA256"
+        check_sha "$base_stage/Main/cgame_sp_x64.dll" "$BASE_CGAME_SHA256"
+        check_sha "$base_stage/Main/ui_sp_x64.dll" "$BASE_UI_SHA256"
+        check_sha "$base_stage/OpenAL64.dll" "$BASE_OPENAL_SHA256"
+        check_sha "$base_stage/SDL264.dll" "$BASE_SDL_SHA256"
+        check_sha "$base_stage/Main/FIREVOL085_PRODUCTION_BALANCED.cfg" "$BASE_BALANCED_SHA256"
+        check_sha "$base_stage/Main/FIREVOL085_PRODUCTION_CINEMATIC.cfg" "$BASE_CINEMATIC_SHA256"
+        check_sha "$base_stage/Main/FIREVOL085_PRODUCTION_PERFORMANCE.cfg" "$BASE_PERFORMANCE_SHA256"
+        check_sha "$base_stage/docs/$BASE_CUMULATIVE_NAME" "$BASE_CUMULATIVE_SHA256"
+
+        file "$base_stage/renderer_sp_rend2_x64.dll" > .renderer_file.txt
+        grep -Fq 'PE32+ executable' .renderer_file.txt
+        grep -Fq 'x86-64' .renderer_file.txt
+        grep -Fq '(DLL)' .renderer_file.txt
+        strings -a "$base_stage/renderer_sp_rend2_x64.dll" > .renderer_strings.txt
+        for need in FIREVOL085_GUARD weaponStreamSeen FIREVOL084_HOLD visibleFixtureHolds FIREVOL083_PRIORITY FIREVOL082_COVERAGE r_volumetricFireMaxActive r_volumetricFireSourceMode; do
+          grep -Fq "$need" .renderer_strings.txt || { echo "ERROR: tested renderer missing final-contract token: $need" >&2; exit 1; }
+        done
+
+        # Assert the production profiles really keep every diagnostic switch disabled.
+        for cfg in \
+          "$base_stage/Main/FIREVOL085_PRODUCTION_BALANCED.cfg" \
+          "$base_stage/Main/FIREVOL085_PRODUCTION_CINEMATIC.cfg" \
+          "$base_stage/Main/FIREVOL085_PRODUCTION_PERFORMANCE.cfg"; do
+          grep -Fq 'seta r_volumetricFireDiag "0"' "$cfg"
+          grep -Fq 'seta r_volumetricFireProofMode "0"' "$cfg"
+          grep -Fq 'seta r_volumetricFireDualDebug "0"' "$cfg"
+          grep -Fq 'seta r_volumetricFireGreenMarker "0"' "$cfg"
+          grep -Fq 'seta r_volumetricFireV072GpuIsolation "0"' "$cfg"
+          grep -Fq 'seta r_volumetricFireSourceMode "2"' "$cfg"
+          grep -Fq 'seta r_volumetricFireRenderedMaxDist "320"' "$cfg"
+          grep -Fq 'seta r_volumetricFirePoolGraceMs "10000"' "$cfg"
+        done
+        echo "Exact tested v0.8.5 runtime and production profiles PASS"
+
+    - name: Package clean production release with zero renderer behavior drift
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_stage="$(cat .base_stage_path)"
+        rm -rf release dist
+        stage="release/$RELEASE_BASENAME"
+        mkdir -p "$stage/Main" "$stage/docs" dist
+
+        # Runtime binaries are copied byte-for-byte from the final user-tested v0.8.5 candidate.
+        cp "$base_stage/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+        cp "$base_stage/renderer_sp_rend2_x64.dll" "$stage/renderer_sp_rend2_x64.dll"
+        cp "$base_stage/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+        cp "$base_stage/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+        cp "$base_stage/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+        cp "$base_stage/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+        cp "$base_stage/OpenAL64.dll" "$stage/OpenAL64.dll"
+        cp "$base_stage/SDL264.dll" "$stage/SDL264.dll"
+
+        # Rename only the files, never their tested CVar contents.
+        cp "$base_stage/Main/FIREVOL085_PRODUCTION_BALANCED.cfg" "$stage/Main/FIREVOL_PRODUCTION_BALANCED.cfg"
+        cp "$base_stage/Main/FIREVOL085_PRODUCTION_CINEMATIC.cfg" "$stage/Main/FIREVOL_PRODUCTION_CINEMATIC.cfg"
+        cp "$base_stage/Main/FIREVOL085_PRODUCTION_PERFORMANCE.cfg" "$stage/Main/FIREVOL_PRODUCTION_PERFORMANCE.cfg"
+        cp "$base_stage/Main/FIREVOL085_PRODUCTION_BALANCED.cfg" "$stage/Main/FIREVOL_PRODUCTION_DEFAULT.cfg"
+
+        cmp "$base_stage/Main/FIREVOL085_PRODUCTION_BALANCED.cfg" "$stage/Main/FIREVOL_PRODUCTION_BALANCED.cfg"
+        cmp "$base_stage/Main/FIREVOL085_PRODUCTION_CINEMATIC.cfg" "$stage/Main/FIREVOL_PRODUCTION_CINEMATIC.cfg"
+        cmp "$base_stage/Main/FIREVOL085_PRODUCTION_PERFORMANCE.cfg" "$stage/Main/FIREVOL_PRODUCTION_PERFORMANCE.cfg"
+        cmp "$base_stage/Main/FIREVOL085_PRODUCTION_BALANCED.cfg" "$stage/Main/FIREVOL_PRODUCTION_DEFAULT.cfg"
+
+        cat > "$stage/RUN_FIREVOL_PRODUCTION.cmd" <<'CMD'
+        @echo off
+        setlocal
+        cd /d "%~dp0"
+        echo DarkWolf Rend2 Fire Volumetric - Clean Production Release
+        echo Profile: BALANCED (recommended default)
+        ioWolfSP.x64.exe +set com_recommendedSet 1 +set cl_renderer rend2 +set r_swapInterval 0 +set r_volumetricLocal 0 +exec FIREVOL_PRODUCTION_DEFAULT.cfg
+        CMD
+
+        cat > "$stage/RUN_FIREVOL_PRODUCTION_CINEMATIC.cmd" <<'CMD'
+        @echo off
+        setlocal
+        cd /d "%~dp0"
+        echo DarkWolf Rend2 Fire Volumetric - Clean Production Release
+        echo Profile: CINEMATIC
+        ioWolfSP.x64.exe +set com_recommendedSet 1 +set cl_renderer rend2 +set r_swapInterval 0 +set r_volumetricLocal 0 +exec FIREVOL_PRODUCTION_CINEMATIC.cfg
+        CMD
+
+        cat > "$stage/RUN_FIREVOL_PRODUCTION_PERFORMANCE.cmd" <<'CMD'
+        @echo off
+        setlocal
+        cd /d "%~dp0"
+        echo DarkWolf Rend2 Fire Volumetric - Clean Production Release
+        echo Profile: PERFORMANCE
+        ioWolfSP.x64.exe +set com_recommendedSet 1 +set cl_renderer rend2 +set r_swapInterval 0 +set r_volumetricLocal 0 +exec FIREVOL_PRODUCTION_PERFORMANCE.cfg
+        CMD
+
+        cat > "$stage/README_FIRE_VOLUMETRIC_PRODUCTION_RU.txt" <<'EOF'
+        DARKWOLF / ioRTCW REND2 SINGLE PLAYER
+        FIRE VOLUMETRIC — CLEAN PRODUCTION RELEASE
+
+        Это финальная чистая production-упаковка Fire Volumetric после успешного тестирования v0.8.5.
+
+        ВАЖНО:
+        - renderer_sp_rend2_x64.dll байт-в-байт совпадает с успешно протестированным v0.8.5.
+        - Никакой новой функциональной правки после финального пользовательского теста не внесено.
+        - Удалены только тестовая оболочка и диагностические файлы упаковки: Coverage Audit, collector,
+          TEST_HOME/RESULTS и экспериментальные RUN_FIREVOL08x launcher-ы.
+        - Диагностические CVar в production CFG явно принудительно установлены в 0, чтобы старые значения
+          из пользовательского wolfconfig не могли случайно включить debug-режим.
+
+        СОХРАНЕННЫЙ PRODUCTION CONTRACT:
+        - исправленный world-space / vertical screen-ray projection;
+        - persistent fixture-centric flame identity;
+        - registry capacity 32;
+        - render budget 8 (Performance profile: 6);
+        - owner deduplication;
+        - active-view priority;
+        - synthetic flame-only coverage fallback;
+        - visible-fixture hold без 10-секундного pop-off перед камерой;
+        - weapon-stream blacklist: огнемет сохраняет оригинальную струю, но не получает stationary torch FireVol;
+        - утвержденный внешний вид Balanced / Cinematic / Performance.
+
+        ЗАПУСК:
+        RUN_FIREVOL_PRODUCTION.cmd                  — BALANCED, рекомендованный профиль.
+        RUN_FIREVOL_PRODUCTION_CINEMATIC.cmd        — максимальное качество.
+        RUN_FIREVOL_PRODUCTION_PERFORMANCE.cmd      — более легкий профиль.
+
+        CFG:
+        Main/FIREVOL_PRODUCTION_DEFAULT.cfg         — копия проверенного Balanced.
+        Main/FIREVOL_PRODUCTION_BALANCED.cfg
+        Main/FIREVOL_PRODUCTION_CINEMATIC.cfg
+        Main/FIREVOL_PRODUCTION_PERFORMANCE.cfg
+
+        Отдельный известный вывод "Fatal: empty aas link heap" относится к существующей AAS/game-side
+        проблеме и не является ошибкой Fire Volumetric renderer path.
+        EOF
+
+        # Preserve reproducible source provenance, but do not ship experimental patchers or audit scripts.
+        cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" \
+          "$stage/docs/darkwolf-rend2-cumulative-fire-volumetric-final-tested-v0-8-5-sp.patch"
+        test "$(sha256sum "$stage/docs/darkwolf-rend2-cumulative-fire-volumetric-final-tested-v0-8-5-sp.patch" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+
+        cat > "$stage/docs/PRODUCTION_PROVENANCE.txt" <<EOF
+        DarkWolf Rend2 Fire Volumetric Clean Production Release
+        release_strategy=byte-identical-tested-runtime-repackage
+        tested_parent_run=$BASE_RUN_ID
+        tested_parent_head=$BASE_RUN_HEAD_SHA
+        tested_parent_workflow=$BASE_WORKFLOW_PATH
+        tested_parent_artifact_id=$BASE_ARTIFACT_ID
+        tested_parent_artifact_name=$BASE_ARTIFACT_NAME
+        tested_parent_artifact_digest=$BASE_ARTIFACT_DIGEST
+        tested_parent_inner_zip_sha256=$BASE_INNER_ZIP_SHA256
+        tested_renderer_sha256=$BASE_RENDERER_SHA256
+        tested_cumulative_source_sha256=$BASE_CUMULATIVE_SHA256
+        default_profile=BALANCED
+        registry_capacity=32
+        render_cap_balanced=8
+        render_cap_cinematic=8
+        render_cap_performance=6
+        visual_contract=approved_v0.8.1_plus_v0.8.5_backend_fixes
+        visible_fixture_hold=enabled
+        weapon_stream_torch_volume=excluded
+        original_flamethrower_stream=preserved
+        production_behavior_drift_from_tested_v0.8.5=ZERO
+        EOF
+
+        (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+
+        echo "Clean production stage created"
+
+    - name: Validate clean production package contract
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_stage="$(cat .base_stage_path)"
+        stage="release/$RELEASE_BASENAME"
+
+        # Zero behavior drift: every executable binary must be byte-identical to tested v0.8.5.
+        cmp "$base_stage/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+        cmp "$base_stage/renderer_sp_rend2_x64.dll" "$stage/renderer_sp_rend2_x64.dll"
+        cmp "$base_stage/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+        cmp "$base_stage/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+        cmp "$base_stage/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+        cmp "$base_stage/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+        cmp "$base_stage/OpenAL64.dll" "$stage/OpenAL64.dll"
+        cmp "$base_stage/SDL264.dll" "$stage/SDL264.dll"
+
+        test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+
+        # Production profiles are byte-identical to those used in the successful v0.8.5 tests.
+        cmp "$base_stage/Main/FIREVOL085_PRODUCTION_BALANCED.cfg" "$stage/Main/FIREVOL_PRODUCTION_DEFAULT.cfg"
+        cmp "$base_stage/Main/FIREVOL085_PRODUCTION_BALANCED.cfg" "$stage/Main/FIREVOL_PRODUCTION_BALANCED.cfg"
+        cmp "$base_stage/Main/FIREVOL085_PRODUCTION_CINEMATIC.cfg" "$stage/Main/FIREVOL_PRODUCTION_CINEMATIC.cfg"
+        cmp "$base_stage/Main/FIREVOL085_PRODUCTION_PERFORMANCE.cfg" "$stage/Main/FIREVOL_PRODUCTION_PERFORMANCE.cfg"
+
+        # The user-facing release must contain no test/audit collection shell.
+        if find "$stage" -type f \( \
+          -iname '*COVERAGE_AUDIT*' -o \
+          -iname '*COLLECT*' -o \
+          -iname '*RESULTS*' -o \
+          -iname 'RUN_FIREVOL08*' -o \
+          -iname '*TEST_HOME*' \
+        \) -print | grep -q .; then
+          echo "ERROR: test/audit packaging residue found" >&2
+          find "$stage" -type f -print
+          exit 1
+        fi
+
+        for need in \
+          RUN_FIREVOL_PRODUCTION.cmd \
+          RUN_FIREVOL_PRODUCTION_CINEMATIC.cmd \
+          RUN_FIREVOL_PRODUCTION_PERFORMANCE.cmd \
+          Main/FIREVOL_PRODUCTION_DEFAULT.cfg \
+          Main/FIREVOL_PRODUCTION_BALANCED.cfg \
+          Main/FIREVOL_PRODUCTION_CINEMATIC.cfg \
+          Main/FIREVOL_PRODUCTION_PERFORMANCE.cfg \
+          README_FIRE_VOLUMETRIC_PRODUCTION_RU.txt \
+          docs/PRODUCTION_PROVENANCE.txt \
+          docs/SHA256SUMS.txt \
+          docs/darkwolf-rend2-cumulative-fire-volumetric-final-tested-v0-8-5-sp.patch; do
+          test -s "$stage/$need" || { echo "ERROR: clean release missing $need" >&2; exit 1; }
+        done
+
+        grep -Fq '+exec FIREVOL_PRODUCTION_DEFAULT.cfg' "$stage/RUN_FIREVOL_PRODUCTION.cmd"
+        grep -Fq '+exec FIREVOL_PRODUCTION_CINEMATIC.cfg' "$stage/RUN_FIREVOL_PRODUCTION_CINEMATIC.cmd"
+        grep -Fq '+exec FIREVOL_PRODUCTION_PERFORMANCE.cfg' "$stage/RUN_FIREVOL_PRODUCTION_PERFORMANCE.cmd"
+
+        # Safety: all debug switches stay explicitly OFF in every shipped production profile.
+        for cfg in "$stage/Main"/FIREVOL_PRODUCTION_*.cfg; do
+          grep -Fq 'seta r_volumetricFireDiag "0"' "$cfg"
+          grep -Fq 'seta r_volumetricFireProofMode "0"' "$cfg"
+          grep -Fq 'seta r_volumetricFireDualDebug "0"' "$cfg"
+          grep -Fq 'seta r_volumetricFireGreenMarker "0"' "$cfg"
+          grep -Fq 'seta r_volumetricFireV072GpuIsolation "0"' "$cfg"
+        done
+
+        (cd "$stage" && sha256sum -c docs/SHA256SUMS.txt)
+        echo "Clean Production Release contract PASS"
+
+    - name: Create final clean production ZIP
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        rm -f "dist/${RELEASE_BASENAME}.zip" "dist/${RELEASE_BASENAME}.zip.sha256"
+        zip -q -r "dist/${RELEASE_BASENAME}.zip" "release/${RELEASE_BASENAME}"
+        test -s "dist/${RELEASE_BASENAME}.zip"
+        sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+        unzip -t "dist/${RELEASE_BASENAME}.zip" >/dev/null
+        echo "Clean Production Release packaged successfully"
+
+    - name: Upload clean Fire Volumetric production release
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.RELEASE_BASENAME }}
+        path: |
+          dist/${{ env.RELEASE_BASENAME }}.zip
+          dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+        if-no-files-found: error
+        retention-days: 90
