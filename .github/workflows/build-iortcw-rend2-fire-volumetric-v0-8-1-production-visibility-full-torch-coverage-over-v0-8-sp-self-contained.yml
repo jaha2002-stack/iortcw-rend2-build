@@ -1,0 +1,987 @@
+name: Build DarkWolf Rend2 Fire Volumetric v0.8.1 Production Visibility Full Torch Coverage SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-fire-volumetric-v0-8-1-production-visibility-full-coverage-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: FireVol v0.8.1 - production visibility + 32 registry / 8 render budget
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      # Exact successful and user-verified v0.7.4 projection-fix parent.
+      BASE_RUN_ID: "33471178590"
+      BASE_RUN_HEAD_SHA: 753f062e9719fa58f0dacc466273bd6b6880eb83
+      BASE_WORKFLOW_PATH: '.github/workflows/15build-iortcw-rend2-fire-volumetric-v0-8-production-flame-volume-over-v0-7-4-sp-self-contained.yml'
+      BASE_ARTIFACT_ID: "9786608338"
+      BASE_ARTIFACT_NAME: iortcw-rend2-fire-volumetric-v0-8-production-flame-volume-over-v0-7-4-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:a2758aaa6516694ab6eaaa6a62d1ed5337c36321afe0e042b67e6c9d5c647a1b
+      BASE_RELEASE_BASENAME: iortcw-rend2-fire-volumetric-v0-8-production-flame-volume-over-v0-7-4-full-sp-windows-x64-1
+      BASE_INNER_ZIP_SHA256: 39ffcfe168b09b269804a8d0a37d03dc12811b6bfe9431ae3c59c8cb903f0c23
+
+      BASE_EXE_SHA256: e10fe66316d12594da8d497d0c996ae30b47af19d6fe1ccd08537407328c01ba
+      BASE_RENDERER_SHA256: 802ef53a44ca481dbdef78b102759667e060c836861bd787d2f5a6a452960306
+      BASE_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      BASE_QAGAME_SHA256: b4d6b72bb43a6bb8ccce0eeaf95515da5a88dd4f048c5cf6db05e566f5dfa60a
+      BASE_CGAME_SHA256: dbcfe16805248a2d017a6f35450688caba89750b1044e16547c0c0911eec1e16
+      BASE_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      BASE_OPENAL_SHA256: 396f88738ce20905e933cb7d8c696351e41bd7e72e80b8cfdadf20ab613420b4
+      BASE_SDL_SHA256: f34cd90b131ceb45b7f32d41680a13fd4b13e5f48f0d1649cbf441833105310c
+
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-8-production-flame-volume-sp.patch
+      BASE_CUMULATIVE_SHA256: f290afc5fbaa6b9b7b7501c04723163b601727198c3077b7d34d07c1d1913c7f
+
+      PATCHER_NAME: apply_fire_volumetric_v0_8_1_production_visibility_full_coverage.py
+      PATCHER_SHA256: 05fec58e287cf4073a24c29bff38e903b454ca4181d163f0412a5dbf27e6532e
+      DELTA_NAME: darkwolf-fire-volumetric-v0-8-1-production-visibility-full-coverage-over-v0-8.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-8-1-production-visibility-full-coverage-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-fire-volumetric-v0-8-1-production-visibility-full-coverage-over-v0-8-full-sp-windows-x64-1
+
+    steps:
+    - name: Checkout build repository
+      uses: actions/checkout@v5
+
+    - name: Preflight workflow YAML and bash contract
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+        workflow_rel="${workflow_rel%@*}"
+        test -f "$workflow_rel" || { echo "ERROR: cannot resolve workflow: $workflow_rel" >&2; exit 1; }
+        python3 - "$workflow_rel" <<'PY'
+        from pathlib import Path
+        import subprocess, sys, yaml
+        p = Path(sys.argv[1])
+        doc = yaml.safe_load(p.read_text(encoding='utf-8'))
+        expected = 'Build DarkWolf Rend2 Fire Volumetric v0.8.1 Production Visibility Full Torch Coverage SP'
+        if doc.get('name') != expected:
+            raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+        checked = 0
+        for job_name, job in (doc.get('jobs') or {}).items():
+            for index, step in enumerate(job.get('steps') or [], 1):
+                script = step.get('run')
+                shell = step.get('shell', 'bash')
+                if not script or not str(shell).lower().startswith('bash'):
+                    continue
+                proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if proc.returncode:
+                    print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                    print(proc.stderr, file=sys.stderr)
+                    raise SystemExit(proc.returncode)
+                checked += 1
+        if checked < 1:
+            raise SystemExit('ERROR: no bash run blocks found')
+        print(f'Workflow YAML + bash syntax PASS: {checked} bash blocks')
+        PY
+
+    - name: Install canonical MinGW and shader validation dependencies
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          binutils-mingw-w64-x86-64 build-essential ca-certificates \
+          g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+          glslang-tools libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+          python3 python3-yaml unzip zip file
+
+    - name: Verify exact user-tested FireVol v0.8 parent
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -Eeuo pipefail
+        run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+        test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: v0.8 base HEAD drift" >&2; exit 1; }
+        test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo "ERROR: v0.8 base run is not successful" >&2; exit 1; }
+        test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: v0.8 workflow path drift" >&2; exit 1; }
+        line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+        test -n "$line" || { echo "ERROR: exact v0.8 artifact missing" >&2; exit 1; }
+        IFS=$'\t' read -r aname expired adigest <<< "$line"
+        test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: v0.8 artifact name drift" >&2; exit 1; }
+        test "$expired" = "false" || { echo "ERROR: v0.8 artifact expired" >&2; exit 1; }
+        test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: v0.8 artifact digest drift" >&2; exit 1; }
+        echo "Exact user-tested FireVol v0.8 provenance PASS"
+
+    - name: Download and byte-verify exact v0.8 runtime and source payload
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -Eeuo pipefail
+        rm -rf base-artifact base-release
+        mkdir -p base-artifact base-release
+        gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+        base_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+        test -s "$base_zip" || { echo "ERROR: v0.8 inner ZIP missing" >&2; find base-artifact -maxdepth 2 -type f -print; exit 1; }
+        test "$(sha256sum "$base_zip" | awk '{print $1}')" = "$BASE_INNER_ZIP_SHA256" || { echo "ERROR: v0.8 inner ZIP SHA drift" >&2; exit 1; }
+        unzip -q "$base_zip" -d base-release
+        mapfile -t roots < <(find base-release/release -mindepth 1 -maxdepth 1 -type d -print)
+        test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one v0.8 release root" >&2; find base-release -maxdepth 3 -type d -print; exit 1; }
+        base_stage="${roots[0]}"
+        check_sha() {
+          local file="$1" expected="$2"
+          test "$(sha256sum "$file" | awk '{print $1}')" = "$expected" || { echo "ERROR: SHA drift: $file" >&2; exit 1; }
+        }
+        check_sha "$base_stage/ioWolfSP.x64.exe" "$BASE_EXE_SHA256"
+        check_sha "$base_stage/renderer_sp_rend2_x64.dll" "$BASE_RENDERER_SHA256"
+        check_sha "$base_stage/renderer_sp_opengl1_x64.dll" "$BASE_OPENGL1_SHA256"
+        check_sha "$base_stage/Main/qagame_sp_x64.dll" "$BASE_QAGAME_SHA256"
+        check_sha "$base_stage/Main/cgame_sp_x64.dll" "$BASE_CGAME_SHA256"
+        check_sha "$base_stage/Main/ui_sp_x64.dll" "$BASE_UI_SHA256"
+        check_sha "$base_stage/OpenAL64.dll" "$BASE_OPENAL_SHA256"
+        check_sha "$base_stage/SDL264.dll" "$BASE_SDL_SHA256"
+        check_sha "$base_stage/docs/$BASE_CUMULATIVE_NAME" "$BASE_CUMULATIVE_SHA256"
+        printf '%s\n' "$base_stage" > .base_stage_path
+        echo "Exact v0.8 runtime/source payload PASS"
+
+    - name: Reconstruct exact v0.8 source tree
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_stage="$(cat .base_stage_path)"
+        rm -rf source replay-delta replay-cumulative
+        git clone "$UPSTREAM_REPO" source
+        git -C source checkout --detach "$UPSTREAM_SHA"
+        git -C source reset --hard "$UPSTREAM_SHA"
+        git -C source clean -fdx
+        cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" .base-v080-cumulative.patch
+        test "$(sha256sum .base-v080-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+        git -C source apply --check --binary ../.base-v080-cumulative.patch
+        git -C source apply --binary ../.base-v080-cumulative.patch
+        git -C source add -A
+        git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > .rebuilt-v080-cumulative.patch
+        test -s .rebuilt-v080-cumulative.patch
+        cmp .base-v080-cumulative.patch .rebuilt-v080-cumulative.patch || { echo "ERROR: exact v0.8 source reconstruction drift" >&2; exit 1; }
+        grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_PRODUCTION_FLAME_VOLUME' source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+        grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_7_4_VERTICAL_SCREEN_RAY_CONTRACT_FIX' source/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+        grep -Fq 'var_ViewDir = u_ViewForward + u_ViewLeft * -screenCoords.x + u_ViewUp * -screenCoords.y;' source/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+        grep -Fq '#define FIREVOL07_MAX_POOL 4' source/SP/code/rend2/tr_backend.c
+        git -C source config user.email "darkwolf-ci@example.invalid"
+        git -C source config user.name "DarkWolf CI"
+        git -C source commit -m "Exact tested FireVol v0.8 source base"
+        git -C source rev-parse HEAD > .base_source_commit
+        test -z "$(git -C source status --porcelain)" || { echo "ERROR: reconstructed v0.8 source is not clean" >&2; exit 1; }
+        echo "Exact user-tested v0.8 source reconstruction PASS"
+
+    - name: Apply FireVol v0.8.1 production visibility and full-coverage delta
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        # v0.7.4 projection/latch and v0.8 fire architecture are proven. v0.8.1 changes ONLY
+        # the persistent registry/render-budget backend and the shaped-fire fragment shader.
+        find source/SP/code/rend2 -type f \
+          ! -path 'source/SP/code/rend2/tr_backend.c' \
+          ! -path 'source/SP/code/rend2/glsl/volumetriclocal_fp.glsl' \
+          -print0 | sort -z | xargs -0 sha256sum > .v080_rend2_frozen.sha256
+        cp source/SP/code/rend2/tr_backend.c .v080_tr_backend.c
+        cp source/SP/code/rend2/glsl/volumetriclocal_fp.glsl .v080_volumetriclocal_fp.glsl
+
+        cat > "$PATCHER_NAME" <<'__PATCHER_V081__'
+        from pathlib import Path
+        import sys
+
+        ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('.')
+        BACKEND = ROOT / 'SP/code/rend2/tr_backend.c'
+        FP = ROOT / 'SP/code/rend2/glsl/volumetriclocal_fp.glsl'
+        VP = ROOT / 'SP/code/rend2/glsl/volumetriclocal_vp.glsl'
+        MARK = 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_1_PRODUCTION_VISIBILITY_FULL_COVERAGE'
+        PARENT = 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_PRODUCTION_FLAME_VOLUME'
+        ROOT_FIX = 'DARKWOLF_FIRE_VOLUMETRIC_V0_7_4_VERTICAL_SCREEN_RAY_CONTRACT_FIX'
+
+
+        def replace_once(text, old, new, label):
+            count = text.count(old)
+            if count != 1:
+                raise SystemExit(f'ERROR: {label}: expected exactly one anchor, found {count}')
+            return text.replace(old, new, 1)
+
+
+        def assert_ready(backend, fp, vp):
+            if PARENT not in fp:
+                raise SystemExit('ERROR: exact FireVol v0.8 fragment parent marker missing')
+            if ROOT_FIX not in vp or 'u_ViewUp * -screenCoords.y' not in vp:
+                raise SystemExit('ERROR: proven v0.7.4 vertical screen-ray fix missing/drifted')
+            if 'DARKWOLF_FIRE_VOLUMETRIC_V0_7_1_LATCHED_ANCHOR_ISOLATION' not in backend:
+                raise SystemExit('ERROR: latched-anchor backend parent missing')
+
+
+        backend = BACKEND.read_text(encoding='utf-8')
+        fp = FP.read_text(encoding='utf-8')
+        vp = VP.read_text(encoding='utf-8')
+        assert_ready(backend, fp, vp)
+
+        backend_marked = MARK in backend
+        fp_marked = MARK in fp
+        if backend_marked or fp_marked:
+            if not (backend_marked and fp_marked):
+                raise SystemExit('ERROR: partial v0.8.1 application: marker present in only one production file')
+            required_backend = [
+                '#define FIREVOL07_MAX_POOL 32',
+                '#define FIREVOL081_RENDER_CAP 8',
+                'Com_Clamp(0, 2, s_rVolumetricFireSourceMode->integer)',
+                'FIREVOL081_REGISTRY',
+                'production semantic-anchor hybrid',
+            ]
+            required_fp = [
+                'phase *= (4.0 * M_PI);',
+                'float halo = 0.23 * haloRadial',
+                'mix(0.68, 0.35, smoothstep(0.04, 0.86, z01))',
+                'mix(1.06, 0.50, z01)',
+            ]
+            missing = [x for x in required_backend if x not in backend] + [x for x in required_fp if x not in fp]
+            if missing:
+                raise SystemExit('ERROR: partial/drifted v0.8.1 application: ' + ', '.join(missing))
+            print('FireVol v0.8.1 production visibility/full-coverage fix already applied')
+            raise SystemExit(0)
+
+        # ---------------------------------------------------------------------------
+        # Backend: turn the old four-slot persistent pool into a 32-entry map registry,
+        # while retaining a hard render budget of at most eight live sources per frame.
+        # ---------------------------------------------------------------------------
+        backend = replace_once(
+            backend,
+            '// DARKWOLF_FIRE_VOLUMETRIC_V0_7_2_WORLD_PROJECTION_DEPTH_GPU_ISOLATION\n#define FIREVOL07_MAX_POOL 4\n',
+            '// DARKWOLF_FIRE_VOLUMETRIC_V0_7_2_WORLD_PROJECTION_DEPTH_GPU_ISOLATION\n'
+            '// ' + MARK + '\n'
+            '// The proven latched world anchor remains authoritative. v0.8.1 only separates the\n'
+            '// map-persistent source registry from the per-frame render budget.\n'
+            '#define FIREVOL07_MAX_POOL 32\n'
+            '#define FIREVOL081_RENDER_CAP 8\n',
+            'registry/render-cap constants')
+
+        old_eligible = '''static qboolean RB_FireVolumetricEligible(const dlight_t *dl, int sourceMode)
+        {
+        \tif (!dl)
+        \t\treturn qfalse;
+        \tif (sourceMode <= 0)
+        \t\treturn dl->fireVolumetricSource ? qtrue : qfalse;
+        \t// Positive control only: any renderer-tagged authored native dlight.
+        \t// This is never the production default and exists solely to distinguish
+        \t// source-recognition failure from raymarch/render failure.
+        \treturn dl->nativeAuthoredDlight ? qtrue : qfalse;
+        }
+        '''
+        new_eligible = '''static qboolean RB_FireVolumetricEligible(const dlight_t *dl, int sourceMode)
+        {
+        \tif (!dl)
+        \t\treturn qfalse;
+        \tif (sourceMode <= 0)
+        \t\treturn dl->fireVolumetricSource ? qtrue : qfalse;
+        \tif (sourceMode == 1)
+        \t{
+        \t\t// Historical positive control: any renderer-tagged authored native DLight.
+        \t\treturn dl->nativeAuthoredDlight ? qtrue : qfalse;
+        \t}
+        \t// v0.8.1 production semantic-anchor hybrid. Eligibility is intentionally broad here,
+        \t// but admission into the persistent registry still REQUIRES a semantic rendered flame
+        \t// anchor within r_volumetricFireRenderedMaxDist. This covers torches that were not tagged
+        \t// by the old strict fireVolumetricSource path without volumetricizing unrelated DLights.
+        \treturn (dl->fireVolumetricSource || dl->nativeAuthoredDlight) ? qtrue : qfalse;
+        }
+        '''
+        backend = replace_once(backend, old_eligible, new_eligible, 'production source eligibility')
+
+        backend = replace_once(
+            backend,
+            '\tfireVolumetricV07Selection_t selected[FIREVOL07_MAX_POOL];\n\tint selectedCount = 0;\n\tint usedAnchors[FIREVOL07_MAX_POOL] = { -1, -1, -1, -1 };\n\tint usedAnchorCount = 0;\n\tint variant = Com_Clamp(1, 2, s_rVolumetricFireV07Mode->integer);\n\tint sourceMode = Com_Clamp(0, 1, s_rVolumetricFireSourceMode->integer);\n\tint maxActive = (variant == 1) ? 1 : Com_Clamp(1, FIREVOL07_MAX_POOL, s_rVolumetricFireMaxActive->integer);\n',
+            '\tfireVolumetricV07Selection_t selected[FIREVOL081_RENDER_CAP];\n\tint selectedCount = 0;\n\tint usedAnchors[FIREVOL07_MAX_POOL];\n\tint usedAnchorCount = 0;\n\tint variant = Com_Clamp(1, 2, s_rVolumetricFireV07Mode->integer);\n\tint sourceMode = Com_Clamp(0, 2, s_rVolumetricFireSourceMode->integer);\n\tint maxActive = (variant == 1) ? 1 : Com_Clamp(1, FIREVOL081_RENDER_CAP, s_rVolumetricFireMaxActive->integer);\n',
+            'selection arrays/source/render-budget clamp')
+
+        backend = replace_once(
+            backend,
+            '''\tmemset(selected, 0, sizeof(selected));
+        \tfor (i = 0; i < FIREVOL07_MAX_POOL; ++i)
+        \t{
+        \t\tselected[i].dlightIndex = -1;
+        \t\tselected[i].shadowSlot = -1;
+        \t\tselected[i].anchorIndex = -1;
+        \t\tselected[i].poolSlot = -1;
+        \t}
+        \tRB_FireV07ResetStateForMap();
+        ''',
+            '''\tmemset(selected, 0, sizeof(selected));
+        \tfor (i = 0; i < FIREVOL081_RENDER_CAP; ++i)
+        \t{
+        \t\tselected[i].dlightIndex = -1;
+        \t\tselected[i].shadowSlot = -1;
+        \t\tselected[i].anchorIndex = -1;
+        \t\tselected[i].poolSlot = -1;
+        \t}
+        \tfor (i = 0; i < FIREVOL07_MAX_POOL; ++i)
+        \t\tusedAnchors[i] = -1;
+        \tRB_FireV07ResetStateForMap();
+        ''',
+            'selection/anchor initialization')
+
+        start_token = '''\telse
+        \t{
+        \t\tint slot;
+        \t\t// Retain DLight identity exactly as v0.7, but once a flame anchor is latched it is never
+        \t\t// replaced by a different currently-rendered surface. Visibility is diagnostic-only.
+        '''
+        end_token = '\n\tfor (i = 0; i < selectedCount; ++i)\n'
+        start = backend.find(start_token)
+        end = backend.find(end_token, start)
+        if start < 0 or end < 0:
+            raise SystemExit('ERROR: exact v0.7.1 multi-source block boundaries not found')
+        if backend.find(start_token, start + 1) >= 0:
+            raise SystemExit('ERROR: multi-source block start is not unique')
+
+        new_multi = r'''\telse
+        \t{
+        \t\tint slot, admission, rank;
+        \t\tint liveIndex[FIREVOL07_MAX_POOL];
+        \t\tint liveShadowSlot[FIREVOL07_MAX_POOL];
+        \t\tqboolean renderChosen[FIREVOL07_MAX_POOL];
+
+        \t\tfor (slot = 0; slot < FIREVOL07_MAX_POOL; ++slot)
+        \t\t{
+        \t\t\tliveIndex[slot] = -1;
+        \t\t\tliveShadowSlot[slot] = -1;
+        \t\t\trenderChosen[slot] = qfalse;
+        \t\t}
+
+        \t\t// Pass 1: maintain the complete map-persistent registry. A flame leaving the current
+        \t\t// rendered surface set never invalidates its latch. Owner absence only marks the entry
+        \t\t// stale; it is retained unless the 32-entry registry is completely full and a new torch
+        \t\t// needs admission after the configured grace interval.
+        \t\tfor (slot = 0; slot < FIREVOL07_MAX_POOL; ++slot)
+        \t\t{
+        \t\t\tfireVolumetricV07PoolSlot_t *pool = &s_fireV07Pool[slot];
+        \t\t\tint index, shadowSlot = -1;
+        \t\t\tif (!pool->valid)
+        \t\t\t\tcontinue;
+        \t\t\tindex = RB_FireVolumetricFindOwner(sourceMode, pool->nativeOrdinal, -1, &shadowSlot);
+        \t\t\tif (index >= 0)
+        \t\t\t{
+        \t\t\t\tdlight_t *dl = &backEnd.refdef.dlights[index];
+        \t\t\t\tint latchedRenderedIndex;
+        \t\t\t\tif (!pool->latchValid)
+        \t\t\t\t{
+        \t\t\t\t\tint anchor, candidates = 0, ambiguity = 0;
+        \t\t\t\t\tfloat dlightDistance = -1.0f, speakerDistance = -1.0f, secondDistance = -1.0f;
+        \t\t\t\t\tanchor = RB_FireV07FindRenderedAnchor(dl, usedAnchors, usedAnchorCount, maxDistance,
+        \t\t\t\t\t\t&dlightDistance, &speakerDistance, &candidates, &secondDistance, &ambiguity);
+        \t\t\t\t\tif (anchor >= 0)
+        \t\t\t\t\t{
+        \t\t\t\t\t\tconst fireVolumetricV07Anchor_t *first = &s_fireV07Anchors[anchor];
+        \t\t\t\t\t\tpool->latchValid = qtrue;
+        \t\t\t\t\t\tpool->latchedFlameSurface = first->surfaceIndex;
+        \t\t\t\t\t\tVectorCopy(first->origin, pool->latchedFlameOrigin);
+        \t\t\t\t\t\tQ_strncpyz(pool->latchedShader, first->shaderName, sizeof(pool->latchedShader));
+        \t\t\t\t\t\tpool->latchedAtMs = nowMs;
+        \t\t\t\t\t}
+        \t\t\t\t}
+        \t\t\t\tpool->lastSeenMs = nowMs;
+        \t\t\t\tpool->missingSinceMs = 0;
+        \t\t\t\tliveIndex[slot] = index;
+        \t\t\t\tliveShadowSlot[slot] = shadowSlot;
+        \t\t\t\tif (!fallbackDl)
+        \t\t\t\t\tfallbackDl = dl;
+        \t\t\t\tif (pool->latchValid)
+        \t\t\t\t{
+        \t\t\t\t\tlatchedRenderedIndex = RB_FireV071FindLatchedRenderedIndex(pool->latchedFlameSurface,
+        \t\t\t\t\t\tpool->latchedShader, pool->latchedFlameOrigin);
+        \t\t\t\t\tif (latchedRenderedIndex >= 0 && usedAnchorCount < FIREVOL07_MAX_POOL)
+        \t\t\t\t\t\tusedAnchors[usedAnchorCount++] = latchedRenderedIndex;
+        \t\t\t\t}
+        \t\t\t}
+        \t\t\telse
+        \t\t\t{
+        \t\t\t\tif (!pool->missingSinceMs)
+        \t\t\t\t\tpool->missingSinceMs = nowMs;
+        \t\t\t}
+        \t\t}
+
+        \t\t// Pass 2: discover additional authored fire sources as their semantic flame surfaces are
+        \t\t// actually rendered. The registry can grow to 32 across traversal of the map. Only when it
+        \t\t// is full may a long-missing owner be evicted to admit a newly observed torch.
+        \t\tfor (admission = 0; admission < FIREVOL07_MAX_POOL; ++admission)
+        \t\t{
+        \t\t\tint targetSlot = -1;
+        \t\t\tint index, anchor = -1, candidates = 0, ambiguity = 0;
+        \t\t\tint shadowSlot;
+        \t\t\tfloat dlightDistance = -1.0f, speakerDistance = -1.0f, secondDistance = -1.0f;
+        \t\t\tfor (slot = 0; slot < FIREVOL07_MAX_POOL; ++slot)
+        \t\t\t{
+        \t\t\t\tif (!s_fireV07Pool[slot].valid)
+        \t\t\t\t{
+        \t\t\t\t\ttargetSlot = slot;
+        \t\t\t\t\tbreak;
+        \t\t\t\t}
+        \t\t\t}
+        \t\t\tif (targetSlot < 0)
+        \t\t\t{
+        \t\t\t\tint staleSlot = -1;
+        \t\t\t\tint oldestSeen = 0x7fffffff;
+        \t\t\t\tfor (slot = 0; slot < FIREVOL07_MAX_POOL; ++slot)
+        \t\t\t\t{
+        \t\t\t\t\tfireVolumetricV07PoolSlot_t *pool = &s_fireV07Pool[slot];
+        \t\t\t\t\tif (!pool->valid || liveIndex[slot] >= 0 || !pool->missingSinceMs)
+        \t\t\t\t\t\tcontinue;
+        \t\t\t\t\tif (nowMs - pool->missingSinceMs < graceMs)
+        \t\t\t\t\t\tcontinue;
+        \t\t\t\t\tif (pool->lastSeenMs < oldestSeen)
+        \t\t\t\t\t{
+        \t\t\t\t\t\toldestSeen = pool->lastSeenMs;
+        \t\t\t\t\t\tstaleSlot = slot;
+        \t\t\t\t\t}
+        \t\t\t\t}
+        \t\t\t\tif (staleSlot < 0)
+        \t\t\t\t\tbreak;
+        \t\t\t\tmemset(&s_fireV07Pool[staleSlot], 0, sizeof(s_fireV07Pool[staleSlot]));
+        \t\t\t\tliveIndex[staleSlot] = -1;
+        \t\t\t\tliveShadowSlot[staleSlot] = -1;
+        \t\t\t\trenderChosen[staleSlot] = qfalse;
+        \t\t\t\ts_fireV07PoolChangeCount++;
+        \t\t\t\ttargetSlot = staleSlot;
+        \t\t\t}
+
+        \t\t\tindex = RB_FireV07BestAdmissionDlight(sourceMode, FIREVOL07_MAX_POOL,
+        \t\t\t\tusedAnchors, usedAnchorCount, maxDistance, &anchor, &dlightDistance,
+        \t\t\t\t&speakerDistance, &candidates, &secondDistance, &ambiguity);
+        \t\t\tif (index < 0 || anchor < 0)
+        \t\t\t\tbreak;
+        \t\t\t{
+        \t\t\t\tfireVolumetricV07PoolSlot_t *pool = &s_fireV07Pool[targetSlot];
+        \t\t\t\tpool->valid = qtrue;
+        \t\t\t\tpool->nativeOrdinal = backEnd.refdef.dlights[index].fireVolumetricNativeOrdinal;
+        \t\t\t\tpool->speakerOrdinal = backEnd.refdef.dlights[index].fireVolumetricSpeakerOrdinal;
+        \t\t\t\tpool->createdMs = nowMs;
+        \t\t\t\tpool->lastSeenMs = nowMs;
+        \t\t\t\tpool->missingSinceMs = 0;
+        \t\t\t\tpool->latchValid = qtrue;
+        \t\t\t\tpool->latchedFlameSurface = s_fireV07Anchors[anchor].surfaceIndex;
+        \t\t\t\tVectorCopy(s_fireV07Anchors[anchor].origin, pool->latchedFlameOrigin);
+        \t\t\t\tQ_strncpyz(pool->latchedShader, s_fireV07Anchors[anchor].shaderName, sizeof(pool->latchedShader));
+        \t\t\t\tpool->latchedAtMs = nowMs;
+        \t\t\t\tliveIndex[targetSlot] = index;
+        \t\t\t\tshadowSlot = RB_FireVolumetricShadowSlotForIndex(index);
+        \t\t\t\tliveShadowSlot[targetSlot] = shadowSlot;
+        \t\t\t\ts_fireV07PoolChangeCount++;
+        \t\t\t\tif (usedAnchorCount < FIREVOL07_MAX_POOL)
+        \t\t\t\t\tusedAnchors[usedAnchorCount++] = anchor;
+        \t\t\t\tif (!fallbackDl)
+        \t\t\t\t\tfallbackDl = &backEnd.refdef.dlights[index];
+        \t\t\t}
+        \t\t}
+
+        \t\t// Pass 3: independent render budget. Pick the closest/strongest live registered sources
+        \t\t// every frame, with a strong boost for a currently rendered/PVS-relevant latched flame.
+        \t\t// Registry identity never changes merely because a source is not selected this frame.
+        \t\tfor (rank = 0; rank < maxActive; ++rank)
+        \t\t{
+        \t\t\tint bestSlot = -1;
+        \t\t\tfloat bestScore = -1.0f;
+        \t\t\tfor (slot = 0; slot < FIREVOL07_MAX_POOL; ++slot)
+        \t\t\t{
+        \t\t\t\tfireVolumetricV07PoolSlot_t *pool = &s_fireV07Pool[slot];
+        \t\t\t\tint index = liveIndex[slot];
+        \t\t\t\tint visibleNow;
+        \t\t\t\tfloat score;
+        \t\t\t\tif (!pool->valid || !pool->latchValid || index < 0 || renderChosen[slot])
+        \t\t\t\t\tcontinue;
+        \t\t\t\tvisibleNow = RB_FireV071FindLatchedRenderedIndex(pool->latchedFlameSurface,
+        \t\t\t\t\tpool->latchedShader, pool->latchedFlameOrigin) >= 0 ? 1 : 0;
+        \t\t\t\tscore = RB_LocalVolumetricDlightScore(&backEnd.refdef.dlights[index]);
+        \t\t\t\tif (visibleNow)
+        \t\t\t\t\tscore *= 4.0f;
+        \t\t\t\tif (backEnd.refdef.dlights[index].fireVolumetricSource)
+        \t\t\t\t\tscore *= 1.15f;
+        \t\t\t\tif (score > bestScore)
+        \t\t\t\t{
+        \t\t\t\t\tbestScore = score;
+        \t\t\t\t\tbestSlot = slot;
+        \t\t\t\t}
+        \t\t\t}
+        \t\t\tif (bestSlot < 0)
+        \t\t\t\tbreak;
+        \t\t\trenderChosen[bestSlot] = qtrue;
+        \t\t\t{
+        \t\t\t\tfireVolumetricV07PoolSlot_t *pool = &s_fireV07Pool[bestSlot];
+        \t\t\t\tint index = liveIndex[bestSlot];
+        \t\t\t\tdlight_t *dl = &backEnd.refdef.dlights[index];
+        \t\t\t\tfireVolumetricV07Selection_t *sel = &selected[selectedCount];
+        \t\t\t\tvec3_t delta;
+        \t\t\t\tint latchedRenderedIndex = RB_FireV071FindLatchedRenderedIndex(pool->latchedFlameSurface,
+        \t\t\t\t\tpool->latchedShader, pool->latchedFlameOrigin);
+        \t\t\t\tsel->dlightIndex = index;
+        \t\t\t\tsel->shadowSlot = liveShadowSlot[bestSlot];
+        \t\t\t\tsel->anchorIndex = latchedRenderedIndex;
+        \t\t\t\tsel->poolSlot = bestSlot;
+        \t\t\t\tVectorSubtract(pool->latchedFlameOrigin, dl->origin, delta);
+        \t\t\t\tsel->dlightToFlame = VectorLength(delta);
+        \t\t\t\tif (dl->fireVolumetricSpeakerOrdinal >= 0)
+        \t\t\t\t{
+        \t\t\t\t\tVectorSubtract(pool->latchedFlameOrigin, dl->fireVolumetricSpeakerOrigin, delta);
+        \t\t\t\t\tsel->speakerToFlame = VectorLength(delta);
+        \t\t\t\t}
+        \t\t\t\telse
+        \t\t\t\t\tsel->speakerToFlame = -1.0f;
+        \t\t\t\tsel->anchorCandidates = latchedRenderedIndex >= 0 ? 1 : 0;
+        \t\t\t\tsel->secondDistance = -1.0f;
+        \t\t\t\tsel->ambiguity = 0;
+        \t\t\t\tRB_FireV071CopyPoolLatchToSelection(pool, sel);
+        \t\t\t\tselectedCount++;
+        \t\t\t}
+        \t\t}
+        \t}
+        '''.replace('\\t', '\t')
+        backend = backend[:start] + new_multi + backend[end:]
+
+        # Add registry telemetry to existing once-per-second diagnostic path without changing visual output.
+        diag_anchor = '''\t\tri.Printf(PRINT_ALL,
+        \t\t\t"FIREVOL07_SCAN map=%s variant=%s captureFresh=1 captureTime=%d anchors=%d semantic=%d animated=%d dropped=%d world=%d bmodel=%d mdv=%d poly=%d entity=%d flare=%d modelFallback=%d strictEligible=%d nativeEligible=%d selected=%d rendered=%d greenMarkers=%d poolChangeCount=%d renderMode=%d frameMsAvg=%.3f frameMsMax=%.3f fpsAvg=%.2f\\n",
+        \t\t\ttr.world ? tr.world->baseName : "<none>", variant == 1 ? "B_RENDERED_SINGLE" : "C_RENDERED_MULTI",
+        \t\t\ts_fireV07CaptureTime, s_fireV07AnchorCount, s_fireV07AnchorSemanticCount,
+        \t\t\ts_fireV07AnchorAnimatedCount, s_fireV07AnchorDropped,
+        \t\t\tworldCount, bmodelCount, mdvCount, polyCount, entityCount, flareCount, fallbackCount,
+        \t\t\tstrictCount, nativeCount, selectedCount, renderedCount, greenMarkers, s_fireV07PoolChangeCount,
+        \t\t\trenderMode, frameMsAvg, perfFrameMsMax, fpsAvg);
+
+        '''
+        if diag_anchor not in backend:
+            raise SystemExit('ERROR: FIREVOL07_SCAN telemetry anchor drift')
+        diag_extra = diag_anchor + '''\t\tif (variant == 2)
+        \t\t{
+        \t\t\tint registryCount = 0, registryLive = 0, registryVisible = 0, registrySlot;
+        \t\t\tfor (registrySlot = 0; registrySlot < FIREVOL07_MAX_POOL; ++registrySlot)
+        \t\t\t{
+        \t\t\t\tfireVolumetricV07PoolSlot_t *pool = &s_fireV07Pool[registrySlot];
+        \t\t\t\tint ownerShadow = -1;
+        \t\t\t\tif (!pool->valid)
+        \t\t\t\t\tcontinue;
+        \t\t\t\tregistryCount++;
+        \t\t\t\tif (RB_FireVolumetricFindOwner(sourceMode, pool->nativeOrdinal, -1, &ownerShadow) >= 0)
+        \t\t\t\t\tregistryLive++;
+        \t\t\t\tif (pool->latchValid && RB_FireV071FindLatchedRenderedIndex(pool->latchedFlameSurface,
+        \t\t\t\t\tpool->latchedShader, pool->latchedFlameOrigin) >= 0)
+        \t\t\t\t\tregistryVisible++;
+        \t\t\t}
+        \t\t\tri.Printf(PRINT_ALL,
+        \t\t\t\t"FIREVOL081_REGISTRY map=%s registry=%d live=%d visible=%d registryCap=%d renderBudget=%d selected=%d sourceMode=%d\\n",
+        \t\t\t\ttr.world ? tr.world->baseName : "<none>", registryCount, registryLive, registryVisible,
+        \t\t\t\tFIREVOL07_MAX_POOL, maxActive, selectedCount, sourceMode);
+        \t\t}
+
+        '''
+        backend = backend.replace(diag_anchor, diag_extra, 1)
+
+        # ---------------------------------------------------------------------------
+        # Fragment shader: production-mode energy calibration + a wider tapered medium.
+        # No change to the proven screen-ray, depth, FBO or latch contracts.
+        # ---------------------------------------------------------------------------
+        fp = replace_once(fp,
+            '// DARKWOLF_FIRE_VOLUMETRIC_V0_8_PRODUCTION_FLAME_VOLUME\n',
+            '// DARKWOLF_FIRE_VOLUMETRIC_V0_8_PRODUCTION_FLAME_VOLUME\n// ' + MARK + '\n',
+            'fragment production marker')
+
+        shape_replacements = [
+            ('float coreWidth = max(lightRadius * plumeRadius * mix(0.30, 0.22, z01), 1.0);',
+             'float coreWidth = max(lightRadius * plumeRadius * mix(0.46, 0.34, z01), 1.0);', 'core width'),
+            ('float bodyWidthScale = mix(0.43, 0.22, smoothstep(0.04, 0.86, z01));',
+             'float bodyWidthScale = mix(0.68, 0.35, smoothstep(0.04, 0.86, z01));', 'body width'),
+            ('float tongueWidth = max(lightRadius * plumeRadius * mix(0.22, 0.115, z01), 1.0);',
+             'float tongueWidth = max(lightRadius * plumeRadius * mix(0.34, 0.18, z01), 1.0);', 'tongue width'),
+            ('float haloWidth = max(lightRadius * plumeRadius * mix(0.62, 0.30, z01), 1.0);',
+             'float haloWidth = max(lightRadius * plumeRadius * mix(0.98, 0.48, z01), 1.0);', 'halo width'),
+            ('float halo = 0.11 * haloRadial * haloVertical * (0.78 + 0.22 * softNoise);',
+             'float halo = 0.23 * haloRadial * haloVertical * (0.78 + 0.22 * softNoise);', 'halo energy'),
+            ('float shaped = 1.14 * core + 0.78 * body + 0.56 * tongues + halo;',
+             'float shaped = 1.12 * core + 0.94 * body + 0.68 * tongues + halo;', 'shape weights'),
+            ('float guardWidth = max(lightRadius * plumeRadius * mix(0.70, 0.32, z01), 1.0);',
+             'float guardWidth = max(lightRadius * plumeRadius * mix(1.06, 0.50, z01), 1.0);', 'taper guard width'),
+        ]
+        for old, new, label in shape_replacements:
+            fp = replace_once(fp, old, new, label)
+
+        old_phase = '        float phase = (mode == 1 || mode == 9) ? 1.0 : phaseHG(clamp(dot(normalize(toLight), rayDir), -1.0, 1.0), g);\n'
+        new_phase = '''        float phase = (mode == 1 || mode == 9) ? 1.0 : phaseHG(clamp(dot(normalize(toLight), rayDir), -1.0, 1.0), g);
+                // v0.8.1: production fire uses an artist-calibrated phase scale. phaseHG is physically
+                // normalized by 1/(4*pi), which made the effect disappear against RTCW's bright sprite.
+                // Remove only that normalization for shaped fire modes; lamp/diagnostic modes are unchanged.
+                if (mode >= 5 && mode <= 7)
+                    phase *= (4.0 * M_PI);
+        '''
+        fp = replace_once(fp, old_phase, new_phase, 'production phase calibration')
+
+        BACKEND.write_text(backend, encoding='utf-8', newline='')
+        FP.write_text(fp, encoding='utf-8', newline='')
+        print('FireVol v0.8.1 production visibility/full-coverage fix applied')
+        __PATCHER_V081__
+
+        test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: embedded v0.8.1 patcher SHA drift" >&2; exit 1; }
+        python3 -m py_compile "$PATCHER_NAME"
+        python3 "$PATCHER_NAME" source
+        sha256sum -c .v080_rend2_frozen.sha256
+
+        # Proven spatial contract must remain byte/semantic intact.
+        grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_7_4_VERTICAL_SCREEN_RAY_CONTRACT_FIX' source/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+        grep -Fq 'var_ViewDir = u_ViewForward + u_ViewLeft * -screenCoords.x + u_ViewUp * -screenCoords.y;' source/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+        grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_PRODUCTION_FLAME_VOLUME' source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+        grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_1_PRODUCTION_VISIBILITY_FULL_COVERAGE' source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+        grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_1_PRODUCTION_VISIBILITY_FULL_COVERAGE' source/SP/code/rend2/tr_backend.c
+        grep -Fq '#define FIREVOL07_MAX_POOL 32' source/SP/code/rend2/tr_backend.c
+        grep -Fq '#define FIREVOL081_RENDER_CAP 8' source/SP/code/rend2/tr_backend.c
+        grep -Fq 'FIREVOL081_REGISTRY' source/SP/code/rend2/tr_backend.c
+        grep -Fq 'phase *= (4.0 * M_PI);' source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+
+        # Standalone fragment shader syntax validation. ioRTCW injects M_PI at runtime.
+        {
+          printf '#version 120\n#define M_PI 3.14159265358979323846\n'
+          cat source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+        } > .firevol081_validate.frag
+        glslangValidator -S frag .firevol081_validate.frag
+
+        # Full-source structural checks catch malformed C replacement before MinGW build.
+        python3 - <<'__STRUCT_V081__'
+        from pathlib import Path
+        import re
+        for name in ['source/SP/code/rend2/tr_backend.c','source/SP/code/rend2/glsl/volumetriclocal_fp.glsl']:
+            s=Path(name).read_text(encoding='utf-8')
+            clean=re.sub(r'//.*', '', s)
+            clean=re.sub(r'/\*.*?\*/', '', clean, flags=re.S)
+            clean=re.sub(r'"(?:\\.|[^"\\])*"', '""', clean)
+            clean=re.sub(r"'(?:\\.|[^'\\])*'", "''", clean)
+            for a,b,label in [('{','}','brace'),('(',')','paren'),('[',']','bracket')]:
+                depth=0
+                for ch in clean:
+                    if ch==a: depth+=1
+                    elif ch==b: depth-=1
+                    if depth<0: raise SystemExit(f'ERROR: {name}: {label} underflow')
+                if depth!=0: raise SystemExit(f'ERROR: {name}: unbalanced {label}: {depth}')
+        print('FireVol v0.8.1 C/GLSL structural validation PASS')
+        __STRUCT_V081__
+
+        # Patcher must be byte-idempotent across both changed files.
+        before_backend="$(sha256sum source/SP/code/rend2/tr_backend.c | awk '{print $1}')"
+        before_fp="$(sha256sum source/SP/code/rend2/glsl/volumetriclocal_fp.glsl | awk '{print $1}')"
+        python3 "$PATCHER_NAME" source
+        after_backend="$(sha256sum source/SP/code/rend2/tr_backend.c | awk '{print $1}')"
+        after_fp="$(sha256sum source/SP/code/rend2/glsl/volumetriclocal_fp.glsl | awk '{print $1}')"
+        test "$before_backend" = "$after_backend" || { echo "ERROR: backend patcher not idempotent" >&2; exit 1; }
+        test "$before_fp" = "$after_fp" || { echo "ERROR: fragment patcher not idempotent" >&2; exit 1; }
+
+        base_commit="$(cat .base_source_commit)"
+        git -C source add -A
+        mapfile -t changed < <(git -C source diff --cached --name-only "$base_commit" -- . | sort)
+        test "${#changed[@]}" -eq 2 || { printf 'ERROR: v0.8.1 scope count drift: %s\n' "${changed[*]}" >&2; exit 1; }
+        test "${changed[0]}" = 'SP/code/rend2/glsl/volumetriclocal_fp.glsl' || { printf 'ERROR: v0.8.1 scope[0] drift: %s\n' "${changed[*]}" >&2; exit 1; }
+        test "${changed[1]}" = 'SP/code/rend2/tr_backend.c' || { printf 'ERROR: v0.8.1 scope[1] drift: %s\n' "${changed[*]}" >&2; exit 1; }
+        if git -C source diff --cached "$base_commit" -- . | grep -E '^\+.*(r_bloom|ToneMap|Exposure|r_ssgi|StaticPromote|LampLearn)' >/dev/null; then
+          echo "ERROR: forbidden parallel subsystem token added by v0.8.1" >&2
+          exit 1
+        fi
+        if git -C source diff --cached "$base_commit" -- SP/code/rend2/glsl/volumetriclocal_vp.glsl | grep . >/dev/null; then
+          echo "ERROR: proven v0.7.4 vertex projection path changed" >&2
+          exit 1
+        fi
+
+        git -C source diff --cached --binary "$base_commit" -- . > "$DELTA_NAME"
+        test -s "$DELTA_NAME" || { echo "ERROR: empty v0.8.1 delta" >&2; exit 1; }
+        sha256sum "$DELTA_NAME" > "$DELTA_NAME.sha256"
+        git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > "$CUMULATIVE_NAME"
+        test -s "$CUMULATIVE_NAME" || { echo "ERROR: empty v0.8.1 cumulative patch" >&2; exit 1; }
+        sha256sum "$CUMULATIVE_NAME" > "$CUMULATIVE_NAME.sha256"
+        echo "FireVol v0.8.1 two-file production fix delta PASS"
+
+    - name: Independent v0.8.1 delta and cumulative replay verification
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_commit="$(cat .base_source_commit)"
+        rm -rf replay-delta replay-cumulative
+        git -C source worktree add --detach ../replay-delta "$base_commit"
+        git -C replay-delta apply --check --binary "../$DELTA_NAME"
+        git -C replay-delta apply --binary "../$DELTA_NAME"
+        git -C replay-delta add -A
+        git -C replay-delta diff --cached --binary "$base_commit" -- . > .replayed-v081-delta.patch
+        cmp "$DELTA_NAME" .replayed-v081-delta.patch || { echo "ERROR: v0.8.1 delta replay drift" >&2; exit 1; }
+
+        git -C source worktree add --detach ../replay-cumulative "$UPSTREAM_SHA"
+        git -C replay-cumulative apply --check --binary "../$CUMULATIVE_NAME"
+        git -C replay-cumulative apply --binary "../$CUMULATIVE_NAME"
+        git -C replay-cumulative add -A
+        git -C replay-cumulative diff --cached --binary "$UPSTREAM_SHA" -- . > .replayed-v081-cumulative.patch
+        cmp "$CUMULATIVE_NAME" .replayed-v081-cumulative.patch || { echo "ERROR: v0.8.1 cumulative replay drift" >&2; exit 1; }
+        grep -Fq 'u_ViewUp * -screenCoords.y' replay-cumulative/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+        grep -Fq '#define FIREVOL07_MAX_POOL 32' replay-cumulative/SP/code/rend2/tr_backend.c
+        grep -Fq 'phase *= (4.0 * M_PI);' replay-cumulative/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+        echo "Independent v0.8.1 delta + cumulative replay PASS"
+
+    - name: Build canonical Windows x64 FireVol v0.8.1 candidate
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        jobs="$(nproc)"
+        if [ "$jobs" -gt 4 ]; then jobs=4; fi
+        cd source/SP
+        ./cross-make-mingw64.sh -j"$jobs" BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+    - name: Verify rebuilt v0.8.1 Rend2 and frozen v0.8 runtime
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        find_one() {
+          local name="$1" out="$2"
+          mapfile -t a < <(find source/SP/build -type f -name "$name" -print | sort)
+          test "${#a[@]}" -eq 1 || { printf 'ERROR: expected one %s, got %d\n' "$name" "${#a[@]}" >&2; exit 1; }
+          test -s "${a[0]}"
+          printf '%s\n' "${a[0]}" > "$out"
+        }
+        find_one renderer_sp_rend2_x64.dll .new_renderer_path
+        new_renderer="$(cat .new_renderer_path)"
+        file "$new_renderer" > .new_renderer_file.txt
+        grep -Fq 'PE32+ executable' .new_renderer_file.txt
+        grep -Fq 'x86-64' .new_renderer_file.txt
+        grep -Fq '(DLL)' .new_renderer_file.txt
+        test "$(sha256sum "$new_renderer" | awk '{print $1}')" != "$BASE_RENDERER_SHA256" || { echo "ERROR: v0.8.1 renderer unexpectedly equals v0.8" >&2; exit 1; }
+        strings -a "$new_renderer" > .new_renderer_strings.txt
+        for need in \
+          DARKWOLF_FIRE_VOLUMETRIC_V0_7_4_VERTICAL_SCREEN_RAY_CONTRACT_FIX \
+          DARKWOLF_FIRE_VOLUMETRIC_V0_8_PRODUCTION_FLAME_VOLUME \
+          DARKWOLF_FIRE_VOLUMETRIC_V0_8_1_PRODUCTION_VISIBILITY_FULL_COVERAGE \
+          FIREVOL081_REGISTRY r_volumetricFireMaxActive r_volumetricFireSourceMode; do
+          grep -Fq "$need" .new_renderer_strings.txt || { echo "ERROR: rebuilt Rend2 missing $need" >&2; exit 1; }
+        done
+
+        base_stage="$(cat .base_stage_path)"
+        check_base() {
+          local rel="$1" sha="$2"
+          test "$(sha256sum "$base_stage/$rel" | awk '{print $1}')" = "$sha" || { echo "ERROR: frozen v0.8 runtime drift: $rel" >&2; exit 1; }
+        }
+        check_base ioWolfSP.x64.exe "$BASE_EXE_SHA256"
+        check_base renderer_sp_opengl1_x64.dll "$BASE_OPENGL1_SHA256"
+        check_base Main/qagame_sp_x64.dll "$BASE_QAGAME_SHA256"
+        check_base Main/cgame_sp_x64.dll "$BASE_CGAME_SHA256"
+        check_base Main/ui_sp_x64.dll "$BASE_UI_SHA256"
+        check_base OpenAL64.dll "$BASE_OPENAL_SHA256"
+        check_base SDL264.dll "$BASE_SDL_SHA256"
+        sha256sum "$new_renderer" > .new_renderer_sha256
+        echo "Rebuilt FireVol v0.8.1 Rend2 verification PASS"
+
+    - name: Package FireVol v0.8.1 production visibility/full-coverage candidate
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_stage="$(cat .base_stage_path)"
+        new_renderer="$(cat .new_renderer_path)"
+        rm -rf release dist
+        stage="release/$RELEASE_BASENAME"
+        mkdir -p "$stage/Main" "$stage/docs" dist
+
+        # Runtime stays byte-identical to the exact successful v0.8 release except the rebuilt Rend2 DLL.
+        cp "$base_stage/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+        cp "$base_stage/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+        cp "$base_stage/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+        cp "$base_stage/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+        cp "$base_stage/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+        cp "$base_stage/OpenAL64.dll" "$stage/OpenAL64.dll"
+        cp "$base_stage/SDL264.dll" "$stage/SDL264.dll"
+        cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+
+        write_fire_cfg() {
+          local file="$1" firemode="$2" maxactive="$3" strength="$4" density="$5" samples="$6" plume_radius="$7" plume_height="$8" turbulence="$9"
+          shift 9
+          local speed="$1" radius_min="$2" radius_max="$3" smooth_ms="$4" gain="$5" knee="$6" anisotropy="$7" jitter="$8" pcf="$9"
+          shift 9
+          local diag="${1:-0}"
+          cat > "$stage/Main/$file" <<EOF
+        seta r_volumetricFire "1"
+        seta r_volumetricFireMode "$firemode"
+        seta r_volumetricFireSourceMode "2"
+        seta r_volumetricFireMaxActive "$maxactive"
+        seta r_volumetricFireDiag "$diag"
+        seta r_volumetricFireShape "1"
+        seta r_volumetricFireProofMode "0"
+        seta r_volumetricFireOwnerLock "0"
+        seta r_volumetricFireAnchorMode "0"
+        seta r_volumetricFireDualDebug "0"
+        seta r_volumetricFireV07Mode "2"
+        seta r_volumetricFireGreenMarker "0"
+        seta r_volumetricFireV072GpuIsolation "0"
+        seta r_volumetricFireRenderedMaxDist "320"
+        seta r_volumetricFirePoolGraceMs "10000"
+        seta r_volumetricFireRadiusStabilize "1"
+        seta r_volumetricFireRadiusMin "$radius_min"
+        seta r_volumetricFireRadiusMax "$radius_max"
+        seta r_volumetricFireRadiusSmoothMs "$smooth_ms"
+        seta r_volumetricFireStrength "$strength"
+        seta r_volumetricFireDensity "$density"
+        seta r_volumetricFireSamples "$samples"
+        seta r_volumetricFirePlumeRadius "$plume_radius"
+        seta r_volumetricFirePlumeHeight "$plume_height"
+        seta r_volumetricFireTurbulence "$turbulence"
+        seta r_volumetricFireSpeed "$speed"
+        seta r_volumetricLocalGain "$gain"
+        seta r_volumetricLocalKnee "$knee"
+        seta r_volumetricLocalAnisotropy "$anisotropy"
+        seta r_volumetricLocalJitter "$jitter"
+        seta r_volumetricLocalShadowPcf "$pcf"
+        seta r_volumetricLocalMaxDistance "2048"
+        seta r_volumetricLocal "0"
+        seta cg_drawFPS "1"
+        seta com_maxfps "250"
+        EOF
+        }
+
+        # v0.8.1 calibrated presets. Registry capacity is fixed at 32; these values are render budgets only.
+        write_fire_cfg FIREVOL081_PRODUCTION_BALANCED.cfg   2 8 1.00 0.0140 20 0.50 0.95 0.58 1.60 170 240 1200 2.40 0.55 0.05 0.04 0 0
+        write_fire_cfg FIREVOL081_PRODUCTION_CINEMATIC.cfg  3 8 1.08 0.0150 28 0.54 1.00 0.65 1.80 180 255 1300 2.70 0.50 0.08 0.05 1 0
+        write_fire_cfg FIREVOL081_PRODUCTION_PERFORMANCE.cfg 2 6 0.92 0.0125 16 0.46 0.90 0.50 1.50 150 215 1100 2.10 0.65 0.03 0.02 0 0
+        write_fire_cfg FIREVOL081_COVERAGE_AUDIT.cfg         2 8 1.00 0.0140 20 0.50 0.95 0.58 1.60 170 240 1200 2.40 0.55 0.05 0.04 0 1
+
+        cat > "$stage/FIREVOL081_COLLECT.ps1" <<'PS1'
+        param([Parameter(Mandatory=$true)][string]$Mode,[Parameter(Mandatory=$true)][string]$TestHome)
+        $ErrorActionPreference='Stop'
+        $root=$PSScriptRoot
+        $results=Join-Path $root 'FIREVOL081_RESULTS'
+        $out=Join-Path $results $Mode
+        $zip=Join-Path $results ($Mode+'.zip')
+        New-Item -ItemType Directory -Force -Path $results | Out-Null
+        if(Test-Path $out){Remove-Item -Recurse -Force $out}
+        if(Test-Path $zip){Remove-Item -Force $zip}
+        New-Item -ItemType Directory -Force -Path $out | Out-Null
+        $log=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'rtcwconsole.log' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if($log){
+          Copy-Item $log.FullName (Join-Path $out 'rtcwconsole.log')
+          $registry=Select-String -Path $log.FullName -Pattern 'FIREVOL081_REGISTRY' -ErrorAction SilentlyContinue
+          if($registry){$registry.Line | Set-Content -Encoding UTF8 (Join-Path $out 'FIREVOL081_REGISTRY.txt')}
+        }
+        $cfg=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'wolfconfig.cfg' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if($cfg){Copy-Item $cfg.FullName (Join-Path $out 'wolfconfig.cfg')}
+        $shots=Get-ChildItem -Path $TestHome -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.Extension -match '^\.(tga|jpg|jpeg|png)$'}
+        if($shots){$sd=Join-Path $out 'screenshots'; New-Item -ItemType Directory -Force -Path $sd|Out-Null; foreach($s in $shots){Copy-Item $s.FullName (Join-Path $sd $s.Name) -Force}}
+        @(
+          "mode=$Mode",
+          "base=v0.8_successful_over_user_verified_v0.7.4_projection_fix",
+          "registry_capacity=32",
+          "render_budget=6_or_8_by_preset",
+          "source_mode=2_semantic_anchor_hybrid",
+          "production_visibility=phase_4pi+wider_tapered_shape+halo_0.23",
+          "debug_spheres=off"
+        ) | Set-Content -Encoding UTF8 (Join-Path $out 'FIREVOL081_SUMMARY.txt')
+        Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -CompressionLevel Optimal
+        Write-Host "Created $zip"
+        PS1
+
+        make_launcher() {
+          local file="$1" mode="$2" cfg="$3" note="$4"
+          cat > "$stage/$file" <<EOF
+        @echo off
+        setlocal
+        cd /d "%~dp0"
+        set "MODE=$mode"
+        set "TESTHOME=%~dp0FIREVOL081_TEST_HOME\%MODE%"
+        if exist "%TESTHOME%" rmdir /s /q "%TESTHOME%"
+        mkdir "%TESTHOME%"
+        echo Running FireVol v0.8.1 %MODE% on crypt1...
+        echo $note
+        ioWolfSP.x64.exe +set fs_homepath "%TESTHOME%" +set com_recommendedSet 1 +set cl_renderer rend2 +set logfile 2 +set r_swapInterval 0 +set r_volumetricLocal 0 +exec $cfg +map crypt1
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0FIREVOL081_COLLECT.ps1" -Mode "%MODE%" -TestHome "%TESTHOME%"
+        pause
+        EOF
+        }
+        make_launcher RUN_FIREVOL081_01_PRODUCTION_BALANCED.cmd PRODUCTION_BALANCED FIREVOL081_PRODUCTION_BALANCED.cfg "RECOMMENDED: 32-source persistent registry, render nearest/visible 8, calibrated visible production flame."
+        make_launcher RUN_FIREVOL081_02_PRODUCTION_CINEMATIC.cmd PRODUCTION_CINEMATIC FIREVOL081_PRODUCTION_CINEMATIC.cfg "Higher quality: 28 samples, 8-source render budget and point-shadow PCF where available."
+        make_launcher RUN_FIREVOL081_03_PRODUCTION_PERFORMANCE.cmd PRODUCTION_PERFORMANCE FIREVOL081_PRODUCTION_PERFORMANCE.cfg "Lower cost: 16 samples and 6-source render budget; registry still remains 32."
+        make_launcher RUN_FIREVOL081_04_COVERAGE_AUDIT.cmd COVERAGE_AUDIT FIREVOL081_COVERAGE_AUDIT.cfg "Coverage audit: normal visual profile plus once-per-second FIREVOL081_REGISTRY telemetry; no debug spheres."
+
+        cat > "$stage/README_FIREVOL081_RU.txt" <<'EOF'
+        DARKWOLF / ioRTCW Rend2 SP
+        FIREVOL v0.8.1 — PRODUCTION VISIBILITY + FULL TORCH COVERAGE
+        ===========================================================
+
+        БАЗА
+        v0.8.1 строится непосредственно поверх успешно собранного FireVol v0.8,
+        который в свою очередь сохраняет визуально подтверждённый v0.7.4 vertical screen-ray fix.
+        Projection/latch/depth/FBO contract не меняются.
+
+        ЧТО ИСПРАВЛЕНО
+        1. Видимость production FireVol:
+           - только для shaped fire modes физический phaseHG масштабируется на 4*pi;
+           - основное tapered flame body расширено примерно в 1.5–1.8 раза;
+           - outer halo усилен до 0.23;
+           - envelope увеличен до production-диапазона примерно 150–255 units по пресету.
+
+        2. Coverage:
+           - persistent map registry = 32 источника;
+           - per-frame render budget = максимум 8 (6 в Performance);
+           - r_volumetricFireMaxActive теперь является render budget 1..8, а не размером registry;
+           - registry не теряет latch только потому, что flame surface вышла из текущего rendered/PVS set;
+           - SourceMode=2 расширяет admission на native authored DLight, НО регистрация всё равно требует
+             реальный semantic flame-anchor рядом. Обычная лампа без flame surface в registry не попадёт;
+           - каждый кадр рендерятся наиболее значимые live registered sources с сильным приоритетом
+             currently-rendered/PVS-relevant flame и дополнительным приоритетом strict fire source.
+
+        РЕКОМЕНДУЕМЫЙ ЗАПУСК
+        RUN_FIREVOL081_01_PRODUCTION_BALANCED.cmd
+
+        ДЛЯ ПРОВЕРКИ ПОКРЫТИЯ
+        RUN_FIREVOL081_04_COVERAGE_AUDIT.cmd
+        Пройдите по crypt1 мимо большого количества факелов. После выхода из игры ZIP будет содержать
+        FIREVOL081_REGISTRY.txt. Ожидается рост registry по мере исследования карты, при renderBudget <= 8.
+
+        Важное ограничение: registry является runtime-discovered. Факел, который ни разу не попадал в
+        rendered semantic flame set во время текущего запуска карты, заранее зарегистрировать невозможно.
+        Это сознательно безопаснее глобального volumetricizing всех native DLight.
+        EOF
+
+        cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+        sha256sum "$PATCHER_NAME" > "$stage/docs/$PATCHER_NAME.sha256"
+        cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+        cp "$DELTA_NAME.sha256" "$stage/docs/$DELTA_NAME.sha256"
+        cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+        cp "$CUMULATIVE_NAME.sha256" "$stage/docs/$CUMULATIVE_NAME.sha256"
+        cp .base-v080-cumulative.patch "$stage/docs/$BASE_CUMULATIVE_NAME"
+
+        cat > "$stage/docs/EXACT_BASE.txt" <<EOF
+        Fire Volumetric v0.8.1 Production Visibility + Full Torch Coverage
+        direct_source_parent_run=$BASE_RUN_ID
+        parent_head=$BASE_RUN_HEAD_SHA
+        parent_workflow=$BASE_WORKFLOW_PATH
+        parent_artifact_id=$BASE_ARTIFACT_ID
+        parent_artifact_name=$BASE_ARTIFACT_NAME
+        parent_artifact_digest=$BASE_ARTIFACT_DIGEST
+        parent_inner_zip_sha256=$BASE_INNER_ZIP_SHA256
+        parent_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+        parent_renderer_sha256=$BASE_RENDERER_SHA256
+        upstream_sha=$UPSTREAM_SHA
+        source_scope=SP/code/rend2/tr_backend.c + SP/code/rend2/glsl/volumetriclocal_fp.glsl ONLY
+        preserved_root_fix=DARKWOLF_FIRE_VOLUMETRIC_V0_7_4_VERTICAL_SCREEN_RAY_CONTRACT_FIX
+        preserved_parent=DARKWOLF_FIRE_VOLUMETRIC_V0_8_PRODUCTION_FLAME_VOLUME
+        registry_capacity=32
+        render_cap=8
+        production_source_mode=2 semantic-anchor hybrid
+        behavioral_change=production visibility calibration + persistent full-map torch registry + independent visible/nearest render budget
+        runtime_policy=exact successful v0.8 runtime except rebuilt renderer_sp_rend2_x64.dll
+        EOF
+
+        (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+        zip -q -r "dist/${RELEASE_BASENAME}.zip" "release/${RELEASE_BASENAME}"
+        sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+        echo "Packaged FireVol v0.8.1 production visibility/full-coverage candidate"
+
+    - name: Upload Fire Volumetric v0.8.1 production artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.RELEASE_BASENAME }}
+        path: |
+          dist/${{ env.RELEASE_BASENAME }}.zip
+          dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+        if-no-files-found: error
+        retention-days: 90
