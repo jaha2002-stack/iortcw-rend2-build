@@ -1,0 +1,1455 @@
+name: Build DarkWolf NPC AI v0.3 Unified Squad Combat Controller SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-npc-ai-v0-3-unified-squad-combat-controller-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: DarkWolf NPC AI v0.3 - unified squad combat controller
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "33498882606"
+      BASE_RUN_HEAD_SHA: a0fdc6a9b63fe324f6d49b5a39a18ff877743577
+      BASE_WORKFLOW_PATH: '.github/workflows/18build-iortcw-rend2-fire-volumetric-clean-production-release-over-tested-v0-8-5-sp.yml'
+      BASE_ARTIFACT_ID: "9796860322"
+      BASE_ARTIFACT_NAME: iortcw-rend2-fire-volumetric-clean-production-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:9f70ce374437e0baae1312dd4616fee577a9b24a7b76ff2ed748801c345deb3d
+      BASE_RELEASE_BASENAME: iortcw-rend2-fire-volumetric-clean-production-sp-windows-x64-1
+      BASE_INNER_ZIP_SHA256: 75d4debc573774c64f07c5b6612f3319ce4db722fb0e777d171ff2b11fa0fb1f
+
+      BASE_EXE_SHA256: e10fe66316d12594da8d497d0c996ae30b47af19d6fe1ccd08537407328c01ba
+      BASE_RENDERER_SHA256: d5dc0df3f4126d34f25442f2508ea27f7f9129b27dc854f035ea24254c692c96
+      BASE_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      BASE_QAGAME_SHA256: b4d6b72bb43a6bb8ccce0eeaf95515da5a88dd4f048c5cf6db05e566f5dfa60a
+      BASE_CGAME_SHA256: dbcfe16805248a2d017a6f35450688caba89750b1044e16547c0c0911eec1e16
+      BASE_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      BASE_OPENAL_SHA256: 396f88738ce20905e933cb7d8c696351e41bd7e72e80b8cfdadf20ab613420b4
+      BASE_SDL_SHA256: f34cd90b131ceb45b7f32d41680a13fd4b13e5f48f0d1649cbf441833105310c
+      BASE_FIRE_BALANCED_SHA256: d4449b575c1e8eeff489241b947625088337d093d79e2e345caf568b74e84551
+      BASE_FIRE_CINEMATIC_SHA256: c4925caa8811dbb2daf0addf6d731bb84e2c77c876aacdf39c47aa04a2790da3
+      BASE_FIRE_PERFORMANCE_SHA256: d4b047ca6159aab47052adbcd0a90c1e4ecea8cfa943642d3f456508d06111a0
+
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-final-tested-v0-8-5-sp.patch
+      BASE_CUMULATIVE_SHA256: f27dc8f4ee0a802f14a33f565cebd216a9719ee0bc8ae5d7ac4900d95f47e81c
+
+      AI_CAST_BLOB_SHA1: e0fc48a8449a834c678dd3ea7524c07c7d2c45d1
+      AI_CAST_SIGHT_BLOB_SHA1: de45edc232a003685919face0acce1ded9734c8c
+      AI_CAST_FUNCS_BLOB_SHA1: 5a6103d730345660be630da96c297a60124a6343
+
+      PATCHER_NAME: apply_darkwolf_npc_ai_v0_3.py
+      DELTA_NAME: darkwolf-npc-ai-v0-3-over-clean-production.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-firevol-final-plus-npc-ai-v0-3-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-darkwolf-npc-ai-v0-3-unified-squad-combat-controller-full-sp-windows-x64-1
+
+    steps:
+    - name: Checkout build repository
+      uses: actions/checkout@v5
+
+    - name: Preflight workflow YAML and bash contract
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+        workflow_rel="${workflow_rel%@*}"
+        test -f "$workflow_rel" || { echo "ERROR: cannot resolve workflow: $workflow_rel" >&2; exit 1; }
+        python3 - "$workflow_rel" <<'PY'
+        from pathlib import Path
+        import subprocess
+        import sys
+        import yaml
+
+        path = Path(sys.argv[1])
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        expected = "Build DarkWolf NPC AI v0.3 Unified Squad Combat Controller SP"
+        if doc.get("name") != expected:
+            raise SystemExit(f"ERROR: workflow identity drift: {doc.get('name')!r}")
+
+        checked = 0
+        for job_name, job in (doc.get("jobs") or {}).items():
+            for index, step in enumerate(job.get("steps") or [], 1):
+                script = step.get("run")
+                shell = step.get("shell", "bash")
+                if not script or not str(shell).lower().startswith("bash"):
+                    continue
+                proc = subprocess.run(
+                    ["bash", "-n"],
+                    input=script,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                if proc.returncode:
+                    print(
+                        f"ERROR: bash -n failed job={job_name} step={index} name={step.get('name')}",
+                        file=sys.stderr,
+                    )
+                    print(proc.stderr, file=sys.stderr)
+                    raise SystemExit(proc.returncode)
+                checked += 1
+        if checked < 1:
+            raise SystemExit("ERROR: no bash run blocks found")
+        print(f"Workflow YAML + bash syntax PASS: {checked} bash blocks")
+        PY
+
+    - name: Install canonical MinGW and validation dependencies
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          binutils-mingw-w64-x86-64 build-essential ca-certificates \
+          g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+          libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+          python3 python3-yaml unzip zip file
+
+    - name: Verify exact Clean Production base provenance
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -Eeuo pipefail
+        run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+        test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: Clean Production HEAD drift" >&2; exit 1; }
+        test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo "ERROR: Clean Production base run is not successful" >&2; exit 1; }
+        test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: Clean Production workflow path drift" >&2; exit 1; }
+
+        line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" \
+          --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+        test -n "$line" || { echo "ERROR: exact Clean Production artifact missing" >&2; exit 1; }
+        IFS=$'\t' read -r artifact_name expired artifact_digest <<< "$line"
+        test "$artifact_name" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: Clean Production artifact name drift" >&2; exit 1; }
+        test "$expired" = "false" || { echo "ERROR: Clean Production artifact expired" >&2; exit 1; }
+        test "$artifact_digest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: Clean Production artifact digest drift" >&2; exit 1; }
+        echo "Exact Clean Production provenance PASS"
+
+    - name: Download and byte-verify exact Clean Production runtime and source payload
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -Eeuo pipefail
+        rm -rf base-artifact base-release
+        mkdir -p base-artifact base-release
+        gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+          --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+
+        base_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+        test -s "$base_zip" || { echo "ERROR: Clean Production inner ZIP missing" >&2; find base-artifact -maxdepth 2 -type f -print; exit 1; }
+        test "$(sha256sum "$base_zip" | awk '{print $1}')" = "$BASE_INNER_ZIP_SHA256" || { echo "ERROR: Clean Production inner ZIP SHA drift" >&2; exit 1; }
+
+        unzip -q "$base_zip" -d base-release
+        mapfile -t roots < <(find base-release/release -mindepth 1 -maxdepth 1 -type d -print)
+        test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one Clean Production release root" >&2; exit 1; }
+        base_stage="${roots[0]}"
+        printf '%s\n' "$base_stage" > .base_stage_path
+
+        check_sha() {
+          local file="$1" expected="$2"
+          test -s "$file" || { echo "ERROR: missing required base file: $file" >&2; exit 1; }
+          test "$(sha256sum "$file" | awk '{print $1}')" = "$expected" || { echo "ERROR: SHA drift: $file" >&2; exit 1; }
+        }
+
+        check_sha "$base_stage/ioWolfSP.x64.exe" "$BASE_EXE_SHA256"
+        check_sha "$base_stage/renderer_sp_rend2_x64.dll" "$BASE_RENDERER_SHA256"
+        check_sha "$base_stage/renderer_sp_opengl1_x64.dll" "$BASE_OPENGL1_SHA256"
+        check_sha "$base_stage/Main/qagame_sp_x64.dll" "$BASE_QAGAME_SHA256"
+        check_sha "$base_stage/Main/cgame_sp_x64.dll" "$BASE_CGAME_SHA256"
+        check_sha "$base_stage/Main/ui_sp_x64.dll" "$BASE_UI_SHA256"
+        check_sha "$base_stage/OpenAL64.dll" "$BASE_OPENAL_SHA256"
+        check_sha "$base_stage/SDL264.dll" "$BASE_SDL_SHA256"
+        check_sha "$base_stage/Main/FIREVOL_PRODUCTION_BALANCED.cfg" "$BASE_FIRE_BALANCED_SHA256"
+        check_sha "$base_stage/Main/FIREVOL_PRODUCTION_DEFAULT.cfg" "$BASE_FIRE_BALANCED_SHA256"
+        check_sha "$base_stage/Main/FIREVOL_PRODUCTION_CINEMATIC.cfg" "$BASE_FIRE_CINEMATIC_SHA256"
+        check_sha "$base_stage/Main/FIREVOL_PRODUCTION_PERFORMANCE.cfg" "$BASE_FIRE_PERFORMANCE_SHA256"
+        check_sha "$base_stage/docs/$BASE_CUMULATIVE_NAME" "$BASE_CUMULATIVE_SHA256"
+
+        grep -Fq 'production_behavior_drift_from_tested_v0.8.5=ZERO' "$base_stage/docs/PRODUCTION_PROVENANCE.txt"
+        test -z "$(find "$base_stage" -type f -iname 'pak*.pk3' -print -quit)" || { echo "ERROR: commercial pak asset unexpectedly present" >&2; exit 1; }
+        echo "Exact Clean Production runtime/source payload PASS"
+
+    - name: Reconstruct exact Clean Production source tree
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_stage="$(cat .base_stage_path)"
+        rm -rf source replay-delta replay-cumulative
+        git clone "$UPSTREAM_REPO" source
+        git -C source checkout --detach "$UPSTREAM_SHA"
+        git -C source reset --hard "$UPSTREAM_SHA"
+        git -C source clean -fdx
+
+        cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" .base-clean-production-cumulative.patch
+        test "$(sha256sum .base-clean-production-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+
+        if grep -Eq '^diff --git a/SP/code/game/(ai_cast\.c|ai_cast_sight\.c|ai_cast_funcs\.c) ' .base-clean-production-cumulative.patch; then
+          echo "ERROR: Clean Production cumulative patch unexpectedly changes v0.1 AI allowlist files" >&2
+          exit 1
+        fi
+
+        git -C source apply --check --binary ../.base-clean-production-cumulative.patch
+        git -C source apply --binary ../.base-clean-production-cumulative.patch
+        # The hash-pinned Clean Production cumulative patch intentionally preserves
+        # one historical trailing-whitespace line in Rend2 tr_scene.c. Do not
+        # normalize or reject accepted base bytes; validate only the AI allowlist
+        # here, whose exact upstream blob hashes are asserted immediately below.
+        git -C source diff --check -- \
+          SP/code/game/ai_cast.c \
+          SP/code/game/ai_cast_sight.c \
+          SP/code/game/ai_cast_funcs.c
+
+        test "$(git -C source hash-object SP/code/game/ai_cast.c)" = "$AI_CAST_BLOB_SHA1" || { echo "ERROR: ai_cast.c exact-source drift" >&2; exit 1; }
+        test "$(git -C source hash-object SP/code/game/ai_cast_sight.c)" = "$AI_CAST_SIGHT_BLOB_SHA1" || { echo "ERROR: ai_cast_sight.c exact-source drift" >&2; exit 1; }
+        test "$(git -C source hash-object SP/code/game/ai_cast_funcs.c)" = "$AI_CAST_FUNCS_BLOB_SHA1" || { echo "ERROR: ai_cast_funcs.c exact-source drift" >&2; exit 1; }
+
+        git -C source config user.email "darkwolf-ci@example.invalid"
+        git -C source config user.name "DarkWolf CI"
+        git -C source add -A
+        git -C source commit -m "Exact DarkWolf Clean Production source base"
+        git -C source rev-parse HEAD > .base_source_commit
+        test -z "$(git -C source status --porcelain)"
+        echo "Exact Clean Production source reconstruction PASS"
+
+    - name: Apply DarkWolf NPC AI v0.3 unified squad combat controller delta
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_commit="$(cat .base_source_commit)"
+
+        find source/SP/code/rend2 -type f -print0 | sort -z | xargs -0 sha256sum > .rend2_frozen.sha256
+        find source/SP/code/game -type f \
+          ! -name 'ai_cast.c' ! -name 'ai_cast_sight.c' ! -name 'ai_cast_funcs.c' \
+          -print0 | sort -z | xargs -0 sha256sum > .game_non_ai_frozen.sha256
+
+        cat > "$PATCHER_NAME" <<'PY'
+        from pathlib import Path
+        import sys
+
+        root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('.')
+        cast_file = root / 'SP/code/game/ai_cast.c'
+        sight_file = root / 'SP/code/game/ai_cast_sight.c'
+        funcs_file = root / 'SP/code/game/ai_cast_funcs.c'
+
+        mark_cvar = 'DARKWOLF_NPC_AI_V0_3_CVAR'
+        mark_memory = 'DARKWOLF_NPC_AI_V0_3_HONEST_MEMORY'
+        mark_tactical = 'DARKWOLF_NPC_AI_V0_3_UNIFIED_SQUAD_CONTROLLER'
+
+        def replace_once(text, old, new, label):
+            count = text.count(old)
+            if count != 1:
+                raise SystemExit(f'ERROR: {label}: expected exactly one anchor, found {count}')
+            return text.replace(old, new, 1)
+
+        def insert_after_in_function(text, signature, needle, insert, label):
+            start = text.find(signature)
+            if start < 0 or text.find(signature, start + 1) >= 0:
+                raise SystemExit(f'ERROR: {label}: function signature missing or non-unique')
+            next_func = text.find('\n/*\n============', start + len(signature))
+            if next_func < 0:
+                next_func = len(text)
+            segment = text[start:next_func]
+            if segment.count(needle) != 1:
+                raise SystemExit(f'ERROR: {label}: expected one in-function anchor, found {segment.count(needle)}')
+            pos = start + segment.find(needle) + len(needle)
+            return text[:pos] + insert + text[pos:]
+
+        cast_text = cast_file.read_text(encoding='utf-8')
+        sight_text = sight_file.read_text(encoding='utf-8')
+        funcs_text = funcs_file.read_text(encoding='utf-8')
+
+        for marker, text, label in (
+            (mark_cvar, cast_text, 'ai_cast.c'),
+            (mark_memory, sight_text, 'ai_cast_sight.c'),
+            (mark_tactical, funcs_text, 'ai_cast_funcs.c'),
+        ):
+            if marker in text:
+                raise SystemExit(f'ERROR: {label}: v0.3 marker already present')
+
+        old_cast = '''\ttrap_Cvar_Register( &aicast_debug, "aicast_debug", "0", 0 );
+        \ttrap_Cvar_Register( &aicast_debugname, "aicast_debugname", "", 0 );
+        \ttrap_Cvar_Register( &aicast_scripts, "aicast_scripts", "1", 0 );
+        '''
+        new_cast = '''\ttrap_Cvar_Register( &aicast_debug, "aicast_debug", "0", 0 );
+        \ttrap_Cvar_Register( &aicast_debugname, "aicast_debugname", "", 0 );
+        \ttrap_Cvar_Register( &aicast_scripts, "aicast_scripts", "1", 0 );
+        \t/* DARKWOLF_NPC_AI_V0_3_CVAR: master mode and unified-squad telemetry only. */
+        \ttrap_Cvar_Register( &cvar, "g_aiMode", "0", CVAR_ARCHIVE );
+        \ttrap_Cvar_Register( &cvar, "g_aiDebug", "0", 0 );
+        \tif ( trap_Cvar_VariableIntegerValue( "g_aiDebug" ) ) {
+        \t\tG_Printf( "DARKWOLF_NPC_AI_V0_3 initialized mode=%d\\n", trap_Cvar_VariableIntegerValue( "g_aiMode" ) );
+        \t}
+        '''
+        cast_text = replace_once(cast_text, old_cast, new_cast, 'AI cvar registration')
+
+        old_memory = '''\t// if enough time has passed, and still within chase period, drop a marker
+        \tif ( vis->chase_marker_count < MAX_CHASE_MARKERS ) {
+        \t\tif ( ( level.time - vis->visible_timestamp ) > ( vis->chase_marker_count + 1 ) * CHASE_MARKER_INTERVAL ) {
+        \t\t\tVectorCopy( destent->client->ps.origin, vis->chase_marker[vis->chase_marker_count] );
+        \t\t\tvis->chase_marker_count++;
+        \t\t}
+        \t}
+        '''
+        new_memory = '''\t/* DARKWOLF_NPC_AI_V0_3_HONEST_MEMORY
+        \t * Mode 0 preserves original RTCW hidden-position chase-marker behavior.
+        \t * Enhanced modes seed one hunt marker from the last genuinely visible position.
+        \t * g_aiDebug 1 prints only CAST-AI -> SP-player memory; debug 2 keeps full telemetry.
+        \t */
+        \tif ( trap_Cvar_VariableIntegerValue( "g_aiMode" ) <= 0 ) {
+        \t\tif ( vis->chase_marker_count < MAX_CHASE_MARKERS ) {
+        \t\t\tif ( ( level.time - vis->visible_timestamp ) > ( vis->chase_marker_count + 1 ) * CHASE_MARKER_INTERVAL ) {
+        \t\t\t\tVectorCopy( destent->client->ps.origin, vis->chase_marker[vis->chase_marker_count] );
+        \t\t\t\tvis->chase_marker_count++;
+        \t\t\t}
+        \t\t}
+        \t} else if ( vis->visible_timestamp && vis->chase_marker_count == 0 ) {
+        \t\tint dwDebug;
+        \t\tVectorCopy( vis->visible_pos, vis->chase_marker[0] );
+        \t\tvis->chase_marker_count = 1;
+        \t\tdwDebug = trap_Cvar_VariableIntegerValue( "g_aiDebug" );
+        \t\tif ( dwDebug > 1 || ( dwDebug == 1 && destent->s.number == 0 && ( srcent->r.svFlags & SVF_CASTAI ) ) ) {
+        \t\t\tG_Printf( "DWAI_MEMORY self=%d enemy=%d last=(%.1f %.1f %.1f)\\n",
+        \t\t\t\tsrcent->s.number, destent->s.number,
+        \t\t\t\tvis->visible_pos[0], vis->visible_pos[1], vis->visible_pos[2] );
+        \t\t}
+        \t}
+        '''
+        sight_text = replace_once(sight_text, old_memory, new_memory, 'honest chase memory')
+
+        old_helpers = '''char *AIFunc_BattleChase( cast_state_t *cs );
+        char *AIFunc_Battle( cast_state_t *cs );
+
+        static bot_moveresult_t *moveresult;
+        '''
+        new_helpers = r'''char *AIFunc_BattleChase( cast_state_t *cs );
+        char *AIFunc_Battle( cast_state_t *cs );
+
+        /* DARKWOLF_NPC_AI_V0_3_UNIFIED_SQUAD_CONTROLLER
+         * Milestone 3: one contact creates one local squad, and the same sidecar role
+         * controls both AIFunc_Battle and AIFunc_BattleChase.
+         *
+         * Guardrails:
+         * - Mode 0 never enters this controller.
+         * - no cast_state_t/savegame layout changes;
+         * - no new navmesh and no script/map changes;
+         * - only ordinary Nazi/Allied CAST-AI are enrolled;
+         * - active scripts, leaders, danger and door ownership always win;
+         * - shared contact is copied only from a spotter's genuine real_visible_pos.
+         */
+        #define DWAI_ROLE_NONE       0
+        #define DWAI_ROLE_PRESSURE   1
+        #define DWAI_ROLE_SUPPRESS   2
+        #define DWAI_ROLE_FLANK      3
+        #define DWAI_ROLE_GRENADIER  4
+        #define DWAI_ROLE_RESERVE    5
+        #define DWAI_SQUAD_RADIUS    1250.0f
+        #define DWAI_CONTACT_RANGE   1800.0f
+        #define DWAI_FLANK_REACHED   64.0f
+
+        static int dwaiSquadSerial;
+        static int dwaiLastLevelTime;
+        static int dwaiSquadId[MAX_CLIENTS];
+        static int dwaiSquadSpotter[MAX_CLIENTS];
+        static int dwaiSquadMode[MAX_CLIENTS];
+        static int dwaiSquadCount[MAX_CLIENTS];
+        static int dwaiRole[MAX_CLIENTS];
+        static int dwaiRank[MAX_CLIENTS];
+        static int dwaiRoleUntil[MAX_CLIENTS];
+        static int dwaiRoleAssignedAt[MAX_CLIENTS];
+        static int dwaiContactTime[MAX_CLIENTS];
+        static int dwaiContactUntil[MAX_CLIENTS];
+        static vec3_t dwaiContactPos[MAX_CLIENTS];
+        static vec3_t dwaiFlankGoal[MAX_CLIENTS];
+        static int dwaiFlankGoalUntil[MAX_CLIENTS];
+        static int dwaiFlankSide[MAX_CLIENTS];
+        static int dwaiSpotterNextForm[MAX_CLIENTS];
+        static int dwaiCoverNextTime[MAX_CLIENTS];
+        static int dwaiFlankNextTime[MAX_CLIENTS];
+        static int dwaiRoleLogged[MAX_CLIENTS];
+        static int dwaiChaseLogTime[MAX_CLIENTS];
+        static int dwaiActionLogTime[MAX_CLIENTS];
+        static int dwaiAcceptLogTime[MAX_CLIENTS];
+
+        static int DarkWolfAI_Mode( void ) {
+        	int mode;
+        	mode = trap_Cvar_VariableIntegerValue( "g_aiMode" );
+        	if ( mode < 0 ) return 0;
+        	if ( mode > 4 ) return 4;
+        	return mode;
+        }
+
+        static int DarkWolfAI_Debug( void ) {
+        	return trap_Cvar_VariableIntegerValue( "g_aiDebug" );
+        }
+
+        static qboolean DarkWolfAI_LogReady( int *times, int entnum, int interval ) {
+        	if ( entnum < 0 || entnum >= MAX_CLIENTS ) return qfalse;
+        	if ( !times[entnum] || times[entnum] > level.time + interval || times[entnum] <= level.time - interval ) {
+        		times[entnum] = level.time;
+        		return qtrue;
+        	}
+        	return qfalse;
+        }
+
+        static void DarkWolfAI_ResetRuntimeState( void ) {
+        	memset( dwaiSquadId, 0, sizeof( dwaiSquadId ) );
+        	memset( dwaiSquadSpotter, 0, sizeof( dwaiSquadSpotter ) );
+        	memset( dwaiSquadMode, 0, sizeof( dwaiSquadMode ) );
+        	memset( dwaiSquadCount, 0, sizeof( dwaiSquadCount ) );
+        	memset( dwaiRole, 0, sizeof( dwaiRole ) );
+        	memset( dwaiRank, 0, sizeof( dwaiRank ) );
+        	memset( dwaiRoleUntil, 0, sizeof( dwaiRoleUntil ) );
+        	memset( dwaiRoleAssignedAt, 0, sizeof( dwaiRoleAssignedAt ) );
+        	memset( dwaiContactTime, 0, sizeof( dwaiContactTime ) );
+        	memset( dwaiContactUntil, 0, sizeof( dwaiContactUntil ) );
+        	memset( dwaiContactPos, 0, sizeof( dwaiContactPos ) );
+        	memset( dwaiFlankGoal, 0, sizeof( dwaiFlankGoal ) );
+        	memset( dwaiFlankGoalUntil, 0, sizeof( dwaiFlankGoalUntil ) );
+        	memset( dwaiFlankSide, 0, sizeof( dwaiFlankSide ) );
+        	memset( dwaiSpotterNextForm, 0, sizeof( dwaiSpotterNextForm ) );
+        	memset( dwaiCoverNextTime, 0, sizeof( dwaiCoverNextTime ) );
+        	memset( dwaiFlankNextTime, 0, sizeof( dwaiFlankNextTime ) );
+        	memset( dwaiRoleLogged, 0, sizeof( dwaiRoleLogged ) );
+        	memset( dwaiChaseLogTime, 0, sizeof( dwaiChaseLogTime ) );
+        	memset( dwaiActionLogTime, 0, sizeof( dwaiActionLogTime ) );
+        	memset( dwaiAcceptLogTime, 0, sizeof( dwaiAcceptLogTime ) );
+        	dwaiSquadSerial = 0;
+        }
+
+        static void DarkWolfAI_TimeGuard( void ) {
+        	if ( dwaiLastLevelTime && level.time < dwaiLastLevelTime ) {
+        		DarkWolfAI_ResetRuntimeState();
+        	}
+        	dwaiLastLevelTime = level.time;
+        }
+
+        static qboolean DarkWolfAI_IsHumanCombatant( cast_state_t *cs ) {
+        	gentity_t *ent;
+        	if ( !cs || !cs->bs || cs->entityNum <= 0 || cs->entityNum >= level.maxclients ) return qfalse;
+        	ent = &g_entities[cs->entityNum];
+        	if ( !ent->inuse || ent->health <= 0 || !ent->client || ent->aiInactive || !( ent->r.svFlags & SVF_CASTAI ) ) return qfalse;
+        	return ent->aiTeam == AITEAM_NAZI || ent->aiTeam == AITEAM_ALLIES;
+        }
+
+        static qboolean DarkWolfAI_ScriptOwnsCast( cast_state_t *cs ) {
+        	if ( !cs ) return qtrue;
+        	if ( cs->castScriptStatus.castScriptEventIndex >= 0 ) return qtrue;
+        	if ( cs->castScriptStatus.scriptGotoEnt >= 0 || cs->castScriptStatus.scriptAttackEnt >= 0 ) return qtrue;
+        	if ( cs->castScriptStatus.scriptNoMoveTime > level.time || cs->castScriptStatus.scriptNoAttackTime >= level.time ) return qtrue;
+        	if ( cs->castScriptStatus.scriptNoSightTime >= level.time ) return qtrue;
+        	if ( cs->aiFlags & AIFL_DENYACTION ) return qtrue;
+        	return qfalse;
+        }
+
+        static qboolean DarkWolfAI_PriorityOwnsFrame( cast_state_t *cs ) {
+        	if ( DarkWolfAI_ScriptOwnsCast( cs ) ) return qtrue;
+        	if ( cs->dangerEntityValidTime >= level.time ) return qtrue;
+        	if ( cs->doorMarkerTime > level.time - 100 ) return qtrue;
+        	if ( cs->leaderNum >= 0 && cs->leaderNum < level.maxclients && g_entities[cs->leaderNum].inuse &&
+        		 Distance( cs->bs->origin, g_entities[cs->leaderNum].r.currentOrigin ) > MAX_LEADER_DIST ) return qtrue;
+        	return qfalse;
+        }
+
+        static int DarkWolfAI_MemoryWindowForMode( int mode ) {
+        	switch ( mode ) {
+        	case 1: return 4500;
+        	case 2: return 6500;
+        	case 3: return 7000;
+        	case 4: return 8000;
+        	default: return 0;
+        	}
+        }
+
+        static const char *DarkWolfAI_RoleName( int role ) {
+        	switch ( role ) {
+        	case DWAI_ROLE_PRESSURE: return "PRESSURE";
+        	case DWAI_ROLE_SUPPRESS: return "SUPPRESS";
+        	case DWAI_ROLE_FLANK: return "FLANK";
+        	case DWAI_ROLE_GRENADIER: return "GRENADIER";
+        	case DWAI_ROLE_RESERVE: return "RESERVE";
+        	default: return "NONE";
+        	}
+        }
+
+        static int DarkWolfAI_RoleForRank( int mode, int count, int rank ) {
+        	if ( count <= 1 ) return DWAI_ROLE_PRESSURE;
+        	switch ( mode ) {
+        	case 1:
+        		if ( rank < 2 ) return DWAI_ROLE_PRESSURE;
+        		if ( rank == 2 ) return DWAI_ROLE_SUPPRESS;
+        		if ( rank == 3 ) return DWAI_ROLE_FLANK;
+        		return DWAI_ROLE_RESERVE;
+        	case 2:
+        		if ( rank == 0 ) return DWAI_ROLE_PRESSURE;
+        		if ( rank == 1 ) return DWAI_ROLE_SUPPRESS;
+        		if ( rank == 2 ) return DWAI_ROLE_FLANK;
+        		if ( rank == 3 ) return DWAI_ROLE_GRENADIER;
+        		return DWAI_ROLE_RESERVE;
+        	case 3:
+        		if ( rank < 2 ) return DWAI_ROLE_PRESSURE;
+        		if ( rank == 2 ) return DWAI_ROLE_FLANK;
+        		if ( rank == 3 ) return DWAI_ROLE_GRENADIER;
+        		if ( rank == 4 ) return DWAI_ROLE_SUPPRESS;
+        		return DWAI_ROLE_RESERVE;
+        	case 4:
+        		if ( rank == 0 ) return DWAI_ROLE_PRESSURE;
+        		if ( rank == 1 ) return DWAI_ROLE_SUPPRESS;
+        		if ( rank == 2 ) return DWAI_ROLE_FLANK;
+        		if ( rank == 3 ) return DWAI_ROLE_GRENADIER;
+        		return ( rank & 1 ) ? DWAI_ROLE_RESERVE : DWAI_ROLE_FLANK;
+        	default:
+        		return DWAI_ROLE_PRESSURE;
+        	}
+        }
+
+        static qboolean DarkWolfAI_AssignmentActive( cast_state_t *cs ) {
+        	int n;
+        	DarkWolfAI_TimeGuard();
+        	if ( DarkWolfAI_Mode() <= 0 || !DarkWolfAI_IsHumanCombatant( cs ) ) return qfalse;
+        	n = cs->entityNum;
+        	if ( n <= 0 || n >= MAX_CLIENTS ) return qfalse;
+        	if ( dwaiRoleAssignedAt[n] > level.time ) return qfalse;
+        	if ( dwaiSquadId[n] <= 0 || dwaiRole[n] == DWAI_ROLE_NONE || dwaiRoleUntil[n] <= level.time ) return qfalse;
+        	if ( dwaiSquadMode[n] != DarkWolfAI_Mode() || dwaiContactUntil[n] <= level.time ) return qfalse;
+        	if ( cs->enemyNum != 0 || !g_entities[0].inuse || g_entities[0].health <= 0 ) return qfalse;
+        	return qtrue;
+        }
+
+        static qboolean DarkWolfAI_CanEnroll( cast_state_t *cs, int team ) {
+        	if ( !DarkWolfAI_IsHumanCombatant( cs ) || DarkWolfAI_ScriptOwnsCast( cs ) ) return qfalse;
+        	if ( g_entities[cs->entityNum].aiTeam != team ) return qfalse;
+        	if ( cs->leaderNum >= 0 && cs->leaderNum < level.maxclients && g_entities[cs->leaderNum].inuse &&
+        		 Distance( cs->bs->origin, g_entities[cs->leaderNum].r.currentOrigin ) > MAX_LEADER_DIST ) return qfalse;
+        	/* Never steal an actor from a different current target. Unengaged actors are safe to enroll. */
+        	if ( cs->enemyNum >= 0 && cs->enemyNum != 0 ) return qfalse;
+        	return qtrue;
+        }
+
+        static qboolean DarkWolfAI_SpotterFresh( cast_state_t *cs, vec3_t contact ) {
+        	cast_visibility_t *vis;
+        	if ( DarkWolfAI_Mode() <= 0 || !DarkWolfAI_CanEnroll( cs, g_entities[cs->entityNum].aiTeam ) ) return qfalse;
+        	if ( cs->enemyNum != 0 || !g_entities[0].inuse || g_entities[0].health <= 0 ) return qfalse;
+        	vis = &cs->vislist[0];
+        	if ( !vis->real_visible_timestamp || vis->real_visible_timestamp < level.time - 2000 ) return qfalse;
+        	VectorCopy( vis->real_visible_pos, contact );
+        	return qtrue;
+        }
+
+        static void DarkWolfAI_UpdateExistingContact( int spotter, vec3_t contact, int contactTime, int mode ) {
+        	int i, squad;
+        	if ( spotter <= 0 || spotter >= MAX_CLIENTS ) return;
+        	squad = dwaiSquadId[spotter];
+        	if ( squad <= 0 ) return;
+        	for ( i = 1; i < level.maxclients && i < MAX_CLIENTS; i++ ) {
+        		if ( dwaiSquadId[i] != squad || dwaiSquadSpotter[i] != spotter ) continue;
+        		VectorCopy( contact, dwaiContactPos[i] );
+        		dwaiContactTime[i] = contactTime;
+        		dwaiContactUntil[i] = level.time + DarkWolfAI_MemoryWindowForMode( mode );
+        	}
+        }
+
+        static void DarkWolfAI_UpdateSquadFromSpotter( cast_state_t *spotter ) {
+        	int i, j, count, team, mode, squad, role, hold, tmpi;
+        	int members[MAX_CLIENTS];
+        	float distances[MAX_CLIENTS], tmpf;
+        	qboolean selected[MAX_CLIENTS];
+        	vec3_t contact;
+        	gentity_t *sent, *other;
+        	cast_state_t *ocs;
+
+        	DarkWolfAI_TimeGuard();
+        	mode = DarkWolfAI_Mode();
+        	if ( mode <= 0 || !DarkWolfAI_SpotterFresh( spotter, contact ) ) return;
+        	if ( spotter->entityNum <= 0 || spotter->entityNum >= MAX_CLIENTS ) return;
+
+        	/* A support member that also sees the player updates its existing squad only;
+        	 * it does not create a second overlapping squad or a second pressure actor. */
+        	if ( DarkWolfAI_AssignmentActive( spotter ) && dwaiSquadSpotter[spotter->entityNum] != spotter->entityNum ) {
+        		DarkWolfAI_UpdateExistingContact( dwaiSquadSpotter[spotter->entityNum], contact, spotter->vislist[0].real_visible_timestamp, mode );
+        		return;
+        	}
+
+        	if ( dwaiSpotterNextForm[spotter->entityNum] > level.time && dwaiSquadId[spotter->entityNum] > 0 ) {
+        		DarkWolfAI_UpdateExistingContact( spotter->entityNum, contact, spotter->vislist[0].real_visible_timestamp, mode );
+        		return;
+        	}
+        	dwaiSpotterNextForm[spotter->entityNum] = level.time + 1200;
+
+        	sent = &g_entities[spotter->entityNum];
+        	team = sent->aiTeam;
+        	memset( selected, 0, sizeof( selected ) );
+        	count = 1;
+        	members[0] = spotter->entityNum;
+        	distances[0] = 0.0f;
+        	selected[spotter->entityNum] = qtrue;
+
+        	for ( i = 1; i < level.maxclients && i < MAX_CLIENTS; i++ ) {
+        		if ( i == spotter->entityNum ) continue;
+        		other = &g_entities[i];
+        		ocs = AICast_GetCastState( i );
+        		if ( !DarkWolfAI_CanEnroll( ocs, team ) ) continue;
+        		if ( Distance( sent->r.currentOrigin, other->r.currentOrigin ) > DWAI_SQUAD_RADIUS ) continue;
+        		if ( Distance( other->r.currentOrigin, contact ) > DWAI_CONTACT_RANGE ) continue;
+        		if ( dwaiSquadId[i] > 0 && dwaiRoleUntil[i] > level.time && dwaiSquadSpotter[i] != spotter->entityNum ) continue;
+        		members[count] = i;
+        		distances[count] = Distance( sent->r.currentOrigin, other->r.currentOrigin );
+        		count++;
+        	}
+
+        	for ( i = 1; i < count; i++ ) {
+        		for ( j = i + 1; j < count; j++ ) {
+        			if ( distances[j] < distances[i] - 1.0f || ( fabs( distances[j] - distances[i] ) <= 1.0f && members[j] < members[i] ) ) {
+        				tmpf = distances[i]; distances[i] = distances[j]; distances[j] = tmpf;
+        				tmpi = members[i]; members[i] = members[j]; members[j] = tmpi;
+        			}
+        		}
+        	}
+
+        	squad = dwaiSquadId[spotter->entityNum];
+        	if ( squad <= 0 || dwaiSquadSpotter[spotter->entityNum] != spotter->entityNum || dwaiRoleUntil[spotter->entityNum] <= level.time ) {
+        		dwaiSquadSerial++;
+        		if ( dwaiSquadSerial <= 0 ) dwaiSquadSerial = 1;
+        		squad = dwaiSquadSerial;
+        	}
+        	hold = 6500;
+
+        	/* Remove members that belonged to this local squad but are no longer eligible. */
+        	for ( i = 1; i < level.maxclients && i < MAX_CLIENTS; i++ ) {
+        		selected[i] = qfalse;
+        	}
+        	for ( i = 0; i < count; i++ ) selected[members[i]] = qtrue;
+        	for ( i = 1; i < level.maxclients && i < MAX_CLIENTS; i++ ) {
+        		if ( dwaiSquadId[i] == squad && dwaiSquadSpotter[i] == spotter->entityNum && !selected[i] ) {
+        			dwaiSquadId[i] = 0;
+        			dwaiRole[i] = DWAI_ROLE_NONE;
+        			dwaiRoleUntil[i] = 0;
+        			dwaiFlankGoalUntil[i] = 0;
+        		}
+        	}
+
+        	for ( i = 0; i < count; i++ ) {
+        		int n, oldRole, oldSquad;
+        		n = members[i];
+        		ocs = AICast_GetCastState( n );
+        		role = DarkWolfAI_RoleForRank( mode, count, i );
+        		oldRole = dwaiRole[n];
+        		oldSquad = dwaiSquadId[n];
+        		dwaiSquadId[n] = squad;
+        		dwaiSquadSpotter[n] = spotter->entityNum;
+        		dwaiSquadMode[n] = mode;
+        		dwaiSquadCount[n] = count;
+        		dwaiRank[n] = i;
+        		dwaiRole[n] = role;
+        		dwaiRoleAssignedAt[n] = level.time;
+        		dwaiRoleUntil[n] = level.time + hold;
+        		dwaiContactTime[n] = spotter->vislist[0].real_visible_timestamp;
+        		dwaiContactUntil[n] = level.time + DarkWolfAI_MemoryWindowForMode( mode );
+        		VectorCopy( contact, dwaiContactPos[n] );
+        		if ( role != DWAI_ROLE_FLANK ) dwaiFlankGoalUntil[n] = 0;
+        		if ( ocs && ocs->enemyNum < 0 ) {
+        			/* Squad communication assigns the known enemy, but deliberately does not
+        			 * forge visible/real_visible timestamps for this ally. */
+        			ocs->enemyNum = 0;
+        			ocs->lastEnemy = 0;
+        		}
+        		if ( DarkWolfAI_Debug() && ( oldRole != role || oldSquad != squad || dwaiRoleLogged[n] != role ) ) {
+        			G_Printf( "DWAI_ROLE_CHANGE self=%d squad=%d spotter=%d mode=%d rank=%d count=%d role=%s\\n",
+        				n, squad, spotter->entityNum, mode, i, count, DarkWolfAI_RoleName( role ) );
+        			dwaiRoleLogged[n] = role;
+        		}
+        	}
+
+        	if ( DarkWolfAI_Debug() ) {
+        		G_Printf( "DWAI_SQUAD_FORM spotter=%d squad=%d mode=%d enemy=0 count=%d pressureCap=%d contact=(%.1f %.1f %.1f)\\n",
+        			spotter->entityNum, squad, mode, count, mode == 4 ? 1 : ( mode == 2 ? 1 : 2 ), contact[0], contact[1], contact[2] );
+        		if ( mode == 4 && count >= 4 && DarkWolfAI_LogReady( dwaiAcceptLogTime, spotter->entityNum, 2500 ) ) {
+        			G_Printf( "DWAI_ACCEPT squad=%d count=%d pressureCap=1 pressureAssigned=1 otherAssigned=%d\\n", squad, count, count - 1 );
+        		}
+        	}
+        }
+
+        static qboolean DarkWolfAI_HasPersonalShot( cast_state_t *cs ) {
+        	if ( !cs || cs->enemyNum != 0 ) return qfalse;
+        	if ( !cs->vislist[0].real_visible_timestamp || cs->vislist[0].real_visible_timestamp < level.time - 700 ) return qfalse;
+        	return AICast_CheckAttack( cs, 0, qfalse );
+        }
+
+        static void DarkWolfAI_AimAtContact( cast_state_t *cs ) {
+        	vec3_t dir;
+        	if ( !cs || cs->entityNum <= 0 || cs->entityNum >= MAX_CLIENTS ) return;
+        	VectorSubtract( dwaiContactPos[cs->entityNum], cs->bs->origin, dir );
+        	if ( VectorNormalize( dir ) > 1.0f ) vectoangles( dir, cs->ideal_viewangles );
+        }
+
+        static qboolean DarkWolfAI_ServiceWeapon( cast_state_t *cs ) {
+        	int weapon, clip;
+        	if ( !cs || !cs->bs ) return qfalse;
+        	if ( cs->bs->cur_ps.weaponstate == WEAPON_RELOADING ) return qtrue;
+        	weapon = cs->bs->cur_ps.weapon;
+        	if ( weapon <= WP_NONE || weapon >= WP_NUM_WEAPONS ) return qfalse;
+        	clip = cs->bs->cur_ps.ammoclip[BG_FindClipForWeapon( weapon )];
+        	if ( clip >= (int)ammoTable[weapon].uses ) return qfalse;
+        	if ( AICast_GotEnoughAmmoForWeapon( cs, cs->weaponNum ) ) {
+        		trap_EA_Reload( cs->entityNum );
+        	} else {
+        		AICast_ChooseWeapon( cs, qfalse );
+        	}
+        	return qtrue;
+        }
+
+        static qboolean DarkWolfAI_TrySupportCover( cast_state_t *cs ) {
+        	int n;
+        	n = cs->entityNum;
+        	if ( n <= 0 || n >= MAX_CLIENTS || dwaiCoverNextTime[n] > level.time ) return qfalse;
+        	dwaiCoverNextTime[n] = level.time + 2200 + ( n * 97 ) % 900;
+        	if ( !AICast_GetTakeCoverPos( cs, 0, dwaiContactPos[n], cs->takeCoverPos ) ) return qfalse;
+        	cs->takeCoverTime = level.time + 2600 + ( n * 131 ) % 1800;
+        	return qtrue;
+        }
+
+        static qboolean DarkWolfAI_GoalConflicts( int entnum, vec3_t goal ) {
+        	int i, squad;
+        	squad = dwaiSquadId[entnum];
+        	for ( i = 1; i < level.maxclients && i < MAX_CLIENTS; i++ ) {
+        		if ( i == entnum || dwaiSquadId[i] != squad || dwaiRole[i] != DWAI_ROLE_FLANK || dwaiFlankGoalUntil[i] <= level.time ) continue;
+        		if ( Distance( goal, dwaiFlankGoal[i] ) < 144.0f ) return qtrue;
+        	}
+        	return qfalse;
+        }
+
+        static qboolean DarkWolfAI_EnsureFlankGoal( cast_state_t *cs ) {
+        	int n, k, side, area, bestClear;
+        	float standOff[6] = { 300.0f, 380.0f, 460.0f, 340.0f, 430.0f, 520.0f };
+        	float lateral[6] = { 240.0f, 320.0f, 400.0f, 440.0f, 500.0f, 560.0f };
+        	float score, bestScore;
+        	vec3_t radial, right, candidate, start, end, losStart, losEnd, best;
+        	trace_t tr, los;
+        	gentity_t *ent;
+
+        	n = cs->entityNum;
+        	if ( n <= 0 || n >= MAX_CLIENTS ) return qfalse;
+        	if ( dwaiFlankGoalUntil[n] > level.time && BotPointAreaNum( dwaiFlankGoal[n] ) > 0 ) return qtrue;
+        	if ( dwaiFlankNextTime[n] > level.time ) return qfalse;
+        	dwaiFlankNextTime[n] = level.time + 1000;
+        	ent = &g_entities[n];
+
+        	VectorSubtract( ent->r.currentOrigin, dwaiContactPos[n], radial );
+        	radial[2] = 0;
+        	if ( VectorNormalize( radial ) < 1.0f ) VectorSet( radial, 1, 0, 0 );
+        	VectorSet( right, -radial[1], radial[0], 0 );
+        	side = dwaiFlankSide[n];
+        	if ( !side ) side = ( ( dwaiRank[n] + n ) & 1 ) ? 1 : -1;
+        	dwaiFlankSide[n] = side;
+        	bestScore = -999999.0f;
+        	bestClear = 0;
+        	VectorClear( best );
+
+        	for ( k = 0; k < 6; k++ ) {
+        		VectorCopy( dwaiContactPos[n], candidate );
+        		VectorMA( candidate, standOff[k], radial, candidate );
+        		VectorMA( candidate, lateral[k] * (float)side, right, candidate );
+        		candidate[2] = ent->r.currentOrigin[2] + 64.0f;
+        		VectorCopy( candidate, start );
+        		VectorCopy( candidate, end );
+        		end[2] -= 192.0f;
+        		trap_Trace( &tr, start, ent->r.mins, ent->r.maxs, end, n, MASK_SOLID );
+        		if ( tr.startsolid || tr.allsolid || tr.fraction >= 1.0f ) continue;
+        		VectorCopy( tr.endpos, candidate );
+        		area = BotPointAreaNum( candidate );
+        		if ( area <= 0 ) continue;
+        		if ( Distance( candidate, dwaiContactPos[n] ) < 220.0f ) continue;
+        		if ( Distance( candidate, ent->r.currentOrigin ) < 96.0f ) continue;
+        		if ( DarkWolfAI_GoalConflicts( n, candidate ) ) continue;
+
+        		VectorCopy( candidate, losStart );
+        		losStart[2] += cs->bs->cur_ps.viewheight;
+        		VectorCopy( dwaiContactPos[n], losEnd );
+        		losEnd[2] += 24.0f;
+        		trap_Trace( &los, losStart, NULL, NULL, losEnd, n, MASK_SHOT );
+        		score = lateral[k] - 0.15f * Distance( candidate, ent->r.currentOrigin );
+        		if ( los.fraction > 0.92f || los.entityNum == 0 ) score += 1200.0f;
+        		if ( score > bestScore ) {
+        			bestScore = score;
+        			bestClear = ( los.fraction > 0.92f || los.entityNum == 0 ) ? 1 : 0;
+        			VectorCopy( candidate, best );
+        		}
+        	}
+        	if ( bestScore <= -999998.0f ) {
+        		dwaiFlankSide[n] = -side;
+        		return qfalse;
+        	}
+        	VectorCopy( best, dwaiFlankGoal[n] );
+        	dwaiFlankGoalUntil[n] = level.time + 3500;
+        	if ( DarkWolfAI_Debug() ) {
+        		G_Printf( "DWAI_FLANK_TARGET self=%d squad=%d side=%s clear=%d goal=(%.1f %.1f %.1f) contact=(%.1f %.1f %.1f)\\n",
+        			n, dwaiSquadId[n], side < 0 ? "LEFT" : "RIGHT", bestClear,
+        			best[0], best[1], best[2], dwaiContactPos[n][0], dwaiContactPos[n][1], dwaiContactPos[n][2] );
+        	}
+        	return qtrue;
+        }
+
+        static qboolean DarkWolfAI_ShouldGrenade( cast_state_t *cs ) {
+        	int n, cooldown;
+        	float dist;
+        	qboolean hasGrenade;
+        	cast_visibility_t *vis;
+        	n = cs->entityNum;
+        	if ( n <= 0 || n >= MAX_CLIENTS || cs->enemyNum != 0 || DarkWolfAI_ScriptOwnsCast( cs ) ) return qfalse;
+        	vis = &cs->vislist[0];
+        	/* Original GrenadeFlush expects this actor's own remembered target, so shared
+        	 * squad contact alone never authorizes a throw. */
+        	if ( !vis->visible_timestamp || vis->visible_timestamp < level.time - DarkWolfAI_MemoryWindowForMode( DarkWolfAI_Mode() ) ) return qfalse;
+        	if ( DarkWolfAI_HasPersonalShot( cs ) ) return qfalse;
+        	cooldown = DarkWolfAI_Mode() == 4 ? 4500 : ( DarkWolfAI_Mode() == 3 ? 5500 : 7000 );
+        	if ( lastGrenadeFlush && !( lastGrenadeFlush > level.time || lastGrenadeFlush < level.time - cooldown ) ) return qfalse;
+        	if ( cs->startGrenadeFlushTime > level.time - 2500 ) return qfalse;
+        	if ( cs->weaponNum && ( cs->castScriptStatus.scriptFlags & SFL_NOCHANGEWEAPON ) ) return qfalse;
+        	dist = Distance( cs->bs->origin, vis->visible_pos );
+        	if ( dist < 180.0f || dist > 1500.0f ) return qfalse;
+        	hasGrenade = qfalse;
+        	if ( COM_BitCheck( cs->bs->cur_ps.weapons, WP_GRENADE_LAUNCHER ) && AICast_GotEnoughAmmoForWeapon( cs, WP_GRENADE_LAUNCHER ) ) hasGrenade = qtrue;
+        	if ( COM_BitCheck( cs->bs->cur_ps.weapons, WP_GRENADE_PINEAPPLE ) && AICast_GotEnoughAmmoForWeapon( cs, WP_GRENADE_PINEAPPLE ) ) hasGrenade = qtrue;
+        	return hasGrenade;
+        }
+
+        static qboolean DarkWolfAI_BattleController( cast_state_t *cs, char **transition ) {
+        	int n, role;
+        	qboolean shot;
+        	*transition = NULL;
+        	if ( !DarkWolfAI_AssignmentActive( cs ) || DarkWolfAI_PriorityOwnsFrame( cs ) ) return qfalse;
+        	n = cs->entityNum;
+        	role = dwaiRole[n];
+        	if ( role == DWAI_ROLE_PRESSURE ) return qfalse;
+
+        	if ( role == DWAI_ROLE_FLANK ) {
+        		if ( DarkWolfAI_EnsureFlankGoal( cs ) ) {
+        			if ( Distance( cs->bs->origin, dwaiFlankGoal[n] ) > DWAI_FLANK_REACHED ) {
+        				AICast_MoveToPos( cs, dwaiFlankGoal[n], -1 );
+        				DarkWolfAI_AimAtContact( cs );
+        				if ( DarkWolfAI_HasPersonalShot( cs ) ) AICast_ProcessAttack( cs );
+        				if ( DarkWolfAI_Debug() && DarkWolfAI_LogReady( dwaiActionLogTime, n, 1200 ) ) {
+        					G_Printf( "DWAI_FLANK_MOVE self=%d squad=%d goal=(%.1f %.1f %.1f)\\n", n, dwaiSquadId[n], dwaiFlankGoal[n][0], dwaiFlankGoal[n][1], dwaiFlankGoal[n][2] );
+        				}
+        				return qtrue;
+        			}
+        		}
+        		shot = DarkWolfAI_HasPersonalShot( cs );
+        		if ( shot ) AICast_ProcessAttack( cs ); else DarkWolfAI_AimAtContact( cs );
+        		return qtrue;
+        	}
+
+        	if ( DarkWolfAI_ServiceWeapon( cs ) ) return qtrue;
+        	shot = DarkWolfAI_HasPersonalShot( cs );
+        	if ( role == DWAI_ROLE_GRENADIER && DarkWolfAI_ShouldGrenade( cs ) ) {
+        		if ( DarkWolfAI_Debug() ) G_Printf( "DWAI_GRENADE_ORDER self=%d squad=%d contact=(%.1f %.1f %.1f)\\n", n, dwaiSquadId[n], dwaiContactPos[n][0], dwaiContactPos[n][1], dwaiContactPos[n][2] );
+        		*transition = AIFunc_GrenadeFlushStart( cs );
+        		return qtrue;
+        	}
+        	if ( shot ) {
+        		AICast_ProcessAttack( cs );
+        		if ( DarkWolfAI_Debug() && DarkWolfAI_LogReady( dwaiActionLogTime, n, 1400 ) ) {
+        			G_Printf( "DWAI_SUPPRESS_HOLD self=%d squad=%d role=%s firing=1\\n", n, dwaiSquadId[n], DarkWolfAI_RoleName( role ) );
+        		}
+        		return qtrue;
+        	}
+        	if ( ( role == DWAI_ROLE_SUPPRESS || role == DWAI_ROLE_GRENADIER ) && DarkWolfAI_TrySupportCover( cs ) ) {
+        		if ( DarkWolfAI_Debug() ) G_Printf( "DWAI_SUPPRESS_COVER self=%d squad=%d role=%s pos=(%.1f %.1f %.1f)\\n", n, dwaiSquadId[n], DarkWolfAI_RoleName( role ), cs->takeCoverPos[0], cs->takeCoverPos[1], cs->takeCoverPos[2] );
+        		*transition = AIFunc_BattleTakeCoverStart( cs );
+        		return qtrue;
+        	}
+        	DarkWolfAI_AimAtContact( cs );
+        	if ( DarkWolfAI_Debug() && DarkWolfAI_LogReady( dwaiActionLogTime, n, 1500 ) ) {
+        		if ( role == DWAI_ROLE_GRENADIER || role == DWAI_ROLE_RESERVE ) {
+        			G_Printf( "DWAI_RESERVE_HOLD self=%d squad=%d role=%s\\n", n, dwaiSquadId[n], DarkWolfAI_RoleName( role ) );
+        		} else {
+        			G_Printf( "DWAI_SUPPRESS_HOLD self=%d squad=%d role=%s firing=0\\n", n, dwaiSquadId[n], DarkWolfAI_RoleName( role ) );
+        		}
+        	}
+        	return qtrue;
+        }
+
+        static qboolean DarkWolfAI_ChaseController( cast_state_t *cs, char **transition ) {
+        	int n, role;
+        	*transition = NULL;
+        	if ( !DarkWolfAI_AssignmentActive( cs ) || DarkWolfAI_PriorityOwnsFrame( cs ) ) return qfalse;
+        	n = cs->entityNum;
+        	role = dwaiRole[n];
+        	if ( role == DWAI_ROLE_PRESSURE ) {
+        		if ( DarkWolfAI_Debug() && DarkWolfAI_LogReady( dwaiChaseLogTime, n, 1600 ) ) {
+        			G_Printf( "DWAI_CHASE_ALLOW self=%d squad=%d role=PRESSURE\\n", n, dwaiSquadId[n] );
+        		}
+        		return qfalse;
+        	}
+        	if ( role == DWAI_ROLE_FLANK ) {
+        		if ( DarkWolfAI_EnsureFlankGoal( cs ) ) {
+        			AICast_MoveToPos( cs, dwaiFlankGoal[n], -1 );
+        			DarkWolfAI_AimAtContact( cs );
+        			if ( DarkWolfAI_HasPersonalShot( cs ) ) AICast_ProcessAttack( cs );
+        			if ( DarkWolfAI_Debug() && DarkWolfAI_LogReady( dwaiChaseLogTime, n, 1200 ) ) {
+        				G_Printf( "DWAI_CHASE_DENY self=%d squad=%d role=FLANK redirect=FLANK_GOAL\\n", n, dwaiSquadId[n] );
+        			}
+        			return qtrue;
+        		}
+        	}
+        	cs->aifunc = AIFunc_Battle;
+        	if ( DarkWolfAI_Debug() && DarkWolfAI_LogReady( dwaiChaseLogTime, n, 1200 ) ) {
+        		G_Printf( "DWAI_CHASE_DENY self=%d squad=%d role=%s redirect=BATTLE\\n", n, dwaiSquadId[n], DarkWolfAI_RoleName( role ) );
+        	}
+        	*transition = "AIFunc_Battle";
+        	return qtrue;
+        }
+
+        static bot_moveresult_t *moveresult;
+        '''
+        funcs_text = replace_once(funcs_text, old_helpers, new_helpers, 'unified squad helper insertion')
+
+        old_battle_anchor = '''\tif ( enemy->health <= 0 ) {
+        \t\t// go back to whatever our default action is
+        \t\tif ( g_entities[cs->entityNum].aiTeam == AITEAM_NAZI ) {
+        \t\t\treturn AIFunc_InspectBodyStart( cs );
+        \t\t} else {
+        \t\t\treturn AIFunc_DefaultStart( cs );
+        \t\t}
+        \t}
+        \t//
+        \t// if we are not in a good attacking position, we should chase
+        '''
+        new_battle_anchor = '''\tif ( enemy->health <= 0 ) {
+        \t\t// go back to whatever our default action is
+        \t\tif ( g_entities[cs->entityNum].aiTeam == AITEAM_NAZI ) {
+        \t\t\treturn AIFunc_InspectBodyStart( cs );
+        \t\t} else {
+        \t\t\treturn AIFunc_DefaultStart( cs );
+        \t\t}
+        \t}
+        \t//
+        \t/* DARKWOLF NPC AI v0.3: update one shared squad before the original stand/chase split. */
+        \tDarkWolfAI_UpdateSquadFromSpotter( cs );
+        \t{
+        \t\tchar *dwTransition;
+        \t\tif ( DarkWolfAI_BattleController( cs, &dwTransition ) ) {
+        \t\t\treturn dwTransition;
+        \t\t}
+        \t}
+        \t//
+        \t// if we are not in a good attacking position, we should chase
+        '''
+        funcs_text = replace_once(funcs_text, old_battle_anchor, new_battle_anchor, 'Battle unified controller')
+
+        # Earliest BattleStart contact formation: do not wait for a later Battle frame.
+        battle_start_sig = 'char *AIFunc_BattleStart( cast_state_t *cs ) {'
+        battle_start_needle = '\tint lastweap;\n'
+        funcs_text = insert_after_in_function(
+            funcs_text, battle_start_sig, battle_start_needle,
+            '\tDarkWolfAI_UpdateSquadFromSpotter( cs );\n',
+            'BattleStart squad formation')
+
+        # BattleChase is now role-gated too. Insert after its own initial ent assignment;
+        # the controller yields when scripts/danger/door/leader own the frame.
+        chase_sig = 'char *AIFunc_BattleChase( cast_state_t *cs ) {'
+        chase_needle = '\tent = &g_entities[cs->entityNum];\n'
+        chase_insert = '''\tDarkWolfAI_UpdateSquadFromSpotter( cs );
+        \t{
+        \t\tchar *dwTransition;
+        \t\tif ( DarkWolfAI_ChaseController( cs, &dwTransition ) ) {
+        \t\t\treturn dwTransition;
+        \t\t}
+        \t}
+        '''
+        funcs_text = insert_after_in_function(funcs_text, chase_sig, chase_needle, chase_insert, 'BattleChase role gate')
+
+        cast_file.write_text(cast_text, encoding='utf-8', newline='\n')
+        sight_file.write_text(sight_text, encoding='utf-8', newline='\n')
+        funcs_file.write_text(funcs_text, encoding='utf-8', newline='\n')
+        print('DarkWolf NPC AI v0.3 Unified Squad Combat Controller source patch applied')
+        PY
+
+        python3 -m py_compile "$PATCHER_NAME"
+        sha256sum "$PATCHER_NAME" > .patcher.sha256
+        python3 "$PATCHER_NAME" source
+
+        sha256sum -c .rend2_frozen.sha256
+        sha256sum -c .game_non_ai_frozen.sha256
+        git -C source diff --check
+
+        mapfile -t changed < <(git -C source diff --name-only "$base_commit" -- | sort)
+        printf '%s\n' \
+          'SP/code/game/ai_cast.c' \
+          'SP/code/game/ai_cast_funcs.c' \
+          'SP/code/game/ai_cast_sight.c' > .expected_ai_changed_files
+        printf '%s\n' "${changed[@]}" > .actual_ai_changed_files
+        diff -u .expected_ai_changed_files .actual_ai_changed_files
+
+        grep -Fq 'DARKWOLF_NPC_AI_V0_3_CVAR' source/SP/code/game/ai_cast.c
+        grep -Fq 'DARKWOLF_NPC_AI_V0_3_HONEST_MEMORY' source/SP/code/game/ai_cast_sight.c
+        grep -Fq 'DARKWOLF_NPC_AI_V0_3_UNIFIED_SQUAD_CONTROLLER' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'trap_Cvar_Register( &cvar, "g_aiMode", "0", CVAR_ARCHIVE );' source/SP/code/game/ai_cast.c
+        grep -Fq 'VectorCopy( vis->visible_pos, vis->chase_marker[0] );' source/SP/code/game/ai_cast_sight.c
+        grep -Fq 'DWAI_SQUAD_FORM' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DWAI_ROLE_CHANGE' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DWAI_CHASE_ALLOW' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DWAI_CHASE_DENY' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DWAI_SUPPRESS_HOLD' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DWAI_FLANK_TARGET' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DWAI_FLANK_MOVE' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DWAI_GRENADE_ORDER' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DWAI_RESERVE_HOLD' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DWAI_ACCEPT' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DarkWolfAI_UpdateSquadFromSpotter' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DarkWolfAI_BattleController' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DarkWolfAI_ChaseController' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'DarkWolfAI_EnsureFlankGoal' source/SP/code/game/ai_cast_funcs.c
+        grep -Fq 'dwaiRoleAssignedAt[n] > level.time' source/SP/code/game/ai_cast_funcs.c
+        test "$(grep -Fc 'DarkWolfAI_UpdateSquadFromSpotter( cs );' source/SP/code/game/ai_cast_funcs.c)" -ge 3
+        test "$(grep -Fc 'AICast_GetTakeCoverPos' source/SP/code/game/ai_cast_funcs.c)" -ge 1
+        python3 - <<'PY'
+        from pathlib import Path
+        text = Path('source/SP/code/game/ai_cast_funcs.c').read_text(encoding='utf-8')
+        flank = text[text.index('static qboolean DarkWolfAI_EnsureFlankGoal'):text.index('static qboolean DarkWolfAI_ShouldGrenade')]
+        if 'AICast_GetTakeCoverPos' in flank:
+            raise SystemExit('ERROR: v0.3 flank generator regressed to cover-search alias')
+        chase = text[text.index('static qboolean DarkWolfAI_ChaseController'):text.index('static bot_moveresult_t *moveresult')]
+        for token in ('DWAI_CHASE_ALLOW', 'DWAI_CHASE_DENY', 'role == DWAI_ROLE_PRESSURE', 'role == DWAI_ROLE_FLANK'):
+            if token not in chase:
+                raise SystemExit(f'ERROR: unified chase gate contract missing {token}')
+        rolefn = text[text.index('static int DarkWolfAI_RoleForRank'):text.index('static qboolean DarkWolfAI_AssignmentActive')]
+        mode4 = rolefn[rolefn.index('case 4:'):rolefn.index('default:', rolefn.index('case 4:'))]
+        if mode4.count('DWAI_ROLE_PRESSURE') != 1:
+            raise SystemExit('ERROR: Mode 4 static role table must contain exactly one pressure rank')
+        print('v0.3 architecture source contract PASS')
+        PY
+
+        if python3 "$PATCHER_NAME" source > .repeat_apply.log 2>&1; then
+          echo "ERROR: patcher unexpectedly allowed repeat apply" >&2
+          exit 1
+        fi
+        grep -Fq 'v0.3 marker already present' .repeat_apply.log
+
+        git -C source diff --binary "$base_commit" -- \
+          SP/code/game/ai_cast.c \
+          SP/code/game/ai_cast_sight.c \
+          SP/code/game/ai_cast_funcs.c > "$DELTA_NAME"
+        test -s "$DELTA_NAME"
+        git -C source apply --reverse --check --binary "../$DELTA_NAME"
+        if git -C source apply --check --binary "../$DELTA_NAME" > /dev/null 2>&1; then
+          echo "ERROR: delta forward apply unexpectedly succeeds on already-patched source" >&2
+          exit 1
+        fi
+
+        git -C source diff --binary "$UPSTREAM_SHA" -- . > "$CUMULATIVE_NAME"
+        test -s "$CUMULATIVE_NAME"
+        echo "DarkWolf NPC AI v0.3 delta validation PASS"
+
+    - name: Clean replay delta and cumulative source contracts
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        rm -rf replay-delta replay-cumulative
+
+        git clone "$UPSTREAM_REPO" replay-delta
+        git -C replay-delta checkout --detach "$UPSTREAM_SHA"
+        git -C replay-delta reset --hard "$UPSTREAM_SHA"
+        git -C replay-delta clean -fdx
+        git -C replay-delta apply --check --binary ../.base-clean-production-cumulative.patch
+        git -C replay-delta apply --binary ../.base-clean-production-cumulative.patch
+        # Base patch creates new Rend2 files. Mark them intent-to-add so clean
+        # git diff replays include those exact bytes without staging content.
+        git -C replay-delta add -N -- .
+        git -C replay-delta apply --check --binary "../$DELTA_NAME"
+        git -C replay-delta apply --binary "../$DELTA_NAME"
+        # Scope whitespace validation to the new AI delta. The exact accepted
+        # Clean Production base contains historical Rend2 whitespace by contract.
+        git -C replay-delta diff --check -- \
+          SP/code/game/ai_cast.c \
+          SP/code/game/ai_cast_sight.c \
+          SP/code/game/ai_cast_funcs.c
+
+        cmp source/SP/code/game/ai_cast.c replay-delta/SP/code/game/ai_cast.c
+        cmp source/SP/code/game/ai_cast_sight.c replay-delta/SP/code/game/ai_cast_sight.c
+        cmp source/SP/code/game/ai_cast_funcs.c replay-delta/SP/code/game/ai_cast_funcs.c
+
+        git -C replay-delta apply --reverse --check --binary "../$DELTA_NAME"
+        git -C replay-delta apply --reverse --binary "../$DELTA_NAME"
+        git -C replay-delta diff --binary "$UPSTREAM_SHA" -- . > .replay-base-after-reverse.patch
+        cmp .base-clean-production-cumulative.patch .replay-base-after-reverse.patch
+        git -C replay-delta apply --check --binary "../$DELTA_NAME"
+        git -C replay-delta apply --binary "../$DELTA_NAME"
+        git -C replay-delta diff --binary "$UPSTREAM_SHA" -- . > .replay-full-cumulative.patch
+        cmp "$CUMULATIVE_NAME" .replay-full-cumulative.patch
+
+        git clone "$UPSTREAM_REPO" replay-cumulative
+        git -C replay-cumulative checkout --detach "$UPSTREAM_SHA"
+        git -C replay-cumulative reset --hard "$UPSTREAM_SHA"
+        git -C replay-cumulative clean -fdx
+        git -C replay-cumulative apply --check --binary "../$CUMULATIVE_NAME"
+        git -C replay-cumulative apply --binary "../$CUMULATIVE_NAME"
+        # Cumulative patch also creates new Rend2 files; intent-to-add is required
+        # for a byte-identical commit-to-working-tree diff replay.
+        git -C replay-cumulative add -N -- .
+        # The direct cumulative replay contains the same accepted base bytes;
+        # reject whitespace regressions only in the three new AI files.
+        git -C replay-cumulative diff --check -- \
+          SP/code/game/ai_cast.c \
+          SP/code/game/ai_cast_sight.c \
+          SP/code/game/ai_cast_funcs.c
+        git -C replay-cumulative diff --binary "$UPSTREAM_SHA" -- . > .replay-direct-cumulative.patch
+        cmp "$CUMULATIVE_NAME" .replay-direct-cumulative.patch
+
+        cmp source/SP/code/game/ai_cast.c replay-cumulative/SP/code/game/ai_cast.c
+        cmp source/SP/code/game/ai_cast_sight.c replay-cumulative/SP/code/game/ai_cast_sight.c
+        cmp source/SP/code/game/ai_cast_funcs.c replay-cumulative/SP/code/game/ai_cast_funcs.c
+        echo "Delta reverse/reapply and clean cumulative replay PASS"
+
+    - name: Build canonical Windows x64 SP runtime
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        jobs="$(nproc)"
+        if [ "$jobs" -gt 4 ]; then jobs=4; fi
+        cd source/SP
+        ./cross-make-mingw64.sh -j"$jobs" BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+    - name: Verify rebuilt AI qagame contract
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        mapfile -t qagames < <(find source/SP/build -type f -name qagame_sp_x64.dll -print | sort)
+        test "${#qagames[@]}" -eq 1 || { echo "ERROR: expected exactly one qagame_sp_x64.dll, found ${#qagames[@]}" >&2; printf '%s\n' "${qagames[@]}"; exit 1; }
+        new_qagame="${qagames[0]}"
+        test -s "$new_qagame"
+        printf '%s\n' "$new_qagame" > .new_qagame_path
+
+        file "$new_qagame" > .qagame_file.txt
+        grep -Fq 'PE32+ executable' .qagame_file.txt
+        grep -Fq 'x86-64' .qagame_file.txt
+        grep -Fq '(DLL)' .qagame_file.txt
+
+        strings -a "$new_qagame" > .qagame_strings.txt
+        for token in \
+          DARKWOLF_NPC_AI_V0_3 \
+          g_aiMode \
+          g_aiDebug \
+          DWAI_MEMORY \
+          DWAI_SQUAD_FORM \
+          DWAI_ROLE_CHANGE \
+          DWAI_CHASE_ALLOW \
+          DWAI_CHASE_DENY \
+          DWAI_SUPPRESS_HOLD \
+          DWAI_FLANK_TARGET \
+          DWAI_FLANK_MOVE \
+          DWAI_GRENADE_ORDER \
+          DWAI_RESERVE_HOLD \
+          DWAI_ACCEPT; do
+          grep -Fq "$token" .qagame_strings.txt || { echo "ERROR: rebuilt qagame missing token: $token" >&2; exit 1; }
+        done
+
+        new_sha="$(sha256sum "$new_qagame" | awk '{print $1}')"
+        test "$new_sha" != "$BASE_QAGAME_SHA256" || { echo "ERROR: rebuilt AI qagame unexpectedly byte-identical to Clean Production qagame" >&2; exit 1; }
+        printf '%s\n' "$new_sha" > .new_qagame_sha256
+        echo "Rebuilt DarkWolf NPC AI v0.3 qagame PASS: $new_sha"
+
+    - name: Package Unified Squad Combat Controller AI v0.3 test kit over frozen Clean Production runtime
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_stage="$(cat .base_stage_path)"
+        new_qagame="$(cat .new_qagame_path)"
+        new_qagame_sha="$(cat .new_qagame_sha256)"
+
+        rm -rf release dist
+        stage="release/$RELEASE_BASENAME"
+        mkdir -p "$stage" dist
+        cp -a "$base_stage/." "$stage/"
+        cp "$new_qagame" "$stage/Main/qagame_sp_x64.dll"
+
+        cat > "$stage/Main/AI_ORIGINAL.cfg" <<'CFG'
+        seta g_aiMode "0"
+        seta g_aiDebug "1"
+        echo "DarkWolf NPC AI v0.3: MODE 0 ORIGINAL RTCW control"
+        CFG
+        cat > "$stage/Main/AI_ENHANCED.cfg" <<'CFG'
+        seta g_aiMode "1"
+        seta g_aiDebug "1"
+        echo "DarkWolf NPC AI v0.3: MODE 1 ENHANCED CONSERVATIVE"
+        CFG
+        cat > "$stage/Main/AI_TACTICAL.cfg" <<'CFG'
+        seta g_aiMode "2"
+        seta g_aiDebug "1"
+        echo "DarkWolf NPC AI v0.3: MODE 2 TACTICAL"
+        CFG
+        cat > "$stage/Main/AI_AGGRESSIVE.cfg" <<'CFG'
+        seta g_aiMode "3"
+        seta g_aiDebug "1"
+        echo "DarkWolf NPC AI v0.3: MODE 3 AGGRESSIVE TACTICAL"
+        CFG
+        cat > "$stage/Main/AI_EXPERIMENTAL.cfg" <<'CFG'
+        seta g_aiMode "4"
+        seta g_aiDebug "1"
+        echo "DarkWolf NPC AI v0.3: MODE 4 EXPERIMENTAL HIGH SIGNAL"
+        CFG
+
+        make_launcher() {
+          local file="$1" cfg="$2" label="$3"
+          cat > "$stage/$file" <<CMD
+        @echo off
+        setlocal
+        cd /d "%~dp0"
+        echo DarkWolf NPC AI v0.3 - $label
+        echo Fire/renderer base: exact Clean Production
+        ioWolfSP.x64.exe +set g_gameskill 1 +set com_recommendedSet 1 +set cl_renderer rend2 +set r_swapInterval 0 +set r_volumetricLocal 0 +exec FIREVOL_PRODUCTION_DEFAULT.cfg +exec $cfg
+        CMD
+        }
+
+        make_launcher RUN_AI_00_ORIGINAL.cmd AI_ORIGINAL.cfg "MODE 0 ORIGINAL RTCW CONTROL"
+        make_launcher RUN_AI_01_ENHANCED.cmd AI_ENHANCED.cfg "MODE 1 ENHANCED CONSERVATIVE"
+        make_launcher RUN_AI_02_TACTICAL.cmd AI_TACTICAL.cfg "MODE 2 TACTICAL"
+        make_launcher RUN_AI_03_AGGRESSIVE.cmd AI_AGGRESSIVE.cfg "MODE 3 AGGRESSIVE TACTICAL"
+        make_launcher RUN_AI_04_EXPERIMENTAL.cmd AI_EXPERIMENTAL.cfg "MODE 4 EXPERIMENTAL HIGH SIGNAL"
+
+        mkdir -p "$stage/docs" "$stage/test_results"
+        printf '%s\n' 'Place returned notes, screenshots names, or copied console excerpts here.' > "$stage/test_results/README.txt"
+        cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+        cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+        cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+        cp .patcher.sha256 "$stage/docs/PATCHER_SHA256.txt"
+
+        cat > "$stage/docs/EXACT_BASE.txt" <<EOF
+        DarkWolf NPC AI v0.3 exact base
+        base_run_id=$BASE_RUN_ID
+        base_head_sha=$BASE_RUN_HEAD_SHA
+        base_workflow=$BASE_WORKFLOW_PATH
+        base_artifact_id=$BASE_ARTIFACT_ID
+        base_artifact_name=$BASE_ARTIFACT_NAME
+        base_artifact_digest=$BASE_ARTIFACT_DIGEST
+        base_inner_zip_sha256=$BASE_INNER_ZIP_SHA256
+        pinned_upstream_sha=$UPSTREAM_SHA
+        base_cumulative_name=$BASE_CUMULATIVE_NAME
+        base_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+        base_qagame_sha256=$BASE_QAGAME_SHA256
+        new_ai_qagame_sha256=$new_qagame_sha
+        changed_source_files=SP/code/game/ai_cast.c,SP/code/game/ai_cast_sight.c,SP/code/game/ai_cast_funcs.c
+        EOF
+
+        cat > "$stage/docs/TEST_MATRIX.txt" <<'EOF'
+        DARKWOLF NPC AI v0.3 UNIFIED SQUAD COMBAT CONTROLLER TEST MATRIX
+
+        PRIMARY HIGH-SIGNAL ACCEPTANCE — MODE 4
+        Use one non-scripted encounter containing four ordinary soldiers close enough to form one local squad.
+        Keep g_gameskill fixed at 1 for A/B comparison.
+
+        Within roughly 3-5 seconds after the FIRST soldier genuinely detects the player, the log should show:
+        1. DWAI_SQUAD_FORM ... count=4 (or more)
+        2. exactly one rank-0 PRESSURE role in that squad
+        3. one SUPPRESS role
+        4. one FLANK role with DWAI_FLANK_TARGET and lateral movement
+        5. one GRENADIER role, or RESERVE hold when a safe grenade opportunity does not exist
+        6. DWAI_ACCEPT ... pressureCap=1 pressureAssigned=1 otherAssigned=3
+
+        VISUAL ACCEPTANCE
+        - No more than ONE squad member may directly run at the player during the opening engagement in Mode 4.
+        - SUPPRESS must hold/fire or enter original cover instead of joining direct pursuit.
+        - FLANK must move toward a generated lateral AAS combat goal; it must not call the old v0.2 fake-flank cover selector.
+        - GRENADIER must deny direct chase and may enter original GrenadeFlush only after its own remembered target and original safety gates allow it.
+        - If no safe grenade exists, GRENADIER/RESERVE must visibly hold rather than become a second pursuer.
+
+        REGRESSION MATRIX
+        A - Mode 0 same encounter: original RTCW mass pursuit remains available.
+        B - 1 NPC: no forced squad behavior, no crash.
+        C - 2 NPC: role split is stable and support denies direct chase where its mode requires.
+        D - 4-6 NPC: Mode 4 pressure cap remains one throughout the first contact window.
+        E - corridor: flank goal failure must degrade to hold, never to uncontrolled support chase.
+        F - multi-route room: flank target should be visibly lateral and reachable through existing AAS.
+        G - player behind cover: grenadier may receive DWAI_GRENADE_ORDER only through original grenade safety.
+        H - break LOS then move hidden: honest memory remains last genuinely seen position.
+        I - scripted/cutscene encounter: controller yields completely.
+        J - save in combat, load, continue: static sidecar state safely rebuilds after level.time rewind.
+        EOF
+
+        cat > "$stage/docs/DECISION_TABLE.txt" <<'EOF'
+        DARKWOLF NPC AI v0.3 DECISION TABLE
+
+        1. MODE 0 matches Clean Production:
+           Original compatibility guardrail PASS.
+
+        2. DWAI_SQUAD_FORM appears immediately after first contact and count includes allies that had not independently acquired enemy=0:
+           Early squad communication architecture PASS.
+
+        3. Four-man Mode 4 prints DWAI_ACCEPT pressureCap=1 pressureAssigned=1 otherAssigned=3:
+           Assignment contract PASS; verify visually that only one direct pursuer exists.
+
+        4. Support roles print DWAI_CHASE_DENY while pressure prints DWAI_CHASE_ALLOW:
+           Unified Battle + BattleChase gate PASS.
+
+        5. DWAI_FLANK_TARGET goal differs from support cover and DWAI_FLANK_MOVE follows it laterally:
+           True flank-goal generator PASS.
+
+        6. FLANK repeatedly fails to find a target in open/multi-route rooms:
+           Inspect floor trace/AAS candidate validation, not GetTakeCoverPos; do not restore v0.2 fake flank.
+
+        7. Four NPC still all run directly at player despite correct role logs:
+           Reject v0.3; inspect un-gated chase transition or role expiry before tuning any thresholds.
+
+        8. GRENADIER never throws but logs RESERVE_HOLD:
+           Not automatically a failure. Confirm whether that actor personally saw the player and whether original grenade safety/ammo gates permit a throw.
+
+        9. Scripted scene changes, NPC leader breaks, or save/load becomes unstable:
+           Reject v0.3 and isolate the guardrail violation before any behavioral expansion.
+
+        10. NPC acts on the player's current hidden position rather than shared last genuine contact:
+            Reject v0.3. Shared contact must originate only from spotter real_visible_pos; visibility timestamps must never be forged.
+        EOF
+
+        cat > "$stage/README_AI_TEST_PLAN.txt" <<'EOF'
+        DARKWOLF / ioRTCW REND2 SINGLE PLAYER
+        NPC AI v0.3 - UNIFIED SQUAD COMBAT CONTROLLER
+
+        WHY v0.3 EXISTS
+        Runtime testing proved v0.2 roles were real but too late and too sparse. Squad membership required allies to already be in combat against enemy=0, the pressure actor often escaped into original BattleChase before the group existed, and FLANK merely renamed an original cover point. v0.3 changes that architecture instead of tuning v0.2 numbers.
+
+        WHAT v0.3 CHANGES
+        - The first ordinary soldier with a genuine fresh sighting of SP player entity 0 creates one local squad.
+        - Eligible nearby allies can be enrolled before they independently acquire enemy=0.
+        - Enrollment communicates enemy identity and shared last-seen contact, but never forges ally visibility timestamps.
+        - Mode 4 assigns exactly one PRESSURE actor per local squad; support roles are persistent sidecar state.
+        - Both AIFunc_Battle and AIFunc_BattleChase consult the same controller.
+        - SUPPRESS/GRENADIER/RESERVE direct chase is denied; PRESSURE direct chase is allowed.
+        - FLANK gets a real lateral AAS goal generated from shared contact, floor validity and line-to-contact scoring. It does not use AICast_GetTakeCoverPos as the flank target generator.
+        - Grenades still use original RTCW GrenadeFlush and its safety/ammo constraints.
+
+        SAFETY BOUNDARIES
+        Mode 0 bypasses the controller. Active scripts, scripted goto/attack, no-move/no-attack/no-sight, DENYACTION, leaders, danger and door handling retain ownership. No cast_state_t fields, savegame format, navmesh, renderer, cgame, UI, maps or scripts are changed. Static squad state is invalidated automatically if level.time moves backwards after load/restart.
+
+        HIGH-SIGNAL TEST
+        Run the same non-scripted four-soldier encounter with RUN_AI_00_ORIGINAL.cmd and RUN_AI_04_EXPERIMENTAL.cmd. In Mode 4, within the first few seconds after first contact, no more than one soldier should directly rush you. The others should immediately show SUPPRESS, FLANK and GRENADIER/RESERVE intents.
+
+        IMPORTANT DEBUG TOKENS
+        g_aiDebug 1 now keeps DWAI_MEMORY focused on CAST-AI -> player events.
+        DWAI_SQUAD_FORM    local squad created/refreshed by genuine spotter
+        DWAI_ROLE_CHANGE   deterministic role assignment
+        DWAI_CHASE_ALLOW   PRESSURE may use original direct chase
+        DWAI_CHASE_DENY    support role prevented from direct chase
+        DWAI_SUPPRESS_HOLD support fires/holds instead of rushing
+        DWAI_SUPPRESS_COVER support entered original cover executor
+        DWAI_FLANK_TARGET  real lateral AAS flank goal selected
+        DWAI_FLANK_MOVE    actor is moving to that goal
+        DWAI_GRENADE_ORDER original GrenadeFlush authorized for grenadier
+        DWAI_RESERVE_HOLD  grenadier/reserve holds when no safe throw exists
+        DWAI_ACCEPT        Mode4 four-plus-member pressure-cap assignment contract reached
+
+        RETURN AFTER TEST
+        Attach rtcwconsole.log and report the exact encounter. The first question is no longer simply whether role tokens exist: visually count how many NPCs directly rush you in the first 3-5 seconds. Mode4 acceptance is <=1 direct pursuer in a four-man local squad.
+        EOF
+
+        cat > "$stage/docs/CI_VALIDATION.txt" <<EOF
+        CI validation contract for this artifact:
+        exact_clean_production_provenance=PASS
+        base_runtime_hashes=PASS
+        base_cumulative_patch_sha256=PASS
+        exact_ai_source_blob_sha1=PASS
+        python_patcher_compile=PASS
+        changed_file_allowlist=PASS
+        rend2_frozen_hashes=PASS
+        non_ai_game_source_frozen_hashes=PASS
+        git_diff_check=PASS
+        repeat_apply_guard=PASS
+        delta_reverse_check=PASS
+        clean_delta_replay=PASS
+        clean_cumulative_replay=PASS
+        canonical_mingw_full_sp_build=PASS
+        rebuilt_qagame_pe_x64_dll=PASS
+        rebuilt_qagame_required_strings=PASS
+        new_ai_qagame_sha256=$new_qagame_sha
+        runtime_status=REQUIRES_USER_TEST
+        EOF
+
+        check_same() {
+          local rel="$1"
+          cmp "$base_stage/$rel" "$stage/$rel" || { echo "ERROR: frozen runtime drift: $rel" >&2; exit 1; }
+        }
+        check_same ioWolfSP.x64.exe
+        check_same renderer_sp_rend2_x64.dll
+        check_same renderer_sp_opengl1_x64.dll
+        check_same Main/cgame_sp_x64.dll
+        check_same Main/ui_sp_x64.dll
+        check_same OpenAL64.dll
+        check_same SDL264.dll
+        check_same Main/FIREVOL_PRODUCTION_BALANCED.cfg
+        check_same Main/FIREVOL_PRODUCTION_DEFAULT.cfg
+        check_same Main/FIREVOL_PRODUCTION_CINEMATIC.cfg
+        check_same Main/FIREVOL_PRODUCTION_PERFORMANCE.cfg
+
+        cmp "$new_qagame" "$stage/Main/qagame_sp_x64.dll"
+        test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$new_qagame_sha"
+        test "$new_qagame_sha" != "$BASE_QAGAME_SHA256"
+
+        for required in \
+          Main/AI_ORIGINAL.cfg \
+          Main/AI_ENHANCED.cfg \
+          Main/AI_TACTICAL.cfg \
+          Main/AI_AGGRESSIVE.cfg \
+          Main/AI_EXPERIMENTAL.cfg \
+          RUN_AI_00_ORIGINAL.cmd \
+          RUN_AI_01_ENHANCED.cmd \
+          RUN_AI_02_TACTICAL.cmd \
+          RUN_AI_03_AGGRESSIVE.cmd \
+          RUN_AI_04_EXPERIMENTAL.cmd \
+          README_AI_TEST_PLAN.txt \
+          docs/EXACT_BASE.txt \
+          docs/TEST_MATRIX.txt \
+          docs/DECISION_TABLE.txt \
+          docs/CI_VALIDATION.txt \
+          "docs/$DELTA_NAME" \
+          "docs/$CUMULATIVE_NAME"; do
+          test -s "$stage/$required" || { echo "ERROR: missing package file: $required" >&2; exit 1; }
+        done
+
+        test -z "$(find "$stage" -type f -iname 'pak*.pk3' -print -quit)" || { echo "ERROR: commercial pak asset present in AI test kit" >&2; exit 1; }
+
+        strings -a "$stage/Main/qagame_sp_x64.dll" > .packaged_qagame_strings.txt
+        for token in g_aiMode DWAI_MEMORY DWAI_SQUAD_FORM DWAI_ROLE_CHANGE DWAI_CHASE_ALLOW DWAI_CHASE_DENY DWAI_SUPPRESS_HOLD DWAI_FLANK_TARGET DWAI_FLANK_MOVE DWAI_GRENADE_ORDER DWAI_RESERVE_HOLD DWAI_ACCEPT; do
+          grep -Fq "$token" .packaged_qagame_strings.txt
+        done
+
+        (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS_AI_V0_3.txt' -print0 | sort -z | xargs -0 sha256sum) > "$stage/docs/SHA256SUMS_AI_V0_3.txt"
+
+        zip -q -r "dist/${RELEASE_BASENAME}.zip" "release/${RELEASE_BASENAME}"
+        sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+        echo "Packaged DarkWolf NPC AI v0.3 unified squad combat controller test kit"
+
+    - name: Final package contract
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        test -s "dist/${RELEASE_BASENAME}.zip"
+        test -s "dist/${RELEASE_BASENAME}.zip.sha256"
+        unzip -t "dist/${RELEASE_BASENAME}.zip" > .zip_test.txt
+        grep -Fq 'No errors detected' .zip_test.txt
+
+        rm -rf package-audit
+        mkdir -p package-audit
+        unzip -q "dist/${RELEASE_BASENAME}.zip" -d package-audit
+        stage="package-audit/release/$RELEASE_BASENAME"
+        test -s "$stage/Main/qagame_sp_x64.dll"
+        test -s "$stage/README_AI_TEST_PLAN.txt"
+        test -s "$stage/docs/DECISION_TABLE.txt"
+        test -z "$(find "$stage" -type f -iname 'pak*.pk3' -print -quit)"
+        echo "Final package contract PASS"
+
+    - name: Upload DarkWolf NPC AI v0.3 artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.RELEASE_BASENAME }}
+        path: |
+          dist/${{ env.RELEASE_BASENAME }}.zip
+          dist/${{ env.RELEASE_BASENAME }}.zip.sha256
