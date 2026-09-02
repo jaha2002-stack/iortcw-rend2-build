@@ -1,0 +1,617 @@
+name: Build DarkWolf Rend2 MSAA Integrity v1.0 Diagnostic over FireVol v0.8.5 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-msaa-integrity-v1-0-diagnostic-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: MSAA Integrity v1.0 - one-build SFM root-cause diagnostic
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "33496107254"
+      BASE_RUN_HEAD_SHA: c2e33a81abc4129b11a4e09aef9d9d96a3682900
+      BASE_WORKFLOW_PATH: '.github/workflows/17build-iortcw-rend2-fire-volumetric-v0-8-5-visible-hold-weapon-flame-exclusion-over-v0-8-3-sp-self-contained.yml'
+      BASE_ARTIFACT_ID: "9795842358"
+      BASE_ARTIFACT_NAME: iortcw-rend2-fire-volumetric-v0-8-5-visible-hold-weapon-flame-exclusion-over-v0-8-3-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:9a7bb686ec9295c7a99878922c937baf7349e1e21e9e59045e2ff4a88863af1b
+      BASE_RELEASE_BASENAME: iortcw-rend2-fire-volumetric-v0-8-5-visible-hold-weapon-flame-exclusion-over-v0-8-3-full-sp-windows-x64-1
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-8-5-visible-hold-weapon-flame-exclusion-sp.patch
+
+      PATCHER_NAME: apply_msaa_integrity_v1_0_diagnostic.py
+      DELTA_NAME: darkwolf-rend2-msaa-integrity-v1-0-diagnostic-over-firevol-v0-8-5.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-msaa-integrity-v1-0-diagnostic-over-firevol-v0-8-5-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-msaa-integrity-v1-0-diagnostic-over-firevol-v0-8-5-full-sp-windows-x64-1
+
+    steps:
+    - name: Checkout build repository
+      uses: actions/checkout@v5
+
+    - name: Preflight workflow YAML and bash contract
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+        workflow_rel="${workflow_rel%@*}"
+        test -f "$workflow_rel" || { echo "ERROR: cannot resolve workflow: $workflow_rel" >&2; exit 1; }
+        python3 - "$workflow_rel" <<'PY'
+        from pathlib import Path
+        import subprocess, sys, yaml
+        p = Path(sys.argv[1])
+        doc = yaml.safe_load(p.read_text(encoding='utf-8'))
+        expected = 'Build DarkWolf Rend2 MSAA Integrity v1.0 Diagnostic over FireVol v0.8.5 SP'
+        if doc.get('name') != expected:
+            raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+        checked = 0
+        for job_name, job in (doc.get('jobs') or {}).items():
+            for index, step in enumerate(job.get('steps') or [], 1):
+                script = step.get('run')
+                shell = step.get('shell', 'bash')
+                if not script or not str(shell).lower().startswith('bash'):
+                    continue
+                proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if proc.returncode:
+                    print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                    print(proc.stderr, file=sys.stderr)
+                    raise SystemExit(proc.returncode)
+                checked += 1
+        if checked < 1:
+            raise SystemExit('ERROR: no bash run blocks found')
+        print(f'Workflow YAML + bash syntax PASS: {checked} bash blocks')
+        PY
+
+    - name: Install canonical MinGW and validation dependencies
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          binutils-mingw-w64-x86-64 build-essential ca-certificates \
+          g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+          libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+          python3 python3-yaml unzip zip file
+
+    - name: Verify exact successful FireVol v0.8.5 production parent
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -Eeuo pipefail
+        run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+        test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: FireVol v0.8.5 parent HEAD drift" >&2; exit 1; }
+        test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo "ERROR: FireVol v0.8.5 parent run is not successful" >&2; exit 1; }
+        test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: FireVol v0.8.5 parent workflow drift" >&2; exit 1; }
+        line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+        test -n "$line" || { echo "ERROR: exact FireVol v0.8.5 artifact missing" >&2; exit 1; }
+        IFS=$'\t' read -r aname expired adigest <<< "$line"
+        test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: parent artifact name drift" >&2; exit 1; }
+        test "$expired" = "false" || { echo "ERROR: parent artifact expired" >&2; exit 1; }
+        test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: parent artifact digest drift" >&2; exit 1; }
+        echo "Exact FireVol v0.8.5 production provenance PASS"
+
+    - name: Download exact FireVol v0.8.5 runtime and cumulative source payload
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -Eeuo pipefail
+        rm -rf base-artifact base-release
+        mkdir -p base-artifact base-release
+        gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+        base_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+        test -s "$base_zip" || { echo "ERROR: FireVol v0.8.5 inner ZIP missing" >&2; exit 1; }
+        if test -s "${base_zip}.sha256"; then
+          expected_inner="$(awk '{print $1}' "${base_zip}.sha256")"
+          actual_inner="$(sha256sum "$base_zip" | awk '{print $1}')"
+          test -n "$expected_inner" && test "$actual_inner" = "$expected_inner" || { echo "ERROR: parent inner ZIP SHA drift" >&2; exit 1; }
+        fi
+        unzip -q "$base_zip" -d base-release
+        mapfile -t roots < <(find base-release/release -mindepth 1 -maxdepth 1 -type d -print)
+        test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one FireVol v0.8.5 release root" >&2; exit 1; }
+        base_stage="${roots[0]}"
+        for rel in \
+          ioWolfSP.x64.exe \
+          renderer_sp_rend2_x64.dll \
+          renderer_sp_opengl1_x64.dll \
+          Main/qagame_sp_x64.dll \
+          Main/cgame_sp_x64.dll \
+          Main/ui_sp_x64.dll \
+          OpenAL64.dll SDL264.dll \
+          "docs/$BASE_CUMULATIVE_NAME"; do
+          test -s "$base_stage/$rel" || { echo "ERROR: parent payload missing: $rel" >&2; exit 1; }
+        done
+        strings -a "$base_stage/renderer_sp_rend2_x64.dll" > .base_renderer_strings.txt
+        for need in FIREVOL085_GUARD FIREVOL084_HOLD FIREVOL083_PRIORITY r_volumetricFireMaxActive; do
+          grep -Fq "$need" .base_renderer_strings.txt || { echo "ERROR: parent renderer missing FireVol production token: $need" >&2; exit 1; }
+        done
+        sha256sum "$base_stage/renderer_sp_rend2_x64.dll" | awk '{print $1}' > .base_renderer_sha
+        (cd "$base_stage" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > .base_payload_sha256
+        printf '%s\n' "$base_stage" > .base_stage_path
+        echo "Exact FireVol v0.8.5 runtime/source payload PASS"
+
+    - name: Reconstruct exact FireVol v0.8.5 production source
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_stage="$(cat .base_stage_path)"
+        rm -rf source replay-delta replay-cumulative
+        git clone "$UPSTREAM_REPO" source
+        git -C source checkout --detach "$UPSTREAM_SHA"
+        git -C source reset --hard "$UPSTREAM_SHA"
+        git -C source clean -fdx
+        cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" .base-v085-cumulative.patch
+        test -s .base-v085-cumulative.patch
+        git -C source apply --check --binary ../.base-v085-cumulative.patch
+        git -C source apply --binary ../.base-v085-cumulative.patch
+        grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_5_VISIBLE_HOLD_WEAPON_FLAME_EXCLUSION' source/SP/code/rend2/tr_backend.c
+        grep -Fq 'FIREVOL085_GUARD' source/SP/code/rend2/tr_backend.c
+        grep -Fq 'FIREVOL084_HOLD' source/SP/code/rend2/tr_backend.c
+        git -C source config user.email "darkwolf-ci@example.invalid"
+        git -C source config user.name "DarkWolf CI"
+        git -C source add -A
+        git -C source commit -m "Exact FireVol v0.8.5 production source parent"
+        git -C source rev-parse HEAD > .base_source_commit
+        test -z "$(git -C source status --porcelain)"
+        echo "Exact FireVol v0.8.5 source reconstruction PASS"
+
+    - name: Apply isolated MSAA Integrity v1.0 diagnostic instrumentation
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        find source/SP/code/rend2 -type f \
+          ! -path 'source/SP/code/rend2/tr_backend.c' \
+          ! -path 'source/SP/code/rend2/tr_init.c' \
+          ! -path 'source/SP/code/rend2/tr_local.h' \
+          -print0 | sort -z | xargs -0 sha256sum > .msaa_diag_frozen.sha256
+
+        cat > "$PATCHER_NAME" <<'PY'
+        from pathlib import Path
+        import re
+        import sys
+
+        ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('.')
+        BACKEND = ROOT / 'SP/code/rend2/tr_backend.c'
+        INIT = ROOT / 'SP/code/rend2/tr_init.c'
+        LOCAL = ROOT / 'SP/code/rend2/tr_local.h'
+        MARK = 'DARKWOLF_MSAA_INTEGRITY_V1_0_DIAGNOSTIC'
+        CVAR = 'r_msaaIntegrityDiag'
+
+        def function_span(text, signature):
+            start = text.find(signature)
+            if start < 0:
+                raise SystemExit(f'ERROR: function signature not found: {signature}')
+            brace = text.find('{', start)
+            if brace < 0:
+                raise SystemExit(f'ERROR: opening brace not found: {signature}')
+            depth = 0
+            i = brace
+            while i < len(text):
+                c = text[i]
+                if c == '{':
+                    depth += 1
+                elif c == '}':
+                    depth -= 1
+                    if depth == 0:
+                        return start, i + 1
+                i += 1
+            raise SystemExit(f'ERROR: unterminated function: {signature}')
+
+        def replace_regex_once(text, pattern, repl, label, flags=0):
+            rx = re.compile(pattern, flags)
+            matches = list(rx.finditer(text))
+            if len(matches) != 1:
+                raise SystemExit(f'ERROR: {label}: expected 1 match, found {len(matches)}')
+            return rx.sub(repl, text, count=1)
+
+        backend = BACKEND.read_text(encoding='utf-8')
+        init = INIT.read_text(encoding='utf-8')
+        local = LOCAL.read_text(encoding='utf-8')
+
+        if MARK in backend:
+            required = [CVAR, 'MSAA_DIAG_FBO', 'MSAA_DIAG_POST', 'coverage sentinel', 'diag == 1 || diag == 3']
+            missing = [x for x in required if x not in backend + init + local]
+            if missing:
+                raise SystemExit('ERROR: diagnostic marker exists but contract incomplete: ' + ', '.join(missing))
+            print('MSAA Integrity v1.0 diagnostic already applied')
+            raise SystemExit(0)
+
+        if 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_5_VISIBLE_HOLD_WEAPON_FLAME_EXCLUSION' not in backend:
+            raise SystemExit('ERROR: exact FireVol v0.8.5 parent marker missing')
+
+        local = replace_regex_once(
+            local,
+            r'(extern\s+cvar_t\s*\*r_ext_framebuffer_multisample\s*;)',
+            r'\1\nextern cvar_t  *r_msaaIntegrityDiag;  // DarkWolf MSAA Integrity diagnostic 0..4',
+            'tr_local cvar declaration')
+
+        init = replace_regex_once(
+            init,
+            r'(cvar_t\s*\*r_ext_framebuffer_multisample\s*;)',
+            r'\1\ncvar_t  *r_msaaIntegrityDiag;',
+            'tr_init cvar definition')
+
+        init = replace_regex_once(
+            init,
+            r'(r_ext_framebuffer_multisample\s*=\s*ri\.Cvar_Get\(\s*"r_ext_framebuffer_multisample"\s*,\s*"0"\s*,\s*CVAR_ARCHIVE\s*\|\s*CVAR_LATCH\s*\)\s*;)',
+            r'\1\n\tr_msaaIntegrityDiag = ri.Cvar_Get( "r_msaaIntegrityDiag", "0", 0 );',
+            'tr_init cvar registration')
+
+        backend = backend.replace(
+            'backEndData_t\t*backEndData;\nbackEndState_t\tbackEnd;\n',
+            'backEndData_t\t*backEndData;\nbackEndState_t\tbackEnd;\n\n'
+            '// DARKWOLF_MSAA_INTEGRITY_V1_0_DIAGNOSTIC\n'
+            '// 0 normal; 1 raw color-only resolve; 2 resolved depth; 3 coverage sentinel; 4 FBO identity.\n',
+            1)
+        if MARK not in backend:
+            raise SystemExit('ERROR: backend diagnostic marker insertion failed')
+
+        # Instrument the exact FBO actually selected for each view. Mode 4 logs every view on sparse frames.
+        b0, b1 = function_span(backend, 'void RB_BeginDrawingView (void)')
+        begin = backend[b0:b1]
+        bind_anchor = '\t\tFBO_Bind(fbo);\n'
+        if begin.count(bind_anchor) != 1:
+            raise SystemExit(f'ERROR: RB_BeginDrawingView FBO_Bind anchor count={begin.count(bind_anchor)}')
+        bind_new = bind_anchor + '''\n\t\tif (r_msaaIntegrityDiag && r_msaaIntegrityDiag->integer == 4 && (tr.frameCount % 60) == 0)\n\t\t{\n\t\t\tconst char *diagClass = (fbo == tr.renderFbo) ? "MAIN" : "OFFSCREEN";\n\t\t\tconst char *requested = backEnd.viewParms.targetFbo ? backEnd.viewParms.targetFbo->name : "<null-main>";\n\t\t\tconst char *effective = fbo ? fbo->name : "<default>";\n\t\t\tconst char *resolve = tr.msaaResolveFbo ? tr.msaaResolveFbo->name : "<none>";\n\t\t\tri.Printf(PRINT_ALL, "MSAA_DIAG_FBO frame=%d class=%s requested=%s effective=%s resolve=%s\\n",\n\t\t\t\ttr.frameCount, diagClass, requested, effective, resolve);\n\t\t}\n'''
+        begin = begin.replace(bind_anchor, bind_new, 1)
+
+        # Mode 3: force a conspicuous main-FBO background immediately before the real clear.
+        # Any partially uncovered MSAA samples can then contribute magenta/pink to the raw color resolve.
+        clear_anchor = '\tif ( clearBits ) {\n\t\tqglClear( clearBits );\n\t}\n'
+        if begin.count(clear_anchor) != 1:
+            raise SystemExit(f'ERROR: RB_BeginDrawingView clear anchor count={begin.count(clear_anchor)}')
+        clear_new = '''\tif (r_msaaIntegrityDiag && r_msaaIntegrityDiag->integer == 3 &&\n\t\tglState.currentFBO == tr.renderFbo && tr.msaaResolveFbo)\n\t{\n\t\t// MSAA coverage sentinel: magenta means an uncovered/partially covered sample reached the resolve.\n\t\tqglClearColor(1.0f, 0.0f, 1.0f, 1.0f);\n\t\tclearBits |= GL_COLOR_BUFFER_BIT;\n\t}\n\n''' + clear_anchor
+        begin = begin.replace(clear_anchor, clear_new, 1)
+        backend = backend[:b0] + begin + backend[b1:]
+
+        # Postprocess diagnostic fork. Mode 0 remains the exact original combined color+depth resolve.
+        p0, p1 = function_span(backend, 'const void *RB_PostProcess(const void *data)')
+        post = backend[p0:p1]
+        resolve_anchor = '''\t\tFBO_FastBlit(tr.renderFbo, NULL, tr.msaaResolveFbo, NULL, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);\n\t\tsrcFbo = tr.msaaResolveFbo;\n'''
+        if post.count(resolve_anchor) != 1:
+            raise SystemExit(f'ERROR: RB_PostProcess resolve anchor count={post.count(resolve_anchor)}')
+        resolve_new = '''\t\t{\n\t\t\tint diag = r_msaaIntegrityDiag ? r_msaaIntegrityDiag->integer : 0;\n\n\t\t\tif (diag == 1 || diag == 3)\n\t\t\t{\n\t\t\t\t// RAW/COVERAGE: resolve COLOR ONLY, before any depth resolve or postprocess.\n\t\t\t\tFBO_FastBlit(tr.renderFbo, NULL, tr.msaaResolveFbo, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);\n\t\t\t\tsrcFbo = tr.msaaResolveFbo;\n\t\t\t\tif ((tr.frameCount % 60) == 0)\n\t\t\t\t\tri.Printf(PRINT_ALL, "MSAA_DIAG_POST frame=%d mode=%d path=COLOR_ONLY_RAW src=%s\\n",\n\t\t\t\t\t\ttr.frameCount, diag, srcFbo ? srcFbo->name : "<null>");\n\t\t\t\tFBO_FastBlit(srcFbo, NULL, NULL, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);\n\t\t\t\treturn (const void *)(cmd + 1);\n\t\t\t}\n\n\t\t\t// NORMAL/DEPTH/FBO-ID: preserve the exact production combined color+depth resolve.\n\t\t\tFBO_FastBlit(tr.renderFbo, NULL, tr.msaaResolveFbo, NULL, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);\n\t\t\tsrcFbo = tr.msaaResolveFbo;\n\n\t\t\tif (diag == 2)\n\t\t\t{\n\t\t\t\tif ((tr.frameCount % 60) == 0)\n\t\t\t\t\tri.Printf(PRINT_ALL, "MSAA_DIAG_POST frame=%d mode=2 path=RESOLVED_DEPTH image=%s\\n",\n\t\t\t\t\t\ttr.frameCount, tr.renderDepthImage ? tr.renderDepthImage->imgName : "<null>");\n\t\t\t\tFBO_BlitFromTexture(tr.renderDepthImage, NULL, NULL, NULL, NULL, NULL, NULL, 0);\n\t\t\t\treturn (const void *)(cmd + 1);\n\t\t\t}\n\n\t\t\tif (diag == 4 && (tr.frameCount % 60) == 0)\n\t\t\t\tri.Printf(PRINT_ALL, "MSAA_DIAG_POST frame=%d mode=4 path=PRODUCTION_POST src=%s resolve=%s\\n",\n\t\t\t\t\ttr.frameCount, srcFbo ? srcFbo->name : "<null>",\n\t\t\t\t\ttr.msaaResolveFbo ? tr.msaaResolveFbo->name : "<none>");\n\t\t}\n'''
+        post = post.replace(resolve_anchor, resolve_new, 1)
+        backend = backend[:p0] + post + backend[p1:]
+
+        # Preserve the depth diagnostic on the default framebuffer. The normal SwapBuffers path
+        # would otherwise perform a final MSAA/HDR color blit and overwrite mode 2.
+        s0, s1 = function_span(backend, 'RB_SwapBuffers( const void *data )')
+        swap = backend[s0:s1]
+        swap_anchor = '\tif (glRefConfig.framebufferObject)\n\t{\n'
+        if swap.count(swap_anchor) != 1:
+            raise SystemExit(f'ERROR: RB_SwapBuffers framebuffer block count={swap.count(swap_anchor)}')
+        swap_new = '''\t// MSAA Integrity mode 2 already drew renderDepthImage to the default framebuffer.\n\tif (!(r_msaaIntegrityDiag && r_msaaIntegrityDiag->integer == 2) && glRefConfig.framebufferObject)\n\t{\n'''
+        swap = swap.replace(swap_anchor, swap_new, 1)
+        backend = backend[:s0] + swap + backend[s1:]
+
+        required = [
+            MARK, CVAR, 'MSAA_DIAG_FBO', 'MSAA_DIAG_POST',
+            'COLOR_ONLY_RAW', 'RESOLVED_DEPTH', 'MSAA coverage sentinel',
+            'GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT',
+            'diag == 1 || diag == 3', 'MSAA Integrity mode 2 already drew renderDepthImage',
+        ]
+        combined = backend + init + local
+        missing = [x for x in required if x not in combined]
+        if missing:
+            raise SystemExit('ERROR: generated MSAA diagnostic contract incomplete: ' + ', '.join(missing))
+
+        BACKEND.write_text(backend, encoding='utf-8', newline='')
+        INIT.write_text(init, encoding='utf-8', newline='')
+        LOCAL.write_text(local, encoding='utf-8', newline='')
+        print('DarkWolf MSAA Integrity v1.0 diagnostic applied')
+        PY
+
+        python3 -m py_compile "$PATCHER_NAME"
+        python3 "$PATCHER_NAME" source
+        sha256sum -c .msaa_diag_frozen.sha256
+
+        for need in \
+          DARKWOLF_MSAA_INTEGRITY_V1_0_DIAGNOSTIC \
+          r_msaaIntegrityDiag MSAA_DIAG_FBO MSAA_DIAG_POST \
+          COLOR_ONLY_RAW RESOLVED_DEPTH; do
+          grep -R -Fq "$need" source/SP/code/rend2 || { echo "ERROR: missing diagnostic token: $need" >&2; exit 1; }
+        done
+        grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_5_VISIBLE_HOLD_WEAPON_FLAME_EXCLUSION' source/SP/code/rend2/tr_backend.c
+        grep -Fq 'FIREVOL085_GUARD' source/SP/code/rend2/tr_backend.c
+
+        first_backend="$(sha256sum source/SP/code/rend2/tr_backend.c | awk '{print $1}')"
+        first_init="$(sha256sum source/SP/code/rend2/tr_init.c | awk '{print $1}')"
+        first_local="$(sha256sum source/SP/code/rend2/tr_local.h | awk '{print $1}')"
+        python3 "$PATCHER_NAME" source
+        test "$first_backend" = "$(sha256sum source/SP/code/rend2/tr_backend.c | awk '{print $1}')"
+        test "$first_init" = "$(sha256sum source/SP/code/rend2/tr_init.c | awk '{print $1}')"
+        test "$first_local" = "$(sha256sum source/SP/code/rend2/tr_local.h | awk '{print $1}')"
+
+        base_commit="$(cat .base_source_commit)"
+        git -C source add -A
+        mapfile -t changed < <(git -C source diff --cached --name-only "$base_commit" --)
+        printf 'MSAA diagnostic changed files:\n'; printf '  %s\n' "${changed[@]}"
+        test "${#changed[@]}" -eq 3
+        printf '%s\n' "${changed[@]}" | grep -Fxq 'SP/code/rend2/tr_backend.c'
+        printf '%s\n' "${changed[@]}" | grep -Fxq 'SP/code/rend2/tr_init.c'
+        printf '%s\n' "${changed[@]}" | grep -Fxq 'SP/code/rend2/tr_local.h'
+
+        git -C source diff --cached --binary "$base_commit" -- . > "$DELTA_NAME"
+        test -s "$DELTA_NAME"
+        sha256sum "$DELTA_NAME" > "$DELTA_NAME.sha256"
+        git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > "$CUMULATIVE_NAME"
+        test -s "$CUMULATIVE_NAME"
+        sha256sum "$CUMULATIVE_NAME" > "$CUMULATIVE_NAME.sha256"
+        echo "MSAA Integrity v1.0 isolated diagnostic delta PASS"
+
+    - name: Independent diagnostic delta and cumulative replay verification
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_commit="$(cat .base_source_commit)"
+        git -C source worktree add --detach ../replay-delta "$base_commit"
+        git -C replay-delta apply --check --binary "../$DELTA_NAME"
+        git -C replay-delta apply --binary "../$DELTA_NAME"
+        grep -Fq 'DARKWOLF_MSAA_INTEGRITY_V1_0_DIAGNOSTIC' replay-delta/SP/code/rend2/tr_backend.c
+        grep -Fq 'r_msaaIntegrityDiag' replay-delta/SP/code/rend2/tr_init.c
+        grep -Fq 'r_msaaIntegrityDiag' replay-delta/SP/code/rend2/tr_local.h
+
+        git -C source worktree add --detach ../replay-cumulative "$UPSTREAM_SHA"
+        git -C replay-cumulative apply --check --binary "../$CUMULATIVE_NAME"
+        git -C replay-cumulative apply --binary "../$CUMULATIVE_NAME"
+        grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_5_VISIBLE_HOLD_WEAPON_FLAME_EXCLUSION' replay-cumulative/SP/code/rend2/tr_backend.c
+        grep -Fq 'DARKWOLF_MSAA_INTEGRITY_V1_0_DIAGNOSTIC' replay-cumulative/SP/code/rend2/tr_backend.c
+        grep -Fq 'MSAA_DIAG_FBO' replay-cumulative/SP/code/rend2/tr_backend.c
+        grep -Fq 'MSAA_DIAG_POST' replay-cumulative/SP/code/rend2/tr_backend.c
+        echo "Independent diagnostic replay PASS"
+
+    - name: Build canonical Windows x64 MSAA diagnostic renderer
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        jobs="$(nproc)"
+        if [ "$jobs" -gt 4 ]; then jobs=4; fi
+        cd source/SP
+        ./cross-make-mingw64.sh -j"$jobs" \
+          BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+          BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+    - name: Verify rebuilt renderer and diagnostic runtime tokens
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | sort)
+        test "${#renderers[@]}" -eq 1 || { echo "ERROR: expected exactly one rebuilt Rend2 DLL" >&2; exit 1; }
+        new_renderer="${renderers[0]}"
+        test -s "$new_renderer"
+        printf '%s\n' "$new_renderer" > .new_renderer_path
+        file "$new_renderer" > .new_renderer_file.txt
+        grep -Fq 'PE32+ executable' .new_renderer_file.txt
+        grep -Fq 'x86-64' .new_renderer_file.txt
+        grep -Fq '(DLL)' .new_renderer_file.txt
+        test "$(sha256sum "$new_renderer" | awk '{print $1}')" != "$(cat .base_renderer_sha)"
+        strings -a "$new_renderer" > .new_renderer_strings.txt
+        for need in \
+          r_msaaIntegrityDiag MSAA_DIAG_FBO MSAA_DIAG_POST COLOR_ONLY_RAW RESOLVED_DEPTH \
+          FIREVOL085_GUARD FIREVOL084_HOLD FIREVOL083_PRIORITY; do
+          grep -Fq "$need" .new_renderer_strings.txt || { echo "ERROR: rebuilt renderer missing token: $need" >&2; exit 1; }
+        done
+        echo "Rebuilt MSAA diagnostic renderer verification PASS"
+
+    - name: Package one-build SFM diagnostic matrix
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_stage="$(cat .base_stage_path)"
+        new_renderer="$(cat .new_renderer_path)"
+        rm -rf release dist
+        stage="release/$RELEASE_BASENAME"
+        mkdir -p "$stage" dist
+        cp -a "$base_stage/." "$stage/"
+        cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+
+        # Critical non-renderer runtime remains byte-identical to the exact FireVol v0.8.5 parent.
+        for rel in \
+          ioWolfSP.x64.exe renderer_sp_opengl1_x64.dll \
+          Main/qagame_sp_x64.dll Main/cgame_sp_x64.dll Main/ui_sp_x64.dll \
+          OpenAL64.dll SDL264.dll; do
+          cmp "$base_stage/$rel" "$stage/$rel" || { echo "ERROR: frozen runtime drift: $rel" >&2; exit 1; }
+        done
+
+        make_cfg() {
+          local file="$1" msaa="$2" diag="$3"
+          cat > "$stage/Main/$file" <<EOF
+        // DarkWolf Rend2 MSAA Integrity v1.0 diagnostic
+        seta r_ext_multisample "0"
+        seta r_ext_framebuffer_multisample "$msaa"
+        seta r_hdr "1"
+        seta r_postProcess "1"
+        seta r_ssao "0"
+        set r_msaaIntegrityDiag "$diag"
+        EOF
+        }
+        make_cfg MSAA_DIAG_00_CONTROL_0X.cfg 0 0
+        make_cfg MSAA_DIAG_01_NORMAL_4X.cfg 4 0
+        make_cfg MSAA_DIAG_02_RAW_COLOR_4X.cfg 4 1
+        make_cfg MSAA_DIAG_03_RESOLVED_DEPTH_4X.cfg 4 2
+        make_cfg MSAA_DIAG_04_COVERAGE_SENTINEL_4X.cfg 4 3
+        make_cfg MSAA_DIAG_05_FBO_IDENTITY_4X.cfg 4 4
+
+        cat > "$stage/MSAA_DIAG_COLLECT.ps1" <<'PS1'
+        param(
+          [Parameter(Mandatory=$true)][string]$Mode,
+          [Parameter(Mandatory=$true)][string]$TestHome
+        )
+        $ErrorActionPreference='Stop'
+        $root=$PSScriptRoot
+        $results=Join-Path $root 'MSAA_DIAG_RESULTS'
+        $out=Join-Path $results $Mode
+        $zip=Join-Path $results ($Mode+'.zip')
+        New-Item -ItemType Directory -Force -Path $results|Out-Null
+        if(Test-Path $out){Remove-Item -Recurse -Force $out}
+        if(Test-Path $zip){Remove-Item -Force $zip}
+        New-Item -ItemType Directory -Force -Path $out|Out-Null
+
+        $log=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'rtcwconsole.log' -ErrorAction SilentlyContinue|Select-Object -First 1
+        if($log){
+          Copy-Item $log.FullName (Join-Path $out 'rtcwconsole.log')
+          $m=Select-String -Path $log.FullName -Pattern 'MSAA_DIAG_' -ErrorAction SilentlyContinue
+          if($m){$m.Line|Set-Content -Encoding UTF8 (Join-Path $out 'MSAA_DIAG_LINES.txt')}
+        }
+        $cfg=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'wolfconfig.cfg' -ErrorAction SilentlyContinue|Select-Object -First 1
+        if($cfg){Copy-Item $cfg.FullName (Join-Path $out 'wolfconfig.cfg')}
+
+        $shots=Get-ChildItem -Path $TestHome -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.tga','.jpg','.jpeg','.png' }
+        $i=0
+        foreach($shot in $shots){
+          $i++
+          $dest=('shot_{0:D3}_{1}' -f $i,$shot.Name)
+          Copy-Item $shot.FullName (Join-Path $out $dest)
+        }
+        if((Get-ChildItem -Path $out -File -ErrorAction SilentlyContinue).Count -eq 0){
+          'No log/screenshots found. Press F12 at the SFM seam and quit normally.' | Set-Content -Encoding UTF8 (Join-Path $out 'NO_DATA.txt')
+        }
+        Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -CompressionLevel Optimal
+        Write-Host "Created $zip"
+        PS1
+
+        make_launcher() {
+          local file="$1" mode="$2" msaa="$3" diag="$4" note="$5"
+          cat > "$stage/$file" <<EOF
+        @echo off
+        setlocal
+        cd /d "%~dp0"
+        set "MODE=$mode"
+        set "TESTHOME=%~dp0MSAA_DIAG_TEST_HOME\%MODE%"
+        if exist "%TESTHOME%" rmdir /s /q "%TESTHOME%"
+        mkdir "%TESTHOME%"
+        echo ============================================================
+        echo DarkWolf Rend2 MSAA Integrity v1.0 - %MODE%
+        echo $note
+        echo On SFM: reproduce the SAME white strip, press F12 once, then quit normally.
+        echo ============================================================
+        ioWolfSP.x64.exe +set fs_homepath "%TESTHOME%" +set com_recommendedSet 1 +set cl_renderer rend2 +set logfile 2 +set r_swapInterval 0 +set r_ext_multisample 0 +set r_ext_framebuffer_multisample $msaa +set r_hdr 1 +set r_postProcess 1 +set r_ssao 0 +set r_msaaIntegrityDiag $diag +map sfm
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0MSAA_DIAG_COLLECT.ps1" -Mode "%MODE%" -TestHome "%TESTHOME%"
+        pause
+        EOF
+        }
+
+        make_launcher RUN_MSAA_DIAG_00_CONTROL_0X.cmd CONTROL_0X 0 0 "No framebuffer MSAA. The SFM MSAA-induced white strips should be absent."
+        make_launcher RUN_MSAA_DIAG_01_NORMAL_4X.cmd NORMAL_4X 4 0 "Exact normal production resolve path with 4x framebuffer MSAA. Confirm the white strip is reproduced."
+        make_launcher RUN_MSAA_DIAG_02_RAW_COLOR_4X.cmd RAW_COLOR_4X 4 1 "COLOR-ONLY resolve straight to screen BEFORE depth resolve and BEFORE postprocess."
+        make_launcher RUN_MSAA_DIAG_03_RESOLVED_DEPTH_4X.cmd RESOLVED_DEPTH_4X 4 2 "Production combined color+depth resolve, then show renderDepthImage directly."
+        make_launcher RUN_MSAA_DIAG_04_COVERAGE_SENTINEL_4X.cmd COVERAGE_SENTINEL_4X 4 3 "Magenta clear + COLOR-ONLY raw resolve. Pink/magenta line at the same pixels means partial/uncovered MSAA samples."
+        make_launcher RUN_MSAA_DIAG_05_FBO_IDENTITY_4X.cmd FBO_IDENTITY_4X 4 4 "Normal production image plus periodic MSAA_DIAG_FBO MAIN/OFFSCREEN routing records in rtcwconsole.log."
+
+        cat > "$stage/README_MSAA_INTEGRITY_V1_RU.txt" <<'EOF'
+        DARKWOLF / ioRTCW Rend2 SP
+        MSAA INTEGRITY v1.0 - ONE-BUILD SFM ROOT-CAUSE DIAGNOSTIC
+
+        PURPOSE
+        This build does NOT attempt to fix the old wall/floor seam.
+        It diagnoses the separate SFM white strips that disappear when
+        r_ext_framebuffer_multisample is set to 0.
+
+        BASE
+        Exact successful FireVol v0.8.5 production artifact, run 33496107254.
+        Only SP/code/rend2/tr_backend.c, tr_init.c and tr_local.h are changed.
+        FireVol, Static Promotion, Lamp Learn, Bloom/GI shaders and gameplay DLLs are preserved.
+
+        NEW CVAR
+          r_msaaIntegrityDiag 0  normal production path
+          r_msaaIntegrityDiag 1  raw COLOR-ONLY MSAA resolve, bypass depth resolve and postprocess
+          r_msaaIntegrityDiag 2  direct resolved renderDepthImage view
+          r_msaaIntegrityDiag 3  magenta coverage sentinel + raw COLOR-ONLY resolve
+          r_msaaIntegrityDiag 4  normal path + MAIN/OFFSCREEN FBO identity logging
+
+        TEST ORDER ON THE SAME SFM WHITE STRIP
+          00 CONTROL_0X
+          01 NORMAL_4X
+          02 RAW_COLOR_4X
+          03 RESOLVED_DEPTH_4X
+          04 COVERAGE_SENTINEL_4X
+          05 FBO_IDENTITY_4X
+
+        For every mode, reproduce exactly the same camera position/strip, press F12 once,
+        then quit normally. The launcher creates MSAA_DIAG_RESULTS/<MODE>.zip.
+
+        INTERPRETATION
+        A) NORMAL_4X has strip, RAW_COLOR_4X is clean:
+           The strip is introduced after color resolve. Strong lead: resolved depth / depth-driven
+           postprocess / FBO resolve coupling, not a raw BSP coverage crack.
+
+        B) RAW_COLOR_4X already has the strip:
+           The defect exists before depth-driven postprocess. Continue with COVERAGE_SENTINEL.
+
+        C) COVERAGE_SENTINEL shows magenta/pink exactly on the strip:
+           Strong evidence for uncovered/partially covered MSAA samples: BSP/T-junction/sub-pixel
+           geometry coverage is being exposed by multisampling.
+
+        D) RAW_COLOR_4X has strip but COVERAGE_SENTINEL does NOT mark the same pixels:
+           Stronger lead: color resolve / multisample FBO state / shader edge interaction rather
+           than a simple geometric undercoverage crack.
+
+        E) RESOLVED_DEPTH has a discontinuity/edge exactly where NORMAL_4X has the strip while
+           RAW_COLOR_4X is clean:
+           Strong evidence for depth-resolve/postprocess mismatch.
+
+        F) FBO_IDENTITY log shows the affected frame/view using OFFSCREEN rather than MAIN:
+           Investigate portal/cubemap/offscreen FBO routing. MAIN means the primary renderFbo path.
+
+        IMPORTANT
+        r_ext_multisample is forced to 0 in every launcher. This isolates Rend2 framebuffer MSAA
+        (r_ext_framebuffer_multisample) from SDL/backbuffer multisampling.
+        EOF
+
+        cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+        cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+        cp "$DELTA_NAME.sha256" "$stage/docs/$DELTA_NAME.sha256"
+        cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+        cp "$CUMULATIVE_NAME.sha256" "$stage/docs/$CUMULATIVE_NAME.sha256"
+        cp .base-v085-cumulative.patch "$stage/docs/$BASE_CUMULATIVE_NAME"
+
+        cat > "$stage/docs/EXACT_BASE_MSAA_DIAG.txt" <<EOF
+        DarkWolf Rend2 MSAA Integrity v1.0 Diagnostic
+        base_run=$BASE_RUN_ID
+        base_head=$BASE_RUN_HEAD_SHA
+        base_workflow=$BASE_WORKFLOW_PATH
+        base_artifact_id=$BASE_ARTIFACT_ID
+        base_artifact_name=$BASE_ARTIFACT_NAME
+        base_artifact_digest=$BASE_ARTIFACT_DIGEST
+        upstream_sha=$UPSTREAM_SHA
+        source_scope=SP/code/rend2/tr_backend.c,SP/code/rend2/tr_init.c,SP/code/rend2/tr_local.h
+        production_fix=no
+        diagnostic_only=yes
+        default_mode=0
+        diagnostic_cvar=r_msaaIntegrityDiag
+        raw_color_mode=1_color_only_before_depth_resolve_before_postprocess
+        resolved_depth_mode=2
+        coverage_mode=3_magenta_main_fbo_sentinel_color_only_resolve
+        fbo_identity_mode=4_periodic_MAIN_OFFSCREEN_log
+        sdl_backbuffer_msaa_forced_off_in_launchers=yes
+        framebuffer_msaa_test_level=4
+        EOF
+
+        rm -f "$stage/docs/SHA256SUMS.txt"
+        (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+        zip -q -r "dist/${RELEASE_BASENAME}.zip" "release/${RELEASE_BASENAME}"
+        sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+        echo "Packaged MSAA Integrity v1.0 one-build diagnostic matrix"
+
+    - name: Upload MSAA Integrity v1.0 diagnostic artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.RELEASE_BASENAME }}
+        path: |
+          dist/${{ env.RELEASE_BASENAME }}.zip
+          dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+        if-no-files-found: error
+        retention-days: 90
