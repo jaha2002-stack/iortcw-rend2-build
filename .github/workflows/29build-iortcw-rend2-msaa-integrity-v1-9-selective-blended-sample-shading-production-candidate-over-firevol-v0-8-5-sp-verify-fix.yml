@@ -1,0 +1,827 @@
+name: Build DarkWolf Rend2 MSAA Integrity v1.9 Selective Blended Sample Shading Production Candidate over FireVol v0.8.5 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-msaa-integrity-v1-9-selective-blended-sample-shading-production-candidate-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: MSAA Integrity v1.9 - Selective blended sample shading production candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "33496107254"
+      BASE_RUN_HEAD_SHA: c2e33a81abc4129b11a4e09aef9d9d96a3682900
+      BASE_WORKFLOW_PATH: '.github/workflows/17build-iortcw-rend2-fire-volumetric-v0-8-5-visible-hold-weapon-flame-exclusion-over-v0-8-3-sp-self-contained.yml'
+      BASE_ARTIFACT_ID: "9795842358"
+      BASE_ARTIFACT_NAME: iortcw-rend2-fire-volumetric-v0-8-5-visible-hold-weapon-flame-exclusion-over-v0-8-3-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:9a7bb686ec9295c7a99878922c937baf7349e1e21e9e59045e2ff4a88863af1b
+      BASE_RELEASE_BASENAME: iortcw-rend2-fire-volumetric-v0-8-5-visible-hold-weapon-flame-exclusion-over-v0-8-3-full-sp-windows-x64-1
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-fire-volumetric-v0-8-5-visible-hold-weapon-flame-exclusion-sp.patch
+
+      PATCHER_NAME: apply_msaa_integrity_v1_9_selective_blended_sample_shading_production_candidate.py
+      DELTA_NAME: darkwolf-rend2-msaa-integrity-v1-9-selective-blended-sample-shading-production-candidate-over-firevol-v0-8-5.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-msaa-integrity-v1-9-selective-blended-sample-shading-production-candidate-over-firevol-v0-8-5-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-msaa-integrity-v1-9-selective-blended-sample-shading-production-candidate-over-firevol-v0-8-5-full-sp-windows-x64-1
+
+    steps:
+    - name: Checkout build repository
+      uses: actions/checkout@v5
+
+    - name: Preflight workflow YAML and bash contract
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+        workflow_rel="${workflow_rel%@*}"
+        test -f "$workflow_rel" || { echo "ERROR: cannot resolve workflow: $workflow_rel" >&2; exit 1; }
+        python3 - "$workflow_rel" <<'PY'
+        from pathlib import Path
+        import subprocess, sys, yaml
+        p = Path(sys.argv[1])
+        doc = yaml.safe_load(p.read_text(encoding='utf-8'))
+        expected = 'Build DarkWolf Rend2 MSAA Integrity v1.9 Selective Blended Sample Shading Production Candidate over FireVol v0.8.5 SP'
+        if doc.get('name') != expected:
+            raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+        checked = 0
+        for job_name, job in (doc.get('jobs') or {}).items():
+            for index, step in enumerate(job.get('steps') or [], 1):
+                script = step.get('run')
+                shell = step.get('shell', 'bash')
+                if not script or not str(shell).lower().startswith('bash'):
+                    continue
+                proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if proc.returncode:
+                    print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                    print(proc.stderr, file=sys.stderr)
+                    raise SystemExit(proc.returncode)
+                checked += 1
+        if checked < 1:
+            raise SystemExit('ERROR: no bash run blocks found')
+        print(f'Workflow YAML + bash syntax PASS: {checked} bash blocks')
+        PY
+
+    - name: Install canonical MinGW and validation dependencies
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          binutils-mingw-w64-x86-64 build-essential ca-certificates \
+          g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+          libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+          python3 python3-yaml unzip zip file
+
+    - name: Verify exact successful FireVol v0.8.5 production parent
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -Eeuo pipefail
+        run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+        test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: FireVol v0.8.5 parent HEAD drift" >&2; exit 1; }
+        test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo "ERROR: FireVol v0.8.5 parent run is not successful" >&2; exit 1; }
+        test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: FireVol v0.8.5 parent workflow drift" >&2; exit 1; }
+        line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+        test -n "$line" || { echo "ERROR: exact FireVol v0.8.5 artifact missing" >&2; exit 1; }
+        IFS=$'\t' read -r aname expired adigest <<< "$line"
+        test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: parent artifact name drift" >&2; exit 1; }
+        test "$expired" = "false" || { echo "ERROR: parent artifact expired" >&2; exit 1; }
+        test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: parent artifact digest drift" >&2; exit 1; }
+        echo "Exact FireVol v0.8.5 production provenance PASS"
+
+    - name: Download exact FireVol v0.8.5 runtime and cumulative source payload
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -Eeuo pipefail
+        rm -rf base-artifact base-release
+        mkdir -p base-artifact base-release
+        gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+        base_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+        test -s "$base_zip" || { echo "ERROR: FireVol v0.8.5 inner ZIP missing" >&2; exit 1; }
+        if test -s "${base_zip}.sha256"; then
+          expected_inner="$(awk '{print $1}' "${base_zip}.sha256")"
+          actual_inner="$(sha256sum "$base_zip" | awk '{print $1}')"
+          test -n "$expected_inner" && test "$actual_inner" = "$expected_inner" || { echo "ERROR: parent inner ZIP SHA drift" >&2; exit 1; }
+        fi
+        unzip -q "$base_zip" -d base-release
+        mapfile -t roots < <(find base-release/release -mindepth 1 -maxdepth 1 -type d -print)
+        test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one FireVol v0.8.5 release root" >&2; exit 1; }
+        base_stage="${roots[0]}"
+        for rel in \
+          ioWolfSP.x64.exe \
+          renderer_sp_rend2_x64.dll \
+          renderer_sp_opengl1_x64.dll \
+          Main/qagame_sp_x64.dll \
+          Main/cgame_sp_x64.dll \
+          Main/ui_sp_x64.dll \
+          OpenAL64.dll SDL264.dll \
+          "docs/$BASE_CUMULATIVE_NAME"; do
+          test -s "$base_stage/$rel" || { echo "ERROR: parent payload missing: $rel" >&2; exit 1; }
+        done
+        strings -a "$base_stage/renderer_sp_rend2_x64.dll" > .base_renderer_strings.txt
+        for need in FIREVOL085_GUARD FIREVOL084_HOLD FIREVOL083_PRIORITY r_volumetricFireMaxActive; do
+          grep -Fq "$need" .base_renderer_strings.txt || { echo "ERROR: parent renderer missing FireVol production token: $need" >&2; exit 1; }
+        done
+        sha256sum "$base_stage/renderer_sp_rend2_x64.dll" | awk '{print $1}' > .base_renderer_sha
+        (cd "$base_stage" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > .base_payload_sha256
+        printf '%s\n' "$base_stage" > .base_stage_path
+        echo "Exact FireVol v0.8.5 runtime/source payload PASS"
+
+    - name: Reconstruct exact FireVol v0.8.5 production source
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_stage="$(cat .base_stage_path)"
+        rm -rf source replay-delta replay-cumulative
+        git clone "$UPSTREAM_REPO" source
+        git -C source checkout --detach "$UPSTREAM_SHA"
+        git -C source reset --hard "$UPSTREAM_SHA"
+        git -C source clean -fdx
+        cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" .base-v085-cumulative.patch
+        test -s .base-v085-cumulative.patch
+        git -C source apply --check --binary ../.base-v085-cumulative.patch
+        git -C source apply --binary ../.base-v085-cumulative.patch
+        grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_5_VISIBLE_HOLD_WEAPON_FLAME_EXCLUSION' source/SP/code/rend2/tr_backend.c
+        grep -Fq 'FIREVOL085_GUARD' source/SP/code/rend2/tr_backend.c
+        grep -Fq 'FIREVOL084_HOLD' source/SP/code/rend2/tr_backend.c
+        git -C source config user.email "darkwolf-ci@example.invalid"
+        git -C source config user.name "DarkWolf CI"
+        git -C source add -A
+        git -C source commit -m "Exact FireVol v0.8.5 production source parent"
+        git -C source rev-parse HEAD > .base_source_commit
+        test -z "$(git -C source status --porcelain)"
+        echo "Exact FireVol v0.8.5 source reconstruction PASS"
+
+    - name: Apply isolated MSAA Integrity v1.9 selective blended sample shading production candidate
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        find source/SP/code/rend2 -type f \
+          ! -path 'source/SP/code/rend2/tr_fbo.c' \
+          ! -path 'source/SP/code/rend2/tr_fbo.h' \
+          ! -path 'source/SP/code/rend2/tr_backend.c' \
+          ! -path 'source/SP/code/rend2/tr_init.c' \
+          ! -path 'source/SP/code/rend2/tr_local.h' \
+          -print0 | sort -z | xargs -0 sha256sum > .msaa19_frozen.sha256
+
+        cat > "$PATCHER_NAME" <<'PY'
+        from pathlib import Path
+        import re
+        import sys
+
+        ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('.')
+        FBO = ROOT / 'SP/code/rend2/tr_fbo.c'
+        FBOH = ROOT / 'SP/code/rend2/tr_fbo.h'
+        BACKEND = ROOT / 'SP/code/rend2/tr_backend.c'
+        INIT = ROOT / 'SP/code/rend2/tr_init.c'
+        LOCAL = ROOT / 'SP/code/rend2/tr_local.h'
+
+        MARK = 'DARKWOLF_MSAA_INTEGRITY_V1_9_SELECTIVE_BLENDED_SAMPLE_SHADING_PRODUCTION_CANDIDATE'
+        CVAR = 'r_msaaSampleShadingMode'
+
+        def replace_regex_once(text, pattern, repl, label, flags=0):
+            rx = re.compile(pattern, flags)
+            matches = list(rx.finditer(text))
+            if len(matches) != 1:
+                raise SystemExit(f'ERROR: {label}: expected 1 match, found {len(matches)}')
+            return rx.sub(repl, text, count=1)
+
+        def replace_exact_once(text, old, new, label):
+            count = text.count(old)
+            if count != 1:
+                raise SystemExit(f'ERROR: {label}: expected 1 exact match, found {count}')
+            return text.replace(old, new, 1)
+
+        fbo = FBO.read_text(encoding='utf-8')
+        fboh = FBOH.read_text(encoding='utf-8')
+        backend = BACKEND.read_text(encoding='utf-8')
+        init = INIT.read_text(encoding='utf-8')
+        local = LOCAL.read_text(encoding='utf-8')
+        combined = fbo + fboh + backend + init + local
+
+        if MARK in combined:
+            required = [
+                CVAR, 'MSAA19_INIT', 'MSAA19_SAMPLE_SHADING',
+                'A_STOCK_BAD_CONTROL', 'B_SELECTIVE_BLENDED_PRODUCTION',
+                'C_FULL_MAIN_FBO_CLEAN_REFERENCE',
+                'FBO_MSAA19UpdateSampleShading', 'glMinSampleShadingARB'
+            ]
+            missing = [x for x in required if x not in combined]
+            if missing:
+                raise SystemExit('ERROR: v1.9 marker exists but contract incomplete: ' + ', '.join(missing))
+            print('MSAA Integrity v1.9 already applied')
+            raise SystemExit(0)
+
+        # 1) cvar declaration / definition / registration.
+        local = replace_regex_once(
+            local,
+            r'(extern\s+cvar_t\s*\*r_ext_framebuffer_multisample\s*;)',
+            r'\1\nextern cvar_t  *r_msaaSampleShadingMode;  // DarkWolf MSAA v1.9: 0=stock, 1=selective blended, 2=full main-FBO reference',
+            'tr_local cvar declaration')
+
+        init = replace_regex_once(
+            init,
+            r'(cvar_t\s*\*r_ext_framebuffer_multisample\s*;)',
+            r'\1\ncvar_t  *r_msaaSampleShadingMode;',
+            'tr_init cvar definition')
+
+        init = replace_regex_once(
+            init,
+            r'(r_ext_framebuffer_multisample\s*=\s*ri\.Cvar_Get\(\s*"r_ext_framebuffer_multisample"\s*,\s*"0"\s*,\s*CVAR_ARCHIVE\s*\|\s*CVAR_LATCH\s*\)\s*;)',
+            r'''\1
+        \tr_msaaSampleShadingMode = ri.Cvar_Get( "r_msaaSampleShadingMode", "0", CVAR_ARCHIVE | CVAR_LATCH );
+        \tri.Cvar_CheckRange( r_msaaSampleShadingMode, 0, 2, qtrue );''',
+            'tr_init cvar registration')
+
+        # 2) Export the state synchronizer to GL_State().
+        fboh = replace_regex_once(
+            fboh,
+            r'(void\s+FBO_Bind\s*\(\s*FBO_t\s*\*\s*fbo\s*\)\s*;)',
+            r'\1\nvoid FBO_MSAA19UpdateSampleShading(unsigned long stateBits);',
+            'tr_fbo.h selective sample shading prototype')
+
+        # 3) Sample-shading loader and transition manager.
+        # No QGL API expansion: only qglEnable/qglDisable are used; glMinSampleShading is loaded locally through SDL.
+        fbo = replace_exact_once(
+            fbo,
+            '#include "tr_dsa.h"\n',
+            '''#include "tr_dsa.h"
+
+        #ifdef USE_LOCAL_HEADERS
+        #  include "SDL.h"
+        #else
+        #  include <SDL.h>
+        #endif
+
+        #ifndef GL_SAMPLE_SHADING_ARB
+        #define GL_SAMPLE_SHADING_ARB 0x8C36
+        #endif
+
+        /* DARKWOLF_MSAA_INTEGRITY_V1_9_SELECTIVE_BLENDED_SAMPLE_SHADING_PRODUCTION_CANDIDATE */
+        typedef void (APIENTRYP msaa19MinSampleShadingProc_t)(GLfloat value);
+
+        static msaa19MinSampleShadingProc_t s_msaa19MinSampleShading = NULL;
+        static int s_msaa19SampleShadingSupport = -1;
+        static qboolean s_msaa19SampleShadingEnabled = qfalse;
+        static unsigned long s_msaa19TransitionCount = 0;
+
+        static qboolean FBO_MSAA19SampleShadingSupported(void)
+        {
+        \tif (s_msaa19SampleShadingSupport < 0)
+        \t{
+        \t\ts_msaa19SampleShadingSupport =
+        \t\t\t(QGL_VERSION_ATLEAST(4, 0) || SDL_GL_ExtensionSupported("GL_ARB_sample_shading")) ? 1 : 0;
+        \t}
+        \treturn s_msaa19SampleShadingSupport ? qtrue : qfalse;
+        }
+
+        static void FBO_MSAA19LoadSampleShadingProc(void)
+        {
+        \tif (!FBO_MSAA19SampleShadingSupported() || s_msaa19MinSampleShading)
+        \t\treturn;
+
+        \ts_msaa19MinSampleShading = (msaa19MinSampleShadingProc_t)SDL_GL_GetProcAddress("glMinSampleShadingARB");
+        \tif (!s_msaa19MinSampleShading)
+        \t\ts_msaa19MinSampleShading = (msaa19MinSampleShadingProc_t)SDL_GL_GetProcAddress("glMinSampleShading");
+        }
+
+        static const char *FBO_MSAA19ModeName(int mode)
+        {
+        \tif (mode == 1)
+        \t\treturn "B_SELECTIVE_BLENDED_PRODUCTION";
+        \tif (mode == 2)
+        \t\treturn "C_FULL_MAIN_FBO_CLEAN_REFERENCE";
+        \treturn "A_STOCK_BAD_CONTROL";
+        }
+
+        void FBO_MSAA19UpdateSampleShading(unsigned long stateBits)
+        {
+        \tint mode = r_msaaSampleShadingMode ? r_msaaSampleShadingMode->integer : 0;
+        \tqboolean mainMsaaHdrFbo = qfalse;
+        \tqboolean blended = (stateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS)) ? qtrue : qfalse;
+        \tqboolean wantSampleShading = qfalse;
+
+        \t/* Only the actual HDR multisample scene target is eligible. Offscreen/shadow/postprocess FBOs are never eligible. */
+        \tif (r_hdr && r_hdr->integer && tr.renderFbo && tr.msaaResolveFbo && glState.currentFBO == tr.renderFbo)
+        \t\tmainMsaaHdrFbo = qtrue;
+
+        \tif (mode == 1)
+        \t\twantSampleShading = (mainMsaaHdrFbo && blended) ? qtrue : qfalse;
+        \telse if (mode == 2)
+        \t\twantSampleShading = mainMsaaHdrFbo;
+
+        \tif (wantSampleShading == s_msaa19SampleShadingEnabled)
+        \t\treturn;
+
+        \tif (wantSampleShading)
+        \t{
+        \t\tFBO_MSAA19LoadSampleShadingProc();
+        \t\tif (!FBO_MSAA19SampleShadingSupported() || !s_msaa19MinSampleShading)
+        \t\t\tri.Error(ERR_FATAL, "MSAA19: GL_ARB_sample_shading / glMinSampleShading unavailable");
+
+        \t\tqglEnable(GL_SAMPLE_SHADING_ARB);
+        \t\ts_msaa19MinSampleShading(1.0f);
+        \t}
+        \telse
+        \t{
+        \t\t/* This branch is reached only after v1.9 previously enabled the state. */
+        \t\tqglDisable(GL_SAMPLE_SHADING_ARB);
+        \t\tif (s_msaa19MinSampleShading)
+        \t\t\ts_msaa19MinSampleShading(0.0f);
+        \t}
+
+        \ts_msaa19SampleShadingEnabled = wantSampleShading;
+        \ts_msaa19TransitionCount++;
+        \tif (s_msaa19TransitionCount <= 96)
+        \t{
+        \t\tri.Printf(PRINT_ALL,
+        \t\t\t"MSAA19_SAMPLE_SHADING transition=%lu mode=%s modeValue=%d enable=%d mainFbo=%d blended=%d frame=%d state=0x%08lx fbo=%s minSampleShading=%.1f\\n",
+        \t\t\ts_msaa19TransitionCount, FBO_MSAA19ModeName(mode), mode,
+        \t\t\twantSampleShading, mainMsaaHdrFbo, blended, tr.frameCount, stateBits,
+        \t\t\tglState.currentFBO ? glState.currentFBO->name : "NULL",
+        \t\t\twantSampleShading ? 1.0f : 0.0f);
+        \t}
+        }
+        ''',
+            'tr_fbo v1.9 sample shading manager')
+
+        # 4) Safety hook on every actual FBO switch. This prevents sample shading leaking into offscreen/shadow/postprocess FBOs.
+        bind_anchor = '''\tGL_BindFramebuffer(GL_FRAMEBUFFER, fbo ? fbo->frameBuffer : 0);
+        \tglState.currentFBO = fbo;
+        }'''
+        bind_repl = '''\tGL_BindFramebuffer(GL_FRAMEBUFFER, fbo ? fbo->frameBuffer : 0);
+        \tglState.currentFBO = fbo;
+
+        \t// DARKWOLF_MSAA_INTEGRITY_V1_9_SELECTIVE_BLENDED_SAMPLE_SHADING_PRODUCTION_CANDIDATE
+        \t// Safety synchronization: leaving tr.renderFbo immediately disables sample shading;
+        \t// entering it restores the state implied by the currently cached GLS blend bits.
+        \tFBO_MSAA19UpdateSampleShading(glState.glStateBits);
+        }'''
+        fbo = replace_exact_once(fbo, bind_anchor, bind_repl, 'tr_fbo FBO_Bind safety synchronization')
+
+        # 5) Runtime initialization proof. Source/destination/resolve remain exactly stock.
+        resolve_block = (
+            r'(\t\ttr\.msaaResolveFbo = FBO_Create\("_msaaResolve", tr\.renderDepthImage->width, tr\.renderDepthImage->height\);\n'
+            r'\t\tFBO_AttachImage\(tr\.msaaResolveFbo, tr\.renderImage, GL_COLOR_ATTACHMENT0, 0\);\n'
+            r'\t\tFBO_AttachImage\(tr\.msaaResolveFbo, tr\.renderDepthImage, GL_DEPTH_ATTACHMENT, 0\);\n'
+            r'\t\tR_CheckFBO\(tr\.msaaResolveFbo\);)'
+        )
+        resolve_repl = r'''\1
+
+        \t\t{
+        \t\t\tint msaa19Mode = r_msaaSampleShadingMode ? r_msaaSampleShadingMode->integer : 0;
+        \t\t\tqboolean sourceFboComplete = R_CheckFBO(tr.renderFbo);
+        \t\t\tqboolean supported = FBO_MSAA19SampleShadingSupported();
+        \t\t\tFBO_MSAA19LoadSampleShadingProc();
+
+        \t\t\tif (msaa19Mode != 0 && (!supported || !s_msaa19MinSampleShading))
+        \t\t\t\tri.Error(ERR_FATAL, "MSAA19: requested sample-shading mode requires GL_ARB_sample_shading");
+
+        \t\t\tri.Printf(PRINT_ALL,
+        \t\t\t\t"MSAA19_INIT mode=%s modeValue=%d r_hdr=%d requestedSamples=%d actualSamples=%d "
+        \t\t\t\t"sourceObject=RENDERBUFFER source=RGBA16F sourceFboComplete=%d dest=RGBA16F resolve=GL_BLIT "
+        \t\t\t\t"sampleShadingSupported=%d minSampleProc=%d selectiveMainFboOnly=1\\n",
+        \t\t\t\tFBO_MSAA19ModeName(msaa19Mode), msaa19Mode, r_hdr->integer,
+        \t\t\t\tr_ext_framebuffer_multisample->integer, multisample,
+        \t\t\t\tsourceFboComplete, supported, s_msaa19MinSampleShading ? 1 : 0);
+        \t\t}'''
+        fbo = replace_regex_once(fbo, resolve_block, resolve_repl, 'tr_fbo v1.9 runtime init proof', re.M)
+
+        # 6) Main production hook: run before GL_State's early-return test so sample-shading state cannot become stale.
+        backend_anchor = '''void GL_State( unsigned long stateBits )
+        {
+        \tunsigned long diff = stateBits ^ glState.glStateBits;'''
+        backend_repl = '''/* DARKWOLF_MSAA_INTEGRITY_V1_9_SELECTIVE_BLENDED_SAMPLE_SHADING_PRODUCTION_CANDIDATE */
+        void GL_State( unsigned long stateBits )
+        {
+        \tunsigned long diff;
+
+        \t/* Must precede the !diff early return: FBO identity can change while GLS state bits remain identical. */
+        \tFBO_MSAA19UpdateSampleShading(stateBits);
+        \tdiff = stateBits ^ glState.glStateBits;'''
+        backend = replace_exact_once(backend, backend_anchor, backend_repl, 'tr_backend GL_State selective sample shading hook')
+
+        combined = fbo + fboh + backend + init + local
+        required = [
+            MARK, CVAR, 'MSAA19_INIT', 'MSAA19_SAMPLE_SHADING',
+            'A_STOCK_BAD_CONTROL', 'B_SELECTIVE_BLENDED_PRODUCTION', 'C_FULL_MAIN_FBO_CLEAN_REFERENCE',
+            'FBO_MSAA19UpdateSampleShading(stateBits);',
+            'FBO_MSAA19UpdateSampleShading(glState.glStateBits);',
+            'GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS',
+            'glState.currentFBO == tr.renderFbo',
+            's_msaa19MinSampleShading(1.0f);',
+            's_msaa19MinSampleShading(0.0f);',
+            'qglEnable(GL_SAMPLE_SHADING_ARB);', 'qglDisable(GL_SAMPLE_SHADING_ARB);'
+        ]
+        missing = [x for x in required if x not in combined]
+        if missing:
+            raise SystemExit('ERROR: generated MSAA v1.9 contract incomplete: ' + ', '.join(missing))
+
+        # No v1.8 diagnostic interventions may leak into this production candidate.
+        forbidden = [
+            'r_msaaClampBlendMode', 'MSAA18_', 'MSAA18_BLEND_SUPPRESS',
+            'glClampColorARB', 'GL_CLAMP_FRAGMENT_COLOR_ARB',
+            'sampler2DMS', 'texelFetch', 'glTexImage2DMultisample',
+            'r_msaaPostTonemapMode', 'r_msaaHdrSourceFormat'
+        ]
+        bad = [x for x in forbidden if x in combined]
+        if bad:
+            raise SystemExit('ERROR: forbidden prior MSAA experimental path leaked into v1.9: ' + ', '.join(bad))
+
+        FBO.write_text(fbo, encoding='utf-8', newline='')
+        FBOH.write_text(fboh, encoding='utf-8', newline='')
+        BACKEND.write_text(backend, encoding='utf-8', newline='')
+        INIT.write_text(init, encoding='utf-8', newline='')
+        LOCAL.write_text(local, encoding='utf-8', newline='')
+        print('DarkWolf MSAA Integrity v1.9 Selective Blended Sample Shading Production Candidate applied')
+        PY
+
+        python3 -m py_compile "$PATCHER_NAME"
+        python3 "$PATCHER_NAME" source
+        sha256sum -c .msaa19_frozen.sha256
+
+        # Source contract: exact five-file delta, stock HDR source/destination/resolve, no prior diagnostic hacks.
+        for need in \
+          DARKWOLF_MSAA_INTEGRITY_V1_9_SELECTIVE_BLENDED_SAMPLE_SHADING_PRODUCTION_CANDIDATE \
+          r_msaaSampleShadingMode MSAA19_INIT MSAA19_SAMPLE_SHADING \
+          A_STOCK_BAD_CONTROL B_SELECTIVE_BLENDED_PRODUCTION C_FULL_MAIN_FBO_CLEAN_REFERENCE \
+          FBO_MSAA19UpdateSampleShading glMinSampleShadingARB; do
+          grep -R -Fq "$need" source/SP/code/rend2 || { echo "ERROR: missing v1.9 token: $need" >&2; exit 1; }
+        done
+
+        grep -Fq 'FBO_MSAA19UpdateSampleShading(stateBits);' source/SP/code/rend2/tr_backend.c
+        grep -Fq 'FBO_MSAA19UpdateSampleShading(glState.glStateBits);' source/SP/code/rend2/tr_fbo.c
+        grep -Fq 'stateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS)' source/SP/code/rend2/tr_fbo.c
+        grep -Fq 'glState.currentFBO == tr.renderFbo' source/SP/code/rend2/tr_fbo.c
+        grep -Fq 's_msaa19MinSampleShading(1.0f);' source/SP/code/rend2/tr_fbo.c
+        grep -Fq 's_msaa19MinSampleShading(0.0f);' source/SP/code/rend2/tr_fbo.c
+
+        # Compile/link guard learned from v1.8 failure: use no undeclared QGL state-query symbols.
+        for bad in qglGetFloatv qglIsEnabled; do
+          if grep -R -Fq "$bad" source/SP/code/rend2/tr_fbo.c source/SP/code/rend2/tr_backend.c; then
+            echo "ERROR: forbidden unresolved QGL symbol survived: $bad" >&2; exit 1
+          fi
+        done
+        grep -Fq 'GLE(void, Enable, GLenum cap)' source/SP/code/rend2/qgl.h
+        grep -Fq 'GLE(void, Disable, GLenum cap)' source/SP/code/rend2/qgl.h
+
+        # Preserve exact production renderer subsystems and stock MSAA resolve path.
+        grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_5_VISIBLE_HOLD_WEAPON_FLAME_EXCLUSION' source/SP/code/rend2/tr_backend.c
+        grep -Fq 'FIREVOL085_GUARD' source/SP/code/rend2/tr_backend.c
+        grep -Fq 'FIREVOL084_HOLD' source/SP/code/rend2/tr_backend.c
+        grep -Fq 'FBO_CreateBuffer(tr.renderFbo, hdrFormat, 0, multisample);' source/SP/code/rend2/tr_fbo.c
+        grep -Fq 'FBO_AttachImage(tr.msaaResolveFbo, tr.renderImage, GL_COLOR_ATTACHMENT0, 0);' source/SP/code/rend2/tr_fbo.c
+        grep -Fq 'FBO_FastBlit(tr.renderFbo, NULL, tr.msaaResolveFbo, NULL, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);' source/SP/code/rend2/tr_backend.c
+
+        # Idempotence: second application must be byte-stable.
+        first_fbo="$(sha256sum source/SP/code/rend2/tr_fbo.c | awk '{print $1}')"
+        first_fboh="$(sha256sum source/SP/code/rend2/tr_fbo.h | awk '{print $1}')"
+        first_backend="$(sha256sum source/SP/code/rend2/tr_backend.c | awk '{print $1}')"
+        first_init="$(sha256sum source/SP/code/rend2/tr_init.c | awk '{print $1}')"
+        first_local="$(sha256sum source/SP/code/rend2/tr_local.h | awk '{print $1}')"
+        python3 "$PATCHER_NAME" source
+        test "$first_fbo" = "$(sha256sum source/SP/code/rend2/tr_fbo.c | awk '{print $1}')"
+        test "$first_fboh" = "$(sha256sum source/SP/code/rend2/tr_fbo.h | awk '{print $1}')"
+        test "$first_backend" = "$(sha256sum source/SP/code/rend2/tr_backend.c | awk '{print $1}')"
+        test "$first_init" = "$(sha256sum source/SP/code/rend2/tr_init.c | awk '{print $1}')"
+        test "$first_local" = "$(sha256sum source/SP/code/rend2/tr_local.h | awk '{print $1}')"
+
+        base_commit="$(cat .base_source_commit)"
+        git -C source add -A
+        mapfile -t changed < <(git -C source diff --cached --name-only "$base_commit" --)
+        printf 'MSAA v1.9 changed files:\n'; printf '  %s\n' "${changed[@]}"
+        test "${#changed[@]}" -eq 5
+        printf '%s\n' "${changed[@]}" | grep -Fxq 'SP/code/rend2/tr_fbo.c'
+        printf '%s\n' "${changed[@]}" | grep -Fxq 'SP/code/rend2/tr_fbo.h'
+        printf '%s\n' "${changed[@]}" | grep -Fxq 'SP/code/rend2/tr_backend.c'
+        printf '%s\n' "${changed[@]}" | grep -Fxq 'SP/code/rend2/tr_init.c'
+        printf '%s\n' "${changed[@]}" | grep -Fxq 'SP/code/rend2/tr_local.h'
+
+        git -C source diff --cached --binary "$base_commit" -- . > "$DELTA_NAME"
+        test -s "$DELTA_NAME"
+        sha256sum "$DELTA_NAME" > "$DELTA_NAME.sha256"
+        git -C source diff --cached --binary "$UPSTREAM_SHA" -- . > "$CUMULATIVE_NAME"
+        test -s "$CUMULATIVE_NAME"
+        sha256sum "$CUMULATIVE_NAME" > "$CUMULATIVE_NAME.sha256"
+        echo 'MSAA Integrity v1.9 selective blended sample shading source delta PASS'
+
+    - name: Independent v1.9 delta and cumulative replay verification
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_commit="$(cat .base_source_commit)"
+        git -C source worktree add --detach ../replay-delta "$base_commit"
+        git -C replay-delta apply --check --binary "../$DELTA_NAME"
+        git -C replay-delta apply --binary "../$DELTA_NAME"
+        grep -Fq 'DARKWOLF_MSAA_INTEGRITY_V1_9_SELECTIVE_BLENDED_SAMPLE_SHADING_PRODUCTION_CANDIDATE' replay-delta/SP/code/rend2/tr_fbo.c
+        grep -Fq 'FBO_MSAA19UpdateSampleShading(stateBits);' replay-delta/SP/code/rend2/tr_backend.c
+        grep -Fq 'FBO_MSAA19UpdateSampleShading(glState.glStateBits);' replay-delta/SP/code/rend2/tr_fbo.c
+        grep -Fq 'r_msaaSampleShadingMode' replay-delta/SP/code/rend2/tr_init.c
+
+        git -C source worktree add --detach ../replay-cumulative "$UPSTREAM_SHA"
+        git -C replay-cumulative apply --check --binary "../$CUMULATIVE_NAME"
+        git -C replay-cumulative apply --binary "../$CUMULATIVE_NAME"
+        grep -Fq 'DARKWOLF_FIRE_VOLUMETRIC_V0_8_5_VISIBLE_HOLD_WEAPON_FLAME_EXCLUSION' replay-cumulative/SP/code/rend2/tr_backend.c
+        grep -Fq 'DARKWOLF_MSAA_INTEGRITY_V1_9_SELECTIVE_BLENDED_SAMPLE_SHADING_PRODUCTION_CANDIDATE' replay-cumulative/SP/code/rend2/tr_fbo.c
+        grep -Fq 'MSAA19_INIT' replay-cumulative/SP/code/rend2/tr_fbo.c
+        echo 'Independent MSAA v1.9 replay PASS'
+
+    - name: Build canonical Windows x64 MSAA v1.9 renderer
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        jobs="$(nproc)"
+        if [ "$jobs" -gt 4 ]; then jobs=4; fi
+        cd source/SP
+        ./cross-make-mingw64.sh -j"$jobs" \
+          BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+          BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+    - name: Verify rebuilt renderer and v1.9 production-candidate runtime tokens
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | sort)
+        test "${#renderers[@]}" -eq 1 || { echo 'ERROR: expected exactly one rebuilt Rend2 DLL' >&2; exit 1; }
+        new_renderer="${renderers[0]}"
+        test -s "$new_renderer"
+        printf '%s\n' "$new_renderer" > .new_renderer_path
+        file "$new_renderer" > .new_renderer_file.txt
+        grep -Fq 'PE32+ executable' .new_renderer_file.txt
+        grep -Fq 'x86-64' .new_renderer_file.txt
+        grep -Fq '(DLL)' .new_renderer_file.txt
+        test "$(sha256sum "$new_renderer" | awk '{print $1}')" != "$(cat .base_renderer_sha)"
+        strings -a "$new_renderer" > .new_renderer_strings.txt
+        for need in \
+          r_msaaSampleShadingMode MSAA19_INIT MSAA19_SAMPLE_SHADING \
+          A_STOCK_BAD_CONTROL B_SELECTIVE_BLENDED_PRODUCTION C_FULL_MAIN_FBO_CLEAN_REFERENCE \
+          glMinSampleShadingARB \
+          FIREVOL085_GUARD FIREVOL084_HOLD FIREVOL083_PRIORITY; do
+          grep -Fq "$need" .new_renderer_strings.txt || { echo "ERROR: rebuilt renderer missing token: $need" >&2; exit 1; }
+        done
+        # qglIsEnabled is an inherited token already present in the exact FireVol v0.8.5 production parent.
+        # Source-level guards above already prove v1.9 does not add qglIsEnabled/qglGetFloatv to the modified files.
+        grep -Fq 'qglIsEnabled' .base_renderer_strings.txt || { echo 'ERROR: expected inherited parent token qglIsEnabled missing from baseline proof' >&2; exit 1; }
+        for forbidden in MSAA18_BLEND_SUPPRESS glClampColorARB r_msaaClampBlendMode qglGetFloatv; do
+          if grep -Fq "$forbidden" .new_renderer_strings.txt; then
+            echo "ERROR: forbidden prior/undefined token leaked into v1.9 renderer: $forbidden" >&2; exit 1
+          fi
+        done
+        echo 'Rebuilt MSAA v1.9 renderer verification PASS'
+
+    - name: Package MSAA v1.9 selective blended sample shading production candidate
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_stage="$(cat .base_stage_path)"
+        new_renderer="$(cat .new_renderer_path)"
+        rm -rf release dist
+        stage="release/$RELEASE_BASENAME"
+        mkdir -p "$stage" dist
+        cp -a "$base_stage/." "$stage/"
+        cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+
+        # Everything except Rend2 renderer must stay byte-identical to FireVol v0.8.5 production.
+        for rel in \
+          ioWolfSP.x64.exe renderer_sp_opengl1_x64.dll \
+          Main/qagame_sp_x64.dll Main/cgame_sp_x64.dll Main/ui_sp_x64.dll \
+          OpenAL64.dll SDL264.dll; do
+          cmp "$base_stage/$rel" "$stage/$rel" || { echo "ERROR: frozen runtime drift: $rel" >&2; exit 1; }
+        done
+
+        make_cfg() {
+          local file="$1" mode="$2"
+          cat > "$stage/Main/$file" <<EOF
+        // DarkWolf Rend2 MSAA Integrity v1.9 - Selective Blended Sample Shading Production Candidate
+        seta r_ext_multisample "0"
+        seta r_ext_framebuffer_multisample "4"
+        seta r_hdr "1"
+        seta r_postProcess "1"
+        seta r_ssao "0"
+        seta cg_skybox "1"
+        seta r_msaaSampleShadingMode "$mode"
+        bind F11 "screenshot"
+        bind F12 "screenshot"
+        EOF
+        }
+        make_cfg MSAA19_A_STOCK_BAD_CONTROL.cfg 0
+        make_cfg MSAA19_B_SELECTIVE_BLENDED_PRODUCTION.cfg 1
+        make_cfg MSAA19_C_FULL_MAIN_FBO_CLEAN_REFERENCE.cfg 2
+
+        cat > "$stage/MSAA19_COLLECT.ps1" <<'PS1'
+        param(
+          [Parameter(Mandatory=$true)][string]$Mode,
+          [Parameter(Mandatory=$true)][string]$TestHome
+        )
+        $ErrorActionPreference='Stop'
+        $root=$PSScriptRoot
+        $results=Join-Path $root 'MSAA19_RESULTS'
+        $out=Join-Path $results $Mode
+        $zip=Join-Path $results ($Mode+'.zip')
+        New-Item -ItemType Directory -Force -Path $results|Out-Null
+        if(Test-Path $out){Remove-Item -Recurse -Force $out}
+        if(Test-Path $zip){Remove-Item -Force $zip}
+        New-Item -ItemType Directory -Force -Path $out|Out-Null
+
+        $log=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'rtcwconsole.log' -ErrorAction SilentlyContinue|Select-Object -First 1
+        if($log){
+          Copy-Item $log.FullName (Join-Path $out 'rtcwconsole.log')
+          $m=Select-String -Path $log.FullName -Pattern 'MSAA19_' -ErrorAction SilentlyContinue
+          if($m){$m.Line|Set-Content -Encoding UTF8 (Join-Path $out 'MSAA19_LINES.txt')}
+        }
+        $cfg=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'wolfconfig.cfg' -ErrorAction SilentlyContinue|Select-Object -First 1
+        if($cfg){Copy-Item $cfg.FullName (Join-Path $out 'wolfconfig.cfg')}
+        $shots=Get-ChildItem -Path $TestHome -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.tga','.jpg','.jpeg','.png' }
+        $i=0
+        foreach($shot in $shots){
+          $i++
+          $dest=('shot_{0:D3}_{1}' -f $i,$shot.Name)
+          Copy-Item $shot.FullName (Join-Path $out $dest)
+        }
+        if((Get-ChildItem -Path $out -File -ErrorAction SilentlyContinue).Count -eq 0){
+          'No log/screenshots found. F11 and F12 are explicitly bound to screenshot in v1.9.' | Set-Content -Encoding UTF8 (Join-Path $out 'NO_DATA.txt')
+        }
+        Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -CompressionLevel Optimal
+        Write-Host "Created $zip"
+        PS1
+
+        make_launcher() {
+          local file="$1" mode_name="$2" matrix="$3" note="$4"
+          cat > "$stage/$file" <<EOF
+        @echo off
+        setlocal
+        cd /d "%~dp0"
+        set "MODE=$mode_name"
+        set "TESTHOME=%~dp0MSAA19_TEST_HOME\%MODE%"
+        if exist "%TESTHOME%" rmdir /s /q "%TESTHOME%"
+        mkdir "%TESTHOME%"
+        echo ============================================================
+        echo DarkWolf Rend2 MSAA Integrity v1.9 - %MODE%
+        echo $note
+        echo INVARIANTS: HDR=1, RGBA16F source/destination, framebuffer MSAA=4x, stock GL resolve, stock ToneMap/PBR/FireVol/GI/Bloom.
+        echo Use the SAME SFM strip and SAME camera. F11/F12 take screenshots.
+        echo ============================================================
+        ioWolfSP.x64.exe +set fs_homepath "%TESTHOME%" +set com_recommendedSet 1 +set cl_renderer rend2 +set logfile 2 +set r_swapInterval 0 +set r_ext_multisample 0 +set r_ext_framebuffer_multisample 4 +set r_hdr 1 +set r_postProcess 1 +set r_ssao 0 +set cg_skybox 1 +set r_msaaSampleShadingMode $matrix +bind F11 screenshot +bind F12 screenshot +spdevmap sfm
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0MSAA19_COLLECT.ps1" -Mode "%MODE%" -TestHome "%TESTHOME%"
+        pause
+        EOF
+        }
+
+        make_launcher RUN_MSAA19_A_STOCK_BAD_CONTROL.cmd A_STOCK_BAD_CONTROL 0 "A: exact stock RGBA16F 4x behavior. White strips expected; sample shading remains OFF."
+        make_launcher RUN_MSAA19_B_SELECTIVE_BLENDED_PRODUCTION.cmd B_SELECTIVE_BLENDED_PRODUCTION 1 "B: PRODUCTION CANDIDATE. Sample shading 1.0 only for blended GL_State draws while currentFBO is the HDR multisample tr.renderFbo; opaque/offscreen/shadow/postprocess stay normal."
+        make_launcher RUN_MSAA19_C_FULL_MAIN_FBO_CLEAN_REFERENCE.cmd C_FULL_MAIN_FBO_CLEAN_REFERENCE 2 "C: clean-reference path. Sample shading 1.0 for every draw only while currentFBO is tr.renderFbo; immediately OFF on all other FBOs. Higher cost than B."
+
+        cat > "$stage/README_MSAA_INTEGRITY_V19_RU.txt" <<'EOF'
+        DARKWOLF / ioRTCW Rend2 SP
+        MSAA INTEGRITY v1.9 - SELECTIVE BLENDED SAMPLE SHADING PRODUCTION CANDIDATE
+
+        WHY THIS BUILD EXISTS
+          v1.8 established the decisive pair:
+            - suppressing blending on the floating HDR MSAA scene FBO removes the white strips, but destroys rendering;
+            - full sample shading 1.0 removes the strips while preserving normal blending.
+          v1.9 converts that root-cause result into a production candidate instead of changing formats/resolve/ToneMap.
+
+        INVARIANTS
+          RGBA16F HDR scene source
+          4x framebuffer MSAA
+          stock RGBA16F resolve destination
+          stock glBlitFramebuffer resolve
+          stock GLSL, ToneMap, PBR, FireVol, GI, Bloom and accepted production systems
+          no fragment clamp experiment
+          no blend suppression
+          no per-sample shader-resolve experiment
+
+        CORE PRODUCTION RULE
+          OPAQUE draw on tr.renderFbo:
+            GL_SAMPLE_SHADING OFF, MinSampleShading 0.0
+
+          BLENDED draw on tr.renderFbo:
+            GLS_SRCBLEND_BITS or GLS_DSTBLEND_BITS present
+            -> GL_SAMPLE_SHADING ON, MinSampleShading 1.0
+
+          Leaving blended state OR leaving tr.renderFbo:
+            -> GL_SAMPLE_SHADING OFF, MinSampleShading 0.0
+
+          The GL_State hook runs BEFORE the stock !diff early return.
+          FBO_Bind provides a second safety synchronization so sample shading cannot leak into shadow/offscreen/postprocess FBOs.
+
+        MODES
+          A - STOCK BAD CONTROL (mode 0)
+            No v1.9 sample shading intervention. Must reproduce white strips.
+
+          B - SELECTIVE BLENDED PRODUCTION (mode 1)
+            Main production candidate. Only blended draws to tr.renderFbo are per-sample shaded.
+            Required result: white strips NONE, normal image/materials/effects, materially better FPS than C where fragment cost matters.
+
+          C - FULL MAIN-FBO CLEAN REFERENCE (mode 2)
+            All draws to tr.renderFbo use MinSampleShading=1.0, but offscreen FBOs remain untouched.
+            This is the quality reference corresponding to the clean v1.8 full-sample-shading result.
+
+        RUNTIME PROOF
+          MSAA19_INIT proves HDR/4x/source/destination/extension availability.
+          MSAA19_SAMPLE_SHADING lines prove each ON/OFF transition, FBO identity, blend eligibility, frame and GLS state bits.
+          In B, every enable line must show mainFbo=1 blended=1.
+          Any enable on a non-main FBO is a contract failure.
+
+        TEST ORDER
+          RUN_MSAA19_A_STOCK_BAD_CONTROL.cmd
+          RUN_MSAA19_B_SELECTIVE_BLENDED_PRODUCTION.cmd
+          RUN_MSAA19_C_FULL_MAIN_FBO_CLEAN_REFERENCE.cmd
+
+        REPORT FOR EACH
+          STRIPS: same / fewer / none
+          IMAGE: normal / visual regression
+          FPS: approximate value in the same camera position if convenient
+
+        PRODUCTION DECISION
+          A dirty + B clean/normal + C clean/normal:
+            promote mode B architecture to final production MSAA fix.
+
+          A dirty + B still dirty + C clean:
+            the root class is broader than GLS-tagged blended draws; inspect which main-FBO draw class bypasses GL_State blend classification using MSAA19 transition evidence rather than returning to format/resolve experiments.
+        EOF
+
+        cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+        cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+        cp "$DELTA_NAME.sha256" "$stage/docs/$DELTA_NAME.sha256"
+        cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+        cp "$CUMULATIVE_NAME.sha256" "$stage/docs/$CUMULATIVE_NAME.sha256"
+        cp .base-v085-cumulative.patch "$stage/docs/$BASE_CUMULATIVE_NAME"
+
+        cat > "$stage/docs/EXACT_BASE_MSAA19.txt" <<EOF
+        DarkWolf Rend2 MSAA Integrity v1.9 Selective Blended Sample Shading Production Candidate
+        base_run=$BASE_RUN_ID
+        base_head=$BASE_RUN_HEAD_SHA
+        base_workflow=$BASE_WORKFLOW_PATH
+        base_artifact_id=$BASE_ARTIFACT_ID
+        base_artifact_name=$BASE_ARTIFACT_NAME
+        base_artifact_digest=$BASE_ARTIFACT_DIGEST
+        upstream_sha=$UPSTREAM_SHA
+        source_scope=SP/code/rend2/tr_fbo.c,SP/code/rend2/tr_fbo.h,SP/code/rend2/tr_backend.c,SP/code/rend2/tr_init.c,SP/code/rend2/tr_local.h
+        tr_image_changed=no
+        tr_postprocess_changed=no
+        glsl_changed=no
+        invariant_r_hdr=1
+        invariant_r_ext_framebuffer_multisample=4
+        invariant_r_ext_multisample=0
+        source_format=stock_RGBA16F
+        resolve_destination=stock_RGBA16F_renderImage
+        resolve_algorithm=stock_glBlitFramebuffer
+        production_cvar=r_msaaSampleShadingMode
+        mode_A=0_STOCK_BAD_CONTROL
+        mode_B=1_SELECTIVE_BLENDED_MAIN_RENDERFBO_PRODUCTION
+        mode_C=2_FULL_MAIN_RENDERFBO_CLEAN_REFERENCE
+        sample_shading_enable=GL_SAMPLE_SHADING_ARB_MinSampleShading_1_0
+        sample_shading_disable=GL_SAMPLE_SHADING_ARB_OFF_MinSampleShading_0_0
+        offscreen_policy=always_disabled
+        screenshot_keys=F11,F12
+        sfm_launch_command=spdevmap_sfm
+        EOF
+
+        mapfile -t diag_cmds < <(find "$stage" -maxdepth 1 -type f -name 'RUN_MSAA19_*.cmd' -print | sort)
+        test "${#diag_cmds[@]}" -eq 3 || { echo 'ERROR: expected exactly three v1.9 CMDs' >&2; exit 1; }
+        for cmdfile in "${diag_cmds[@]}"; do
+          grep -Fq '+spdevmap sfm' "$cmdfile" || { echo "ERROR: SP launch contract missing: $cmdfile" >&2; exit 1; }
+          grep -Fq '+set r_hdr 1' "$cmdfile" || { echo "ERROR: HDR invariant missing: $cmdfile" >&2; exit 1; }
+          grep -Fq '+set r_ext_framebuffer_multisample 4' "$cmdfile" || { echo "ERROR: 4x MSAA invariant missing: $cmdfile" >&2; exit 1; }
+          grep -Fq '+set r_ext_multisample 0' "$cmdfile" || { echo "ERROR: SDL MSAA isolation missing: $cmdfile" >&2; exit 1; }
+          grep -Fq '+bind F11 screenshot' "$cmdfile" || { echo "ERROR: F11 screenshot bind missing: $cmdfile" >&2; exit 1; }
+          grep -Fq '+bind F12 screenshot' "$cmdfile" || { echo "ERROR: F12 screenshot bind missing: $cmdfile" >&2; exit 1; }
+          if grep -Fq '+map sfm' "$cmdfile"; then echo "ERROR: generic map launcher survived: $cmdfile" >&2; exit 1; fi
+        done
+
+        grep -Fq '+set r_msaaSampleShadingMode 0' "$stage/RUN_MSAA19_A_STOCK_BAD_CONTROL.cmd"
+        grep -Fq '+set r_msaaSampleShadingMode 1' "$stage/RUN_MSAA19_B_SELECTIVE_BLENDED_PRODUCTION.cmd"
+        grep -Fq '+set r_msaaSampleShadingMode 2' "$stage/RUN_MSAA19_C_FULL_MAIN_FBO_CLEAN_REFERENCE.cmd"
+        echo 'MSAA v1.9 production-candidate launcher matrix PASS'
+
+        rm -f "$stage/docs/SHA256SUMS.txt"
+        (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+        zip -q -r "dist/${RELEASE_BASENAME}.zip" "release/${RELEASE_BASENAME}"
+        sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+        echo 'Packaged MSAA Integrity v1.9 selective blended sample shading production candidate'
+
+    - name: Upload MSAA Integrity v1.9 production-candidate artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.RELEASE_BASENAME }}
+        path: |
+          dist/${{ env.RELEASE_BASENAME }}.zip
+          dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+        if-no-files-found: error
+        retention-days: 90
