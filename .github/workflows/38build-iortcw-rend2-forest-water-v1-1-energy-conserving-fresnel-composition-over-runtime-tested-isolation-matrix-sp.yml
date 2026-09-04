@@ -1,0 +1,845 @@
+name: Build DarkWolf Rend2 Forest Water v1.1 Energy-Conserving Fresnel Composition over Runtime-Tested Isolation Matrix SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-forest-water-v1-1-energy-conserving-fresnel-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Forest Water v1.1 - energy-conserving Fresnel composition
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "33849870049"
+      BASE_RUN_HEAD_SHA: c2f848e22ac21f39d6dbcfa19e2f5b170a87330b
+      BASE_WORKFLOW_PATH: '.github/workflows/37build-iortcw-rend2-forest-water-v1-isolation-stock-cubemap-matrix-v0-1-over-runtime-tested-glsl-fix-sp-fix-v1.yml'
+      BASE_ARTIFACT_ID: "9927965429"
+      BASE_ARTIFACT_NAME: iortcw-rend2-forest-water-v1-isolation-stock-cubemap-matrix-v0-1-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:124c61746f545309af987dd8d8684039936dfb65c4ea14ac86d132666c75291e
+      BASE_RELEASE_BASENAME: iortcw-rend2-forest-water-v1-isolation-stock-cubemap-matrix-v0-1-full-sp-windows-x64-1
+      BASE_INNER_ZIP_SHA256: 1338a88e1b60a676fdf49ea9cbe281515f37e48eac760dd0204773c125950479
+      BASE_RENDERER_SHA256: 2f388067485675ed99c21f2319d0d4ac9dd5af5572d03e0c0b33e82354d07eef
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-forest-water-v1-isolation-stock-cubemap-matrix-v0-1-sp.patch
+      BASE_CUMULATIVE_SHA256: 1580ac59dfb32d46ed2a88655c6529b02d2f0f391ecc045aa2b7c752fd26ea5b
+
+      PATCHER_NAME: apply_forest_water_v1_1_energy_conserving_fresnel_composition.py
+      DELTA_NAME: darkwolf-rend2-forest-water-v1-1-energy-conserving-fresnel-composition.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-forest-water-v1-1-energy-conserving-fresnel-composition-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-forest-water-v1-1-energy-conserving-fresnel-composition-full-sp-windows-x64-1
+
+    steps:
+    - name: Checkout build repository
+      uses: actions/checkout@v5
+
+    - name: Preflight workflow YAML and bash contract
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+        workflow_rel="${workflow_rel%@*}"
+        test -f "$workflow_rel" || { echo "ERROR: cannot resolve workflow: $workflow_rel" >&2; exit 1; }
+        python3 - "$workflow_rel" <<'PY'
+        from pathlib import Path
+        import subprocess, sys, yaml
+
+        p = Path(sys.argv[1])
+        doc = yaml.safe_load(p.read_text(encoding='utf-8'))
+        expected = 'Build DarkWolf Rend2 Forest Water v1.1 Energy-Conserving Fresnel Composition over Runtime-Tested Isolation Matrix SP'
+        if doc.get('name') != expected:
+            raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+        checked = 0
+        for job_name, job in (doc.get('jobs') or {}).items():
+            for index, step in enumerate(job.get('steps') or [], 1):
+                script = step.get('run')
+                shell = step.get('shell', 'bash')
+                if not script or not str(shell).lower().startswith('bash'):
+                    continue
+                proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if proc.returncode:
+                    print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                    print(proc.stderr, file=sys.stderr)
+                    raise SystemExit(proc.returncode)
+                checked += 1
+        if checked < 1:
+            raise SystemExit('ERROR: no bash run blocks found')
+        print(f'Workflow YAML + bash syntax PASS: {checked} bash blocks')
+        PY
+
+    - name: Install canonical MinGW and GLSL validation dependencies
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          binutils-mingw-w64-x86-64 build-essential ca-certificates \
+          g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+          libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+          python3 python3-yaml unzip zip file glslang-tools
+        command -v glslangValidator >/dev/null
+
+    - name: Verify exact runtime-tested Forest Water v1 isolation parent
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -Eeuo pipefail
+        run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+        test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo 'ERROR: parent HEAD drift' >&2; exit 1; }
+        test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo 'ERROR: parent run is not successful' >&2; exit 1; }
+        test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo 'ERROR: parent workflow drift' >&2; exit 1; }
+
+        line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+        test -n "$line" || { echo 'ERROR: exact parent artifact missing' >&2; exit 1; }
+        IFS=$'\t' read -r aname expired adigest <<< "$line"
+        test "$aname" = "$BASE_ARTIFACT_NAME" || { echo 'ERROR: parent artifact name drift' >&2; exit 1; }
+        test "$expired" = "false" || { echo 'ERROR: parent artifact expired' >&2; exit 1; }
+        test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo 'ERROR: parent artifact digest drift' >&2; exit 1; }
+        echo 'Exact runtime-tested Forest Water v1 isolation parent provenance PASS'
+    - name: Download and verify exact runtime-tested isolation parent payload
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -Eeuo pipefail
+        rm -rf base-artifact base-release
+        mkdir -p base-artifact base-release
+        gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+
+        base_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+        test -s "$base_zip" || { echo 'ERROR: parent inner ZIP missing' >&2; exit 1; }
+        test "$(sha256sum "$base_zip" | awk '{print $1}')" = "$BASE_INNER_ZIP_SHA256" || { echo 'ERROR: parent inner ZIP SHA drift' >&2; exit 1; }
+        unzip -q "$base_zip" -d base-release
+
+        mapfile -t roots < <(find base-release/release -mindepth 1 -maxdepth 1 -type d -print)
+        test "${#roots[@]}" -eq 1 || { echo 'ERROR: expected exactly one parent release root' >&2; exit 1; }
+        base_stage="${roots[0]}"
+        printf '%s\n' "$base_stage" > .base_stage_path
+
+        for rel in \
+          ioWolfSP.x64.exe renderer_sp_rend2_x64.dll renderer_sp_opengl1_x64.dll \
+          Main/qagame_sp_x64.dll Main/cgame_sp_x64.dll Main/ui_sp_x64.dll \
+          OpenAL64.dll SDL264.dll \
+          RUN_FOREST_WATER_V1_ISOLATION_MATRIX.cmd FOREST_WATER_V1_ISOLATION_COLLECT.ps1 \
+          Main/DARKWOLF_FOREST_WATER_V1_ISOLATION_MATRIX.cfg \
+          "docs/$BASE_CUMULATIVE_NAME"; do
+          test -s "$base_stage/$rel" || { echo "ERROR: parent payload missing: $rel" >&2; exit 1; }
+        done
+
+        test "$(sha256sum "$base_stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256" || { echo 'ERROR: parent renderer SHA drift' >&2; exit 1; }
+        test "$(sha256sum "$base_stage/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256" || { echo 'ERROR: parent cumulative source SHA drift' >&2; exit 1; }
+
+        strings -a "$base_stage/renderer_sp_rend2_x64.dll" > .base_renderer_strings.txt
+        for need in \
+          r_forestWaterMode FOREST_WATER_COLLAPSE PRESERVE_NATIVE_STAGES \
+          FOREST_WATER_V1_MATRIX textures/liquids/lake_m01 textures/liquids/river_m01 \
+          u_ForestWaterParams USE_FOREST_WATER probeImage cubemapBound \
+          r_msaaSelectiveSampleShading HDRMSAA_PROD_INIT HDRMSAA_PROD_ACTIVE \
+          FIREVOL085_GUARD FIREVOL084_HOLD FIREVOL083_PRIORITY; do
+          grep -Fq "$need" .base_renderer_strings.txt || { echo "ERROR: parent renderer missing runtime token: $need" >&2; exit 1; }
+        done
+        echo 'Exact runtime-tested isolation parent payload PASS'
+    - name: Reconstruct exact runtime-tested Forest Water v1 isolation source
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_stage="$(cat .base_stage_path)"
+        rm -rf source replay-delta replay-cumulative
+        git clone "$UPSTREAM_REPO" source
+        git -C source checkout --detach "$UPSTREAM_SHA"
+        git -C source reset --hard "$UPSTREAM_SHA"
+        git -C source clean -fdx
+
+        cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" .base-runtime-cumulative.patch
+        git -C source apply --check --binary ../.base-runtime-cumulative.patch
+        git -C source apply --binary ../.base-runtime-cumulative.patch
+
+        grep -Fq 'DARKWOLF_FOREST_WATER_V1_ISOLATION_STOCK_CUBEMAP_MATRIX_V0_1' source/SP/code/rend2/glsl/generic_fp.glsl
+        grep -Fq 'DARKWOLF_FOREST_WATER_V1_RUNTIME_GLSL_COMPAT_FIX' source/SP/code/rend2/glsl/generic_fp.glsl
+        grep -Fq 'FOREST_WATER_V1_MATRIX' source/SP/code/rend2/tr_shade.c
+        grep -Fq 'ri.Cvar_CheckRange( r_forestWaterMode, 0, 7, qtrue );' source/SP/code/rend2/tr_init.c
+        grep -Fq 'mode == 4 || mode == 7' source/SP/code/rend2/tr_shade.c
+        grep -Fq 'result += environment * reflectance;' source/SP/code/rend2/glsl/generic_fp.glsl
+        grep -Fq 'GENERICDEF_USE_FOREST_WATER' source/SP/code/rend2/tr_local.h
+
+        git -C source config user.email "darkwolf-ci@example.invalid"
+        git -C source config user.name "DarkWolf CI"
+        git -C source add -A
+        git -C source commit -m "Exact runtime-tested Forest Water v1 isolation parent"
+        git -C source rev-parse HEAD > .base_source_commit
+        test -z "$(git -C source status --porcelain)"
+        echo 'Exact runtime-tested isolation source reconstruction PASS'
+    - name: Apply Forest Water v1.1 energy-conserving Fresnel composition
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_commit="$(cat .base_source_commit)"
+
+        # Freeze high-risk unrelated renderer paths before the v1.1 delta.
+        sha256sum \
+          source/SP/code/rend2/tr_backend.c \
+          source/SP/code/rend2/tr_fbo.c \
+          source/SP/code/rend2/tr_glsl.c \
+          source/SP/code/rend2/tr_shader.c \
+          source/SP/code/rend2/glsl/generic_vp.glsl \
+          source/SP/code/rend2/glsl/lightall_fp.glsl \
+          > .frozen_before.sha256
+
+        cat > "$PATCHER_NAME" <<'PY'
+        from pathlib import Path
+
+        MARK = 'DARKWOLF_FOREST_WATER_V1_1_ENERGY_CONSERVING_FRESNEL_COMPOSITION'
+        ROOT = Path('source/SP/code/rend2')
+        init_p = ROOT / 'tr_init.c'
+        local_p = ROOT / 'tr_local.h'
+        shade_p = ROOT / 'tr_shade.c'
+        fp_p = ROOT / 'glsl/generic_fp.glsl'
+
+        init = init_p.read_text(encoding='utf-8')
+        local = local_p.read_text(encoding='utf-8')
+        shade = shade_p.read_text(encoding='utf-8')
+        fp = fp_p.read_text(encoding='utf-8')
+
+        def exact_once(text, old, new, label):
+            n = text.count(old)
+            if n != 1:
+                raise SystemExit(f'ERROR: {label}: expected exact anchor once, got {n}')
+            return text.replace(old, new, 1)
+
+        parent_blob = init + local + shade + fp
+        if MARK in parent_blob:
+            required = [
+                'ri.Cvar_CheckRange( r_forestWaterMode, 0, 9, qtrue );',
+                'mode == 4 || mode == 7 || mode == 9',
+                'FOREST_WATER_V11', 'composition=%s', 'ENERGY_CONSERVING',
+                'u_ForestWaterParams.x > 5.5 && u_ForestWaterParams.x < 7.5',
+                'u_ForestWaterParams.x > 7.5',
+                'baseColor * (vec3(1.0) - Fenv) + environment * Fenv + sunSpecular',
+            ]
+            missing = [x for x in required if x not in parent_blob]
+            if missing:
+                raise SystemExit('ERROR: v1.1 marker exists but contract incomplete: ' + ', '.join(missing))
+            print('Forest Water v1.1 energy-conserving Fresnel composition already applied')
+            raise SystemExit(0)
+
+        required_parent = [
+            'DARKWOLF_FOREST_WATER_V1_ISOLATION_STOCK_CUBEMAP_MATRIX_V0_1',
+            'DARKWOLF_FOREST_WATER_V1_RUNTIME_GLSL_COMPAT_FIX',
+            'FOREST_WATER_V1_MATRIX',
+            'ri.Cvar_CheckRange( r_forestWaterMode, 0, 7, qtrue );',
+            'mode == 4 || mode == 7',
+            'ForestWaterSampleStockCube',
+            'result += environment * reflectance;',
+        ]
+        missing = [x for x in required_parent if x not in parent_blob]
+        if missing:
+            raise SystemExit('ERROR: exact runtime-tested isolation parent contract missing: ' + ', '.join(missing))
+
+        init = exact_once(
+            init,
+            'ri.Cvar_CheckRange( r_forestWaterMode, 0, 7, qtrue ); // DARKWOLF_FOREST_WATER_V1_ISOLATION_STOCK_CUBEMAP_MATRIX_V0_1',
+            'ri.Cvar_CheckRange( r_forestWaterMode, 0, 9, qtrue ); // ' + MARK,
+            'r_forestWaterMode range 0..9')
+
+        local = exact_once(
+            local,
+            'extern  cvar_t  *r_forestWaterMode;  // Forest water matrix: 2=reference, 3=BRDF, 4=micro-only, 5=raw-cube, 6=stock-cube, 7=stock-cube+micro',
+            'extern  cvar_t  *r_forestWaterMode;  // Forest water: 2=reference, 6=stock-additive control, 8=energy Fresnel flat, 9=energy Fresnel micro candidate',
+            'Forest Water v1.1 mode declaration')
+
+        old_stock = (
+            '    // Modes 6/7 follow stock Rend2 lightall cubemap conventions as closely as this dedicated\n'
+            '    // generic WATER path allows: stock reflection orientation, CubeMapInfo parallax vector,\n'
+            '    // roughness-dependent LOD, stock EnvironmentBRDF shape, PBR cube linearization, additive IBL.\n'
+            '    if (u_ForestWaterParams.x > 5.5 && u_ForestWaterParams.y > 0.5)\n'
+            '    {\n'
+            '        float roughness = clamp(u_ForestWaterParams.w, 0.06, 0.35);\n'
+            '        vec3 viewDir = u_ViewOrigin - var_WaterWorldPos;\n'
+            '        vec3 stockR = reflect(V, N);\n'
+            '        vec3 parallax = u_CubeMapInfo.xyz + u_CubeMapInfo.w * viewDir;\n'
+            '        float lod = ROUGHNESS_MIPS * roughness;\n'
+            '        vec3 environment = ForestWaterSampleStockCube(stockR + parallax, lod);\n'
+            '#if defined(USE_PBR)\n'
+            '        environment *= environment;\n'
+            '#endif\n'
+            '        vec3 reflectance = ForestWaterEnvironmentBRDF(roughness, NoV, dielectricF0);\n'
+            '        result += environment * reflectance;\n'
+            '    }\n'
+        )
+        new_stock = (
+            '    // Modes 6/7 are retained byte-for-byte in behavior as the known STOCK-ADDITIVE control.\n'
+            '    // ' + MARK + '\n'
+            '    if (u_ForestWaterParams.x > 5.5 && u_ForestWaterParams.x < 7.5 && u_ForestWaterParams.y > 0.5)\n'
+            '    {\n'
+            '        float roughness = clamp(u_ForestWaterParams.w, 0.06, 0.35);\n'
+            '        vec3 viewDir = u_ViewOrigin - var_WaterWorldPos;\n'
+            '        vec3 stockR = reflect(V, N);\n'
+            '        vec3 parallax = u_CubeMapInfo.xyz + u_CubeMapInfo.w * viewDir;\n'
+            '        float lod = ROUGHNESS_MIPS * roughness;\n'
+            '        vec3 environment = ForestWaterSampleStockCube(stockR + parallax, lod);\n'
+            '#if defined(USE_PBR)\n'
+            '        environment *= environment;\n'
+            '#endif\n'
+            '        vec3 reflectance = ForestWaterEnvironmentBRDF(roughness, NoV, dielectricF0);\n'
+            '        result += environment * reflectance;\n'
+            '    }\n\n'
+            '    // Modes 8/9 change ONLY composition. The assigned stock-compatible probe sampling,\n'
+            '    // parallax vector, roughness LOD and PBR cube conversion remain identical to mode 6/7.\n'
+            '    // Schlick Fresnel redistributes energy: base*(1-F) + environment*F + direct sun specular.\n'
+            '    if (u_ForestWaterParams.x > 7.5 && u_ForestWaterParams.y > 0.5)\n'
+            '    {\n'
+            '        float roughness = clamp(u_ForestWaterParams.w, 0.06, 0.35);\n'
+            '        vec3 viewDir = u_ViewOrigin - var_WaterWorldPos;\n'
+            '        vec3 stockR = reflect(V, N);\n'
+            '        vec3 parallax = u_CubeMapInfo.xyz + u_CubeMapInfo.w * viewDir;\n'
+            '        float lod = ROUGHNESS_MIPS * roughness;\n'
+            '        vec3 environment = ForestWaterSampleStockCube(stockR + parallax, lod);\n'
+            '#if defined(USE_PBR)\n'
+            '        environment *= environment;\n'
+            '#endif\n'
+            '        vec3 Fenv = ForestWaterFresnelSchlick(NoV, dielectricF0);\n'
+            '        vec3 sunSpecular = max(result - baseColor, vec3(0.0));\n'
+            '        result = baseColor * (vec3(1.0) - Fenv) + environment * Fenv + sunSpecular;\n'
+            '    }\n'
+        )
+        fp = exact_once(fp, old_stock, new_stock, 'stock-additive -> retained control + energy-conserving modes')
+
+        shade = exact_once(
+            shade,
+            'static unsigned int s_forestWaterV1LoggedLakeViews[8] = { 0 };\n'
+            'static unsigned int s_forestWaterV1LoggedRiverViews[8] = { 0 };\n',
+            'static unsigned int s_forestWaterV1LoggedLakeViews[10] = { 0 }; // ' + MARK + '\n'
+            'static unsigned int s_forestWaterV1LoggedRiverViews[10] = { 0 };\n',
+            'telemetry arrays 0..9')
+
+        shade = exact_once(
+            shade,
+            '\t\t\tfloat micro = (mode == 4 || mode == 7) ? 0.085f : 0.0f;\n'
+            '\t\t\tunsigned int viewBit = captureView ? 1u : 2u;\n',
+            '\t\t\tfloat micro = (mode == 4 || mode == 7 || mode == 9) ? 0.085f : 0.0f;\n'
+            '\t\t\tconst char *composition = (mode == 8 || mode == 9) ? "ENERGY_CONSERVING"\n'
+            '\t\t\t\t: ((mode == 6 || mode == 7) ? "STOCK_ADDITIVE"\n'
+            '\t\t\t\t: (mode == 5 ? "RAW_CONTROL" : (mode == 2 ? "REFERENCE" : "CONTROL")));\n'
+            '\t\t\tunsigned int viewBit = captureView ? 1u : 2u;\n',
+            'v1.1 micro isolation and composition telemetry')
+
+        old_log = (
+            '\t\t\t\tri.Printf(PRINT_ALL,\n'
+            '\t\t\t\t\t"FOREST_WATER_V1_MATRIX mode=%d shader=%s stage=%d view=%s viewFlags=0x%x cubeidx=%d probeImage=%s cubemapBound=%d r_cubeMapping=%d roughness=%.3f micro=%.3f\\n",\n'
+            '\t\t\t\t\tmode, tess.shader->name, stage, captureView ? "CUBEMAP_CAPTURE" : "MAIN",\n'
+            '\t\t\t\t\t(unsigned int)tr.viewParms.flags, input->cubemapIndex, probeImage,\n'
+            '\t\t\t\t\tcubemapBound ? 1 : 0, cubeMappingValue, waterParams[3], waterParams[2]);\n'
+        )
+        new_log = (
+            '\t\t\t\tri.Printf(PRINT_ALL,\n'
+            '\t\t\t\t\t"FOREST_WATER_V11 mode=%d shader=%s stage=%d view=%s viewFlags=0x%x cubeidx=%d probeImage=%s cubemapBound=%d r_cubeMapping=%d composition=%s roughness=%.3f micro=%.3f\\n",\n'
+            '\t\t\t\t\tmode, tess.shader->name, stage, captureView ? "CUBEMAP_CAPTURE" : "MAIN",\n'
+            '\t\t\t\t\t(unsigned int)tr.viewParms.flags, input->cubemapIndex, probeImage,\n'
+            '\t\t\t\t\tcubemapBound ? 1 : 0, cubeMappingValue, composition, waterParams[3], waterParams[2]);\n'
+        )
+        shade = exact_once(shade, old_log, new_log, 'v1.1 telemetry line')
+
+        final = init + local + shade + fp
+        required = [
+            MARK,
+            'ri.Cvar_CheckRange( r_forestWaterMode, 0, 9, qtrue );',
+            'mode == 4 || mode == 7 || mode == 9',
+            'FOREST_WATER_V11', 'composition=%s', 'ENERGY_CONSERVING', 'STOCK_ADDITIVE',
+            'u_ForestWaterParams.x > 5.5 && u_ForestWaterParams.x < 7.5',
+            'u_ForestWaterParams.x > 7.5',
+            'vec3 Fenv = ForestWaterFresnelSchlick(NoV, dielectricF0);',
+            'vec3 sunSpecular = max(result - baseColor, vec3(0.0));',
+            'result = baseColor * (vec3(1.0) - Fenv) + environment * Fenv + sunSpecular;',
+        ]
+        missing = [x for x in required if x not in final]
+        if missing:
+            raise SystemExit('ERROR: final v1.1 contract incomplete: ' + ', '.join(missing))
+        if 'if (u_ForestWaterParams.x > 5.5 && u_ForestWaterParams.y > 0.5)' in fp:
+            raise SystemExit('ERROR: old broad stock-additive branch still captures v1.1 modes')
+        if fp.count('result += environment * reflectance;') != 1:
+            raise SystemExit('ERROR: stock-additive control count drift')
+        if fp.count('baseColor * (vec3(1.0) - Fenv) + environment * Fenv + sunSpecular') != 1:
+            raise SystemExit('ERROR: energy-conserving composition count drift')
+
+        init_p.write_text(init, encoding='utf-8', newline='\n')
+        local_p.write_text(local, encoding='utf-8', newline='\n')
+        shade_p.write_text(shade, encoding='utf-8', newline='\n')
+        fp_p.write_text(fp, encoding='utf-8', newline='\n')
+        print('Forest Water v1.1 energy-conserving Fresnel composition applied')
+        PY
+
+        python3 -m py_compile "$PATCHER_NAME"
+        python3 "$PATCHER_NAME"
+        python3 "$PATCHER_NAME"
+
+        mapfile -t changed < <(git -C source diff --name-only "$base_commit" | sort)
+        expected=(
+          SP/code/rend2/glsl/generic_fp.glsl
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          SP/code/rend2/tr_shade.c
+        )
+        mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+        test "${#changed[@]}" -eq "${#expected_sorted[@]}" || {
+          printf 'ERROR: changed-file count drift\nactual:\n%s\n' "${changed[*]}" >&2; exit 1;
+        }
+        for i in "${!expected_sorted[@]}"; do
+          test "${changed[$i]}" = "${expected_sorted[$i]}" || {
+            echo "ERROR: changed-file allowlist drift: ${changed[$i]} != ${expected_sorted[$i]}" >&2; exit 1;
+          }
+        done
+        git -C source diff --check "$base_commit"
+        sha256sum -c .frozen_before.sha256
+
+        # Preserve the previously accepted HDR-safe legacy water energy constants exactly.
+        grep -Fq 'scale = 0.55f; // lake_m1 additive' source/SP/code/rend2/tr_shade.c
+        grep -Fq 'scale = 0.35f; // lake_m2 additive detail' source/SP/code/rend2/tr_shade.c
+        grep -Fq 'scale = 0.55f; // river_m2 additive detail' source/SP/code/rend2/tr_shade.c
+        grep -Fq 'R_ForestWaterHDRSafeStage(stage, baseColor, vertColor); // FOREST_WATER_HDR_SAFE' source/SP/code/rend2/tr_shade.c
+
+        grep -Fq 'ri.Cvar_CheckRange( r_forestWaterMode, 0, 9, qtrue );' source/SP/code/rend2/tr_init.c
+        grep -Fq 'mode == 4 || mode == 7 || mode == 9' source/SP/code/rend2/tr_shade.c
+        grep -Fq 'FOREST_WATER_V11' source/SP/code/rend2/tr_shade.c
+        grep -Fq 'composition=%s' source/SP/code/rend2/tr_shade.c
+        grep -Fq 'u_ForestWaterParams.x > 5.5 && u_ForestWaterParams.x < 7.5' source/SP/code/rend2/glsl/generic_fp.glsl
+        grep -Fq 'u_ForestWaterParams.x > 7.5' source/SP/code/rend2/glsl/generic_fp.glsl
+        grep -Fq 'result = baseColor * (vec3(1.0) - Fenv) + environment * Fenv + sunSpecular;' source/SP/code/rend2/glsl/generic_fp.glsl
+
+        git -C source diff --binary "$base_commit" -- > "$DELTA_NAME"
+        test -s "$DELTA_NAME"
+        sha256sum "$DELTA_NAME" > "$DELTA_NAME.sha256"
+        git -C source apply --reverse --check --binary "../$DELTA_NAME"
+
+        git -C source diff --binary "$UPSTREAM_SHA" -- > "$CUMULATIVE_NAME"
+        test -s "$CUMULATIVE_NAME"
+        sha256sum "$CUMULATIVE_NAME" > "$CUMULATIVE_NAME.sha256"
+        echo 'Forest Water v1.1 source delta validation PASS'
+    - name: Validate Forest Water v1.1 generic permutations in GLSL 1.20 and 1.50 with PBR off/on
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        rm -rf glsl-validate
+        mkdir -p glsl-validate
+
+        python3 - <<'PY'
+        from pathlib import Path
+
+        root = Path('source/SP/code/rend2/glsl')
+        vp = (root / 'generic_vp.glsl').read_text(encoding='utf-8')
+        fp = (root / 'generic_fp.glsl').read_text(encoding='utf-8')
+        out = Path('glsl-validate')
+
+        constants = '\n'.join([
+            '#define M_PI 3.14159265358979323846',
+            '#define ROUGHNESS_MIPS float(6)',
+            '#define DGEN_WAVE_SIN 1',
+            '#define DGEN_WAVE_SQUARE 2',
+            '#define DGEN_WAVE_TRIANGLE 3',
+            '#define DGEN_WAVE_SAWTOOTH 4',
+            '#define DGEN_WAVE_INVERSE_SAWTOOTH 5',
+            '#define DGEN_BULGE 6',
+            '#define DGEN_MOVE 7',
+            '#define TCGEN_LIGHTMAP 1',
+            '#define TCGEN_TEXTURE 2',
+            '#define TCGEN_ENVIRONMENT_MAPPED 3',
+            '#define TCGEN_FOG 4',
+            '#define TCGEN_VECTOR 5',
+            '#define CGEN_LIGHTING_DIFFUSE 1',
+            '#define AGEN_LIGHTING_SPECULAR 1',
+            '#define AGEN_PORTAL 2',
+            '#define AGEN_NORMALZFADE 3',
+        ]) + '\n'
+
+        combo_defs = [
+            ('tcmod', '#define USE_TCGEN\n#define USE_TCMOD\n'),
+            ('fog', '#define USE_FOG\n'),
+            ('rgba', '#define USE_RGBAGEN\n'),
+            ('wlin', '#define USE_WOLF_FOG_LINEAR\n'),
+            ('wexp', '#define USE_WOLF_FOG_EXPONENTIAL\n'),
+            ('pbr', '#define USE_PBR\n'),
+        ]
+
+        manifest = []
+        for version in (120, 150):
+            for mask in range(1 << len(combo_defs)):
+                names = []
+                defs = ['#define USE_FOREST_WATER\n']
+                for bit, (name, define) in enumerate(combo_defs):
+                    if mask & (1 << bit):
+                        names.append(name)
+                        defs.append(define)
+                suffix = '_'.join(names) if names else 'base'
+                stem = f'generic_water_v{version}_{mask:02d}_{suffix}'
+
+                if version >= 130:
+                    vp_header = f'''#version {version}\n#define attribute in\n#define varying out\n{constants}\n{''.join(defs)}'''
+                    fp_header = f'''#version {version}\n#define varying in\nout vec4 out_Color;\n#define gl_FragColor out_Color\n#define texture2D texture\n#define textureCubeLod textureLod\n#define shadow2D texture\n{constants}\n{''.join(defs)}'''
+                else:
+                    vp_header = f'''#version {version}\n{constants}\n{''.join(defs)}'''
+                    fp_header = f'''#version {version}\n#define shadow2D(a,b) shadow2D(a,b).r\n{constants}\n{''.join(defs)}'''
+
+                vfile = out / f'{stem}.vert'
+                ffile = out / f'{stem}.frag'
+                vfile.write_text(vp_header + '\n#line 1\n' + vp, encoding='utf-8', newline='\n')
+                ffile.write_text(fp_header + '\n#line 1\n' + fp, encoding='utf-8', newline='\n')
+                manifest.append((vfile, ffile))
+
+        with (out / 'manifest.txt').open('w', encoding='utf-8') as fh:
+            for vfile, ffile in manifest:
+                fh.write(f'{vfile}\t{ffile}\n')
+        print(f'Generated {len(manifest)} linked WATER permutation pairs')
+        PY
+
+        count=0
+        while IFS=$'\t' read -r vert frag; do
+          test -s "$vert" && test -s "$frag"
+          glslangValidator -l "$vert" "$frag" >/tmp/glslang-water.log 2>&1 || {
+            echo "ERROR: GLSL validation failed for $vert + $frag" >&2
+            cat /tmp/glslang-water.log >&2
+            exit 1
+          }
+          count=$((count + 1))
+        done < glsl-validate/manifest.txt
+        test "$count" -eq 128 || { echo "ERROR: expected 128 GLSL WATER permutation pairs, got $count" >&2; exit 1; }
+        echo "Forest Water v1.1 GLSL 1.20/1.50 + PBR off/on validation PASS: $count linked pairs"
+
+    - name: Independent v1.1 delta and cumulative replay verification
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_commit="$(cat .base_source_commit)"
+
+        git -C source worktree add --detach ../replay-delta "$base_commit"
+        git -C replay-delta apply --check --binary "../$DELTA_NAME"
+        git -C replay-delta apply --binary "../$DELTA_NAME"
+        grep -Fq 'DARKWOLF_FOREST_WATER_V1_1_ENERGY_CONSERVING_FRESNEL_COMPOSITION' replay-delta/SP/code/rend2/glsl/generic_fp.glsl
+        grep -Fq 'FOREST_WATER_V11' replay-delta/SP/code/rend2/tr_shade.c
+        grep -Fq 'ri.Cvar_CheckRange( r_forestWaterMode, 0, 9, qtrue );' replay-delta/SP/code/rend2/tr_init.c
+        grep -Fq 'baseColor * (vec3(1.0) - Fenv) + environment * Fenv + sunSpecular' replay-delta/SP/code/rend2/glsl/generic_fp.glsl
+        git -C replay-delta diff --check
+        git -C replay-delta apply --reverse --check --binary "../$DELTA_NAME"
+
+        git -C source worktree add --detach ../replay-cumulative "$UPSTREAM_SHA"
+        git -C replay-cumulative apply --check --binary "../$CUMULATIVE_NAME"
+        git -C replay-cumulative apply --binary "../$CUMULATIVE_NAME"
+        grep -Fq 'DARKWOLF_FOREST_WATER_V1_RUNTIME_GLSL_COMPAT_FIX' replay-cumulative/SP/code/rend2/glsl/generic_fp.glsl
+        grep -Fq 'DARKWOLF_FOREST_WATER_V1_ISOLATION_STOCK_CUBEMAP_MATRIX_V0_1' replay-cumulative/SP/code/rend2/glsl/generic_fp.glsl
+        grep -Fq 'DARKWOLF_FOREST_WATER_V1_1_ENERGY_CONSERVING_FRESNEL_COMPOSITION' replay-cumulative/SP/code/rend2/glsl/generic_fp.glsl
+        grep -Fq 'FOREST_WATER_V11' replay-cumulative/SP/code/rend2/tr_shade.c
+        grep -Fq 'HDRMSAA_PROD_INIT' replay-cumulative/SP/code/rend2/tr_fbo.c
+        grep -Fq 'FIREVOL085_GUARD' replay-cumulative/SP/code/rend2/tr_backend.c
+        git -C replay-cumulative apply --reverse --check --binary "../$CUMULATIVE_NAME"
+
+        # Stage both working trees before write-tree; write-tree serializes the INDEX.
+        git -C source add -A
+        source_tree="$(git -C source write-tree)"
+        git -C replay-cumulative add -A
+        replay_tree="$(git -C replay-cumulative write-tree)"
+        test "$replay_tree" = "$source_tree" || {
+          echo "ERROR: cumulative replay tree drift: expected=$source_tree actual=$replay_tree" >&2
+          exit 1
+        }
+        echo "Cumulative replay exact-tree PASS: $replay_tree"
+        echo 'Independent Forest Water v1.1 replay PASS'
+    - name: Build canonical Windows x64 Forest Water v1.1 renderer
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        jobs="$(nproc)"
+        if [ "$jobs" -gt 4 ]; then jobs=4; fi
+        cd source/SP
+        ./cross-make-mingw64.sh -j"$jobs" \
+          BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+          BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+    - name: Verify rebuilt Forest Water v1.1 renderer and frozen production systems
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | sort)
+        test "${#renderers[@]}" -eq 1 || { echo 'ERROR: expected exactly one rebuilt Rend2 DLL' >&2; exit 1; }
+        new_renderer="${renderers[0]}"
+        test -s "$new_renderer"
+        printf '%s\n' "$new_renderer" > .new_renderer_path
+
+        file "$new_renderer" > .new_renderer_file.txt
+        grep -Fq 'PE32+ executable' .new_renderer_file.txt
+        grep -Fq 'x86-64' .new_renderer_file.txt
+        grep -Fq '(DLL)' .new_renderer_file.txt
+        test "$(sha256sum "$new_renderer" | awk '{print $1}')" != "$BASE_RENDERER_SHA256"
+
+        strings -a "$new_renderer" > .new_renderer_strings.txt
+        for need in \
+          r_forestWaterMode FOREST_WATER_COLLAPSE PRESERVE_NATIVE_STAGES \
+          FOREST_WATER_V11 ENERGY_CONSERVING STOCK_ADDITIVE \
+          textures/liquids/lake_m01 textures/liquids/river_m01 \
+          u_ForestWaterParams USE_FOREST_WATER probeImage cubemapBound \
+          r_msaaSelectiveSampleShading HDRMSAA_PROD_INIT HDRMSAA_PROD_ACTIVE \
+          FIREVOL085_GUARD FIREVOL084_HOLD FIREVOL083_PRIORITY; do
+          grep -Fq "$need" .new_renderer_strings.txt || { echo "ERROR: rebuilt renderer missing runtime token: $need" >&2; exit 1; }
+        done
+
+        grep -Fq 'ForestWaterSampleStockCube' source/SP/code/rend2/glsl/generic_fp.glsl
+        grep -Fq 'environment *= environment;' source/SP/code/rend2/glsl/generic_fp.glsl
+        grep -Fq 'result += environment * reflectance;' source/SP/code/rend2/glsl/generic_fp.glsl
+        grep -Fq 'result = baseColor * (vec3(1.0) - Fenv) + environment * Fenv + sunSpecular;' source/SP/code/rend2/glsl/generic_fp.glsl
+        echo 'Rebuilt Forest Water v1.1 renderer verification PASS'
+    - name: Package focused Forest Water v1.1 energy-conserving test kit
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        base_stage="$(cat .base_stage_path)"
+        new_renderer="$(cat .new_renderer_path)"
+
+        rm -rf release dist
+        stage="release/$RELEASE_BASENAME"
+        mkdir -p "$stage" dist
+        cp -a "$base_stage/." "$stage/"
+        cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+
+        # Remove the superseded six-mode shell; v1.1 has one focused entry point.
+        rm -f \
+          "$stage/RUN_FOREST_WATER_V1_ISOLATION_MATRIX.cmd" \
+          "$stage/FOREST_WATER_V1_ISOLATION_COLLECT.ps1" \
+          "$stage/Main/DARKWOLF_FOREST_WATER_V1_ISOLATION_MATRIX.cfg"
+
+        # Frozen host/game/runtime binaries remain byte-identical to the runtime-tested isolation parent.
+        for rel in \
+          ioWolfSP.x64.exe renderer_sp_opengl1_x64.dll \
+          Main/qagame_sp_x64.dll Main/cgame_sp_x64.dll Main/ui_sp_x64.dll \
+          OpenAL64.dll SDL264.dll \
+          Main/FIREVOL085_PRODUCTION_BALANCED.cfg \
+          Main/DARKWOLF_HDR_MSAA_PRODUCTION.cfg; do
+          cmp "$base_stage/$rel" "$stage/$rel" || { echo "ERROR: frozen package drift: $rel" >&2; exit 1; }
+        done
+
+        cat > "$stage/Main/DARKWOLF_FOREST_WATER_V11_ENERGY_MATRIX.cfg" <<'EOF'
+        // Forest Water v1.1 - Energy-Conserving Fresnel Composition
+        // Focused matrix: reference vs known additive control vs new energy-conserving flat/micro.
+        // r_forestWaterMode is latched; each F-key performs vid_restart.
+        seta r_cubeMapping "1"
+        seta r_forestWaterMode "2"
+        bind F6 "seta r_forestWaterMode 2; vid_restart; echo FOREST_WATER_MATRIX F6_MODE2_REFERENCE"
+        bind F7 "seta r_forestWaterMode 6; vid_restart; echo FOREST_WATER_MATRIX F7_MODE6_STOCK_ADDITIVE_CONTROL"
+        bind F8 "seta r_forestWaterMode 8; vid_restart; echo FOREST_WATER_MATRIX F8_MODE8_ENERGY_FRESNEL_FLAT"
+        bind F9 "seta r_forestWaterMode 9; vid_restart; echo FOREST_WATER_MATRIX F9_MODE9_ENERGY_FRESNEL_MICRO_CANDIDATE"
+        bind F12 "screenshot"
+        EOF
+
+        cat > "$stage/RUN_FOREST_WATER_V11_ENERGY_MATRIX.cmd" <<'EOF'
+        @echo off
+        setlocal
+        cd /d "%~dp0"
+        set "TESTHOME=%~dp0FOREST_WATER_V11_TEST_HOME"
+        if exist "%TESTHOME%" rmdir /s /q "%TESTHOME%"
+        mkdir "%TESTHOME%"
+        echo ============================================================
+        echo DarkWolf Rend2 Forest Water v1.1 Energy-Conserving Fresnel
+        echo ROOT QUESTION: can Fresnel replacement remove the residual stock-additive energy lift?
+        echo F6 = mode2 proven dark HDR-safe reference
+        echo F7 = mode6 previous stock-compatible ADDITIVE control
+        echo F8 = mode8 energy-conserving Fresnel, flat normal
+        echo F9 = mode9 F8 + proven-safe micro-normal 0.085 candidate
+        echo Keep ONE fixed lake camera. For each F6..F9: wait for vid_restart, then press F12.
+        echo ============================================================
+        ioWolfSP.x64.exe +set fs_homepath "%TESTHOME%" +set com_recommendedSet 1 +set cl_renderer rend2 +set developer 1 +set logfile 2 +set r_swapInterval 0 +set r_ext_multisample 0 +set r_ext_framebuffer_multisample 4 +set r_hdr 1 +set r_msaaSelectiveSampleShading 1 +set r_cubeMapping 1 +set r_forestWaterMode 2 +exec FIREVOL085_PRODUCTION_BALANCED.cfg +exec DARKWOLF_HDR_MSAA_PRODUCTION.cfg +exec DARKWOLF_FOREST_WATER_V11_ENERGY_MATRIX.cfg +spdevmap forest
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0FOREST_WATER_V11_COLLECT.ps1" -TestHome "%TESTHOME%"
+        echo.
+        echo Upload FOREST_WATER_V11_RESULTS.zip and the four lake screenshots.
+        pause
+        EOF
+
+        cat > "$stage/FOREST_WATER_V11_COLLECT.ps1" <<'PS1'
+        param([Parameter(Mandatory=$true)][string]$TestHome)
+        $ErrorActionPreference='Stop'
+        $root=$PSScriptRoot
+        $out=Join-Path $root 'FOREST_WATER_V11_RESULTS'
+        $zip=Join-Path $root 'FOREST_WATER_V11_RESULTS.zip'
+        if(Test-Path $out){Remove-Item -Recurse -Force $out}
+        if(Test-Path $zip){Remove-Item -Force $zip}
+        New-Item -ItemType Directory -Force -Path $out|Out-Null
+
+        $log=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'rtcwconsole.log' -ErrorAction SilentlyContinue|Select-Object -First 1
+        if($log){
+          Copy-Item $log.FullName (Join-Path $out 'rtcwconsole.log')
+          $m=Select-String -Path $log.FullName -Pattern 'FOREST_WATER_V11|FOREST_WATER_MATRIX|FOREST_WATER_COLLAPSE' -ErrorAction SilentlyContinue
+          if($m){$m.Line|Set-Content -Encoding UTF8 (Join-Path $out 'FOREST_WATER_V11_LINES.txt')}
+
+          $rows=@()
+          $rx='FOREST_WATER_V11 mode=(\d+) shader=(\S+) stage=(\d+) view=(\S+) viewFlags=(0x[0-9A-Fa-f]+) cubeidx=(\d+) probeImage=(\S+) cubemapBound=(\d+) r_cubeMapping=(-?\d+) composition=(\S+) roughness=([0-9.]+) micro=([0-9.]+)'
+          foreach($line in Get-Content $log.FullName){
+            if($line -match $rx){
+              $rows += [PSCustomObject]@{
+                mode=[int]$Matches[1]; shader=$Matches[2]; stage=[int]$Matches[3]; view=$Matches[4];
+                viewFlags=$Matches[5]; cubeidx=[int]$Matches[6]; probeImage=$Matches[7];
+                cubemapBound=[int]$Matches[8]; r_cubeMapping=[int]$Matches[9]; composition=$Matches[10];
+                roughness=[double]$Matches[11]; micro=[double]$Matches[12]
+              }
+            }
+          }
+          if($rows.Count -gt 0){$rows|Export-Csv -NoTypeInformation -Encoding UTF8 (Join-Path $out 'FOREST_WATER_V11_TELEMETRY.csv')}
+        }
+
+        $cfg=Get-ChildItem -Path $TestHome -Recurse -File -Filter 'wolfconfig.cfg' -ErrorAction SilentlyContinue|Select-Object -First 1
+        if($cfg){Copy-Item $cfg.FullName (Join-Path $out 'wolfconfig.cfg')}
+
+        $shotRoots=@($TestHome,(Join-Path $TestHome 'main'),$root,(Join-Path $root 'Main'))|Select-Object -Unique
+        $shots=@()
+        foreach($sr in $shotRoots){
+          if(Test-Path $sr){
+            $shots += Get-ChildItem -Path $sr -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.tga','.jpg','.jpeg','.png' }
+          }
+        }
+        $shots=$shots|Sort-Object FullName -Unique
+        $i=0
+        foreach($shot in $shots){$i++; Copy-Item $shot.FullName (Join-Path $out ('shot_{0:D3}_{1}' -f $i,$shot.Name))}
+
+        @(
+          'Forest Water v1.1 - Energy-Conserving Fresnel Composition',
+          'F6 mode2 = REFERENCE proven HDR-safe base',
+          'F7 mode6 = previous stock-compatible ADDITIVE control, flat normal',
+          'F8 mode8 = energy-conserving Schlick Fresnel: base*(1-F)+environment*F+sunSpecular, flat normal',
+          'F9 mode9 = F8 + proven-safe micro-normal 0.085 candidate',
+          'Expected MAIN telemetry for modes 6/8/9: cubemapBound=1 when the Forest probe is available.'
+        )|Set-Content -Encoding UTF8 (Join-Path $out 'TEST_SUMMARY.txt')
+
+        Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -CompressionLevel Optimal
+        Write-Host "Created $zip"
+        PS1
+
+        cat > "$stage/README_FOREST_WATER_V11_ENERGY_CONSERVING_RU.txt" <<'EOF'
+        DARKWOLF / ioRTCW Rend2 SP
+        FOREST WATER v1.1 - ENERGY-CONSERVING FRESNEL COMPOSITION
+
+        CONFIRMED INPUT FROM v1 ISOLATION MATRIX
+        - HDR-safe reference is stable.
+        - Micro-normal 0.085 is NOT the wash root cause.
+        - Raw cubemap integration is the wash root cause.
+        - Stock-compatible sampling is a major improvement, but additive composition still raises total surface energy.
+
+        ARCHITECTURAL CHANGE
+          F = Schlick Fresnel(NoV, dielectric F0=0.02037)
+          basePart       = HDR-safe legacy water * (1-F)
+          reflectionPart = stock-compatible cubemap * F
+          water          = basePart + reflectionPart + direct sun/specular
+
+        There is NO new arbitrary brightness coefficient in modes 8/9.
+        Stock-compatible probe selection, CubeMapInfo parallax, roughness LOD and PBR cube conversion are retained.
+        Only the composition rule changes from ADDITIVE to Fresnel energy redistribution.
+
+        FOCUSED MODES
+        F6 / mode2 - REFERENCE
+          Proven dark HDR-safe legacy water.
+
+        F7 / mode6 - STOCK ADDITIVE CONTROL
+          Exact previous stock-compatible flat-normal response with additive EnvironmentBRDF contribution.
+          This is the known residual-energy-lift control.
+
+        F8 / mode8 - ENERGY-CONSERVING FLAT
+          Same stock-compatible cubemap sampling as F7, flat normal.
+          Replaces additive IBL with base*(1-F)+cube*F+sunSpecular.
+
+        F9 / mode9 - ENERGY-CONSERVING MICRO CANDIDATE
+          Exact F8 composition + previously validated micro-normal 0.085.
+
+        TEST
+        1. Run RUN_FOREST_WATER_V11_ENERGY_MATRIX.cmd.
+        2. Keep one fixed lake camera.
+        3. F6 -> wait for vid_restart -> F12.
+        4. F7 -> wait for vid_restart -> F12.
+        5. F8 -> wait for vid_restart -> F12.
+        6. F9 -> wait for vid_restart -> F12.
+        7. Exit and upload FOREST_WATER_V11_RESULTS.zip plus the four screenshots.
+
+        DECISION
+        - If F8 returns close to F6 energy while gaining angle-dependent reflection, energy composition is confirmed.
+        - If F8 is good and F9 is good, mode9 becomes the Water v1.1 production-candidate architecture.
+        - If F8 is good and F9 regresses, mode8 wins and micro-normal is removed despite its earlier isolated pass.
+        - If F8/F9 remain globally lifted, do NOT tune coefficients randomly; next audit is cubemap color/exposure space.
+
+        FROZEN
+        forest.bsp, liquid.shader, original water textures, v0.2 HDR-safe constants,
+        Bloom, ToneMap/Exposure, GI/SSGI, MAT/REF tuning, FireVol, Local Volumetric,
+        Sun/CSM architecture, point shadows, Static Promotion, Lamp Learn,
+        CGAME/QAGAME/UI and OpenGL1 remain unchanged.
+        EOF
+
+        mkdir -p "$stage/docs"
+        cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+        cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+        cp "$DELTA_NAME.sha256" "$stage/docs/$DELTA_NAME.sha256"
+        cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+        cp "$CUMULATIVE_NAME.sha256" "$stage/docs/$CUMULATIVE_NAME.sha256"
+        cp .base-runtime-cumulative.patch "$stage/docs/$BASE_CUMULATIVE_NAME"
+
+        cat > "$stage/docs/FOREST_WATER_V11_PROVENANCE.txt" <<EOF
+        experiment=Forest Water v1.1 Energy-Conserving Fresnel Composition
+        root_question=replace_residual_stock_additive_energy_lift_with_fresnel_energy_redistribution
+        base_status=RUNTIME_TESTED_BY_USER
+        base_run=$BASE_RUN_ID
+        base_head=$BASE_RUN_HEAD_SHA
+        base_workflow=$BASE_WORKFLOW_PATH
+        base_artifact_id=$BASE_ARTIFACT_ID
+        base_artifact_name=$BASE_ARTIFACT_NAME
+        base_artifact_digest=$BASE_ARTIFACT_DIGEST
+        base_inner_zip_sha256=$BASE_INNER_ZIP_SHA256
+        base_renderer_sha256=$BASE_RENDERER_SHA256
+        base_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+        upstream_sha=$UPSTREAM_SHA
+        source_delta=tr_init.c,tr_local.h,tr_shade.c,glsl/generic_fp.glsl
+        confirmed_root_cause=raw_cubemap_composition
+        micro_normal_0_085=isolation_pass
+        stock_sampling=validated_major_improvement
+        remaining_problem=additive_environment_energy_lift
+        mode2=reference_hdr_safe
+        mode6=stock_compatible_additive_control_flat
+        mode8=energy_conserving_fresnel_flat
+        mode9=energy_conserving_fresnel_micro_0_085_candidate
+        energy_formula=base_times_one_minus_F_plus_environment_times_F_plus_sun_specular
+        forest_bsp_changed=no
+        liquid_shader_changed=no
+        original_textures_changed=no
+        v02_hdr_safe_constants_changed=no
+        bloom_tonemap_gi_firevol_localvol_shadow_staticpromotion_lamplearn_changed=no
+        qagame_cgame_ui_opengl1_changed=no
+        EOF
+
+        for required in \
+          "$stage/RUN_FOREST_WATER_V11_ENERGY_MATRIX.cmd" \
+          "$stage/FOREST_WATER_V11_COLLECT.ps1" \
+          "$stage/Main/DARKWOLF_FOREST_WATER_V11_ENERGY_MATRIX.cfg" \
+          "$stage/README_FOREST_WATER_V11_ENERGY_CONSERVING_RU.txt"; do
+          test -s "$required" || { echo "ERROR: v1.1 test-kit file missing: $required" >&2; exit 1; }
+        done
+
+        if find "$stage" -type f \( -iname '*.pk3' -o -iname '*.bsp' -o -iname '*.roq' -o -iname '*.wav' -o -iname '*.mp3' -o -iname '*.tga' -o -iname '*.jpg' \) -print -quit | grep -q .; then
+          echo 'ERROR: commercial/game asset residue detected in package' >&2
+          exit 1
+        fi
+
+        rm -f "$stage/docs/SHA256SUMS.txt"
+        (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+        zip -q -r "dist/${RELEASE_BASENAME}.zip" "release/${RELEASE_BASENAME}"
+        sha256sum "dist/${RELEASE_BASENAME}.zip" > "dist/${RELEASE_BASENAME}.zip.sha256"
+        unzip -tq "dist/${RELEASE_BASENAME}.zip" >/dev/null
+        echo 'Forest Water v1.1 focused energy-conserving package PASS'
+    - name: Upload Forest Water v1.1 energy-conserving artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.RELEASE_BASENAME }}
+        path: |
+          dist/${{ env.RELEASE_BASENAME }}.zip
+          dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+        if-no-files-found: error
+        retention-days: 90
