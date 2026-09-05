@@ -1,0 +1,1206 @@
+name: Build DarkWolf Rend2 FireVol v0.3.3 BSP Ground Truth Exact Occluder Inclusion Proof over Run 33950244363 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-firevol-bsp-ground-truth-v0-3-3-exact-occluder-proof-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: FireVol v0.3.3 - BSP ground truth / exact occluder inclusion proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      # Exact successful v0.3.2 parent. Runtime result:
+      # A leak; B two-sided leak with backend flag confirmed; C forced visibility=0 no leak;
+      # D raw GPU compare RED only. This v0.3.3 does not revisit FBO/size/near/origin/two-sided.
+      BASE_RUN_ID: "33950244363"
+      BASE_RUN_HEAD_SHA: b52b06f57c655e8d6f2e5efe0f957248c4d128cc
+      BASE_WORKFLOW_PATH: '.github/workflows/43build-iortcw-rend2-fire-volumetric-wall-occlusion-v0-3-2-synthetic-shadow-caster-gpu-visibility-proof-over-run-33948521369-sp.yml'
+      BASE_ARTIFACT_ID: "9964598967"
+      BASE_ARTIFACT_NAME: iortcw-rend2-firevol-wall-occlusion-v0-3-2-synthetic-shadow-caster-gpu-proof-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:0cfcc2c9b6fe25ae6e5c8c6ab494821c2f9a8576c4cb6b3f512dbe2fbaeb6901
+      BASE_RELEASE_BASENAME: iortcw-rend2-firevol-wall-occlusion-v0-3-2-synthetic-shadow-caster-gpu-proof-full-sp-windows-x64-1
+      BASE_INNER_ZIP_SHA256: 64f4306cf0fcb0f3af203f21170d4cfd4c426c40bc5f49dfa3d635dc55fbf942
+      BASE_EXE_SHA256: 431d2ecdc0bc81ea715168e84640a2f106c84b8c8faf5ac4b95348e1af9a2c9d
+      BASE_RENDERER_SHA256: 688060f02b25f138eaf27fd4d74ac8f08be15aac669fce9cf764a6f3995b3132
+      BASE_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      BASE_QAGAME_SHA256: b4d6b72bb43a6bb8ccce0eeaf95515da5a88dd4f048c5cf6db05e566f5dfa60a
+      BASE_CGAME_SHA256: dbcfe16805248a2d017a6f35450688caba89750b1044e16547c0c0911eec1e16
+      BASE_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      BASE_OPENAL_SHA256: 396f88738ce20905e933cb7d8c696351e41bd7e72e80b8cfdadf20ab613420b4
+      BASE_SDL_SHA256: f34cd90b131ceb45b7f32d41680a13fd4b13e5f48f0d1649cbf441833105310c
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-firevol-wall-occlusion-v0-3-2-synthetic-shadow-caster-gpu-proof-sp.patch
+      BASE_CUMULATIVE_SHA256: 785e9bee3533b55a09ee33d20caffa5acf666880ffb1dfb58605b94105013434
+      BASE_DELTA_NAME: darkwolf-firevol-wall-occlusion-v0-3-2-synthetic-shadow-caster-gpu-proof-over-run-33948521369.patch
+      BASE_DELTA_SHA256: 292c260d4fc27d7ed2799ca4053569241e17d8a9b777099098f46307e61bfb4c
+
+      PATCHER_NAME: apply_firevol_bsp_ground_truth_v0_3_3.py
+      DELTA_NAME: darkwolf-firevol-bsp-ground-truth-v0-3-3-exact-occluder-proof-over-run-33950244363.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-firevol-bsp-ground-truth-v0-3-3-exact-occluder-proof-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-firevol-bsp-ground-truth-v0-3-3-exact-occluder-proof-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Preflight workflow YAML and bash contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: cannot resolve workflow: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY'
+          from pathlib import Path
+          import subprocess, sys, yaml
+
+          p = Path(sys.argv[1])
+          doc = yaml.safe_load(p.read_text(encoding='utf-8'))
+          expected = 'Build DarkWolf Rend2 FireVol v0.3.3 BSP Ground Truth Exact Occluder Inclusion Proof over Run 33950244363 SP'
+          if doc.get('name') != expected:
+              raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+          checked = 0
+          for job_name, job in (doc.get('jobs') or {}).items():
+              for index, step in enumerate(job.get('steps') or [], 1):
+                  script = step.get('run')
+                  shell = step.get('shell', 'bash')
+                  if not script or not str(shell).lower().startswith('bash'):
+                      continue
+                  proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                      print(proc.stderr, file=sys.stderr)
+                      raise SystemExit(proc.returncode)
+                  checked += 1
+          if checked < 1:
+              raise SystemExit('ERROR: no bash run blocks found')
+          print(f'Workflow YAML + bash syntax PASS: {checked} bash blocks')
+          PY
+
+      - name: Verify exact successful v0.3.2 parent run 33950244363
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: v0.3.2 parent HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo "ERROR: v0.3.2 parent run is not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: v0.3.2 workflow path drift" >&2; exit 1; }
+          line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$line" || { echo "ERROR: exact v0.3.2 artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$line"
+          test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: v0.3.2 artifact name drift" >&2; exit 1; }
+          test "$expired" = "false" || { echo "ERROR: v0.3.2 artifact expired" >&2; exit 1; }
+          test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: v0.3.2 artifact digest drift" >&2; exit 1; }
+          echo "Exact v0.3.2 run/artifact provenance PASS"
+
+      - name: Download and byte-verify exact v0.3.2 release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          base_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+          sidecar="${base_zip}.sha256"
+          test -s "$base_zip" || { echo "ERROR: v0.3.2 inner ZIP missing" >&2; exit 1; }
+          test -s "$sidecar" || { echo "ERROR: v0.3.2 ZIP sidecar missing" >&2; exit 1; }
+          test "$(sha256sum "$base_zip" | awk '{print $1}')" = "$BASE_INNER_ZIP_SHA256" || { echo "ERROR: v0.3.2 inner ZIP SHA drift" >&2; exit 1; }
+          test "$(awk '{print $1}' "$sidecar")" = "$BASE_INNER_ZIP_SHA256" || { echo "ERROR: v0.3.2 sidecar SHA drift" >&2; exit 1; }
+          unzip -q "$base_zip" -d base-release
+          mapfile -t roots < <(find base-release/release -mindepth 1 -maxdepth 1 -type d -print | sort)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected exactly one v0.3.2 release root" >&2; exit 1; }
+          base_stage="${roots[0]}"
+          printf '%s\n' "$base_stage" > .base_stage_path
+          test -s "$base_stage/docs/SHA256SUMS.txt"
+          (cd "$base_stage" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$base_stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$base_stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$base_stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$BASE_OPENGL1_SHA256"
+          test "$(sha256sum "$base_stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$base_stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$base_stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$base_stage/OpenAL64.dll" | awk '{print $1}')" = "$BASE_OPENAL_SHA256"
+          test "$(sha256sum "$base_stage/SDL264.dll" | awk '{print $1}')" = "$BASE_SDL_SHA256"
+          test "$(sha256sum "$base_stage/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(sha256sum "$base_stage/docs/$BASE_DELTA_NAME" | awk '{print $1}')" = "$BASE_DELTA_SHA256"
+          for f in \
+            RUN_FIREVOL_WALL_OCCLUSION_V032_A_REFERENCE.cmd \
+            RUN_FIREVOL_WALL_OCCLUSION_V032_B_TWO_SIDED_CASTERS.cmd \
+            RUN_FIREVOL_WALL_OCCLUSION_V032_C_FORCED_OCCLUDED.cmd \
+            RUN_FIREVOL_WALL_OCCLUSION_V032_D_GPU_COMPARE.cmd \
+            docs/FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF.txt; do
+            test -s "$base_stage/$f" || { echo "ERROR: v0.3.2 contract file missing: $f" >&2; exit 1; }
+          done
+          echo "Exact v0.3.2 byte contract PASS"
+
+      - name: Reconstruct exact successful v0.3.2 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          rm -rf source
+          git clone "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source reset --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" .base-cumulative.patch
+          test "$(sha256sum .base-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          git -C source apply --check --binary ../.base-cumulative.patch
+          git -C source apply --binary ../.base-cumulative.patch
+
+          # Exact parent markers required by v0.3.3 patcher.
+          grep -Fq 'FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'VPF_FIREVOL_SYNTHETIC_SHADOW = 0x100' source/SP/code/rend2/tr_local.h
+          grep -Fq 'InitShader( "<default>", LIGHTMAP_NONE );' source/SP/code/rend2/tr_shader.c
+          grep -Fq 'shader.sort = SS_OPAQUE;' source/SP/code/rend2/tr_shader.c
+          grep -Fq 'FIREVOL_SYNTH_CASTER_CAPTURE_V032' source/SP/code/rend2/tr_main.c
+          grep -Fq 'FIREVOL_SYNTH_TWO_SIDED_DRAW_V032' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'CM_DarkWolfPCRBV05LogTrace' source/SP/code/qcommon/cm_trace.c
+          grep -Fq 'dwV05HitKind' source/SP/code/qcommon/cm_local.h
+          grep -Fq $'\tri.CM_ClusterPVS = CM_ClusterPVS;' source/SP/code/client/cl_main.c
+          grep -Fq $'\tqboolean (*Sys_LowPhysicalMemory)( void );' source/SP/code/renderer/tr_public.h
+          test "$(grep -Fc 'FIREVOL_BSP_GROUND_TRUTH_V0_3_3_EXACT_OCCLUDER_INCLUSION_PROOF' source/SP/code/rend2/tr_backend.c)" -eq 0
+
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@invalid' commit -q -m 'Exact successful FireVol v0.3.2 parent run 33950244363'
+          git -C source rev-parse HEAD > .base_source_commit
+          echo "Exact v0.3.2 source reconstruction PASS: $(cat .base_source_commit)"
+
+      - name: Write and syntax-check v0.3.3 patcher
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME" <<'PY'
+          #!/usr/bin/env python3
+          from pathlib import Path
+          import sys
+          
+          ROOT = Path('source')
+          MARK = 'FIREVOL_BSP_GROUND_TRUTH_V0_3_3_EXACT_OCCLUDER_INCLUSION_PROOF'
+          FILES = {
+              'tr_public': ROOT / 'SP/code/renderer/tr_public.h',
+              'cm_public': ROOT / 'SP/code/qcommon/cm_public.h',
+              'cm_trace': ROOT / 'SP/code/qcommon/cm_trace.c',
+              'cl_main': ROOT / 'SP/code/client/cl_main.c',
+              'local': ROOT / 'SP/code/rend2/tr_local.h',
+              'main': ROOT / 'SP/code/rend2/tr_main.c',
+              'backend': ROOT / 'SP/code/rend2/tr_backend.c',
+              'world': ROOT / 'SP/code/rend2/tr_world.c',
+          }
+          
+          for key, path in FILES.items():
+              if not path.is_file():
+                  raise SystemExit(f'ERROR: missing source file for {key}: {path}')
+          
+          data = {k: p.read_text(encoding='utf-8') for k, p in FILES.items()}
+          if any(MARK in text for text in data.values()):
+              raise SystemExit('ERROR: FireVol BSP Ground Truth v0.3.3 already present before patch')
+          
+          
+          def replace_once(key, old, new, label):
+              text = data[key]
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'ERROR: {label}: expected exactly one anchor, found {count}')
+              data[key] = text.replace(old, new, 1)
+          
+          # -----------------------------------------------------------------------------
+          # 1. Read-only engine collision bridge appended to refimport_t.
+          # Appending preserves the prefix ABI used by the inherited OpenGL1 renderer DLL.
+          # -----------------------------------------------------------------------------
+          replace_once(
+              'tr_public',
+              '\tqboolean ( *Sys_LowPhysicalMemory )( void );\n} refimport_t;\n',
+              '\tqboolean ( *Sys_LowPhysicalMemory )( void );\n\n'
+              f'\t// {MARK}: diagnostic-only collision ground truth bridge; append-only ABI extension.\n'
+              '\tvoid ( *CM_BoxTrace )( trace_t *results, const vec3_t start, const vec3_t end,\n'
+              '\t\tconst vec3_t mins, const vec3_t maxs, clipHandle_t model, int brushmask, int capsule );\n'
+              '\tvoid ( *CM_DarkWolfLastTraceMeta )( int *hitKind, int *brushNum, int *sideNum,\n'
+              '\t\tint *surfaceNum, int *shaderNum, char *shaderName, int shaderNameSize );\n'
+              '} refimport_t;\n',
+              'append collision bridge to refimport_t')
+          
+          replace_once(
+              'cm_public',
+              'void        CM_BoxTrace( trace_t *results, const vec3_t start, const vec3_t end,\n'
+              '\t\t\t\t\t\t const vec3_t mins, const vec3_t maxs,\n'
+              '\t\t\t\t\t\t clipHandle_t model, int brushmask, int capsule );\n',
+              'void        CM_BoxTrace( trace_t *results, const vec3_t start, const vec3_t end,\n'
+              '\t\t\t\t\t\t const vec3_t mins, const vec3_t maxs,\n'
+              '\t\t\t\t\t\t clipHandle_t model, int brushmask, int capsule );\n'
+              f'// {MARK}: read-only metadata for the immediately preceding CM_BoxTrace.\n'
+              'void        CM_DarkWolfLastTraceMeta( int *hitKind, int *brushNum, int *sideNum,\n'
+              '\t\t\t\t\t\t\t int *surfaceNum, int *shaderNum, char *shaderName, int shaderNameSize );\n',
+              'declare collision metadata getter')
+          
+          # Reuse PCRB v0.5 metadata already maintained by collision tracing in the exact parent.
+          replace_once(
+              'cm_trace',
+              '// always use bbox vs. bbox collision and never capsule vs. bbox or vice versa\n',
+              f'// {MARK}: last collision hit metadata for Rend2 v0.3.3 read-only ground truth.\n'
+              'static int s_dwV033HitKind = 0;\n'
+              'static int s_dwV033BrushNum = -1;\n'
+              'static int s_dwV033SideNum = -1;\n'
+              'static int s_dwV033SurfaceNum = -1;\n'
+              'static int s_dwV033ShaderNum = -1;\n\n'
+              'void CM_DarkWolfLastTraceMeta( int *hitKind, int *brushNum, int *sideNum,\n'
+              '\tint *surfaceNum, int *shaderNum, char *shaderName, int shaderNameSize )\n'
+              '{\n'
+              '\tif (hitKind) *hitKind = s_dwV033HitKind;\n'
+              '\tif (brushNum) *brushNum = s_dwV033BrushNum;\n'
+              '\tif (sideNum) *sideNum = s_dwV033SideNum;\n'
+              '\tif (surfaceNum) *surfaceNum = s_dwV033SurfaceNum;\n'
+              '\tif (shaderNum) *shaderNum = s_dwV033ShaderNum;\n'
+              '\tif (shaderName && shaderNameSize > 0)\n'
+              '\t{\n'
+              '\t\tif (s_dwV033ShaderNum >= 0 && s_dwV033ShaderNum < cm.numShaders)\n'
+              '\t\t\tQ_strncpyz(shaderName, cm.shaders[s_dwV033ShaderNum].shader, shaderNameSize);\n'
+              '\t\telse\n'
+              '\t\t\tshaderName[0] = \'\\0\';\n'
+              '\t}\n'
+              '\tCom_DPrintf("FIREVOL_V033_ENGINE_TRACE_META hitKind=%d brush=%d side=%d surface=%d shaderNum=%d\\n",\n'
+              '\t\ts_dwV033HitKind, s_dwV033BrushNum, s_dwV033SideNum, s_dwV033SurfaceNum, s_dwV033ShaderNum);\n'
+              '}\n\n'
+              '// always use bbox vs. bbox collision and never capsule vs. bbox or vice versa\n',
+              'add collision metadata getter implementation')
+          
+          replace_once(
+              'cm_trace',
+              '\t// DARKWOLF_PCRB_V0_5_VISIBLE_FIXTURE_IDENTITY_PVS_PORTAL_OCCLUDER_SURFACE_CORRELATION\n'
+              '\tCM_DarkWolfPCRBV05LogTrace( &tw, model, start, end );\n'
+              '\t*results = tw.trace;\n',
+              f'\t// {MARK}: publish metadata from the exact traceWork_t selected by CM_Trace.\n'
+              '\ts_dwV033HitKind = tw.dwV05HitKind;\n'
+              '\ts_dwV033BrushNum = tw.dwV05BrushNum;\n'
+              '\ts_dwV033SideNum = tw.dwV05SideNum;\n'
+              '\ts_dwV033SurfaceNum = tw.dwV05SurfaceNum;\n'
+              '\ts_dwV033ShaderNum = tw.dwV05ShaderNum;\n'
+              '\t// DARKWOLF_PCRB_V0_5_VISIBLE_FIXTURE_IDENTITY_PVS_PORTAL_OCCLUDER_SURFACE_CORRELATION\n'
+              '\tCM_DarkWolfPCRBV05LogTrace( &tw, model, start, end );\n'
+              '\t*results = tw.trace;\n',
+              'publish exact CM_Trace metadata')
+          
+          replace_once(
+              'cl_main',
+              '\tri.CM_ClusterPVS = CM_ClusterPVS;\n\tri.CM_DrawDebugSurface = CM_DrawDebugSurface;\n',
+              '\tri.CM_ClusterPVS = CM_ClusterPVS;\n'
+              f'\tri.CM_BoxTrace = CM_BoxTrace; // {MARK}\n'
+              f'\tri.CM_DarkWolfLastTraceMeta = CM_DarkWolfLastTraceMeta; // {MARK}\n'
+              '\tri.CM_DrawDebugSurface = CM_DrawDebugSurface;\n',
+              'wire collision bridge into renderer imports')
+          
+          # -----------------------------------------------------------------------------
+          # 2. v0.3.3 per-view exact-occluder flag + state.
+          # -----------------------------------------------------------------------------
+          replace_once(
+              'local',
+              '\tVPF_NOCUBEMAPS      = 0x80,\n'
+              '\tVPF_FIREVOL_SYNTHETIC_SHADOW = 0x100 // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF: mode B only; backend two-sided caster override\n'
+              '} viewParmFlags_t;\n',
+              '\tVPF_NOCUBEMAPS      = 0x80,\n'
+              '\tVPF_FIREVOL_SYNTHETIC_SHADOW = 0x100, // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF\n'
+              f'\tVPF_FIREVOL_V033_FORCE_OCCLUDER = 0x200 // {MARK}: exact recorded BSP render surface only\n'
+              '} viewParmFlags_t;\n',
+              'add v033 exact-occluder view flag')
+          
+          replace_once(
+              'local',
+              '\tint                     fireVolumetricSyntheticCasterAuditCaptureMode; // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF: cache key for v0.3.2 A/B/C/D\n'
+              '\tint                     fireVolumetricSyntheticAuditCaptureSurface;\n',
+              '\tint                     fireVolumetricSyntheticCasterAuditCaptureMode; // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF: cache key for v0.3.2 A/B/C/D\n'
+              f'\tint                     fireVolV033GroundTruthCaptureMode; // {MARK}: 0 off, 1 CPU/GPU proof, 2 exact force include\n'
+              f'\tint                     fireVolV033ForceOccluderSurface; // {MARK}: render-surface index loaded from mode A record\n'
+              '\tint                     fireVolumetricSyntheticAuditCaptureSurface;\n',
+              'add v033 capture state fields')
+          
+          replace_once(
+              'local',
+              'void R_AddBrushModelSurfaces( trRefEntity_t *e );\nvoid R_AddWorldSurfaces( void );\n',
+              'void R_AddBrushModelSurfaces( trRefEntity_t *e );\nvoid R_AddWorldSurfaces( void );\n'
+              f'int R_FireV033ResolveTraceSurface(const vec3_t start, const vec3_t end, float traceFraction, const char *collisionShader, float *outSurfaceT); // {MARK}\n',
+              'declare exact BSP render surface resolver')
+          
+          # -----------------------------------------------------------------------------
+          # 3. Exact collision-hit -> BSP render-surface resolver and mode-B force include.
+          # -----------------------------------------------------------------------------
+          world_helpers = r'''
+          // FIREVOL_BSP_GROUND_TRUTH_V0_3_3_EXACT_OCCLUDER_INCLUSION_PROOF
+          // Double-sided ray/triangle resolver used only for diagnostic correlation between
+          // CM_BoxTrace ground truth and the Rend2 world surface list.
+          static qboolean R_FireV033SegmentTriangleT(const vec3_t start, const vec3_t end,
+          	const vec3_t a, const vec3_t b, const vec3_t c, float *outT)
+          {
+          	vec3_t dir, e1, e2, p, q, tv;
+          	float det, invDet, u, v, t;
+          	VectorSubtract(end, start, dir);
+          	VectorSubtract(b, a, e1);
+          	VectorSubtract(c, a, e2);
+          	CrossProduct(dir, e2, p);
+          	det = DotProduct(e1, p);
+          	if (fabs(det) < 1.0e-7f) return qfalse;
+          	invDet = 1.0f / det;
+          	VectorSubtract(start, a, tv);
+          	u = DotProduct(tv, p) * invDet;
+          	if (u < -0.0001f || u > 1.0001f) return qfalse;
+          	CrossProduct(tv, e1, q);
+          	v = DotProduct(dir, q) * invDet;
+          	if (v < -0.0001f || u + v > 1.0001f) return qfalse;
+          	t = DotProduct(e2, q) * invDet;
+          	if (t < -0.0001f || t > 1.0001f) return qfalse;
+          	if (outT) *outT = Com_Clamp(0.0f, 1.0f, t);
+          	return qtrue;
+          }
+          
+          int R_FireV033ResolveTraceSurface(const vec3_t start, const vec3_t end, float traceFraction,
+          	const char *collisionShader, float *outSurfaceT)
+          {
+          	int i, j, best = -1;
+          	float bestScore = 1.0e30f, bestT = 1.0f;
+          	if (!tr.world) return -1;
+          	for (i = 0; i < tr.world->numWorldSurfaces; ++i)
+          	{
+          		msurface_t *surf = &tr.world->surfaces[i];
+          		srfBspSurface_t *bsp;
+          		float shaderPenalty;
+          		if (!surf->data || !surf->shader) continue;
+          		if (*surf->data != SF_FACE && *surf->data != SF_GRID && *surf->data != SF_TRIANGLES) continue;
+          		bsp = (srfBspSurface_t *)surf->data;
+          		if (!bsp->verts || !bsp->indexes || bsp->numVerts <= 0 || bsp->numIndexes < 3) continue;
+          		shaderPenalty = (collisionShader && collisionShader[0] && Q_stricmp(collisionShader, surf->shader->name)) ? 0.020f : 0.0f;
+          		for (j = 0; j + 2 < bsp->numIndexes; j += 3)
+          		{
+          			int ia = bsp->indexes[j + 0], ib = bsp->indexes[j + 1], ic = bsp->indexes[j + 2];
+          			float t, score;
+          			if (ia < 0 || ib < 0 || ic < 0 || ia >= bsp->numVerts || ib >= bsp->numVerts || ic >= bsp->numVerts) continue;
+          			if (!R_FireV033SegmentTriangleT(start, end, bsp->verts[ia].xyz, bsp->verts[ib].xyz, bsp->verts[ic].xyz, &t)) continue;
+          			score = fabs(t - traceFraction) + shaderPenalty;
+          			if (score < bestScore)
+          			{
+          				bestScore = score;
+          				bestT = t;
+          				best = i;
+          			}
+          		}
+          	}
+          	// A surface farther than 5% of the segment from collision ground truth is not exact enough to force.
+          	if (best >= 0 && fabs(bestT - traceFraction) <= 0.050f)
+          	{
+          		if (outSurfaceT) *outSurfaceT = bestT;
+          		return best;
+          	}
+          	if (outSurfaceT) *outSurfaceT = -1.0f;
+          	return -1;
+          }
+          '''
+          replace_once(
+              'world',
+              'extern void R_DarkWolfVisibleSurfaceResidencyObserveSurface(msurface_t *surf, int entityNum, int filteredDlightBits);\n\n\n',
+              'extern void R_DarkWolfVisibleSurfaceResidencyObserveSurface(msurface_t *surf, int entityNum, int filteredDlightBits);\n\n' + world_helpers + '\n',
+              'insert v033 exact render surface resolver')
+          
+          replace_once(
+              'world',
+              '\t\ttr.refdef.dlightMask = ~tr.refdef.dlightMask;\n\t}\n}\n',
+              '\t\ttr.refdef.dlightMask = ~tr.refdef.dlightMask;\n\t}\n\n'
+              f'\t// {MARK}: mode B force-includes only the exact surface recorded by mode A.\n'
+              '\tif ((tr.viewParms.flags & VPF_FIREVOL_V033_FORCE_OCCLUDER) && tr.world\n'
+              '\t\t&& tr.fireVolV033ForceOccluderSurface >= 0\n'
+              '\t\t&& tr.fireVolV033ForceOccluderSurface < tr.world->numWorldSurfaces)\n'
+              '\t{\n'
+              '\t\tmsurface_t *forceSurf = &tr.world->surfaces[tr.fireVolV033ForceOccluderSurface];\n'
+              '\t\tshader_t *originalShader = forceSurf->shader;\n'
+              '\t\tif (!tr.defaultShader || tr.defaultShader->sort != SS_OPAQUE)\n'
+              '\t\t{\n'
+              '\t\t\tri.Printf(PRINT_ALL,\n'
+              '\t\t\t\t"FIREVOL_EXACT_OCCLUDER_FORCE_V033 action=reject reason=force_shader_not_opaque surface=%d forcedShader=%s forcedSort=%.3f\\n",\n'
+              '\t\t\t\ttr.fireVolV033ForceOccluderSurface, tr.defaultShader ? tr.defaultShader->name : "<none>",\n'
+              '\t\t\t\ttr.defaultShader ? tr.defaultShader->sort : -1.0f);\n'
+              '\t\t}\n'
+              '\t\telse\n'
+              '\t\t{\n'
+              '\t\t\tR_AddDrawSurf(forceSurf->data, tr.defaultShader, forceSurf->fogIndex, 0, 0, forceSurf->cubemapIndex, ATI_TESS_NONE);\n'
+              '\t\t\tri.Printf(PRINT_ALL,\n'
+              '\t\t\t\t"FIREVOL_EXACT_OCCLUDER_FORCE_V033 action=force surface=%d originalShader=%s originalSort=%.3f originalSurfaceFlags=0x%08x originalContentFlags=0x%08x forcedShader=%s forcedSort=%.3f viewFlags=0x%x\\n",\n'
+              '\t\t\t\ttr.fireVolV033ForceOccluderSurface, originalShader ? originalShader->name : "<none>",\n'
+              '\t\t\t\toriginalShader ? originalShader->sort : -1.0f, originalShader ? (unsigned int)originalShader->surfaceFlags : 0u,\n'
+              '\t\t\t\toriginalShader ? (unsigned int)originalShader->contentFlags : 0u, tr.defaultShader->name, tr.defaultShader->sort,\n'
+              '\t\t\t\t(unsigned int)tr.viewParms.flags);\n'
+              '\t\t}\n'
+              '\t}\n'
+              '}\n',
+              'force exact v033 surface after normal world selection')
+          
+          # -----------------------------------------------------------------------------
+          # 4. Frontend A->B persistent record handoff and cache-key isolation.
+          # -----------------------------------------------------------------------------
+          main_record_helper = r'''
+          static qboolean R_FireV033LoadOccluderRecord(int expectedSourceSurface)
+          {
+          	void *raw = NULL;
+          	long len;
+          	char text[512], mapName[MAX_QPATH], shaderName[MAX_QPATH];
+          	int sourceSurface = -1, renderSurface = -1, brush = -1, collisionSurface = -1;
+          	tr.fireVolV033ForceOccluderSurface = -1;
+          	if (!tr.world) return qfalse;
+          	len = ri.FS_ReadFile("firevol_v033_occluder.txt", &raw);
+          	if (len <= 0 || !raw)
+          	{
+          		ri.Printf(PRINT_ALL, "FIREVOL_OCCLUDER_RECORD_V033 action=reject reason=missing expectedSource=%d map=%s\n",
+          			expectedSourceSurface, tr.world->baseName);
+          		return qfalse;
+          	}
+          	if (len >= (long)sizeof(text)) len = (long)sizeof(text) - 1;
+          	Com_Memcpy(text, raw, (int)len);
+          	text[len] = '\0';
+          	ri.FS_FreeFile(raw);
+          	mapName[0] = shaderName[0] = '\0';
+          	if (sscanf(text, "FIREVOL_V033 map=%63s source=%d renderSurface=%d brush=%d collisionSurface=%d shader=%63s",
+          		mapName, &sourceSurface, &renderSurface, &brush, &collisionSurface, shaderName) != 6)
+          	{
+          		ri.Printf(PRINT_ALL, "FIREVOL_OCCLUDER_RECORD_V033 action=reject reason=parse expectedSource=%d map=%s\n",
+          			expectedSourceSurface, tr.world->baseName);
+          		return qfalse;
+          	}
+          	if (Q_stricmp(mapName, tr.world->baseName) || sourceSurface != expectedSourceSurface ||
+          		renderSurface < 0 || renderSurface >= tr.world->numWorldSurfaces)
+          	{
+          		ri.Printf(PRINT_ALL,
+          			"FIREVOL_OCCLUDER_RECORD_V033 action=reject reason=identity recordMap=%s currentMap=%s recordSource=%d expectedSource=%d renderSurface=%d\n",
+          			mapName, tr.world->baseName, sourceSurface, expectedSourceSurface, renderSurface);
+          		return qfalse;
+          	}
+          	{
+          		shader_t *currentShader = tr.world->surfaces[renderSurface].shader;
+          		if (!currentShader || !shaderName[0] || !Q_stricmp(shaderName, "-") || Q_stricmp(shaderName, currentShader->name))
+          		{
+          			ri.Printf(PRINT_ALL,
+          				"FIREVOL_OCCLUDER_RECORD_V033 action=reject reason=shader_identity recordShader=%s currentShader=%s renderSurface=%d\n",
+          				shaderName[0] ? shaderName : "<empty>", currentShader ? currentShader->name : "<none>", renderSurface);
+          			return qfalse;
+          		}
+          	}
+          	tr.fireVolV033ForceOccluderSurface = renderSurface;
+          	ri.Printf(PRINT_ALL,
+          		"FIREVOL_OCCLUDER_RECORD_V033 action=load map=%s source=%d renderSurface=%d brush=%d collisionSurface=%d shader=%s\n",
+          		mapName, sourceSurface, renderSurface, brush, collisionSurface, shaderName);
+          	return qtrue;
+          }
+          
+          '''
+          replace_once(
+              'main',
+              'void R_RenderFireVolumetricSyntheticAudit(const refdef_t *fd)\n{\n',
+              main_record_helper + 'void R_RenderFireVolumetricSyntheticAudit(const refdef_t *fd)\n{\n',
+              'insert v033 record loader')
+          
+          replace_once(
+              'main',
+              'static qboolean R_FireV031SameCaptureKey(int mode, int casterAuditMode, const vec3_t origin, float radius, float nearPlane, int surface)\n'
+              '{\n'
+              '\tvec3_t delta;\n'
+              '\tif (!tr.fireVolumetricSyntheticAuditCaptureValid) return qfalse;\n'
+              '\tif (tr.fireVolumetricSyntheticAuditCaptureMode != mode || tr.fireVolumetricSyntheticAuditCaptureSurface != surface) return qfalse;\n'
+              '\tif (tr.fireVolumetricSyntheticCasterAuditCaptureMode != casterAuditMode) return qfalse; // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF\n',
+              'static qboolean R_FireV031SameCaptureKey(int mode, int casterAuditMode, int groundMode, int forceSurface, const vec3_t origin, float radius, float nearPlane, int surface)\n'
+              '{\n'
+              '\tvec3_t delta;\n'
+              '\tif (!tr.fireVolumetricSyntheticAuditCaptureValid) return qfalse;\n'
+              '\tif (tr.fireVolumetricSyntheticAuditCaptureMode != mode || tr.fireVolumetricSyntheticAuditCaptureSurface != surface) return qfalse;\n'
+              '\tif (tr.fireVolumetricSyntheticCasterAuditCaptureMode != casterAuditMode) return qfalse; // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF\n'
+              f'\tif (tr.fireVolV033GroundTruthCaptureMode != groundMode) return qfalse; // {MARK}\n'
+              f'\tif (groundMode == 2 && tr.fireVolV033ForceOccluderSurface != forceSurface) return qfalse; // {MARK}\n',
+              'extend capture key for v033 mode/target')
+          
+          replace_once(
+              'main',
+              '\tstatic cvar_t *s_fireVolSyntheticCasterAuditMode = NULL; // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF\n'
+              '\tint casterAuditMode;\n'
+              '\tint side, mapId, faces = 0, nowMs;\n',
+              '\tstatic cvar_t *s_fireVolSyntheticCasterAuditMode = NULL; // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF\n'
+              f'\tstatic cvar_t *s_fireVolBspGroundTruthMode = NULL; // {MARK}\n'
+              '\tint casterAuditMode, groundMode, forceSurface = -1;\n'
+              '\tint side, mapId, faces = 0, nowMs;\n',
+              'add frontend v033 cvar')
+          
+          replace_once(
+              'main',
+              '\tif (!s_fireVolSyntheticCasterAuditMode)\n'
+              '\t\ts_fireVolSyntheticCasterAuditMode = ri.Cvar_Get("r_volumetricFireSyntheticCasterAuditMode", "0", 0);\n'
+              '\tcasterAuditMode = s_fireVolSyntheticCasterAuditMode ? Com_Clamp(0, 4, s_fireVolSyntheticCasterAuditMode->integer) : 0;\n'
+              '\tif (mode != 2) casterAuditMode = 0; // v0.3.2 is intentionally stock-slot7 only\n'
+              '\tif (mode <= 0 || !fd || !h->valid) return;\n',
+              '\tif (!s_fireVolSyntheticCasterAuditMode)\n'
+              '\t\ts_fireVolSyntheticCasterAuditMode = ri.Cvar_Get("r_volumetricFireSyntheticCasterAuditMode", "0", 0);\n'
+              f'\tif (!s_fireVolBspGroundTruthMode)\n\t\ts_fireVolBspGroundTruthMode = ri.Cvar_Get("r_volumetricFireBspGroundTruthMode", "0", 0); // {MARK}\n'
+              '\tcasterAuditMode = s_fireVolSyntheticCasterAuditMode ? Com_Clamp(0, 4, s_fireVolSyntheticCasterAuditMode->integer) : 0;\n'
+              '\tgroundMode = s_fireVolBspGroundTruthMode ? Com_Clamp(0, 2, s_fireVolBspGroundTruthMode->integer) : 0;\n'
+              '\tif (mode != 2) { casterAuditMode = 0; groundMode = 0; } // v0.3.3 stays on proven stock-slot7 route\n'
+              '\tif (mode <= 0 || !fd || !h->valid) return;\n'
+              '\ttr.fireVolV033ForceOccluderSurface = -1;\n'
+              '\tif (groundMode == 2) R_FireV033LoadOccluderRecord(h->flameSurface);\n'
+              '\tforceSurface = tr.fireVolV033ForceOccluderSurface;\n',
+              'initialize frontend v033 ground mode and record')
+          
+          replace_once(
+              'main',
+              '\tcached = R_FireV031SameCaptureKey(mode, casterAuditMode, captureOrigin, captureRadius, nearPlane, h->flameSurface);\n',
+              '\tcached = R_FireV031SameCaptureKey(mode, casterAuditMode, groundMode, forceSurface, captureOrigin, captureRadius, nearPlane, h->flameSurface);\n',
+              'v033 capture-key call')
+          
+          replace_once(
+              'main',
+              '\t\tshadowParms.flags = VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_NOVIEWMODEL;\n'
+              '\t\tif (casterAuditMode == 2) shadowParms.flags |= VPF_FIREVOL_SYNTHETIC_SHADOW; // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF: B two-sided caster proof\n'
+              '\t\tshadowParms.zFar = captureRadius;\n',
+              '\t\tshadowParms.flags = VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_NOVIEWMODEL;\n'
+              '\t\tif (casterAuditMode == 2) shadowParms.flags |= VPF_FIREVOL_SYNTHETIC_SHADOW; // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF: B two-sided caster proof\n'
+              f'\t\tif (groundMode == 2 && forceSurface >= 0) shadowParms.flags |= VPF_FIREVOL_V033_FORCE_OCCLUDER; // {MARK}\n'
+              '\t\tshadowParms.zFar = captureRadius;\n',
+              'set v033 exact-occluder view flag')
+          
+          replace_once(
+              'main',
+              '\t\ttr.fireVolumetricSyntheticAuditCaptureMode = mode;\n'
+              '\t\ttr.fireVolumetricSyntheticCasterAuditCaptureMode = casterAuditMode;\n'
+              '\t\ttr.fireVolumetricSyntheticAuditCaptureSurface = h->flameSurface;\n',
+              '\t\ttr.fireVolumetricSyntheticAuditCaptureMode = mode;\n'
+              '\t\ttr.fireVolumetricSyntheticCasterAuditCaptureMode = casterAuditMode;\n'
+              f'\t\ttr.fireVolV033GroundTruthCaptureMode = groundMode; // {MARK}\n'
+              '\t\ttr.fireVolumetricSyntheticAuditCaptureSurface = h->flameSurface;\n',
+              'persist v033 capture mode')
+          
+          replace_once(
+              'main',
+              '\t\t\tfaces, cached ? 1 : 0, tr.shadowCubemaps[FIREVOL_SYNTH_AUDIT_STOCK_SLOT] ? tr.shadowCubemaps[FIREVOL_SYNTH_AUDIT_STOCK_SLOT]->width : 0);\n'
+              '\t\tlastDiagMs = nowMs;\n',
+              '\t\t\tfaces, cached ? 1 : 0, tr.shadowCubemaps[FIREVOL_SYNTH_AUDIT_STOCK_SLOT] ? tr.shadowCubemaps[FIREVOL_SYNTH_AUDIT_STOCK_SLOT]->width : 0);\n'
+              '\t\tri.Printf(PRINT_ALL,\n'
+              '\t\t\t"FIREVOL_GROUND_TRUTH_CAPTURE_V033 mode=%d sourceSurface=%d forceSurface=%d forceFlag=%d faces=%d cached=%d\\n",\n'
+              '\t\t\tgroundMode, h->flameSurface, forceSurface, (groundMode == 2 && forceSurface >= 0) ? 1 : 0, faces, cached ? 1 : 0);\n'
+              '\t\tlastDiagMs = nowMs;\n',
+              'add v033 capture telemetry')
+          
+          # -----------------------------------------------------------------------------
+          # 5. Backend numeric cubemap readback + CPU trace comparison.
+          # -----------------------------------------------------------------------------
+          replace_once(
+              'backend',
+              'static cvar_t *s_rVolumetricFireSyntheticCasterAuditMode; // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF: 0=off,1=A reference,2=B two-sided,3=C forced-occluded,4=D raw compare viz\n',
+              'static cvar_t *s_rVolumetricFireSyntheticCasterAuditMode; // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF: 0=off,1=A reference,2=B two-sided,3=C forced-occluded,4=D raw compare viz\n'
+              f'static cvar_t *s_rVolumetricFireBspGroundTruthMode; // {MARK}: 0 off, 1 A CPU-vs-GPU, 2 B exact-force inclusion\n',
+              'backend v033 cvar declaration')
+          
+          replace_once(
+              'backend',
+              '\tif (!s_rVolumetricFireSyntheticCasterAuditMode)\n'
+              '\t\ts_rVolumetricFireSyntheticCasterAuditMode = ri.Cvar_Get("r_volumetricFireSyntheticCasterAuditMode", "0", 0); // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF\n',
+              '\tif (!s_rVolumetricFireSyntheticCasterAuditMode)\n'
+              '\t\ts_rVolumetricFireSyntheticCasterAuditMode = ri.Cvar_Get("r_volumetricFireSyntheticCasterAuditMode", "0", 0); // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF\n'
+              f'\tif (!s_rVolumetricFireBspGroundTruthMode)\n\t\ts_rVolumetricFireBspGroundTruthMode = ri.Cvar_Get("r_volumetricFireBspGroundTruthMode", "0", 0); // {MARK}\n',
+              'backend v033 cvar init')
+          
+          backend_probe = r'''
+          // FIREVOL_BSP_GROUND_TRUTH_V0_3_3_EXACT_OCCLUDER_INCLUSION_PROOF
+          static GLuint s_fireVolV033ReadbackFbo = 0;
+          
+          static int RB_FireV033CubeFaceTexel(const vec3_t direction, int size, int *outX, int *outY)
+          {
+          	float x = direction[0], y = direction[1], z = direction[2];
+          	float ax = fabs(x), ay = fabs(y), az = fabs(z), sc = 0.0f, tc = 0.0f, ma = 1.0f;
+          	int face;
+          	if (ax >= ay && ax >= az)
+          	{
+          		if (x >= 0.0f) { face = 0; sc = -z; tc = -y; ma = ax; }
+          		else           { face = 1; sc =  z; tc = -y; ma = ax; }
+          	}
+          	else if (ay >= ax && ay >= az)
+          	{
+          		if (y >= 0.0f) { face = 2; sc =  x; tc =  z; ma = ay; }
+          		else           { face = 3; sc =  x; tc = -z; ma = ay; }
+          	}
+          	else
+          	{
+          		if (z >= 0.0f) { face = 4; sc =  x; tc = -y; ma = az; }
+          		else           { face = 5; sc = -x; tc = -y; ma = az; }
+          	}
+          	if (ma < 1.0e-6f || size <= 0) return -1;
+          	if (outX) *outX = (int)Com_Clamp(0.0f, (float)(size - 1), ((sc / ma) * 0.5f + 0.5f) * (float)(size - 1) + 0.5f);
+          	if (outY) *outY = (int)Com_Clamp(0.0f, (float)(size - 1), ((tc / ma) * 0.5f + 0.5f) * (float)(size - 1) + 0.5f);
+          	return face;
+          }
+          
+          static qboolean RB_FireV033ReadStoredDepth(image_t *cube, const vec3_t direction,
+          	float *storedDepth, int *faceOut, int *pixelXOut, int *pixelYOut, byte rgbaOut[4])
+          {
+          	FBO_t *restoreFbo;
+          	GLuint restoreId;
+          	int face, px = 0, py = 0;
+          	byte rgba[4] = { 0, 0, 0, 0 };
+          	if (!cube || !cube->texnum || cube->width <= 0) return qfalse;
+          	face = RB_FireV033CubeFaceTexel(direction, cube->width, &px, &py);
+          	if (face < 0) return qfalse;
+          	if (!s_fireVolV033ReadbackFbo) qglGenFramebuffers(1, &s_fireVolV033ReadbackFbo);
+          	if (!s_fireVolV033ReadbackFbo) return qfalse;
+          	restoreFbo = glState.currentFBO;
+          	restoreId = restoreFbo ? restoreFbo->frameBuffer : 0;
+          	qglBindFramebuffer(GL_FRAMEBUFFER, s_fireVolV033ReadbackFbo);
+          	qglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+          		GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, cube->texnum, 0);
+          	if (qglCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+          	{
+          		qglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+          			GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, 0);
+          		qglBindFramebuffer(GL_FRAMEBUFFER, restoreId);
+          		return qfalse;
+          	}
+          	qglReadPixels(px, py, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+          	qglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+          		GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, 0);
+          	qglBindFramebuffer(GL_FRAMEBUFFER, restoreId);
+          	if (storedDepth)
+          		*storedDepth = ((float)rgba[0] / 255.0f) / 65536.0f + ((float)rgba[1] / 255.0f) / 256.0f + ((float)rgba[2] / 255.0f);
+          	if (faceOut) *faceOut = face;
+          	if (pixelXOut) *pixelXOut = px;
+          	if (pixelYOut) *pixelYOut = py;
+          	if (rgbaOut) { rgbaOut[0] = rgba[0]; rgbaOut[1] = rgba[1]; rgbaOut[2] = rgba[2]; rgbaOut[3] = rgba[3]; }
+          	return qtrue;
+          }
+          
+          static void RB_FireV033GroundTruthProbe(const dlight_t *auditDl, int sourceSurface,
+          	image_t *cube, int groundMode)
+          {
+          	static int lastProbeMs = 0;
+          	static int clearedSourceSurface = -999999;
+          	static char clearedMap[MAX_QPATH] = "";
+          	static const float sampleFractions[5] = { 0.35f, 0.50f, 0.65f, 0.80f, 0.95f };
+          	static const float startOffsets[4] = { 0.0f, 2.0f, 4.0f, 8.0f };
+          	int nowMs, i, k;
+          	vec3_t towardCamera;
+          	float cameraDistance;
+          	qboolean recordWritten = qfalse;
+          	if (groundMode < 1 || groundMode > 2 || !auditDl || !cube || !tr.world) return;
+          	if (!ri.CM_BoxTrace || !ri.CM_DarkWolfLastTraceMeta) return;
+          	if (groundMode == 1 && (clearedSourceSurface != sourceSurface || Q_stricmp(clearedMap, tr.world->baseName)))
+          	{
+          		static const char invalidRecord[] = "FIREVOL_V033 INVALID\n";
+          		ri.FS_WriteFile("firevol_v033_occluder.txt", invalidRecord, (int)strlen(invalidRecord));
+          		clearedSourceSurface = sourceSurface;
+          		Q_strncpyz(clearedMap, tr.world->baseName, sizeof(clearedMap));
+          		ri.Printf(PRINT_ALL,
+          			"FIREVOL_OCCLUDER_RECORD_V033 action=clear map=%s source=%d reason=fresh_mode_A_session\n",
+          			tr.world->baseName, sourceSurface);
+          	}
+          	nowMs = ri.Milliseconds();
+          	if (lastProbeMs != 0 && nowMs - lastProbeMs < 1000) return;
+          	lastProbeMs = nowMs;
+          	VectorSubtract(backEnd.refdef.vieworg, auditDl->origin, towardCamera);
+          	cameraDistance = VectorNormalize(towardCamera);
+          	if (cameraDistance < 0.001f) VectorSet(towardCamera, 0.0f, 0.0f, 1.0f);
+          
+          	for (i = 0; i < 5; ++i)
+          	{
+          		vec3_t sample, traceStart, cubeDir;
+          		trace_t trace;
+          		float traceStartOffset = 0.0f, surfaceT = -1.0f;
+          		float storedDepth = -1.0f, currentDepth, bias;
+          		int hitKind = 0, brush = -1, side = -1, collisionSurface = -1, shaderNum = -1;
+          		int renderSurface = -1, face = -1, px = -1, py = -1, rawVisible = -1;
+          		qboolean gpuRead = qfalse, blocked;
+          		char collisionShader[MAX_QPATH];
+          		shader_t *renderShader = NULL;
+          		byte rgba[4] = { 0, 0, 0, 0 };
+          		VectorMA(auditDl->origin, auditDl->radius * sampleFractions[i], towardCamera, sample);
+          		collisionShader[0] = '\0';
+          		Com_Memset(&trace, 0, sizeof(trace));
+          		for (k = 0; k < 4; ++k)
+          		{
+          			traceStartOffset = startOffsets[k];
+          			VectorMA(auditDl->origin, traceStartOffset, towardCamera, traceStart);
+          			ri.CM_BoxTrace(&trace, traceStart, sample, NULL, NULL, 0, CONTENTS_SOLID, qfalse);
+          			if (!trace.startsolid || k == 3) break;
+          		}
+          		ri.CM_DarkWolfLastTraceMeta(&hitKind, &brush, &side, &collisionSurface, &shaderNum,
+          			collisionShader, sizeof(collisionShader));
+          		blocked = (!trace.startsolid && trace.fraction < 0.9999f) ? qtrue : qfalse;
+          		if (blocked)
+          			renderSurface = R_FireV033ResolveTraceSurface(traceStart, sample, trace.fraction, collisionShader, &surfaceT);
+          		if (renderSurface >= 0 && renderSurface < tr.world->numWorldSurfaces)
+          			renderShader = tr.world->surfaces[renderSurface].shader;
+          		VectorSubtract(auditDl->origin, sample, cubeDir); // fragment -> light: matches proven legacy FireVol sampler convention
+          		gpuRead = RB_FireV033ReadStoredDepth(cube, cubeDir, &storedDepth, &face, &px, &py, rgba);
+          		{ vec3_t depthDelta; VectorSubtract(sample, auditDl->origin, depthDelta); currentDepth = VectorLength(depthDelta) / MAX(auditDl->radius, 1.0f); }
+          		bias = r_dlightShadowBias ? r_dlightShadowBias->value : 0.0033f;
+          		if (gpuRead) rawVisible = ((currentDepth - bias) <= storedDepth) ? 1 : 0;
+          		ri.Printf(PRINT_ALL,
+          			"FIREVOL_OCCLUDER_GROUND_TRUTH_V033 mode=%d sourceSurface=%d sample=%d sampleWorldPos=%.3f,%.3f,%.3f lightOrigin=%.3f,%.3f,%.3f traceStartOffset=%.1f traceBlocked=%d traceStartSolid=%d traceFraction=%.6f hitPoint=%.3f,%.3f,%.3f hitPlaneNormal=%.4f,%.4f,%.4f hitKind=%d hitBrush=%d hitSide=%d collisionSurface=%d hitSurface=%d surfaceT=%.6f hitShader=%s shaderSort=%.3f traceSurfaceFlags=0x%08x traceContents=0x%08x renderSurfaceFlags=0x%08x renderContentFlags=0x%08x cubeDirection=%.4f,%.4f,%.4f cubeFace=%d cubePixel=%d,%d gpuRead=%d rgba=%u,%u,%u,%u storedDepth=%.6f currentDepth=%.6f bias=%.6f rawVisible=%d\n",
+          			groundMode, sourceSurface, i, sample[0], sample[1], sample[2], auditDl->origin[0], auditDl->origin[1], auditDl->origin[2],
+          			traceStartOffset, blocked ? 1 : 0, trace.startsolid ? 1 : 0, trace.fraction,
+          			trace.endpos[0], trace.endpos[1], trace.endpos[2], trace.plane.normal[0], trace.plane.normal[1], trace.plane.normal[2],
+          			hitKind, brush, side, collisionSurface, renderSurface, surfaceT,
+          			renderShader ? renderShader->name : (collisionShader[0] ? collisionShader : "<none>"), renderShader ? renderShader->sort : -1.0f,
+          			(unsigned int)trace.surfaceFlags, (unsigned int)trace.contents,
+          			renderShader ? (unsigned int)renderShader->surfaceFlags : 0u, renderShader ? (unsigned int)renderShader->contentFlags : 0u,
+          			cubeDir[0], cubeDir[1], cubeDir[2], face, px, py, gpuRead ? 1 : 0,
+          			(unsigned int)rgba[0], (unsigned int)rgba[1], (unsigned int)rgba[2], (unsigned int)rgba[3],
+          			storedDepth, currentDepth, bias, rawVisible);
+          
+          		if (groundMode == 1 && !recordWritten && blocked && !trace.startsolid && rawVisible == 1 && renderSurface >= 0)
+          		{
+          			char record[512];
+          			const char *recordShader = renderShader ? renderShader->name : (collisionShader[0] ? collisionShader : "-");
+          			Com_sprintf(record, sizeof(record),
+          				"FIREVOL_V033 map=%s source=%d renderSurface=%d brush=%d collisionSurface=%d shader=%s\n",
+          				tr.world->baseName, sourceSurface, renderSurface, brush, collisionSurface, recordShader);
+          			ri.FS_WriteFile("firevol_v033_occluder.txt", record, (int)strlen(record));
+          			ri.Printf(PRINT_ALL,
+          				"FIREVOL_OCCLUDER_RECORD_V033 action=write map=%s source=%d renderSurface=%d brush=%d collisionSurface=%d shader=%s sample=%d\n",
+          				tr.world->baseName, sourceSurface, renderSurface, brush, collisionSurface, recordShader, i);
+          			recordWritten = qtrue;
+          		}
+          	}
+          }
+          
+          '''
+          replace_once(
+              'backend',
+              'static void RB_VolumetricFireV07(FBO_t *srcFbo, ivec4_t srcBox)\n{\n',
+              backend_probe + 'static void RB_VolumetricFireV07(FBO_t *srcFbo, ivec4_t srcBox)\n{\n',
+              'insert CPU/GPU ground truth probe')
+          
+          replace_once(
+              'backend',
+              '\tint syntheticCasterMode = s_rVolumetricFireSyntheticCasterAuditMode ? Com_Clamp(0, 4, s_rVolumetricFireSyntheticCasterAuditMode->integer) : 0; // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF\n'
+              '\tif (syntheticAuditMode != 2) syntheticCasterMode = 0; // v0.3.2 only audits the proven stock-slot7 capture route\n'
+              '\tqboolean coreReady = (srcFbo && tr.quarterFbo[0] && tr.renderDepthImage && tr.volumetricLocalShader.program) ? qtrue : qfalse;\n',
+              '\tint syntheticCasterMode = s_rVolumetricFireSyntheticCasterAuditMode ? Com_Clamp(0, 4, s_rVolumetricFireSyntheticCasterAuditMode->integer) : 0; // FIREVOL_WALL_OCCLUSION_V0_3_2_SYNTHETIC_SHADOW_CASTER_GPU_VISIBILITY_PROOF\n'
+              f'\tint bspGroundTruthMode = s_rVolumetricFireBspGroundTruthMode ? Com_Clamp(0, 2, s_rVolumetricFireBspGroundTruthMode->integer) : 0; // {MARK}\n'
+              '\tif (syntheticAuditMode != 2) { syntheticCasterMode = 0; bspGroundTruthMode = 0; } // v0.3.3 only audits proven stock-slot7\n'
+              '\tqboolean coreReady = (srcFbo && tr.quarterFbo[0] && tr.renderDepthImage && tr.volumetricLocalShader.program) ? qtrue : qfalse;\n',
+              'compute backend v033 mode')
+          
+          replace_once(
+              'backend',
+              '\t\t\tRB_LocalVolumetricRenderEx(srcFbo, srcBox, effectiveRenderMode, &auditDl, auditShadowSlot,\n'
+              '\t\t\t\tNULL, 1.0f, geometryRadius, sel->latchedFlameOrigin, auditImage, syntheticCasterMode);\n'
+              '\t\t\tauditSyntheticRendered++;\n',
+              '\t\t\tRB_LocalVolumetricRenderEx(srcFbo, srcBox, effectiveRenderMode, &auditDl, auditShadowSlot,\n'
+              '\t\t\t\tNULL, 1.0f, geometryRadius, sel->latchedFlameOrigin, auditImage, syntheticCasterMode);\n'
+              f'\t\t\tif (bspGroundTruthMode > 0) // {MARK}\n'
+              '\t\t\t{\n'
+              '\t\t\t\timage_t *probeCube = auditImage ? auditImage : ((auditShadowSlot >= 0 && auditShadowSlot < MAX_DLIGHT_SHADOWS) ? tr.shadowCubemaps[auditShadowSlot] : NULL);\n'
+              '\t\t\t\tRB_FireV033GroundTruthProbe(&auditDl, sel->latchedFlameSurface, probeCube, bspGroundTruthMode);\n'
+              '\t\t\t}\n'
+              '\t\t\tauditSyntheticRendered++;\n',
+              'invoke v033 ground truth probe for audited synthetic source')
+          
+          for key, path in FILES.items():
+              path.write_text(data[key], encoding='utf-8', newline='\n')
+          
+          print('FireVol BSP Ground Truth v0.3.3 patch applied successfully')
+          PY
+          python3 -m py_compile "$PATCHER_NAME"
+          test "$(grep -Fc 'FIREVOL_BSP_GROUND_TRUTH_V0_3_3_EXACT_OCCLUDER_INCLUSION_PROOF' "$PATCHER_NAME")" -ge 8
+          echo "Embedded patcher SHA256: $(sha256sum "$PATCHER_NAME" | awk '{print $1}')"
+
+      - name: Apply v0.3.3 diagnostic source patch and enforce isolation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          python3 "$PATCHER_NAME"
+
+          set +e
+          second_out="$(python3 "$PATCHER_NAME" 2>&1)"
+          second_rc=$?
+          set -e
+          test "$second_rc" -ne 0 || { echo "ERROR: patcher unexpectedly applied twice" >&2; exit 1; }
+          grep -Fq 'already present before patch' <<< "$second_out" || { echo "ERROR: patcher idempotency guard returned unexpected error" >&2; echo "$second_out" >&2; exit 1; }
+
+          mapfile -t changed < <(git -C source diff --name-only "$base_commit" -- | sort)
+          expected=(
+            SP/code/client/cl_main.c
+            SP/code/qcommon/cm_public.h
+            SP/code/qcommon/cm_trace.c
+            SP/code/renderer/tr_public.h
+            SP/code/rend2/tr_backend.c
+            SP/code/rend2/tr_local.h
+            SP/code/rend2/tr_main.c
+            SP/code/rend2/tr_world.c
+          )
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          test "${#changed[@]}" -eq "${#expected_sorted[@]}" || { printf 'Changed:\n%s\nExpected:\n%s\n' "${changed[*]}" "${expected_sorted[*]}" >&2; exit 1; }
+          for i in "${!expected_sorted[@]}"; do
+            test "${changed[$i]}" = "${expected_sorted[$i]}" || { echo "ERROR: changed-file allowlist mismatch" >&2; exit 1; }
+          done
+
+          # No GLSL, game, cgame, qagame, old shadow shader, Bloom/ToneMap/Exposure, GI or unrelated source drift.
+          test -z "$(git -C source diff "$base_commit" -- SP/code/game SP/code/cgame SP/code/ui)"
+          test -z "$(git -C source diff "$base_commit" -- SP/code/rend2/glsl SP/code/rend2/tr_shade.c SP/code/rend2/tr_fbo.c SP/code/rend2/tr_image.c SP/code/rend2/tr_scene.c SP/code/rend2/tr_shader.c)"
+          git -C source diff --check "$base_commit" -- "${expected[@]}"
+
+          grep -Fq 'r_volumetricFireBspGroundTruthMode' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'FIREVOL_OCCLUDER_GROUND_TRUTH_V033' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'FIREVOL_OCCLUDER_RECORD_V033' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'FIREVOL_EXACT_OCCLUDER_FORCE_V033' source/SP/code/rend2/tr_world.c
+          grep -Fq 'VPF_FIREVOL_V033_FORCE_OCCLUDER = 0x200' source/SP/code/rend2/tr_local.h
+          grep -Fq 'CM_DarkWolfLastTraceMeta' source/SP/code/qcommon/cm_trace.c
+          grep -Fq 'CM_BoxTrace = CM_BoxTrace' source/SP/code/client/cl_main.c
+          echo "v0.3.3 isolated eight-file source guard PASS"
+
+      - name: Generate and replay exact v0.3.3 source patches
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          allow=(
+            SP/code/client/cl_main.c
+            SP/code/qcommon/cm_public.h
+            SP/code/qcommon/cm_trace.c
+            SP/code/renderer/tr_public.h
+            SP/code/rend2/tr_backend.c
+            SP/code/rend2/tr_local.h
+            SP/code/rend2/tr_main.c
+            SP/code/rend2/tr_world.c
+          )
+          git -C source diff --binary "$base_commit" -- "${allow[@]}" > "$DELTA_NAME"
+          test -s "$DELTA_NAME"
+          git -C source diff --binary "$UPSTREAM_SHA" -- . > "$CUMULATIVE_NAME"
+          test -s "$CUMULATIVE_NAME"
+
+          rm -rf replay-delta replay-cumulative
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$base_commit"
+          git -C replay-delta reset -q --hard "$base_commit"
+          git -C replay-delta clean -fdx
+          git -C replay-delta apply --check --binary "../$DELTA_NAME"
+          git -C replay-delta apply --binary "../$DELTA_NAME"
+          for f in "${allow[@]}"; do cmp "source/$f" "replay-delta/$f"; done
+
+          git clone -q source replay-cumulative
+          git -C replay-cumulative checkout -q --detach "$UPSTREAM_SHA"
+          git -C replay-cumulative reset -q --hard "$UPSTREAM_SHA"
+          git -C replay-cumulative clean -fdx
+          git -C replay-cumulative apply --check --binary "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary "../$CUMULATIVE_NAME"
+          for f in "${allow[@]}"; do cmp "source/$f" "replay-cumulative/$f"; done
+          echo "v0.3.3 delta SHA256: $(sha256sum "$DELTA_NAME" | awk '{print $1}')"
+          echo "v0.3.3 cumulative SHA256: $(sha256sum "$CUMULATIVE_NAME" | awk '{print $1}')"
+          echo "Patch replay contract PASS"
+
+      - name: Build Windows x64 SP
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"
+          if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify rebuilt v0.3.3 executable and Rend2 renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t exes < <(find source/SP/build -type f -name ioWolfSP.x64.exe -print | sort)
+          mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | sort)
+          test "${#exes[@]}" -eq 1 || { echo "ERROR: expected exactly one rebuilt ioWolfSP.x64.exe, found ${#exes[@]}" >&2; exit 1; }
+          test "${#renderers[@]}" -eq 1 || { echo "ERROR: expected exactly one rebuilt Rend2 DLL, found ${#renderers[@]}" >&2; exit 1; }
+          new_exe="${exes[0]}"
+          new_renderer="${renderers[0]}"
+          test -s "$new_exe" && test -s "$new_renderer"
+          printf '%s\n' "$new_exe" > .new_exe_path
+          printf '%s\n' "$new_renderer" > .new_renderer_path
+
+          file "$new_exe" > .new_exe_file.txt
+          file "$new_renderer" > .new_renderer_file.txt
+          cat .new_exe_file.txt .new_renderer_file.txt
+          grep -Fq 'PE32+ executable' .new_exe_file.txt
+          grep -Fq 'x86-64' .new_exe_file.txt
+          grep -Fq 'PE32+ executable' .new_renderer_file.txt
+          grep -Fq 'x86-64' .new_renderer_file.txt
+          grep -Fq '(DLL)' .new_renderer_file.txt
+
+          exe_sha="$(sha256sum "$new_exe" | awk '{print $1}')"
+          renderer_sha="$(sha256sum "$new_renderer" | awk '{print $1}')"
+          test "$exe_sha" != "$BASE_EXE_SHA256" || { echo "ERROR: executable unexpectedly identical to v0.3.2" >&2; exit 1; }
+          test "$renderer_sha" != "$BASE_RENDERER_SHA256" || { echo "ERROR: renderer unexpectedly identical to v0.3.2" >&2; exit 1; }
+          strings -a "$new_exe" > .new_exe_strings.txt
+          strings -a "$new_renderer" > .new_renderer_strings.txt
+
+          grep -Fq 'FIREVOL_V033_ENGINE_TRACE_META' .new_exe_strings.txt || { echo "ERROR: rebuilt exe missing trace bridge token" >&2; exit 1; }
+          grep -Fq 'FIREVOL_BSP_GROUND_TRUTH_V0_3_3_EXACT_OCCLUDER_INCLUSION_PROOF' source/SP/code/rend2/tr_backend.c
+          for need in \
+            FIREVOL_OCCLUDER_GROUND_TRUTH_V033 \
+            FIREVOL_OCCLUDER_RECORD_V033 \
+            FIREVOL_EXACT_OCCLUDER_FORCE_V033 \
+            FIREVOL_GROUND_TRUTH_CAPTURE_V033 \
+            r_volumetricFireBspGroundTruthMode \
+            FIREVOL_SYNTH_AUDIT_CAPTURE_V031 \
+            FIREVOL_SYNTH_CASTER_CAPTURE_V032 \
+            FIREVOL_WALL_OCCLUSION_DUAL_ORIGIN_V0_2; do
+            grep -Fq "$need" .new_renderer_strings.txt || { echo "ERROR: rebuilt renderer missing runtime token: $need" >&2; exit 1; }
+          done
+          echo "New executable SHA256: $exe_sha"
+          echo "New renderer SHA256: $renderer_sha"
+          echo "Rebuilt v0.3.3 runtime validation PASS"
+
+      - name: Package FireVol v0.3.3 final diagnostic release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          new_exe="$(cat .new_exe_path)"
+          new_renderer="$(cat .new_renderer_path)"
+          rm -rf release dist
+          stage="release/$RELEASE_BASENAME"
+          mkdir -p "$stage/Main" "$stage/docs" dist
+          cp -a "$base_stage/." "$stage/"
+          cp "$new_exe" "$stage/ioWolfSP.x64.exe"
+          cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+
+          cat > "$stage/Main/FIREVOL_BSP_GROUND_TRUTH_V033_A_CPU_GPU.cfg" <<'EOF'
+          exec FIREVOL_PRODUCTION_DEFAULT.cfg
+          set r_volumetricFireDiag 1
+          set r_volumetricFireDualOriginTest 1
+          set r_volumetricFireSyntheticAuditMode 2
+          set r_volumetricFireSyntheticCasterAuditMode 1
+          set r_volumetricFireBspGroundTruthMode 1
+          set r_dlightShadowStrength 1
+          set r_volumetricLocal 0
+          set r_volumetricLocalShadowPcf 0
+          set r_volumetricFireGreenMarker 0
+          set r_volumetricFireV072GpuIsolation 0
+          set cg_drawFPS 1
+          set com_maxfps 0
+          echo "FIREVOL v0.3.3 A: CPU CM_BoxTrace vs numeric stock-slot7 cubemap depth; writes exact occluder record on BLOCKED+GPU_VISIBLE mismatch"
+          EOF
+
+          cat > "$stage/Main/FIREVOL_BSP_GROUND_TRUTH_V033_B_FORCE_EXACT_OCCLUDER.cfg" <<'EOF'
+          exec FIREVOL_PRODUCTION_DEFAULT.cfg
+          set r_volumetricFireDiag 1
+          set r_volumetricFireDualOriginTest 1
+          set r_volumetricFireSyntheticAuditMode 2
+          set r_volumetricFireSyntheticCasterAuditMode 2
+          set r_volumetricFireBspGroundTruthMode 2
+          set r_dlightShadowStrength 1
+          set r_volumetricLocal 0
+          set r_volumetricLocalShadowPcf 0
+          set r_volumetricFireGreenMarker 0
+          set r_volumetricFireV072GpuIsolation 0
+          set cg_drawFPS 1
+          set com_maxfps 0
+          echo "FIREVOL v0.3.3 B: load A record; force ONLY exact render surface into synthetic shadow view with opaque material plus proven two-sided backend"
+          EOF
+
+          write_launcher() {
+            local name="$1" cfg="$2" title="$3"
+            cat > "$stage/$name" <<EOF
+          @echo off
+          setlocal
+          cd /d "%~dp0"
+          echo ============================================================
+          echo $title
+          echo Exact parent: successful FireVol v0.3.2 run 33950244363
+          echo Run A first at the leaking Crypt1 floor, then run B from the SAME test position.
+          echo Normal DLight budget=3 and shadow map size=1024 remain frozen.
+          echo ============================================================
+          ioWolfSP.x64.exe +set com_recommendedSet 1 +set cl_renderer rend2 +set r_swapInterval 0 +set r_ext_multisample 0 +set r_ext_framebuffer_multisample 4 +set r_hdr 1 +set r_msaaSelectiveSampleShading 1 +set r_dlightShadowMaxLights 3 +set r_dlightShadowMapSize 1024 +set r_dlightShadowStrength 1 +set logfile 2 +set r_volumetricLocal 0 +exec $cfg
+          EOF
+          }
+          write_launcher RUN_FIREVOL_BSP_GROUND_TRUTH_V033_A_CPU_GPU.cmd FIREVOL_BSP_GROUND_TRUTH_V033_A_CPU_GPU.cfg "FireVol v0.3.3 A - BSP ground truth vs GPU cubemap"
+          write_launcher RUN_FIREVOL_BSP_GROUND_TRUTH_V033_B_FORCE_EXACT_OCCLUDER.cmd FIREVOL_BSP_GROUND_TRUTH_V033_B_FORCE_EXACT_OCCLUDER.cfg "FireVol v0.3.3 B - exact occluder force inclusion proof"
+
+          cat > "$stage/docs/FIREVOL_BSP_GROUND_TRUTH_V0_3_3_EXACT_OCCLUDER_INCLUSION_PROOF.txt" <<'EOF'
+          DarkWolf / ioRTCW Rend2 Single Player
+          FireVol v0.3.3 — BSP Ground Truth / Exact Occluder Inclusion Proof
+          ===================================================================
+
+          PURPOSE
+          This is the last diagnostic in the synthetic FireVol floor-leak chain.
+          It does not test another FBO, cube size, near plane, origin offset, shadow strength or plume shape.
+
+          EXACT PARENT
+          - Successful GitHub Actions run: 33950244363
+          - HEAD: b52b06f57c655e8d6f2e5efe0f957248c4d128cc
+          - Artifact ID: 9964598967
+          - Parent inner ZIP SHA256: 64f4306cf0fcb0f3af203f21170d4cfd4c426c40bc5f49dfa3d635dc55fbf942
+          - Parent renderer SHA256: 688060f02b25f138eaf27fd4d74ac8f08be15aac669fce9cf764a6f3995b3132
+          - Upstream pinned SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+          ESTABLISHED BEFORE v0.3.3
+          - v0.3.1 custom256, stock slot7/1024, near=0.001 and 8-unit origin offset all leaked.
+          - v0.3.2 A leaked.
+          - v0.3.2 B genuinely enabled the dedicated two-sided backend shadow draw, but still leaked.
+          - v0.3.2 C forced audited synthetic visibility=0 and removed leakage.
+          - v0.3.2 D showed RED only: raw cubemap compare reports VISIBLE where the floor physically blocks.
+          Therefore attribution is closed and ordinary backface culling is not the root cause.
+
+          MODE A — CPU TRACE vs GPU CUBEMAP
+          Run: RUN_FIREVOL_BSP_GROUND_TRUTH_V033_A_CPU_GPU.cmd
+          - Uses the same proven stock dlightShadowFbo + shadow cubemap slot 7, 1024, mode 6.
+          - Selects five representative world samples from the audited synthetic light toward the current camera.
+          - Uses the engine's real CM_BoxTrace with CONTENTS_SOLID. If the flame anchor begins inside source geometry,
+            trace start is advanced by 0/2/4/8 units only to remove self-startsolid; actual light origin and GPU currentDepth remain unchanged.
+          - Correlates collision hit with the exact Rend2 world render-surface by double-sided BSP triangle intersection.
+          - Reads one nearest texel from the exact cubemap face into CPU telemetry and decodes the same 24-bit radial depth contract as shadowfill_fp.glsl.
+          - At the first probe for the current map/source, A invalidates any stale firevol_v033_occluder.txt record.
+          - When CPU says BLOCKED while GPU says VISIBLE and an exact render surface is resolved, mode A writes:
+              firevol_v033_occluder.txt
+            containing map, source surface, exact renderSurface index, brush/collision surface and shader.
+
+          Primary log:
+            FIREVOL_OCCLUDER_GROUND_TRUTH_V033
+          Fields include:
+            sampleWorldPos, lightOrigin, traceStartOffset, traceBlocked, traceFraction,
+            hitPoint, hitPlaneNormal, hitKind, hitBrush, collisionSurface,
+            hitSurface (exact Rend2 render surface), hitShader, shaderSort,
+            trace/render flags, cubeDirection, cubeFace, cubePixel,
+            RGBA packed depth, storedDepth, currentDepth, bias and rawVisible.
+
+          Required A proof:
+            traceBlocked=1 + rawVisible=1 + gpuRead=1 + hitSurface>=0
+          This means collision BSP knows an occluder exists but the sampled synthetic cubemap says the ray is visible.
+
+          MODE B — EXACT HIT SURFACE FORCE-INCLUDE
+          Run only after A, from the same test position:
+            RUN_FIREVOL_BSP_GROUND_TRUTH_V033_B_FORCE_EXACT_OCCLUDER.cmd
+          - Loads and validates firevol_v033_occluder.txt against map + audited source + render-surface shader identity.
+          - Adds ONLY the recorded render-surface index to the synthetic shadow view after normal world selection,
+            bypassing frontend R_CullSurface / visibility/material eligibility for that one surface.
+          - Uses tr.defaultShader only for that forced shadow draw so shader sort/material route cannot reject it.
+            The force path explicitly requires tr.defaultShader->sort == SS_OPAQUE; otherwise it logs action=reject instead of producing a false negative.
+          - Also retains v0.3.2's already-proven two-sided backend override, eliminating the previously closed backface variable.
+          - Main renderer, normal DLight shadows, sun, pshadow and all unrelated surfaces keep their parent behavior.
+
+          Required B confirmation tokens:
+            FIREVOL_OCCLUDER_RECORD_V033 action=load
+            FIREVOL_EXACT_OCCLUDER_FORCE_V033
+            FIREVOL_SYNTH_TWO_SIDED_DRAW_V032 active=1
+            FIREVOL_OCCLUDER_GROUND_TRUTH_V033 mode=2
+
+          FINAL DECISION
+          A: CPU BLOCKED + GPU VISIBLE
+          B: leakage disappears and rawVisible changes to 0
+            => ROOT CAUSE CLOSED: exact solid BSP floor render surface was excluded before/from synthetic shadow capture.
+               Production fix: include solid world occluders for synthetic FireVol capture without changing normal DLight/Sun paths.
+
+          A: CPU BLOCKED + GPU VISIBLE
+          B: exact force token present, leakage remains and rawVisible remains 1
+            => caster inclusion is no longer the explanation. Remaining defect is narrowly limited to:
+               cubemap face routing / capture-copy mapping / radial depth encoding-sampling contract.
+               Do not run more broad visual experiments; inspect the one logged ray/face/texel directly.
+
+          A cannot produce BLOCKED+VISIBLE with hitSurface>=0
+            => the representative ray did not identify the tested floor reliably; use the log to distinguish startsolid,
+               no collision, unresolved render-surface correlation or GPU readback failure. Do not interpret B without a valid A record.
+
+          SCOPE / GUARDRAIL
+          - ioRTCW Rend2 SP only.
+          - No GLSL modification.
+          - No Bloom/ToneMap/Exposure/GI/PBR/Sun/Static Promotion/Lamp Learn changes.
+          - Game/cgame/qagame remain inherited byte-for-byte.
+          - Only ioWolfSP.x64.exe and renderer_sp_rend2_x64.dll are intentionally rebuilt in the package.
+          - renderer_sp_opengl1_x64.dll is inherited byte-for-byte. The diagnostic refimport extension is append-only,
+            preserving the old renderer's prefix ABI.
+          EOF
+
+          cat > "$stage/docs/RUNTIME_ACCEPTANCE_V033.txt" <<'EOF'
+          FireVol v0.3.3 is DIAGNOSTIC ONLY.
+          CI SUCCESS proves build/package integrity, not visual acceptance.
+          Runtime order is exactly A then B at the same Crypt1 leakage position.
+          Do not promote v0.3.3 itself to production.
+          EOF
+
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          (cd "$stage" && sha256sum -c docs/SHA256SUMS.txt)
+
+      - name: Verify v0.3.3 zero-drift inheritance and create ZIP
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          stage="release/$RELEASE_BASENAME"
+
+          test -s "$stage/RUN_FIREVOL_BSP_GROUND_TRUTH_V033_A_CPU_GPU.cmd"
+          test -s "$stage/RUN_FIREVOL_BSP_GROUND_TRUTH_V033_B_FORCE_EXACT_OCCLUDER.cmd"
+          test -s "$stage/Main/FIREVOL_BSP_GROUND_TRUTH_V033_A_CPU_GPU.cfg"
+          test -s "$stage/Main/FIREVOL_BSP_GROUND_TRUTH_V033_B_FORCE_EXACT_OCCLUDER.cfg"
+          test -s "$stage/docs/FIREVOL_BSP_GROUND_TRUTH_V0_3_3_EXACT_OCCLUDER_INCLUSION_PROOF.txt"
+          test -s "$stage/docs/$DELTA_NAME"
+          test -s "$stage/docs/$CUMULATIVE_NAME"
+
+          # Only these two inherited runtime binaries are intentionally replaced.
+          while IFS= read -r -d '' f; do
+            rel="${f#${base_stage}/}"
+            case "$rel" in
+              ioWolfSP.x64.exe|renderer_sp_rend2_x64.dll|docs/SHA256SUMS.txt) continue ;;
+            esac
+            cmp "$f" "$stage/$rel" || { echo "ERROR: inherited payload drift: $rel" >&2; exit 1; }
+          done < <(find "$base_stage" -type f -print0)
+
+          test "$(sha256sum "$stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$BASE_OPENGL1_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$stage/OpenAL64.dll" | awk '{print $1}')" = "$BASE_OPENAL_SHA256"
+          test "$(sha256sum "$stage/SDL264.dll" | awk '{print $1}')" = "$BASE_SDL_SHA256"
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" != "$BASE_EXE_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" != "$BASE_RENDERER_SHA256"
+
+          count_cmd="$(find "$stage" -maxdepth 1 -type f -name 'RUN_FIREVOL_BSP_GROUND_TRUTH_V033_*.cmd' | wc -l)"
+          count_cfg="$(find "$stage/Main" -maxdepth 1 -type f -name 'FIREVOL_BSP_GROUND_TRUTH_V033_*.cfg' | wc -l)"
+          test "$count_cmd" -eq 2 && test "$count_cfg" -eq 2 || { echo "ERROR: expected exactly two v0.3.3 modes" >&2; exit 1; }
+
+          # No commercial RTCW assets may enter this source/build artifact.
+          test -z "$(find "$stage" -type f \( -iname '*.pk3' -o -iname '*.pak' -o -iname '*.bsp' -o -iname '*.aas' -o -iname '*.roq' \) -print -quit)"
+          (cd "$stage" && sha256sum -c docs/SHA256SUMS.txt)
+
+          zip_path="dist/${RELEASE_BASENAME}.zip"
+          (cd release && zip -X -q -r "../$zip_path" "$RELEASE_BASENAME")
+          unzip -tq "$zip_path"
+          sha256sum "$zip_path" > "${zip_path}.sha256"
+          echo "ZIP SHA256: $(cat "${zip_path}.sha256")"
+          echo "v0.3.3 zero-drift packaging contract PASS"
+
+      - name: Upload FireVol v0.3.3 final diagnostic artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
