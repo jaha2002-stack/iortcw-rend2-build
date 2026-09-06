@@ -1,0 +1,859 @@
+name: Build DarkWolf Rend2 Clean Production FireVol Occlusion Fix v1 over Run 33864810376 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-clean-production-firevol-occlusion-fix-v1-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Clean Production FireVol occlusion v1 - accepted torch behavior + production shadow path
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      # Exact runtime-accepted Clean Production behavior baseline.
+      BASE_RUN_ID: "33864810376"
+      BASE_RUN_HEAD_SHA: a3f4e9d06fd560280b9e9786dd5cb6e9cf244607
+      BASE_WORKFLOW_PATH: '.github/workflows/build-iortcw-rend2-clean-production-dlight-shadow-resolution-fix-v1-r3-over-run-33850847898-sp.yml'
+      BASE_ARTIFACT_ID: "9933568426"
+      BASE_ARTIFACT_NAME: iortcw-rend2-clean-production-dlight-shadow-resolution-fix-v1-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:529a58c3b1c542675d2a784f97f25e4b1bee3b44e2d9eb6bcbd76a62c2438c6d
+      BASE_RELEASE_BASENAME: iortcw-rend2-clean-production-dlight-shadow-resolution-fix-v1-full-sp-windows-x64-1
+      BASE_INNER_ZIP_SHA256: d8ac827364ee90ca5889f517375a01ebc8b5d912c4edd50647cadaf1e67ec9d7
+
+      BASE_EXE_SHA256: 431d2ecdc0bc81ea715168e84640a2f106c84b8c8faf5ac4b95348e1af9a2c9d
+      BASE_RENDERER_SHA256: 0ce8945736cf738ec4a37dea8eacc4f454c08d3873ba87e3ee719d28e634dc63
+      BASE_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      BASE_QAGAME_SHA256: b4d6b72bb43a6bb8ccce0eeaf95515da5a88dd4f048c5cf6db05e566f5dfa60a
+      BASE_CGAME_SHA256: dbcfe16805248a2d017a6f35450688caba89750b1044e16547c0c0911eec1e16
+      BASE_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+      BASE_OPENAL_SHA256: 396f88738ce20905e933cb7d8c696351e41bd7e72e80b8cfdadf20ab613420b4
+      BASE_SDL_SHA256: f34cd90b131ceb45b7f32d41680a13fd4b13e5f48f0d1649cbf441833105310c
+      BASE_FIREVOL_DEFAULT_SHA256: d4449b575c1e8eeff489241b947625088337d093d79e2e345caf568b74e84551
+      BASE_FIREVOL_CINEMATIC_SHA256: c4925caa8811dbb2daf0addf6d731bb84e2c77c876aacdf39c47aa04a2790da3
+      BASE_FIREVOL_PERFORMANCE_SHA256: d4b047ca6159aab47052adbcd0a90c1e4ecea8cfa943642d3f456508d06111a0
+      BASE_HDR_MSAA_SHA256: 164878ca109d060d05cb2df2ea0d304607789339216edf1aafdf3a4237a96741
+      BASE_RUN_DEFAULT_SHA256: 51bfd856c5e03f6e0b48ede24cd265252c7f552283543fcec7142f0a5fdb6eb6
+      BASE_RUN_CINEMATIC_SHA256: b9d5f70297e17b6f1b448f9af049e19297435938f922d8877daad0024bcdeb1e
+      BASE_RUN_PERFORMANCE_SHA256: f2a331cac116bb8637e9e0d2dfcabb19e5f2dd1f10b887c279a9d5ea404c84a4
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-clean-production-dlight-shadow-resolution-fix-v1-sp.patch
+      BASE_CUMULATIVE_SHA256: fc41c2e3dda4abf8bfb6937b1ae4e3800516046348e1ecc74bcbe966b5e0dcdf
+
+      PATCHER_NAME: apply_firevol_clean_production_occlusion_v1.py
+      DELTA_NAME: darkwolf-firevol-clean-production-occlusion-fix-v1-over-run-33864810376.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-clean-production-firevol-occlusion-fix-v1-sp.patch
+      RELEASE_BASENAME: iortcw-rend2-clean-production-firevol-occlusion-fix-v1-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file glslang-tools
+
+      - name: Preflight workflow YAML and bash contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: cannot resolve workflow: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY'
+          from pathlib import Path
+          import subprocess, sys, yaml
+          p = Path(sys.argv[1])
+          text = p.read_text(encoding='utf-8')
+          if '\r' in text:
+              raise SystemExit('ERROR: workflow contains CR bytes; LF-only contract required')
+          doc = yaml.safe_load(text)
+          expected = 'Build DarkWolf Rend2 Clean Production FireVol Occlusion Fix v1 over Run 33864810376 SP'
+          if doc.get('name') != expected:
+              raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+          checked = 0
+          for job_name, job in (doc.get('jobs') or {}).items():
+              for index, step in enumerate(job.get('steps') or [], 1):
+                  script = step.get('run')
+                  shell = step.get('shell', 'bash')
+                  if not script or not str(shell).lower().startswith('bash'):
+                      continue
+                  proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                      print(proc.stderr, file=sys.stderr)
+                      raise SystemExit(proc.returncode)
+                  checked += 1
+          if checked < 10:
+              raise SystemExit(f'ERROR: unexpectedly few bash run blocks: {checked}')
+          print(f'Workflow YAML + bash syntax PASS: {checked} bash blocks')
+          PY
+
+      - name: Verify exact Clean Production run 33864810376
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: base HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = "success" || { echo "ERROR: base run not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: base workflow path drift" >&2; exit 1; }
+          line="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$line" || { echo "ERROR: exact base artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$line"
+          test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: base artifact name drift" >&2; exit 1; }
+          test "$expired" = "false" || { echo "ERROR: base artifact expired" >&2; exit 1; }
+          test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: base artifact digest drift" >&2; exit 1; }
+          echo "Exact runtime-accepted Clean Production provenance PASS"
+
+      - name: Download and byte-verify exact Clean Production release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          base_zip="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+          sidecar="${base_zip}.sha256"
+          test -s "$base_zip" && test -s "$sidecar"
+          test "$(sha256sum "$base_zip" | awk '{print $1}')" = "$BASE_INNER_ZIP_SHA256"
+          test "$(awk '{print $1}' "$sidecar")" = "$BASE_INNER_ZIP_SHA256"
+          unzip -q "$base_zip" -d base-release
+          mapfile -t roots < <(find base-release/release -mindepth 1 -maxdepth 1 -type d -print | sort)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one base release root" >&2; find base-release -maxdepth 3 -type d -print; exit 1; }
+          base_stage="${roots[0]}"
+          printf '%s\n' "$base_stage" > .base_stage_path
+          (cd "$base_stage" && sha256sum -c docs/SHA256SUMS.txt)
+
+          check_sha() { local file="$1" expected="$2"; test -s "$file"; test "$(sha256sum "$file" | awk '{print $1}')" = "$expected"; }
+          check_sha "$base_stage/ioWolfSP.x64.exe" "$BASE_EXE_SHA256"
+          check_sha "$base_stage/renderer_sp_rend2_x64.dll" "$BASE_RENDERER_SHA256"
+          check_sha "$base_stage/renderer_sp_opengl1_x64.dll" "$BASE_OPENGL1_SHA256"
+          check_sha "$base_stage/Main/qagame_sp_x64.dll" "$BASE_QAGAME_SHA256"
+          check_sha "$base_stage/Main/cgame_sp_x64.dll" "$BASE_CGAME_SHA256"
+          check_sha "$base_stage/Main/ui_sp_x64.dll" "$BASE_UI_SHA256"
+          check_sha "$base_stage/OpenAL64.dll" "$BASE_OPENAL_SHA256"
+          check_sha "$base_stage/SDL264.dll" "$BASE_SDL_SHA256"
+          check_sha "$base_stage/Main/FIREVOL_PRODUCTION_DEFAULT.cfg" "$BASE_FIREVOL_DEFAULT_SHA256"
+          check_sha "$base_stage/Main/FIREVOL_PRODUCTION_BALANCED.cfg" "$BASE_FIREVOL_DEFAULT_SHA256"
+          check_sha "$base_stage/Main/FIREVOL_PRODUCTION_CINEMATIC.cfg" "$BASE_FIREVOL_CINEMATIC_SHA256"
+          check_sha "$base_stage/Main/FIREVOL_PRODUCTION_PERFORMANCE.cfg" "$BASE_FIREVOL_PERFORMANCE_SHA256"
+          check_sha "$base_stage/Main/DARKWOLF_HDR_MSAA_PRODUCTION.cfg" "$BASE_HDR_MSAA_SHA256"
+          check_sha "$base_stage/RUN_DARKWOLF_PRODUCTION.cmd" "$BASE_RUN_DEFAULT_SHA256"
+          check_sha "$base_stage/RUN_DARKWOLF_PRODUCTION_CINEMATIC.cmd" "$BASE_RUN_CINEMATIC_SHA256"
+          check_sha "$base_stage/RUN_DARKWOLF_PRODUCTION_PERFORMANCE.cmd" "$BASE_RUN_PERFORMANCE_SHA256"
+          check_sha "$base_stage/docs/$BASE_CUMULATIVE_NAME" "$BASE_CUMULATIVE_SHA256"
+
+          # Exact torch behavior contract that must stay unchanged.
+          grep -Fq 'seta r_volumetricFireSourceMode "2"' "$base_stage/Main/FIREVOL_PRODUCTION_DEFAULT.cfg"
+          grep -Fq 'seta r_volumetricFireMaxActive "8"' "$base_stage/Main/FIREVOL_PRODUCTION_DEFAULT.cfg"
+          grep -Fq 'seta r_volumetricFireV07Mode "2"' "$base_stage/Main/FIREVOL_PRODUCTION_DEFAULT.cfg"
+          grep -Fq 'seta r_volumetricFireRenderedMaxDist "320"' "$base_stage/Main/FIREVOL_PRODUCTION_DEFAULT.cfg"
+          grep -Fq 'seta r_volumetricFirePoolGraceMs "10000"' "$base_stage/Main/FIREVOL_PRODUCTION_DEFAULT.cfg"
+          echo "Exact Clean Production payload/FireVol behavior bytes PASS"
+
+      - name: Reconstruct exact run 33864810376 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          rm -rf source
+          git clone "$UPSTREAM_REPO" source
+          git -C source checkout --detach "$UPSTREAM_SHA"
+          git -C source reset --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$base_stage/docs/$BASE_CUMULATIVE_NAME" .base-cumulative.patch
+          test "$(sha256sum .base-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          git -C source apply --check --binary ../.base-cumulative.patch
+          git -C source apply --binary ../.base-cumulative.patch
+
+          # Accepted Run 33864810376 source-selection/residency contract.
+          grep -Fq 'FIREVOL081_REGISTRY' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'FIREVOL083_PRIORITY' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'FIREVOL084_HOLD' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'int renderMode = RB_FireV07RenderMode();' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'VectorCopy(sel->latchedFlameOrigin, anchoredDl.origin);' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'volumeShadowSlot = sel->syntheticVolumeOnly ? -1 :' source/SP/code/rend2/tr_backend.c
+          grep -Fq '((renderMode == 8 || latchedDistance <= 1.0f) ? sel->shadowSlot : -1);' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'int dlightShadowSize = r_dlightShadowMapSize ? r_dlightShadowMapSize->integer : PSHADOW_MAP_SIZE;' source/SP/code/rend2/tr_fbo.c
+          grep -Fq 'DARKWOLF_CVAR_PERSISTENCE_FIX_V1 over Clean Production run 33712037857' source/SP/code/client/cl_main.c
+
+          # Later experiment code must not already exist in the clean base.
+          for bad in r_volumetricFireDualOriginTest r_volumetricFireSyntheticAuditMode r_volumetricFireSyntheticCasterAuditMode r_volumetricFireBspGroundTruthMode r_volumetricFireRasterContractMode FIREVOL_RASTER_SHADOWPASS_V034 FIREVOL_OCCLUDER_GROUND_TRUTH_V033; do
+            ! grep -R -Fq "$bad" source/SP/code/rend2 || { echo "ERROR: clean base unexpectedly contains experimental token: $bad" >&2; exit 1; }
+          done
+
+          git -C source config user.email "darkwolf-ci@example.invalid"
+          git -C source config user.name "DarkWolf CI"
+          git -C source add -A
+          git -C source commit -m "Exact Clean Production run 33864810376 source"
+          git -C source rev-parse HEAD > .base_source_commit
+          test -z "$(git -C source status --porcelain)"
+          echo "Exact clean source reconstruction PASS"
+
+      - name: Write and preflight production FireVol occlusion patcher
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+          
+          ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 and not sys.argv[1].startswith('--') else Path('source')
+          ARGS = set(sys.argv[2:] if len(sys.argv) > 1 and not sys.argv[1].startswith('--') else sys.argv[1:])
+          CHECK_ONLY = '--check-only' in ARGS
+          VERIFY = '--verify-applied' in ARGS
+          
+          FILES = {
+              'backend': ROOT / 'SP/code/rend2/tr_backend.c',
+              'fbo': ROOT / 'SP/code/rend2/tr_fbo.c',
+              'image': ROOT / 'SP/code/rend2/tr_image.c',
+              'local': ROOT / 'SP/code/rend2/tr_local.h',
+              'main': ROOT / 'SP/code/rend2/tr_main.c',
+              'scene': ROOT / 'SP/code/rend2/tr_scene.c',
+              'shade': ROOT / 'SP/code/rend2/tr_shade.c',
+              'shader': ROOT / 'SP/code/rend2/glsl/volumetriclocal_fp.glsl',
+          }
+          
+          MARK = 'DARKWOLF_FIREVOL_OCCLUSION_PRODUCTION_V1'
+          MATRIX_MARK = 'DARKWOLF_FIREVOL_WORLD_SHADOW_MODEL_MATRIX_PRODUCTION_V1'
+          FORBIDDEN = (
+              'r_volumetricFireDualOriginTest',
+              'r_volumetricFireSyntheticAuditMode',
+              'r_volumetricFireSyntheticCasterAuditMode',
+              'r_volumetricFireBspGroundTruthMode',
+              'r_volumetricFireRasterContractMode',
+              'FIREVOL_SYNTH_AUDIT',
+              'FIREVOL_SYNTH_CASTER_',
+              'FIREVOL_OCCLUDER_GROUND_TRUTH',
+              'FIREVOL_RASTER_',
+              'FIREVOL_DUAL_DIRECTION_',
+              'FIREVOL_SENTINEL_',
+          )
+          
+          for key, path in FILES.items():
+              if not path.is_file():
+                  raise SystemExit(f'ERROR: missing source file {key}: {path}')
+          
+          data = {k: p.read_text(encoding='utf-8') for k, p in FILES.items()}
+          
+          
+          def verify_applied(data):
+              joined = '\n'.join(data.values())
+              if MARK not in joined:
+                  raise SystemExit(f'ERROR: production marker missing: {MARK}')
+              if MATRIX_MARK not in data['shade']:
+                  raise SystemExit(f'ERROR: matrix marker missing: {MATRIX_MARK}')
+              for token in FORBIDDEN:
+                  if token in joined:
+                      raise SystemExit(f'ERROR: experimental token survived production source: {token}')
+              required = (
+                  'fireVolumetricSyntheticShadowCubemaps[FIREVOL_SYNTH_SHADOW_CACHE_MAX]',
+                  'R_RenderFireVolumetricSyntheticShadows(fd);',
+                  'RB_LocalVolumetricRenderEx',
+                  'GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_CUBEMAPINFO, volumeInfo);',
+                  'Mat4Identity(shadowModelMatrix);',
+                  'VPF_FIREVOL_SYNTHETIC_SHADOW',
+              )
+              for token in required:
+                  if token not in joined:
+                      raise SystemExit(f'ERROR: required production token missing: {token}')
+              print('VERIFY_APPLIED PASS')
+          
+          
+          if VERIFY:
+              verify_applied(data)
+              raise SystemExit(0)
+          
+          if any(MARK in text or MATRIX_MARK in text for text in data.values()):
+              raise SystemExit('ERROR: production FireVol occlusion patch already applied; repeat apply rejected')
+          for token in FORBIDDEN:
+              if any(token in text for text in data.values()):
+                  raise SystemExit(f'ERROR: base unexpectedly contains later experimental token: {token}')
+          
+          
+          def replace_once(key, old, new, label):
+              text = data[key]
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'ERROR: {label}: expected exactly one anchor, found {count}')
+              data[key] = text.replace(old, new, 1)
+          
+          
+          def regex_once(key, pattern, repl, label, flags=0):
+              text = data[key]
+              matches = list(re.finditer(pattern, text, flags))
+              if len(matches) != 1:
+                  raise SystemExit(f'ERROR: {label}: expected exactly one regex anchor, found {len(matches)}')
+              data[key] = re.sub(pattern, repl, text, count=1, flags=flags)
+          
+          
+          # -----------------------------------------------------------------------------
+          # 1) Shader: preserve physical DLight origin for attenuation/shadow while the
+          #    original latched flame origin continues to own plume geometry.
+          # -----------------------------------------------------------------------------
+          replace_once('shader',
+              '// DARKWOLF_FIRE_VOLUMETRIC_V0_8_1_PRODUCTION_VISIBILITY_FULL_COVERAGE\n',
+              '// DARKWOLF_FIRE_VOLUMETRIC_V0_8_1_PRODUCTION_VISIBILITY_FULL_COVERAGE\n'
+              f'// {MARK}: physical shadow origin and rendered flame-volume origin are separated without a runtime test mode.\n',
+              'shader production marker')
+          replace_once('shader',
+              '// u_PrimaryLightOrigin: xyz source, w radius/range\n'
+              '// u_DlightInfo:     xyz spotlight direction, w spot cos(outer)\n',
+              '// u_PrimaryLightOrigin: xyz physical shadow/attenuation origin, w physical radius/range\n'
+              '// u_CubeMapInfo:     xyz rendered fire-volume origin, w fire-volume geometry radius\n'
+              '// u_DlightInfo:     xyz spotlight direction, w spot cos(outer)\n',
+              'shader uniform documentation')
+          replace_once('shader',
+              'uniform vec4 u_PrimaryLightOrigin;\n'
+              'uniform vec3 u_PrimaryLightColor;\n',
+              'uniform vec4 u_PrimaryLightOrigin;\n'
+              'uniform vec4 u_CubeMapInfo;\n'
+              'uniform vec3 u_PrimaryLightColor;\n',
+              'shader volume uniform declaration')
+          replace_once('shader',
+              '    vec3 lightOrigin = u_PrimaryLightOrigin.xyz;\n'
+              '    float lightRadius = max(u_PrimaryLightOrigin.w, 1.0);\n'
+              '    float segmentStart, segmentEnd;\n'
+              '    if (!raySphereSegment(u_ViewOrigin, rayDir, lightOrigin, lightRadius,\n'
+              '                          maxDistance, segmentStart, segmentEnd))\n',
+              '    vec3 lightOrigin = u_PrimaryLightOrigin.xyz;\n'
+              '    float lightRadius = max(u_PrimaryLightOrigin.w, 1.0);\n'
+              '    vec3 volumeOrigin = ((mode >= 5 && mode <= 8) ? u_CubeMapInfo.xyz : lightOrigin);\n'
+              '    float volumeRadius = ((mode >= 5 && mode <= 8) ? max(u_CubeMapInfo.w, 1.0) : lightRadius);\n'
+              '    float segmentStart, segmentEnd;\n'
+              '    if (!raySphereSegment(u_ViewOrigin, rayDir, volumeOrigin, volumeRadius,\n'
+              '                          maxDistance, segmentStart, segmentEnd))\n',
+              'shader ray-volume split')
+          replace_once('shader',
+              '            mediumMask = fireShapeMask(worldPos, lightOrigin, lightRadius);\n',
+              '            mediumMask = fireShapeMask(worldPos, volumeOrigin, volumeRadius);\n',
+              'shader fire shape origin')
+          replace_once('shader',
+              '            debugCoverage += mediumMask * stepLength / max(lightRadius, 1.0);\n',
+              '            debugCoverage += mediumMask * stepLength / max(volumeRadius, 1.0);\n',
+              'shader coverage radius')
+          replace_once('shader',
+              '            integratedFire += fireProductionTint(worldPos, lightOrigin, lightRadius) * sampleContribution;\n',
+              '            integratedFire += fireProductionTint(worldPos, volumeOrigin, volumeRadius) * sampleContribution;\n',
+              'shader fire tint origin')
+          
+          # -----------------------------------------------------------------------------
+          # 2) Internal renderer-only cache contract. 8 cache entries match the accepted
+          #    production render cap. Source selection/residency itself is untouched.
+          # -----------------------------------------------------------------------------
+          replace_once('local',
+              '#define MAX_DLIGHT_SHADOWS 8\n',
+              '#define MAX_DLIGHT_SHADOWS 8\n'
+              f'#define FIREVOL_SYNTH_SHADOW_CACHE_MAX 8 // {MARK}: equals accepted FireVol render cap; does not change source selection\n'
+              f'#define FIREVOL_SYNTH_SHADOW_SIZE 256 // {MARK}: stable single-capture architecture proven by v0.3.1\n'
+              f'#define FIREVOL_SYNTH_SHADOW_MAP_BASE MAX_DLIGHT_SHADOWS // {MARK}: renderer command IDs 8..15, outside normal DLight slots\n',
+              'local cache constants')
+          replace_once('local',
+              '\tVPF_USESUNLIGHT     = 0x20,\n\tVPF_FARPLANEFRUSTUM = 0x40,\n',
+              '\tVPF_USESUNLIGHT     = 0x20,\n\tVPF_FARPLANEFRUSTUM = 0x40,\n'
+              f'\tVPF_FIREVOL_SYNTHETIC_SHADOW = 0x100, // {MARK}: isolated two-sided synthetic FireVol shadow capture\n',
+              'view flag insertion')
+          replace_once('local',
+              '} dlight_t;\n',
+              '} dlight_t;\n\n'
+              f'// {MARK}: previous-frame selected source hints and persistent static-fixture shadow cache.\n'
+              'typedef struct fireVolumetricSyntheticShadowHint_s {\n'
+              '\tqboolean valid;\n'
+              '\tint flameSurface;\n'
+              '\tint stampTime;\n'
+              '\tvec3_t flameOrigin;\n'
+              '\tfloat sampleRadius;\n'
+              '} fireVolumetricSyntheticShadowHint_t;\n\n'
+              'typedef struct fireVolumetricSyntheticShadowCache_s {\n'
+              '\tqboolean valid;\n'
+              '\tint flameSurface;\n'
+              '\tint captureTime;\n'
+              '\tint lastUsedTime;\n'
+              '\tvec3_t captureOrigin;\n'
+              '\tfloat captureRadius;\n'
+              '} fireVolumetricSyntheticShadowCache_t;\n',
+              'shadow hint/cache types')
+          replace_once('local',
+              '\timage_t                 *shadowCubemaps[MAX_DLIGHT_SHADOWS];\n',
+              '\timage_t                 *shadowCubemaps[MAX_DLIGHT_SHADOWS];\n'
+              f'\timage_t                 *fireVolumetricSyntheticShadowCubemaps[FIREVOL_SYNTH_SHADOW_CACHE_MAX]; // {MARK}\n',
+              'synthetic cache image array')
+          replace_once('local',
+              '\tFBO_t                   *dlightShadowFbo; // REND2_PRODUCTION_POLISH_V6_1\n',
+              '\tFBO_t                   *dlightShadowFbo; // REND2_PRODUCTION_POLISH_V6_1\n'
+              f'\tFBO_t                   *fireVolumetricSyntheticShadowFbo; // {MARK}: one producer, many cached cube textures\n'
+              '\tfireVolumetricSyntheticShadowHint_t fireVolumetricSyntheticShadowHints[FIREVOL_SYNTH_SHADOW_CACHE_MAX];\n'
+              '\tint                     fireVolumetricSyntheticShadowHintCount;\n'
+              '\tfireVolumetricSyntheticShadowCache_t fireVolumetricSyntheticShadowCache[FIREVOL_SYNTH_SHADOW_CACHE_MAX];\n',
+              'synthetic FBO/cache state')
+          replace_once('local',
+              'void R_RenderDlightCubemaps(const refdef_t *fd);\n',
+              'void R_RenderDlightCubemaps(const refdef_t *fd);\n'
+              f'void R_RenderFireVolumetricSyntheticShadows(const refdef_t *fd); // {MARK}\n',
+              'synthetic capture prototype')
+          
+          # -----------------------------------------------------------------------------
+          # 3) Eight small persistent cube textures + one reusable FBO. The crash-prone
+          #    multi-R_RenderView fanout is avoided: frontend captures at most one source/frame.
+          # -----------------------------------------------------------------------------
+          image_anchor = '''\t\tfor( x = 0; x < MAX_DLIGHT_SHADOWS; x++)\n\t\t{\n\t\t\ttr.shadowCubemaps[x] = R_CreateImage(va("*shadowcubemap%i", x), NULL, dlightShadowSize, dlightShadowSize, IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE | IMGFLAG_CUBEMAP, GL_RGBA8);\n\t\t\tqglTextureParameterfEXT(tr.shadowCubemaps[x]->texnum, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);\n\t\t\tqglTextureParameterfEXT(tr.shadowCubemaps[x]->texnum, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);\n\t\t\tqglTextureParameterfEXT(tr.shadowCubemaps[x]->texnum, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);\n\t\t}\n'''
+          image_new = image_anchor + f'''\t\t// {MARK}: cache textures only; normal DLight shadow budget remains unchanged.\n\t\t{{\n\t\t\tint fireShadowIndex;\n\t\t\tfor (fireShadowIndex = 0; fireShadowIndex < FIREVOL_SYNTH_SHADOW_CACHE_MAX; ++fireShadowIndex)\n\t\t\t{{\n\t\t\t\ttr.fireVolumetricSyntheticShadowCubemaps[fireShadowIndex] = R_CreateImage(va("*fireVolSynthProd%i", fireShadowIndex), NULL,\n\t\t\t\t\tFIREVOL_SYNTH_SHADOW_SIZE, FIREVOL_SYNTH_SHADOW_SIZE, IMGTYPE_COLORALPHA,\n\t\t\t\t\tIMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE | IMGFLAG_CUBEMAP, GL_RGBA8);\n\t\t\t\tqglTextureParameterfEXT(tr.fireVolumetricSyntheticShadowCubemaps[fireShadowIndex]->texnum, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);\n\t\t\t\tqglTextureParameterfEXT(tr.fireVolumetricSyntheticShadowCubemaps[fireShadowIndex]->texnum, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);\n\t\t\t\tqglTextureParameterfEXT(tr.fireVolumetricSyntheticShadowCubemaps[fireShadowIndex]->texnum, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);\n\t\t\t\tqglTextureParameterfEXT(tr.fireVolumetricSyntheticShadowCubemaps[fireShadowIndex]->texnum, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);\n\t\t\t\tqglTextureParameterfEXT(tr.fireVolumetricSyntheticShadowCubemaps[fireShadowIndex]->texnum, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);\n\t\t\t}}\n\t\t}}\n'''
+          replace_once('image', image_anchor, image_new, 'synthetic cube allocation')
+          
+          fbo_anchor = '''\t{\n\t\t// REND2_DLIGHT_ROBUST_PROBE_FROZEN_RES_V8_6_6: match offscreen FBO to dlight cubemap.\n\t\tint dlightShadowSize = r_dlightShadowMapSize ? r_dlightShadowMapSize->integer : PSHADOW_MAP_SIZE;\n\t\ttr.dlightShadowFbo = FBO_Create("_dlightShadow", dlightShadowSize, dlightShadowSize);\n\t\tFBO_CreateBuffer(tr.dlightShadowFbo, GL_RGBA8, 0, 0);\n\t\tFBO_CreateBuffer(tr.dlightShadowFbo, GL_DEPTH_COMPONENT24_ARB, 0, 0);\n\t\tR_CheckFBO(tr.dlightShadowFbo);\n\t}\n'''
+          fbo_new = fbo_anchor + f'''\n\t// {MARK}: one stable 256x256 capture producer; cache textures are copied from it.\n\tif (tr.fireVolumetricSyntheticShadowCubemaps[0])\n\t{{\n\t\ttr.fireVolumetricSyntheticShadowFbo = FBO_Create("_fireVolSyntheticProduction", FIREVOL_SYNTH_SHADOW_SIZE, FIREVOL_SYNTH_SHADOW_SIZE);\n\t\tFBO_CreateBuffer(tr.fireVolumetricSyntheticShadowFbo, GL_RGBA8, 0, 0);\n\t\tFBO_CreateBuffer(tr.fireVolumetricSyntheticShadowFbo, GL_DEPTH_COMPONENT24_ARB, 0, 0);\n\t\tR_CheckFBO(tr.fireVolumetricSyntheticShadowFbo);\n\t}}\n'''
+          replace_once('fbo', fbo_anchor, fbo_new, 'synthetic capture FBO')
+          
+          # -----------------------------------------------------------------------------
+          # 4) CapShadowMap can target the eight renderer-only cache cube textures.
+          # -----------------------------------------------------------------------------
+          replace_once('backend',
+              '\tint shadowSize, shadowX, shadowY;\n',
+              '\tint shadowSize, shadowX, shadowY;\n'
+              f'\timage_t *fireVolCaptureCube = NULL; // {MARK}\n',
+              'cap shadow local cube')
+          cap_old = '''\t\tif (cmd->cubeSide != -1)\n\t\t{\n\t\t\tif (cmd->map >= 0 && cmd->map < MAX_DLIGHT_SHADOWS && tr.shadowCubemaps[cmd->map])\n\t\t\t{\n\t\t\t\tshadowSize = tr.shadowCubemaps[cmd->map]->width;\n\t\t\t\trestoreFbo = glState.currentFBO;\n\t\t\t\tif (restoreFbo == tr.dlightShadowFbo)\n'''
+          cap_new = f'''\t\tif (cmd->cubeSide != -1)\n\t\t{{\n\t\t\tfireVolCaptureCube = NULL;\n\t\t\tif (cmd->map >= FIREVOL_SYNTH_SHADOW_MAP_BASE && cmd->map < FIREVOL_SYNTH_SHADOW_MAP_BASE + FIREVOL_SYNTH_SHADOW_CACHE_MAX)\n\t\t\t\tfireVolCaptureCube = tr.fireVolumetricSyntheticShadowCubemaps[cmd->map - FIREVOL_SYNTH_SHADOW_MAP_BASE];\n\t\t\tif ((cmd->map >= 0 && cmd->map < MAX_DLIGHT_SHADOWS && tr.shadowCubemaps[cmd->map]) || fireVolCaptureCube)\n\t\t\t{{\n\t\t\t\timage_t *captureCube = fireVolCaptureCube ? fireVolCaptureCube : tr.shadowCubemaps[cmd->map];\n\t\t\t\tshadowSize = captureCube->width;\n\t\t\t\trestoreFbo = glState.currentFBO;\n\t\t\t\tif (restoreFbo == tr.dlightShadowFbo || restoreFbo == tr.fireVolumetricSyntheticShadowFbo)\n'''
+          replace_once('backend', cap_old, cap_new, 'cap shadow map route')
+          replace_once('backend',
+              '\t\t\t\tqglCopyTextureSubImage2DEXT(tr.shadowCubemaps[cmd->map]->texnum,\n',
+              '\t\t\t\tqglCopyTextureSubImage2DEXT(captureCube->texnum,\n',
+              'cap shadow copy target')
+          # Do not let synthetic copies corrupt normal DLight diagnostic counters.
+          cap_diag_old = '''\t\t\t\tif (cmd->cubeSide == 0)\n\t\t\t\t\tbackEnd.dlightDiagFacesCaptured = 0;\n\t\t\t\tbackEnd.dlightDiagCaptureTime = backEnd.refdef.time;\n\t\t\t\tbackEnd.dlightDiagFacesCaptured++;\n'''
+          cap_diag_new = f'''\t\t\t\tif (!fireVolCaptureCube)\n\t\t\t\t{{\n\t\t\t\t\tif (cmd->cubeSide == 0)\n\t\t\t\t\t\tbackEnd.dlightDiagFacesCaptured = 0;\n\t\t\t\t\tbackEnd.dlightDiagCaptureTime = backEnd.refdef.time;\n\t\t\t\t\tbackEnd.dlightDiagFacesCaptured++;\n\t\t\t\t}}\n'''
+          replace_once('backend', cap_diag_old, cap_diag_new, 'cap shadow diagnostics isolation')
+          
+          # -----------------------------------------------------------------------------
+          # 5) Backend volumetric draw: no test cvar and no source skipping. Real DLight
+          #    uses its owning cubemap. Synthetic/no-slot fallback uses cache if ready;
+          #    otherwise it renders with the exact accepted 33864810376 behavior.
+          # -----------------------------------------------------------------------------
+          replace_once('backend',
+              'static void RB_LocalVolumetricRender(FBO_t *srcFbo, ivec4_t srcBox, int mode,\n'
+              '\tconst dlight_t *lamp, int shadowSlot, const localVolumetricSpot_t *spot, float sourceWeight, float fireGeometryRadius)\n'
+              '{\n'
+              '\tvec4_t viewInfo, source, params, qualityParams, energyParams, dlightInfo, shadowParams;\n',
+              f'static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,\n'
+              '\tconst dlight_t *lamp, int shadowSlot, const localVolumetricSpot_t *spot, float sourceWeight, float fireGeometryRadius,\n'
+              f'\tconst vec3_t fireVolumeOrigin, image_t *shadowCubemapOverride) // {MARK}\n'
+              '{\n'
+              '\tvec4_t viewInfo, source, volumeInfo, params, qualityParams, energyParams, dlightInfo, shadowParams;\n'
+              '\timage_t *shadowImage = NULL;\n',
+              'extended volumetric signature')
+          replace_once('backend',
+              '\t\t// v0.3: source.w is the participating-medium geometry radius for fire modes.\n'
+              '\t\t// The raw authored DLight radius is still passed separately for attenuation/shadow normalization.\n'
+              '\t\tVectorSet4(source, lamp->origin[0], lamp->origin[1], lamp->origin[2],\n'
+              '\t\t\t((mode >= 5 && mode <= 8) && fireGeometryRadius > 0.0f) ? fireGeometryRadius : MAX(lamp->radius, 1.0f));\n'
+              '\t\tVectorCopy(lamp->color, lightColor);\n'
+              '\t\tVectorSet4(dlightInfo, 0.0f, 0.0f, 1.0f, -1.0f);\n'
+              '\t\tuseShadow = ((mode == 3 || mode == 6 || mode == 7) && shadowSlot >= 0 && shadowSlot < MAX_DLIGHT_SHADOWS && tr.shadowCubemaps[shadowSlot]) ? qtrue : qfalse;\n'
+              '\t\tradiusOrRange = source[3];\n',
+              f'\t\t// {MARK}: shadow/attenuation origin is independent of the accepted latched plume origin.\n'
+              '\t\tif ((mode >= 5 && mode <= 8) && fireVolumeOrigin)\n'
+              '\t\t{\n'
+              '\t\t\tVectorSet4(source, lamp->origin[0], lamp->origin[1], lamp->origin[2], MAX(lamp->radius, 1.0f));\n'
+              '\t\t\tVectorSet4(volumeInfo, fireVolumeOrigin[0], fireVolumeOrigin[1], fireVolumeOrigin[2],\n'
+              '\t\t\t\tfireGeometryRadius > 0.0f ? fireGeometryRadius : MAX(lamp->radius, 1.0f));\n'
+              '\t\t}\n'
+              '\t\telse\n'
+              '\t\t{\n'
+              '\t\t\tVectorSet4(source, lamp->origin[0], lamp->origin[1], lamp->origin[2],\n'
+              '\t\t\t\t((mode >= 5 && mode <= 8) && fireGeometryRadius > 0.0f) ? fireGeometryRadius : MAX(lamp->radius, 1.0f));\n'
+              '\t\t\tVectorSet4(volumeInfo, source[0], source[1], source[2], source[3]);\n'
+              '\t\t}\n'
+              '\t\tVectorCopy(lamp->color, lightColor);\n'
+              '\t\tVectorSet4(dlightInfo, 0.0f, 0.0f, 1.0f, -1.0f);\n'
+              '\t\tif (mode == 3 || mode == 6 || mode == 7)\n'
+              '\t\t{\n'
+              '\t\t\tif (shadowCubemapOverride) shadowImage = shadowCubemapOverride;\n'
+              '\t\t\telse if (shadowSlot >= 0 && shadowSlot < MAX_DLIGHT_SHADOWS) shadowImage = tr.shadowCubemaps[shadowSlot];\n'
+              '\t\t\tuseShadow = shadowImage ? qtrue : qfalse;\n'
+              '\t\t}\n'
+              '\t\tradiusOrRange = source[3];\n',
+              'dual origin and shadow override')
+          replace_once('backend',
+              '\t\tVectorSet4(source, spot->origin[0], spot->origin[1], spot->origin[2], radiusOrRange);\n'
+              '\t\tVectorCopy(spot->color, lightColor);\n',
+              '\t\tVectorSet4(source, spot->origin[0], spot->origin[1], spot->origin[2], radiusOrRange);\n'
+              '\t\tVectorSet4(volumeInfo, source[0], source[1], source[2], source[3]);\n'
+              '\t\tVectorCopy(spot->color, lightColor);\n',
+              'spot volume info')
+          replace_once('backend',
+              '\tif (useShadow)\n\t\tGL_BindToTMU(tr.shadowCubemaps[shadowSlot], TB_CUBEMAP);\n',
+              '\tif (useShadow)\n\t\tGL_BindToTMU(shadowImage, TB_CUBEMAP);\n',
+              'shadow image binding')
+          replace_once('backend',
+              '\tGLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_PRIMARYLIGHTORIGIN, source);\n'
+              '\tGLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_PRIMARYLIGHTCOLOR, lightColor);\n',
+              '\tGLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_PRIMARYLIGHTORIGIN, source);\n'
+              f'\tGLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_CUBEMAPINFO, volumeInfo); // {MARK}\n'
+              '\tGLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_PRIMARYLIGHTCOLOR, lightColor);\n',
+              'volume uniform upload')
+          replace_once('backend',
+              '\t\tfloat cubeWidth = (float)MAX(tr.shadowCubemaps[shadowSlot]->width, 1);\n',
+              '\t\tfloat cubeWidth = (float)MAX(shadowImage ? shadowImage->width : 1, 1);\n',
+              'shadow softness image size')
+          wrapper_anchor = (
+              '\t// DARKWOLF_LOCAL_VOLUMETRIC_SPOTLIGHT_QUALITY_V0_4: quarter-res raymarch retained; depth-aware reconstruction is spatial only and has no history/ghosting.\n'
+              '}\n\n'
+              '// DARKWOLF_FIRE_VOLUMETRIC_V0_1\n')
+          wrapper_new = (
+              '\t// DARKWOLF_LOCAL_VOLUMETRIC_SPOTLIGHT_QUALITY_V0_4: quarter-res raymarch retained; depth-aware reconstruction is spatial only and has no history/ghosting.\n'
+              '}\n\n'
+              'static void RB_LocalVolumetricRender(FBO_t *srcFbo, ivec4_t srcBox, int mode,\n'
+              '\tconst dlight_t *lamp, int shadowSlot, const localVolumetricSpot_t *spot, float sourceWeight, float fireGeometryRadius)\n'
+              '{\n'
+              '\tRB_LocalVolumetricRenderEx(srcFbo, srcBox, mode, lamp, shadowSlot, spot, sourceWeight, fireGeometryRadius, NULL, NULL);\n'
+              '}\n\n'
+              '// DARKWOLF_FIRE_VOLUMETRIC_V0_1\n')
+          replace_once('backend', wrapper_anchor, wrapper_new, 'compatibility wrapper')
+          
+          # Cache lookup helper lives immediately before RB_VolumetricFireV07, after all selection/cache types exist.
+          helper_anchor = 'static void RB_VolumetricFireV07(FBO_t *srcFbo, ivec4_t srcBox)\n{\n'
+          helper = f'''// {MARK}: source selection is not changed; this helper only locates a ready cached shadow for an already-selected source.\nstatic image_t *RB_FireVolProductionFindCachedShadow(const fireVolumetricV07Selection_t *sel, dlight_t *shadowLight)\n{{\n\tint i;\n\tif (!sel || !sel->latchValid || !shadowLight) return NULL;\n\tfor (i = 0; i < FIREVOL_SYNTH_SHADOW_CACHE_MAX; ++i)\n\t{{\n\t\tfireVolumetricSyntheticShadowCache_t *cache = &tr.fireVolumetricSyntheticShadowCache[i];\n\t\tvec3_t delta;\n\t\tif (!cache->valid || cache->flameSurface != sel->latchedFlameSurface || !tr.fireVolumetricSyntheticShadowCubemaps[i]) continue;\n\t\tVectorSubtract(cache->captureOrigin, sel->latchedFlameOrigin, delta);\n\t\tif (DotProduct(delta, delta) > 4.0f) continue;\n\t\tCom_Memset(shadowLight, 0, sizeof(*shadowLight));\n\t\tVectorCopy(cache->captureOrigin, shadowLight->origin);\n\t\tVectorSet(shadowLight->color, 1.0f, 1.0f, 1.0f);\n\t\tshadowLight->radius = MAX(cache->captureRadius, 1.0f);\n\t\tcache->lastUsedTime = backEnd.refdef.time;\n\t\treturn tr.fireVolumetricSyntheticShadowCubemaps[i];\n\t}}\n\treturn NULL;\n}}\n\n'''
+          replace_once('backend', helper_anchor, helper + helper_anchor, 'cached shadow helper insertion')
+          
+          # Publish selected sources that lack a usable real-DLight cubemap. This is metadata only.
+          publish_anchor = ('\n\tfor (i = 0; i < selectedCount; ++i)\n\t{\n'
+                            '\t\tfireVolumetricV07Selection_t *sel = &selected[i];\n'
+                            '\t\tconst dlight_t *fireDl;\n')
+          publish_block = f'''\n\t// {MARK}: publish, but do not re-rank/reselect, the exact already-selected production sources.\n\ttr.fireVolumetricSyntheticShadowHintCount = 0;\n\tfor (i = 0; i < selectedCount && tr.fireVolumetricSyntheticShadowHintCount < FIREVOL_SYNTH_SHADOW_CACHE_MAX; ++i)\n\t{{\n\t\tfireVolumetricV07Selection_t *hintSel = &selected[i];\n\t\tdlight_t hintLight;\n\t\tqboolean hasRealShadow = (!hintSel->syntheticVolumeOnly && hintSel->shadowSlot >= 0 && hintSel->shadowSlot < MAX_DLIGHT_SHADOWS && tr.shadowCubemaps[hintSel->shadowSlot]) ? qtrue : qfalse;\n\t\tif (!hintSel->latchValid || hasRealShadow) continue;\n\t\tif (hintSel->syntheticVolumeOnly)\n\t\t{{\n\t\t\tfireVolumetricV07PoolSlot_t *hintPool = (hintSel->poolSlot >= 0 && hintSel->poolSlot < FIREVOL07_MAX_POOL) ? &s_fireV07Pool[hintSel->poolSlot] : NULL;\n\t\t\tRB_FireV082BuildSyntheticDlight(hintPool, &hintLight);\n\t\t}}\n\t\telse\n\t\t{{\n\t\t\tif (hintSel->dlightIndex < 0 || hintSel->dlightIndex >= backEnd.refdef.num_dlights) continue;\n\t\t\thintLight = backEnd.refdef.dlights[hintSel->dlightIndex];\n\t\t}}\n\t\t{{\n\t\t\tfireVolumetricSyntheticShadowHint_t *hint = &tr.fireVolumetricSyntheticShadowHints[tr.fireVolumetricSyntheticShadowHintCount++];\n\t\t\thint->valid = qtrue;\n\t\t\thint->flameSurface = hintSel->latchedFlameSurface;\n\t\t\thint->stampTime = backEnd.refdef.time;\n\t\t\tVectorCopy(hintSel->latchedFlameOrigin, hint->flameOrigin);\n\t\t\thint->sampleRadius = MAX(hintLight.radius, 64.0f);\n\t\t}}\n\t}}\n'''
+          # The first selected loop after the selection phase is the render loop; require exactly one full anchor occurrence.
+          if data['backend'].count(publish_anchor) != 1:
+              raise SystemExit(f'ERROR: render loop anchor: expected exactly one, found {data["backend"].count(publish_anchor)}')
+          data['backend'] = data['backend'].replace(publish_anchor, publish_block + publish_anchor, 1)
+          
+          render_old = '''\t\tvolumeShadowSlot = sel->syntheticVolumeOnly ? -1 :\n\t\t\t((renderMode == 8 || latchedDistance <= 1.0f) ? sel->shadowSlot : -1);\n\t\tRB_LocalVolumetricRender(srcFbo, srcBox, renderMode, &anchoredDl, volumeShadowSlot,\n\t\t\tNULL, 1.0f, (renderMode >= 5 && renderMode <= 8) ? geometryRadius : 0.0f);\n\t\trenderedCount++;\n'''
+          render_new = f'''\t\tif (!sel->syntheticVolumeOnly && sel->shadowSlot >= 0 && sel->shadowSlot < MAX_DLIGHT_SHADOWS && tr.shadowCubemaps[sel->shadowSlot])\n\t\t{{\n\t\t\t// {MARK}: proven real-DLight Dual-Origin ownership, without the old >1-unit shadow discard and without skipping any source.\n\t\t\tint effectiveRenderMode = (renderMode == 5) ? 6 : renderMode;\n\t\t\tRB_LocalVolumetricRenderEx(srcFbo, srcBox, effectiveRenderMode, fireDl, sel->shadowSlot,\n\t\t\t\tNULL, 1.0f, (effectiveRenderMode >= 5 && effectiveRenderMode <= 8) ? geometryRadius : 0.0f,\n\t\t\t\tsel->latchedFlameOrigin, NULL);\n\t\t}}\n\t\telse\n\t\t{{\n\t\t\tdlight_t cachedShadowLight;\n\t\t\timage_t *cachedShadow = RB_FireVolProductionFindCachedShadow(sel, &cachedShadowLight);\n\t\t\tif (cachedShadow)\n\t\t\t{{\n\t\t\t\tint effectiveRenderMode = (renderMode == 5) ? 6 : renderMode;\n\t\t\t\tVectorCopy(fireDl->color, cachedShadowLight.color);\n\t\t\t\tRB_LocalVolumetricRenderEx(srcFbo, srcBox, effectiveRenderMode, &cachedShadowLight, -1,\n\t\t\t\t\tNULL, 1.0f, (effectiveRenderMode >= 5 && effectiveRenderMode <= 8) ? geometryRadius : 0.0f,\n\t\t\t\t\tsel->latchedFlameOrigin, cachedShadow);\n\t\t\t}}\n\t\t\telse\n\t\t\t{{\n\t\t\t\t// Critical behavior lock: cache warm-up/miss NEVER hides a torch. Fall back to exact Run 33864810376 rendering.\n\t\t\t\tvolumeShadowSlot = sel->syntheticVolumeOnly ? -1 :\n\t\t\t\t\t((renderMode == 8 || latchedDistance <= 1.0f) ? sel->shadowSlot : -1);\n\t\t\t\tRB_LocalVolumetricRender(srcFbo, srcBox, renderMode, &anchoredDl, volumeShadowSlot,\n\t\t\t\t\tNULL, 1.0f, (renderMode >= 5 && renderMode <= 8) ? geometryRadius : 0.0f);\n\t\t\t}}\n\t\t}}\n\t\trenderedCount++;\n'''
+          replace_once('backend', render_old, render_new, 'production render decision')
+          
+          # -----------------------------------------------------------------------------
+          # 6) Frontend cache warmer: at most one six-face synthetic capture per frame.
+          #    Existing source selection and normal DLight budget are untouched.
+          # -----------------------------------------------------------------------------
+          main_anchor = 'void R_RenderDlightCubemaps(const refdef_t *fd)\n{\n'
+          main_helper = f'''// {MARK}: exact legacy DLight cubemap face orientation, reused for synthetic FireVol cache captures.\nstatic void R_FireVolProductionSetCubeAxis(viewParms_t *parms, int side)\n{{\n\tswitch (side)\n\t{{\n\tcase 0: VectorSet(parms->or.axis[0], -1, 0, 0); VectorSet(parms->or.axis[1], 0, 0, -1); VectorSet(parms->or.axis[2], 0, 1, 0); break;\n\tcase 1: VectorSet(parms->or.axis[0],  1, 0, 0); VectorSet(parms->or.axis[1], 0, 0,  1); VectorSet(parms->or.axis[2], 0, 1, 0); break;\n\tcase 2: VectorSet(parms->or.axis[0], 0, -1, 0); VectorSet(parms->or.axis[1], 1, 0, 0); VectorSet(parms->or.axis[2], 0, 0, -1); break;\n\tcase 3: VectorSet(parms->or.axis[0], 0,  1, 0); VectorSet(parms->or.axis[1], 1, 0, 0); VectorSet(parms->or.axis[2], 0, 0,  1); break;\n\tcase 4: VectorSet(parms->or.axis[0], 0, 0, -1); VectorSet(parms->or.axis[1], 1, 0, 0); VectorSet(parms->or.axis[2], 0, 1, 0); break;\n\tdefault: VectorSet(parms->or.axis[0], 0, 0, 1); VectorSet(parms->or.axis[1], -1, 0, 0); VectorSet(parms->or.axis[2], 0, 1, 0); break;\n\t}}\n}}\n\nstatic qboolean R_FireVolProductionCacheMatchesHint(const fireVolumetricSyntheticShadowCache_t *cache, const fireVolumetricSyntheticShadowHint_t *hint)\n{{\n\tvec3_t delta;\n\tif (!cache || !hint || !cache->valid || !hint->valid || cache->flameSurface != hint->flameSurface) return qfalse;\n\tif (fabs(cache->captureRadius - MAX(hint->sampleRadius, 64.0f)) > 0.5f) return qfalse;\n\tVectorSubtract(cache->captureOrigin, hint->flameOrigin, delta);\n\treturn DotProduct(delta, delta) <= 4.0f ? qtrue : qfalse;\n}}\n\nvoid R_RenderFireVolumetricSyntheticShadows(const refdef_t *fd)\n{{\n\tstatic char lastMap[MAX_QPATH] = {{0}};\n\tviewParms_t shadowParms;\n\tqboolean activeCache[FIREVOL_SYNTH_SHADOW_CACHE_MAX];\n\tint hintIndex, cacheIndex, captureHint = -1, captureSlot = -1, side;\n\tint oldestTime = 0x7fffffff;\n\tif (!fd || !tr.world || !tr.fireVolumetricSyntheticShadowFbo) return;\n\tif (Q_stricmp(lastMap, tr.world->baseName))\n\t{{\n\t\tCom_Memset(tr.fireVolumetricSyntheticShadowCache, 0, sizeof(tr.fireVolumetricSyntheticShadowCache));\n\t\tQ_strncpyz(lastMap, tr.world->baseName, sizeof(lastMap));\n\t}}\n\tCom_Memset(activeCache, 0, sizeof(activeCache));\n\tfor (hintIndex = 0; hintIndex < tr.fireVolumetricSyntheticShadowHintCount && hintIndex < FIREVOL_SYNTH_SHADOW_CACHE_MAX; ++hintIndex)\n\t{{\n\t\tfireVolumetricSyntheticShadowHint_t *hint = &tr.fireVolumetricSyntheticShadowHints[hintIndex];\n\t\tqboolean matched = qfalse;\n\t\tif (!hint->valid || fd->time - hint->stampTime < 0 || fd->time - hint->stampTime > 2000) continue;\n\t\tfor (cacheIndex = 0; cacheIndex < FIREVOL_SYNTH_SHADOW_CACHE_MAX; ++cacheIndex)\n\t\t{{\n\t\t\tif (R_FireVolProductionCacheMatchesHint(&tr.fireVolumetricSyntheticShadowCache[cacheIndex], hint))\n\t\t\t{{\n\t\t\t\tactiveCache[cacheIndex] = qtrue;\n\t\t\t\ttr.fireVolumetricSyntheticShadowCache[cacheIndex].lastUsedTime = fd->time;\n\t\t\t\tmatched = qtrue;\n\t\t\t\tbreak;\n\t\t\t}}\n\t\t}}\n\t\tif (!matched && captureHint < 0) captureHint = hintIndex;\n\t}}\n\tif (captureHint < 0) return;\n\tfor (cacheIndex = 0; cacheIndex < FIREVOL_SYNTH_SHADOW_CACHE_MAX; ++cacheIndex)\n\t{{\n\t\tif (!tr.fireVolumetricSyntheticShadowCache[cacheIndex].valid) {{ captureSlot = cacheIndex; break; }}\n\t}}\n\tif (captureSlot < 0)\n\t{{\n\t\tfor (cacheIndex = 0; cacheIndex < FIREVOL_SYNTH_SHADOW_CACHE_MAX; ++cacheIndex)\n\t\t{{\n\t\t\tif (activeCache[cacheIndex]) continue;\n\t\t\tif (tr.fireVolumetricSyntheticShadowCache[cacheIndex].lastUsedTime < oldestTime)\n\t\t\t{{\n\t\t\t\toldestTime = tr.fireVolumetricSyntheticShadowCache[cacheIndex].lastUsedTime;\n\t\t\t\tcaptureSlot = cacheIndex;\n\t\t\t}}\n\t\t}}\n\t}}\n\tif (captureSlot < 0) return;\n\t{{\n\t\tfireVolumetricSyntheticShadowHint_t *hint = &tr.fireVolumetricSyntheticShadowHints[captureHint];\n\t\tfireVolumetricSyntheticShadowCache_t *cache = &tr.fireVolumetricSyntheticShadowCache[captureSlot];\n\t\tCom_Memset(&shadowParms, 0, sizeof(shadowParms));\n\t\tshadowParms.viewportX = 0;\n\t\tshadowParms.viewportY = 0;\n\t\tshadowParms.viewportWidth = FIREVOL_SYNTH_SHADOW_SIZE;\n\t\tshadowParms.viewportHeight = FIREVOL_SYNTH_SHADOW_SIZE;\n\t\tshadowParms.targetFbo = tr.fireVolumetricSyntheticShadowFbo;\n\t\tshadowParms.isPortal = qfalse;\n\t\tshadowParms.isMirror = qtrue;\n\t\tshadowParms.fovX = 90;\n\t\tshadowParms.fovY = 90;\n\t\tshadowParms.flags = VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_NOVIEWMODEL | VPF_FIREVOL_SYNTHETIC_SHADOW;\n\t\tshadowParms.zFar = Com_Clamp(64.0f, 1024.0f, hint->sampleRadius);\n\t\tVectorCopy(hint->flameOrigin, shadowParms.or.origin);\n\t\tfor (side = 0; side < 6; ++side)\n\t\t{{\n\t\t\tR_FireVolProductionSetCubeAxis(&shadowParms, side);\n\t\t\tR_RenderView(&shadowParms);\n\t\t\tR_AddCapShadowmapCmd(FIREVOL_SYNTH_SHADOW_MAP_BASE + captureSlot, side);\n\t\t}}\n\t\tcache->valid = qtrue;\n\t\tcache->flameSurface = hint->flameSurface;\n\t\tcache->captureTime = fd->time;\n\t\tcache->lastUsedTime = fd->time;\n\t\tVectorCopy(hint->flameOrigin, cache->captureOrigin);\n\t\tcache->captureRadius = shadowParms.zFar;\n\t}}\n}}\n\n'''
+          replace_once('main', main_anchor, main_helper + main_anchor, 'frontend synthetic capture insertion')
+          
+          scene_anchor = '''\tif (!( fd->rdflags & RDF_NOWORLDMODEL ) && tr.refdef.num_dlights && r_dlightMode->integer >= 2)\n\t{\n\t\tR_RenderDlightCubemaps(fd);\n\t}\n'''
+          scene_new = scene_anchor + f'''\t// {MARK}: uses only previous-frame accepted selections and never changes FireVol residency/priority.\n\tif (!(fd->rdflags & RDF_NOWORLDMODEL) && r_dlightMode->integer >= 2)\n\t\tR_RenderFireVolumetricSyntheticShadows(fd);\n'''
+          replace_once('scene', scene_anchor, scene_new, 'scene synthetic capture call')
+          
+          # -----------------------------------------------------------------------------
+          # 7) Shadow raster: isolated two-sided synthetic casters + proven BSP/world
+          #    identity model matrix. No v0.3.2/v0.3.3/v0.3.4 diagnostic branch survives.
+          # -----------------------------------------------------------------------------
+          shade_cull_anchor = '''\tif (backEnd.depthFill && (backEnd.viewParms.flags & VPF_SHADOWMAP))\n\t{\n'''
+          shade_cull_new = shade_cull_anchor + f'''\t\tif (backEnd.viewParms.flags & VPF_FIREVOL_SYNTHETIC_SHADOW)\n\t\t\tGL_Cull(CT_TWO_SIDED); // {MARK}: isolated synthetic FireVol shadow view only\n'''
+          replace_once('shade', shade_cull_anchor, shade_cull_new, 'synthetic two-sided shadow cull')
+          
+          matrix_old = '''\t\tGLSL_SetUniformMat4(sp, UNIFORM_MODELVIEWPROJECTIONMATRIX, glState.modelviewProjection);\n\n\t\tGLSL_SetUniformMat4(sp, UNIFORM_MODELMATRIX, backEnd.or.transformMatrix);\n\n\t\tGLSL_SetUniformFloat(sp, UNIFORM_VERTEXLERP, glState.vertexAttribsInterpolation);\n'''
+          matrix_new = f'''\t\tGLSL_SetUniformMat4(sp, UNIFORM_MODELVIEWPROJECTIONMATRIX, glState.modelviewProjection);\n\n\t\t// {MATRIX_MARK}: world BSP vertices are already world-space; viewer world transformMatrix is zeroed.\n\t\t{{\n\t\t\tmat4_t shadowModelMatrix;\n\t\t\tif (backEnd.currentEntity == &tr.worldEntity)\n\t\t\t\tMat4Identity(shadowModelMatrix);\n\t\t\telse\n\t\t\t\tMat4Copy(backEnd.or.transformMatrix, shadowModelMatrix);\n\t\t\tGLSL_SetUniformMat4(sp, UNIFORM_MODELMATRIX, shadowModelMatrix);\n\t\t}}\n\n\t\tGLSL_SetUniformFloat(sp, UNIFORM_VERTEXLERP, glState.vertexAttribsInterpolation);\n'''
+          replace_once('shade', matrix_old, matrix_new, 'world model matrix fix')
+          
+          # Final source-level isolation checks.
+          joined = '\n'.join(data.values())
+          for token in FORBIDDEN:
+              if token in joined:
+                  raise SystemExit(f'ERROR: experimental token introduced by production patch: {token}')
+          for token in ('FIREVOL081_REGISTRY', 'FIREVOL083_PRIORITY', 'FIREVOL084_HOLD'):
+              if token not in data['backend']:
+                  raise SystemExit(f'ERROR: accepted Run 33864810376 FireVol behavior marker missing: {token}')
+          
+          if CHECK_ONLY:
+              print('CHECK_ONLY PASS: all exact production anchors resolved')
+              raise SystemExit(0)
+          
+          for key, path in FILES.items():
+              path.write_text(data[key], encoding='utf-8', newline='\n')
+          verify_applied({k: p.read_text(encoding='utf-8') for k, p in FILES.items()})
+          print('PATCHED:', ', '.join(str(FILES[k]) for k in sorted(FILES)))
+          PY
+          chmod +x "$PATCHER_NAME"
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" source --check-only
+          echo "Production patcher Python syntax + exact-source anchor preflight PASS"
+
+      - name: Apply clean production FireVol occlusion fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          python3 "$PATCHER_NAME" source
+          python3 "$PATCHER_NAME" source --verify-applied
+
+          mapfile -t changed < <(git -C source diff --name-only "$base_commit" -- | sort)
+          printf '%s\n' "${changed[@]}" > .changed_files.txt
+          printf '%s\n' \
+            SP/code/rend2/glsl/volumetriclocal_fp.glsl \
+            SP/code/rend2/tr_backend.c \
+            SP/code/rend2/tr_fbo.c \
+            SP/code/rend2/tr_image.c \
+            SP/code/rend2/tr_local.h \
+            SP/code/rend2/tr_main.c \
+            SP/code/rend2/tr_scene.c \
+            SP/code/rend2/tr_shade.c | sort > .expected_changed_files.txt
+          diff -u .expected_changed_files.txt .changed_files.txt
+
+          # The selection/residency architecture is retained, not replaced by v0.2/v0.3 test modes.
+          grep -Fq 'FIREVOL081_REGISTRY' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'FIREVOL083_PRIORITY' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'FIREVOL084_HOLD' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'Critical behavior lock: cache warm-up/miss NEVER hides a torch' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'Mat4Identity(shadowModelMatrix);' source/SP/code/rend2/tr_shade.c
+
+          for bad in r_volumetricFireDualOriginTest r_volumetricFireSyntheticAuditMode r_volumetricFireSyntheticCasterAuditMode r_volumetricFireBspGroundTruthMode r_volumetricFireRasterContractMode FIREVOL_SYNTH_AUDIT FIREVOL_RASTER_ FIREVOL_OCCLUDER_GROUND_TRUTH FIREVOL_DUAL_DIRECTION_ FIREVOL_SENTINEL_; do
+            ! grep -R -Fq "$bad" source/SP/code/rend2 || { echo "ERROR: experimental branch survived productionization: $bad" >&2; exit 1; }
+          done
+
+          git -C source diff --check "$base_commit" -- \
+            SP/code/rend2/glsl/volumetriclocal_fp.glsl \
+            SP/code/rend2/tr_backend.c SP/code/rend2/tr_fbo.c SP/code/rend2/tr_image.c \
+            SP/code/rend2/tr_local.h SP/code/rend2/tr_main.c SP/code/rend2/tr_scene.c SP/code/rend2/tr_shade.c
+
+          { printf '%s\n' '#version 120' '#define M_PI 3.14159265358979323846'; cat source/SP/code/rend2/glsl/volumetriclocal_fp.glsl; } > .volumetriclocal_prod_check.frag
+          glslangValidator -S frag .volumetriclocal_prod_check.frag >/tmp/firevol-prod-glslang.log 2>&1 || { cat /tmp/firevol-prod-glslang.log; exit 1; }
+
+          if python3 "$PATCHER_NAME" source --check-only >/tmp/reapply.out 2>&1; then
+            cat /tmp/reapply.out >&2
+            echo "ERROR: repeat-apply guard unexpectedly passed" >&2
+            exit 1
+          fi
+          grep -Fq 'repeat apply rejected' /tmp/reapply.out
+          echo "Source allowlist + GLSL + repeat-apply + production isolation PASS"
+
+      - name: Generate and replay exact production source patches
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          git -C source diff --binary "$base_commit" -- > "$DELTA_NAME"
+          git -C source diff --binary "$UPSTREAM_SHA" -- > "$CUMULATIVE_NAME"
+          test -s "$DELTA_NAME" && test -s "$CUMULATIVE_NAME"
+
+          mapfile -t delta_files < <(grep '^diff --git ' "$DELTA_NAME" | awk '{sub("^a/","",$3); print $3}' | sort -u)
+          test "${#delta_files[@]}" -eq 8 || { printf 'ERROR: unexpected delta files:\n%s\n' "${delta_files[*]}" >&2; exit 1; }
+          diff -u .expected_changed_files.txt <(printf '%s\n' "${delta_files[@]}" | sort)
+          grep -Fq 'DARKWOLF_FIREVOL_OCCLUSION_PRODUCTION_V1' "$DELTA_NAME"
+          grep -Fq 'DARKWOLF_FIREVOL_WORLD_SHADOW_MODEL_MATRIX_PRODUCTION_V1' "$DELTA_NAME"
+          git -C source apply --reverse --check --binary "../$DELTA_NAME"
+
+          # Exact delta clean replay.
+          rm -rf replay-delta
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$base_commit"
+          git -C replay-delta reset -q --hard "$base_commit"
+          git -C replay-delta clean -fdx
+          git -C replay-delta apply --check --binary "../$DELTA_NAME"
+          git -C replay-delta apply --binary "../$DELTA_NAME"
+          python3 "$PATCHER_NAME" replay-delta --verify-applied
+          for rel in "${delta_files[@]}"; do cmp "source/$rel" "replay-delta/$rel"; done
+          git -C replay-delta diff --check "$base_commit" -- "${delta_files[@]}"
+          git -C replay-delta diff --binary "$base_commit" -- > .delta-replayed.patch
+          cmp "$DELTA_NAME" .delta-replayed.patch
+          git -C replay-delta apply --reverse --check --binary "../$DELTA_NAME"
+
+          # Exact cumulative clean replay from pinned upstream, including parent-added files.
+          rm -rf replay-cumulative
+          git clone -q source replay-cumulative
+          git -C replay-cumulative checkout -q --detach "$UPSTREAM_SHA"
+          git -C replay-cumulative reset -q --hard "$UPSTREAM_SHA"
+          git -C replay-cumulative clean -fdx
+          git -C replay-cumulative apply --check --binary "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary "../$CUMULATIVE_NAME"
+          python3 "$PATCHER_NAME" replay-cumulative --verify-applied
+          mapfile -t cumulative_files < <(grep '^diff --git ' "$CUMULATIVE_NAME" | awk '{sub("^a/","",$3); print $3}' | sort -u)
+          for rel in "${cumulative_files[@]}"; do cmp "source/$rel" "replay-cumulative/$rel"; done
+          git -C replay-cumulative add -N .
+          git -C replay-cumulative diff --binary "$UPSTREAM_SHA" -- . > .cumulative-replayed.patch
+          cmp "$CUMULATIVE_NAME" .cumulative-replayed.patch
+
+          sha256sum "$DELTA_NAME" "$CUMULATIVE_NAME"
+          echo "Delta/cumulative apply + reverse + clean replay + byte comparison PASS"
+
+      - name: Build Windows x64 SP with canonical command
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jobs="$(nproc)"
+          if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          cd source/SP
+          ./cross-make-mingw64.sh -j"$jobs" \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+
+      - name: Verify rebuilt production Rend2 renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | sort)
+          test "${#renderers[@]}" -eq 1 || { echo "ERROR: expected one rebuilt Rend2 DLL, found ${#renderers[@]}" >&2; exit 1; }
+          new_renderer="${renderers[0]}"
+          test -s "$new_renderer"
+          printf '%s\n' "$new_renderer" > .new_renderer_path
+          file "$new_renderer" > .new_renderer_file.txt
+          cat .new_renderer_file.txt
+          grep -Fq 'PE32+ executable' .new_renderer_file.txt
+          grep -Fq 'x86-64' .new_renderer_file.txt
+          grep -Fq '(DLL)' .new_renderer_file.txt
+          new_sha="$(sha256sum "$new_renderer" | awk '{print $1}')"
+          test "$new_sha" != "$BASE_RENDERER_SHA256" || { echo "ERROR: renderer unexpectedly identical to base" >&2; exit 1; }
+
+          strings -a "$new_renderer" > .new_renderer_strings.txt
+          for need in '*fireVolSynthProd' '_fireVolSyntheticProduction' FIREVOL081_REGISTRY FIREVOL083_PRIORITY FIREVOL084_HOLD r_volumetricFireSourceMode r_dlightShadowMapSize HDRMSAA_PROD_ACTIVE; do
+            grep -Fq "$need" .new_renderer_strings.txt || { echo "ERROR: rebuilt renderer missing production token: $need" >&2; exit 1; }
+          done
+          for bad in r_volumetricFireDualOriginTest r_volumetricFireSyntheticAuditMode r_volumetricFireSyntheticCasterAuditMode r_volumetricFireBspGroundTruthMode r_volumetricFireRasterContractMode FIREVOL_SYNTH_AUDIT FIREVOL_SYNTH_CASTER_ FIREVOL_OCCLUDER_GROUND_TRUTH FIREVOL_RASTER_ FIREVOL_DUAL_DIRECTION_ FIREVOL_SENTINEL_; do
+            ! grep -Fq "$bad" .new_renderer_strings.txt || { echo "ERROR: experimental runtime token survived: $bad" >&2; exit 1; }
+          done
+          echo "New Clean Production Rend2 SHA256: $new_sha"
+          echo "Production renderer PE/architecture/experimental-token validation PASS"
+
+      - name: Package clean production release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          new_renderer="$(cat .new_renderer_path)"
+          rm -rf release dist
+          stage="release/$RELEASE_BASENAME"
+          mkdir -p "$stage/docs" dist
+          cp -a "$base_stage/." "$stage/"
+          cp "$new_renderer" "$stage/renderer_sp_rend2_x64.dll"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+
+          cat > "$stage/docs/FIREVOL_OCCLUSION_PRODUCTION_V1.txt" <<'EOF'
+          DarkWolf / ioRTCW Rend2 Single Player
+          Clean Production FireVol Occlusion Fix v1
+          ==========================================
+
+          EXACT BEHAVIOR BASE
+          Run 33864810376 / Clean Production DLight Shadow Resolution Fix v1.
+          FIREVOL_PRODUCTION_DEFAULT/CINEMATIC/PERFORMANCE and all RUN_DARKWOLF_PRODUCTION launchers are inherited byte-for-byte.
+          SourceMode, MaxActive, V07 selection, registry, priority, hold, distance and grace behavior are not retuned.
+
+          PRODUCTIONIZED OCCLUSION
+          1. Real DLight FireVol with a valid owning shadow slot uses the proven Dual-Origin contract:
+             physical DLight origin/radius owns attenuation and cubemap visibility;
+             accepted latched flame origin/radius owns only plume geometry.
+          2. Sources without a usable real DLight shadow slot keep rendering. They publish only shadow metadata to an isolated
+             eight-entry cached synthetic shadow layer. At most one six-face cache capture is generated per frame.
+             Cache warm-up/miss falls back to the exact Run 33864810376 rendering path; a torch is never hidden because shadow data is unavailable.
+          3. Synthetic FireVol shadow views are two-sided only inside the isolated synthetic capture path.
+          4. RB_RenderShadowmap uploads identity u_ModelMatrix for tr.worldEntity/BSP and preserves the old entity transform for non-world models.
+             This fixes radial shadow depth encoding for world walls/floors/ceilings.
+
+          REMOVED / NOT PRESENT
+          No r_volumetricFireDualOriginTest.
+          No r_volumetricFireSyntheticAuditMode.
+          No r_volumetricFireSyntheticCasterAuditMode.
+          No r_volumetricFireBspGroundTruthMode.
+          No r_volumetricFireRasterContractMode.
+          No v0.3.x diagnostic launchers, CFGs, sentinel/readback/ground-truth branches.
+
+          START
+          Use the normal inherited RUN_DARKWOLF_PRODUCTION.cmd.
+
+          STATUS
+          CI success confirms compilation only. Runtime acceptance still requires in-game verification of:
+          - Crypt1 floor/ceiling leakage;
+          - torches that previously appeared/disappeared during the experimental chain;
+          - normal scene FPS/stability.
+          EOF
+
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          (cd "$stage" && sha256sum -c docs/SHA256SUMS.txt)
+          printf '%s\n' "$stage" > .stage_path
+          echo "Clean Production package staged"
+
+      - name: Verify zero-drift production package and create ZIP
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_stage="$(cat .base_stage_path)"
+          stage="$(cat .stage_path)"
+
+          # Every inherited runtime payload byte stays identical except Rend2 DLL and regenerated manifest.
+          while IFS= read -r -d '' base_file; do
+            rel="${base_file#$base_stage/}"
+            case "$rel" in
+              renderer_sp_rend2_x64.dll|docs/SHA256SUMS.txt) continue ;;
+            esac
+            test -f "$stage/$rel" || { echo "ERROR: inherited base file missing: $rel" >&2; exit 1; }
+            cmp "$base_file" "$stage/$rel" || { echo "ERROR: forbidden inherited payload drift: $rel" >&2; exit 1; }
+          done < <(find "$base_stage" -type f -print0)
+
+          # Exact original production FireVol behavior surface.
+          test "$(sha256sum "$stage/Main/FIREVOL_PRODUCTION_DEFAULT.cfg" | awk '{print $1}')" = "$BASE_FIREVOL_DEFAULT_SHA256"
+          test "$(sha256sum "$stage/Main/FIREVOL_PRODUCTION_BALANCED.cfg" | awk '{print $1}')" = "$BASE_FIREVOL_DEFAULT_SHA256"
+          test "$(sha256sum "$stage/Main/FIREVOL_PRODUCTION_CINEMATIC.cfg" | awk '{print $1}')" = "$BASE_FIREVOL_CINEMATIC_SHA256"
+          test "$(sha256sum "$stage/Main/FIREVOL_PRODUCTION_PERFORMANCE.cfg" | awk '{print $1}')" = "$BASE_FIREVOL_PERFORMANCE_SHA256"
+          test "$(sha256sum "$stage/RUN_DARKWOLF_PRODUCTION.cmd" | awk '{print $1}')" = "$BASE_RUN_DEFAULT_SHA256"
+          test "$(sha256sum "$stage/RUN_DARKWOLF_PRODUCTION_CINEMATIC.cmd" | awk '{print $1}')" = "$BASE_RUN_CINEMATIC_SHA256"
+          test "$(sha256sum "$stage/RUN_DARKWOLF_PRODUCTION_PERFORMANCE.cmd" | awk '{print $1}')" = "$BASE_RUN_PERFORMANCE_SHA256"
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$BASE_OPENGL1_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$stage/OpenAL64.dll" | awk '{print $1}')" = "$BASE_OPENAL_SHA256"
+          test "$(sha256sum "$stage/SDL264.dll" | awk '{print $1}')" = "$BASE_SDL_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" != "$BASE_RENDERER_SHA256"
+
+          # No experimental test surface in clean production package.
+          test -z "$(find "$stage" -type f \( -iname 'RUN_FIREVOL_*' -o -iname 'FIREVOL_DUAL_ORIGIN_*' -o -iname 'FIREVOL_SYNTH_AUDIT_*' -o -iname 'FIREVOL_RASTER_CONTRACT_*' -o -iname 'FIREVOL_BSP_GROUND_TRUTH_*' -o -iname 'FIREVOL_WALL_OCCLUSION_V032_*' \) -print -quit)"
+          for bad in r_volumetricFireDualOriginTest r_volumetricFireSyntheticAuditMode r_volumetricFireSyntheticCasterAuditMode r_volumetricFireBspGroundTruthMode r_volumetricFireRasterContractMode; do
+            ! grep -R -Fq "$bad" "$stage/Main" "$stage/RUN_DARKWOLF_PRODUCTION.cmd" "$stage/RUN_DARKWOLF_PRODUCTION_CINEMATIC.cmd" "$stage/RUN_DARKWOLF_PRODUCTION_PERFORMANCE.cmd" || { echo "ERROR: experimental command in package: $bad" >&2; exit 1; }
+          done
+
+          # Source provenance is included, commercial RTCW content is not.
+          test -s "$stage/docs/$DELTA_NAME"
+          test -s "$stage/docs/$CUMULATIVE_NAME"
+          test -s "$stage/docs/FIREVOL_OCCLUSION_PRODUCTION_V1.txt"
+          test -z "$(find "$stage" -type f \( -iname '*.pk3' -o -iname '*.pak' -o -iname '*.bsp' -o -iname '*.aas' -o -iname '*.roq' \) -print -quit)"
+          (cd "$stage" && sha256sum -c docs/SHA256SUMS.txt)
+
+          zip_path="dist/${RELEASE_BASENAME}.zip"
+          rm -f "$zip_path" "${zip_path}.sha256"
+          (cd release && zip -X -q -r "../$zip_path" "$RELEASE_BASENAME")
+          unzip -tq "$zip_path"
+          sha256sum "$zip_path" > "${zip_path}.sha256"
+          echo "ZIP SHA256: $(cat "${zip_path}.sha256")"
+          echo "Clean Production zero-drift/package contract PASS"
+
+      - name: Upload Clean Production FireVol Occlusion Fix v1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iortcw-rend2-clean-production-firevol-occlusion-fix-v1-full-sp-windows-x64-1
+          path: |
+            dist/iortcw-rend2-clean-production-firevol-occlusion-fix-v1-full-sp-windows-x64-1.zip
+            dist/iortcw-rend2-clean-production-firevol-occlusion-fix-v1-full-sp-windows-x64-1.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
