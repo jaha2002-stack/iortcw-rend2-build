@@ -1,0 +1,1606 @@
+name: Build DarkWolf Rend2 Persistent DLight Shadow Cache Production Candidate v0.1 over Run 34465281051 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-persistent-dlight-shadow-cache-production-candidate-v0-1-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Persistent DLight Shadow Cache Production Candidate v0.1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      BASE_RUN_ID: "34465281051"
+      BASE_RUN_HEAD_SHA: 2468c4ac7e96f689f163a6704554530ca431541f
+      BASE_WORKFLOW_PATH: '.github/workflows/107build-iortcw-rend2-coplanar-contained-bsp-face-deconfliction-clean-production-release-v1-over-run-34337767924-sp.yml'
+      BASE_WORKFLOW_BLOB_SHA: 666cde36354b96391b8c362524a26bf217732ca1
+      BASE_ARTIFACT_ID: "10147298935"
+      BASE_ARTIFACT_NAME: iortcw-rend2-coplanar-contained-bsp-face-deconfliction-clean-production-v1-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:c1d0893cd6f206384dc8e4fa9ea46d319ba4944cad11bd12f664b13bda97141e
+      BASE_RELEASE_BASENAME: iortcw-rend2-coplanar-contained-bsp-face-deconfliction-clean-production-v1-full-sp-windows-x64-1
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-coplanar-contained-bsp-face-deconfliction-clean-production-v1-sp.patch
+      PATCHER_NAME: apply_persistent_dlight_shadow_cache_pc_v0_1.py
+      PATCHER_SHA256: 836f0cdedf1aebd82b5545e4732b221a68184c931593445a90a68684eb792bed
+      DELTA_NAME: darkwolf-persistent-dlight-shadow-cache-production-candidate-v0-1-over-run-34465281051.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-persistent-dlight-shadow-cache-production-candidate-v0-1-sp.patch
+      CONTRACT_NAME: PERSISTENT_DLIGHT_SHADOW_CACHE_PRODUCTION_CANDIDATE_V0_1_CONTRACT.txt
+      README_NAME: README_PERSISTENT_DLIGHT_SHADOW_CACHE_PRODUCTION_CANDIDATE_V0_1_RU.txt
+      RELEASE_BASENAME: iortcw-rend2-persistent-dlight-shadow-cache-production-candidate-v0-1-full-sp-windows-x64-1
+      BASE_INNER_ZIP_SHA256: 90e18b11754e43b373baafce8b680c27c61a5282906fc0ad055e9c290ec38f72
+      BASE_MANIFEST_SHA256: 87025e7efa03bab640f2e0d18f3b8d1b45af4ab783c6813ea40680006b34bdf5
+      BASE_CUMULATIVE_SHA256: a8ec9d75ca1de797992025f8f51eb5df6c5f6eb4cf423a41adf3fc57a1772bd1
+
+    steps:
+
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Preflight workflow YAML, Bash and shell-grouping contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: workflow cannot be resolved: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY_PREFLIGHT'
+          from pathlib import Path
+          import re, subprocess, sys, yaml
+          p = Path(sys.argv[1])
+          raw = p.read_bytes()
+          if b'\r' in raw:
+              raise SystemExit('ERROR: CR byte in workflow; LF-only required')
+          text = raw.decode('utf-8')
+          doc = yaml.safe_load(text)
+          expected = 'Build DarkWolf Rend2 Persistent DLight Shadow Cache Production Candidate v0.1 over Run 34465281051 SP'
+          if doc.get('name') != expected:
+              raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+          checked = 0
+          for job_name, job in (doc.get('jobs') or {}).items():
+              for index, step in enumerate(job.get('steps') or [], 1):
+                  script = step.get('run')
+                  if not script:
+                      continue
+                  proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                      print(proc.stderr, file=sys.stderr)
+                      raise SystemExit(proc.returncode)
+                  checked += 1
+          if checked != 13:
+              raise SystemExit(f'ERROR: expected exactly 13 Bash blocks, got {checked}')
+          # Catch malformed shell grouping with two opening braces; construct tokens so this preflight does not self-match.
+          open2 = chr(123) * 2
+          bad_or = '|| ' + open2
+          bad_and = '&& ' + open2
+          for lineno, line in enumerate(text.splitlines(), 1):
+              if bad_or in line or bad_and in line:
+                  raise SystemExit(f'ERROR: malformed double-brace shell grouping at workflow line {lineno}')
+          print('Workflow YAML + LF + 13 Bash blocks + semantic shell grouping PASS')
+          PY_PREFLIGHT
+
+      - name: Verify exact accepted baseline Run 34465281051
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: base HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: base run is not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: base workflow path drift" >&2; exit 1; }
+          workflow_blob="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${BASE_WORKFLOW_PATH}?ref=${BASE_RUN_HEAD_SHA}" --jq '.sha')"
+          test "$workflow_blob" = "$BASE_WORKFLOW_BLOB_SHA" || { echo "ERROR: base workflow blob drift: $workflow_blob" >&2; exit 1; }
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: exact accepted artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: base artifact name drift" >&2; exit 1; }
+          test "$expired" = false || { echo "ERROR: base artifact expired" >&2; exit 1; }
+          test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: base artifact digest drift: $adigest" >&2; exit 1; }
+          echo "Exact runtime-accepted Run 34465281051 provenance PASS"
+
+      - name: Download and byte-verify exact Run 34465281051 release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+          sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"
+          sidecar_sha="$(awk '{print $1}' "$sidecar")"
+          test "$inner_sha" = "$sidecar_sha" || { echo "ERROR: base inner ZIP/sidecar SHA mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$BASE_INNER_ZIP_SHA256" || { echo "ERROR: exact base inner ZIP SHA drift: $inner_sha" >&2; exit 1; }
+          unzip -tq "$z"
+          unzip -q "$z" -d base-release
+          mapfile -t roots < <(find base-release -mindepth 1 -maxdepth 1 -type d -print | sort)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one base release root" >&2; exit 1; }
+          base="${roots[0]}"
+          test "$(basename "$base")" = "$BASE_RELEASE_BASENAME" || { echo "ERROR: base release root name drift" >&2; exit 1; }
+          printf '%s\n' "$base" > .base_stage_path
+          test -s "$base/docs/SHA256SUMS.txt"
+          test "$(sha256sum "$base/docs/SHA256SUMS.txt" | awk '{print $1}')" = "$BASE_MANIFEST_SHA256" || { echo "ERROR: exact base manifest SHA drift" >&2; exit 1; }
+          test "$(wc -l < "$base/docs/SHA256SUMS.txt")" -eq 148 || { echo "ERROR: expected 148 entries in accepted base manifest" >&2; exit 1; }
+          (cd "$base" && sha256sum -c docs/SHA256SUMS.txt)
+          test -s "$base/docs/$BASE_CUMULATIVE_NAME"
+          test "$(sha256sum "$base/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256" || { echo "ERROR: exact base cumulative SHA drift" >&2; exit 1; }
+          for rel in ioWolfSP.x64.exe renderer_sp_rend2_x64.dll renderer_sp_opengl1_x64.dll \
+                     Main/cgame_sp_x64.dll Main/qagame_sp_x64.dll Main/ui_sp_x64.dll \
+                     OpenAL64.dll SDL264.dll Main/autoexec.cfg; do
+            test -s "$base/$rel" || { echo "ERROR: missing protected base runtime: $rel" >&2; exit 1; }
+          done
+          grep -Fq 'DARKWOLF REND2 - COPLANAR CONTAINED BSP FACE DECONFLICTION CLEAN PRODUCTION V1' "$base/docs/COPLANAR_CONTAINED_BSP_FACE_DECONFLICTION_CLEAN_PRODUCTION_V1_CONTRACT.txt"
+          echo "Exact Run 34465281051 release byte + 148-file manifest contract PASS"
+
+      - name: Reconstruct exact Run 34465281051 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" .base-cumulative.patch
+          
+          git -C source apply --check --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source add -N .
+          git -C source diff --name-only "$UPSTREAM_SHA" -- | LC_ALL=C sort > .base_actual_paths.txt
+          
+          python3 - <<'PY_PARENT'
+          from pathlib import Path
+          import re, subprocess
+          patch = Path('.base-cumulative.patch').read_text(encoding='utf-8').splitlines()
+          records = []
+          current = None
+          for line in patch:
+              m = re.match(r'diff --git a/(.+) b/(.+)$', line)
+              if m:
+                  if m.group(1) != m.group(2):
+                      raise SystemExit(f'ERROR: parent rename/path mismatch: {line}')
+                  current = m.group(2)
+                  continue
+              if current and line.startswith('index '):
+                  m = re.match(r'index ([0-9a-f]+)\.\.([0-9a-f]+)(?: [0-9]+)?$', line)
+                  if not m:
+                      raise SystemExit(f'ERROR: malformed index line for {current}: {line}')
+                  records.append((current, m.group(2)))
+                  current = None
+          if len(records) != 67 or len({p for p, _ in records}) != 67:
+              raise SystemExit(f'ERROR: accepted cumulative contract drift: sections={len(records)} unique={len({p for p, _ in records})}')
+          expected_paths = sorted(p for p, _ in records)
+          actual_paths = Path('.base_actual_paths.txt').read_text(encoding='utf-8').splitlines()
+          if expected_paths != actual_paths:
+              raise SystemExit('ERROR: reconstructed accepted-base path set drift')
+          for rel, expected_prefix in records:
+              got = subprocess.check_output(['git', '-C', 'source', 'hash-object', rel], text=True).strip()
+              if not got.startswith(expected_prefix):
+                  raise SystemExit(f'ERROR: accepted-base postimage blob drift: {rel} expected-prefix={expected_prefix} got={got}')
+          print('Exact Run 34465281051 cumulative path + postimage blob contract PASS: 67 files')
+          PY_PARENT
+          
+          # Accepted coplanar production fix must already be present and remain frozen.
+          grep -Fq 'DARKWOLF_COPLANAR_CONTAINED_BSP_FACE_DECONFLICTION_CLEAN_PRODUCTION_V1' source/SP/code/rend2/tr_world.c
+          grep -Fq 'ri.Cvar_Get("r_coplanarContainedFaceDeconflict", "1", 0)' source/SP/code/rend2/tr_world.c
+          
+          # Exact current shadow-selector premises. These are source facts, not remembered assumptions.
+          grep -Fq 'static float R_DlightShadowSelectionScore(const dlight_t *dl, const refdef_t *fd)' source/SP/code/rend2/tr_main.c
+          grep -Fq 'void R_RenderDlightCubemaps(const refdef_t *fd)' source/SP/code/rend2/tr_main.c
+          grep -Fq 'static int historyLight[MAX_DLIGHT_SHADOWS];' source/SP/code/rend2/tr_main.c
+          grep -Fq 'static int historyNativeOrdinal[MAX_DLIGHT_SHADOWS];' source/SP/code/rend2/tr_main.c
+          grep -Fq 'static int historyHold[MAX_DLIGHT_SHADOWS];' source/SP/code/rend2/tr_main.c
+          grep -Fq 'visibleLightsMask = allLightsMask & ~savedDlightMask;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'pendingLightsMask = visibleLightsMask;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'tr.refdef.dlights[eligibilityIndex].noDlightShadow' source/SP/code/rend2/tr_main.c
+          grep -Fq 'tr.refdef.dlights[blastIndex].transientBlast' source/SP/code/rend2/tr_main.c
+          grep -Fq 'historyHold[shadowSlot] > 0' source/SP/code/rend2/tr_main.c
+          grep -Fq 'r_dlightShadowHysteresis ? r_dlightShadowHysteresis->value : 0.0f' source/SP/code/rend2/tr_main.c
+          grep -Fq 'tr.refdef.dlightShadowSlot[bestLight] = (signed char)shadowSlot;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_DarkWolfNativeShadowTrace(fd, visibleLightsMask, maxShadowLights);' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'DARKWOLF_DLIGHT_SHADOW_OWNERSHIP_TRANSITION_DIAG_V0_1' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'r_dlightShadowTransitionDiag' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'DARKWOLF_STABLE_DLIGHT_SHADOW_RESIDENCY_IDENTITY_PC_V0_1' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'DARKWOLF_STABLE_DLIGHT_SHADOW_RESIDENCY_RETURN_REACQUISITION_PC_V0_3' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'r_dlightShadowStableResidency' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'DARKWOLF_PERSISTENT_DLIGHT_SHADOW_CACHE_PC_V0_1' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'r_dlightShadowPersistentCache' source/SP/code/rend2/tr_main.c
+          # Existing eight-slot resource/backend contract required by this candidate.
+          grep -Fq '#define MAX_DLIGHT_SHADOWS 8' source/SP/code/rend2/tr_local.h
+          grep -Fq 'image_t                 *shadowCubemaps[MAX_DLIGHT_SHADOWS];' source/SP/code/rend2/tr_local.h
+          grep -Fq 'for( x = 0; x < MAX_DLIGHT_SHADOWS; x++)' source/SP/code/rend2/tr_image.c
+          grep -Fq 'shadowSlot = (int)backEnd.refdef.dlightShadowSlot[l];' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'shadowSlot >= 0 && shadowSlot < MAX_DLIGHT_SHADOWS' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'GL_BindToTMU(tr.shadowCubemaps[shadowSlot], TB_CUBEMAP);' source/SP/code/rend2/tr_shade.c
+          
+          # Protected accepted production behavior remains present in the base source.
+          grep -Fq 'DARKWOLF_PLAYER_NPC_TESLA_WEAPON_ENDPOINT_SHADOW_PRODUCTION_CANDIDATE_V1' source/SP/code/cgame/cg_weapons.c
+          grep -Fq 'DARKWOLF_GRENADE_DYNAMITE_EXPLOSION_DLIGHT_PRODUCTION_V1' source/SP/code/cgame/cg_weapons.c
+          grep -Fq 'DARKWOLF_REF_TRANSIENT_BLAST_DLIGHT' source/SP/code/cgame/cg_localents.c
+          grep -Fq 'transientBlast' source/SP/code/rend2/tr_main.c
+          
+          git -C source config user.name 'DarkWolf CI'
+          git -C source config user.email 'darkwolf-ci@invalid.local'
+          git -C source add -A
+          git -C source commit -q -m 'Exact runtime-accepted Run 34465281051 source postimage'
+          git -C source rev-parse HEAD > .base_source_commit
+          echo "Exact Run 34465281051 source postimage + eight-slot persistent-cache premises PASS"
+
+      - name: Apply Persistent DLight Shadow Cache Production Candidate v0.1
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          cat > "$PATCHER_NAME" <<'PY_PATCHER'
+          from pathlib import Path
+          import sys
+
+          ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('.')
+          REL = Path('SP/code/rend2/tr_main.c')
+          MARKER = 'DARKWOLF_PERSISTENT_DLIGHT_SHADOW_CACHE_PC_V0_1'
+
+
+          def die(msg: str) -> None:
+              raise SystemExit('ERROR: ' + msg)
+
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  die(f'{label}: expected exactly one anchor, found {count}')
+              return text.replace(old, new, 1)
+
+
+          path = ROOT / REL
+          if not path.is_file():
+              die(f'missing target: {REL}')
+          text = path.read_text(encoding='utf-8')
+
+          if MARKER in text:
+              required = [
+                  'r_dlightShadowPersistentCache',
+                  'r_dlightShadowPersistentCacheDiag',
+                  'DW_PERSISTENT_SHADOW_SLOT_COUNT',
+                  'R_DWPersistentShadowRun',
+                  'CACHE_ASSIGN',
+                  'CACHE_RECLAIM',
+                  'VISIBLE_EVICT',
+                  'captureBudget > 3',
+                  'while (!persistentMode && pendingLightsMask && renderedLights < maxShadowLights)',
+              ]
+              for token in required:
+                  if token not in text:
+                      die(f'idempotency marker present but required token missing: {token}')
+              print('Persistent DLight Shadow Cache PC v0.1 already applied; no-op')
+              raise SystemExit(0)
+
+          for old_marker in (
+              'DARKWOLF_DLIGHT_SHADOW_OWNERSHIP_TRANSITION_DIAG_V0_1',
+              'DARKWOLF_STABLE_DLIGHT_SHADOW_RESIDENCY_IDENTITY_PC_V0_1',
+              'DARKWOLF_STABLE_DLIGHT_SHADOW_RESIDENCY_IDENTITY_PC_V0_2',
+              'DARKWOLF_STABLE_DLIGHT_SHADOW_RESIDENCY_RETURN_REACQUISITION_PC_V0_3',
+          ):
+              if old_marker in text:
+                  die(f'incompatible donor source detected: {old_marker}; persistent-cache v0.1 must apply directly over accepted Run 34465281051')
+          if 'r_dlightShadowTransitionDiag' in text or 'r_dlightShadowStableResidency' in text:
+              die('prior shadow experiment source detected; persistent-cache v0.1 must apply directly over accepted Run 34465281051')
+
+          helper = r'''
+          // DARKWOLF_PERSISTENT_DLIGHT_SHADOW_CACHE_PC_V0_1
+          // Production-candidate architecture: decouple persistent shadow ownership from
+          // per-frame cubemap refresh. All eight already-allocated DLight cubemap textures
+          // may retain valid shadows, while no more than the accepted three DLight cubemaps
+          // are captured/refreshed in one frame. Direct lighting and DLight parameters are
+          // never modified here.
+          #define DW_PERSISTENT_SHADOW_SLOT_COUNT MAX_DLIGHT_SHADOWS
+
+          typedef struct
+          {
+          	qboolean valid;
+          	qboolean nativeAuthored;
+          	int nativeOrdinal;
+          	vec3_t origin;
+          	vec3_t color;
+          	int overdraw;
+          } dwPersistentShadowIdentity_t;
+
+          typedef struct
+          {
+          	qboolean occupied;
+          	qboolean captureValid;
+          	dwPersistentShadowIdentity_t identity;
+          	int lastLightIndex;
+          	int assignedTime;
+          	int lastSeenTime;
+          	int lastCaptureTime;
+          	float lastScore;
+          	vec3_t captureOrigin;
+          	float captureRadius;
+          } dwPersistentShadowSlot_t;
+
+          static cvar_t *s_dwPersistentShadowCache = NULL;
+          static cvar_t *s_dwPersistentShadowDiag = NULL;
+          static cvar_t *s_dwPersistentShadowIdentityDistance = NULL;
+          static cvar_t *s_dwPersistentShadowIdentityAmbiguity = NULL;
+          static cvar_t *s_dwPersistentShadowCacheMs = NULL;
+          static cvar_t *s_dwPersistentShadowReclaimMs = NULL;
+          static cvar_t *s_dwPersistentShadowVisibleEvictRatio = NULL;
+          static cvar_t *s_dwPersistentShadowVisibleEvictMs = NULL;
+          static cvar_t *s_dwPersistentShadowMinResidencyMs = NULL;
+
+          static dwPersistentShadowSlot_t s_dwPersistentShadowSlots[DW_PERSISTENT_SHADOW_SLOT_COUNT];
+          static char s_dwPersistentShadowMap[MAX_QPATH] = "";
+          static qboolean s_dwPersistentShadowWasEnabled = qfalse;
+          static dwPersistentShadowIdentity_t s_dwPersistentChallengeLight;
+          static dwPersistentShadowIdentity_t s_dwPersistentChallengeVictim;
+          static int s_dwPersistentChallengeVictimSlot = -1;
+          static int s_dwPersistentChallengeStartTime = 0;
+
+          static void R_DWPersistentShadowEnsureCvars(void)
+          {
+          	if (!s_dwPersistentShadowCache)
+          		s_dwPersistentShadowCache = ri.Cvar_Get("r_dlightShadowPersistentCache", "0", 0);
+          	if (!s_dwPersistentShadowDiag)
+          		s_dwPersistentShadowDiag = ri.Cvar_Get("r_dlightShadowPersistentCacheDiag", "0", 0);
+          	if (!s_dwPersistentShadowIdentityDistance)
+          		s_dwPersistentShadowIdentityDistance = ri.Cvar_Get("r_dlightShadowPersistentIdentityDistance", "64", 0);
+          	if (!s_dwPersistentShadowIdentityAmbiguity)
+          		s_dwPersistentShadowIdentityAmbiguity = ri.Cvar_Get("r_dlightShadowPersistentIdentityAmbiguity", "8", 0);
+          	if (!s_dwPersistentShadowCacheMs)
+          		s_dwPersistentShadowCacheMs = ri.Cvar_Get("r_dlightShadowPersistentCacheMs", "15000", 0);
+          	if (!s_dwPersistentShadowReclaimMs)
+          		s_dwPersistentShadowReclaimMs = ri.Cvar_Get("r_dlightShadowPersistentReclaimMs", "500", 0);
+          	if (!s_dwPersistentShadowVisibleEvictRatio)
+          		s_dwPersistentShadowVisibleEvictRatio = ri.Cvar_Get("r_dlightShadowPersistentVisibleEvictRatio", "2.0", 0);
+          	if (!s_dwPersistentShadowVisibleEvictMs)
+          		s_dwPersistentShadowVisibleEvictMs = ri.Cvar_Get("r_dlightShadowPersistentVisibleEvictMs", "500", 0);
+          	if (!s_dwPersistentShadowMinResidencyMs)
+          		s_dwPersistentShadowMinResidencyMs = ri.Cvar_Get("r_dlightShadowPersistentMinResidencyMs", "1000", 0);
+          }
+
+          static void R_DWPersistentShadowIdentityClear(dwPersistentShadowIdentity_t *identity)
+          {
+          	if (identity)
+          		Com_Memset(identity, 0, sizeof(*identity));
+          }
+
+          static int R_DWPersistentShadowNativeOrdinal(const dlight_t *dl)
+          {
+          	if (!dl || !dl->nativeAuthoredDlight || dl->fireVolumetricNativeOrdinal < 0)
+          		return -1;
+          	return dl->fireVolumetricNativeOrdinal;
+          }
+
+          static void R_DWPersistentShadowIdentityFromLight(dwPersistentShadowIdentity_t *out, const dlight_t *dl)
+          {
+          	if (!out)
+          		return;
+          	R_DWPersistentShadowIdentityClear(out);
+          	if (!dl || dl->transientBlast)
+          		return;
+          	out->valid = qtrue;
+          	out->nativeAuthored = dl->nativeAuthoredDlight;
+          	out->nativeOrdinal = R_DWPersistentShadowNativeOrdinal(dl);
+          	VectorCopy(dl->origin, out->origin);
+          	VectorCopy(dl->color, out->color);
+          	out->overdraw = dl->overdraw;
+          }
+
+          static qboolean R_DWPersistentShadowSpatialMatch(const dlight_t *dl,
+          	const dwPersistentShadowIdentity_t *identity, float maxDistance)
+          {
+          	vec3_t delta;
+          	float c0, c1, c2;
+          	if (!dl || !identity || !identity->valid || dl->transientBlast)
+          		return qfalse;
+          	if (dl->nativeAuthoredDlight != identity->nativeAuthored || dl->overdraw != identity->overdraw)
+          		return qfalse;
+          	if (maxDistance < 8.0f) maxDistance = 8.0f;
+          	if (maxDistance > 192.0f) maxDistance = 192.0f;
+          	VectorSubtract(dl->origin, identity->origin, delta);
+          	if (DotProduct(delta, delta) > maxDistance * maxDistance)
+          		return qfalse;
+          	c0 = dl->color[0] - identity->color[0];
+          	c1 = dl->color[1] - identity->color[1];
+          	c2 = dl->color[2] - identity->color[2];
+          	return c0 * c0 + c1 * c1 + c2 * c2 <= 0.04f ? qtrue : qfalse;
+          }
+
+          static int R_DWPersistentShadowResolveIdentity(unsigned int eligibleMask, unsigned int usedMask,
+          	const dwPersistentShadowIdentity_t *identity, float identityDistance, float ambiguityDistance)
+          {
+          	int i;
+          	int best = -1;
+          	int matches = 0;
+          	float bestDistanceSquared = 1.0e30f;
+          	float secondDistanceSquared = 1.0e30f;
+          	if (!identity || !identity->valid)
+          		return -1;
+          	if (identity->nativeOrdinal >= 0)
+          	{
+          		int found = -1;
+          		for (i = 0; i < tr.refdef.num_dlights; ++i)
+          		{
+          			dlight_t *candidate;
+          			if (!(eligibleMask & (1u << i)) || (usedMask & (1u << i)))
+          				continue;
+          			candidate = &tr.refdef.dlights[i];
+          			if (R_DWPersistentShadowNativeOrdinal(candidate) != identity->nativeOrdinal)
+          				continue;
+          			if (found >= 0)
+          				return -1;
+          			found = i;
+          		}
+          		return found;
+          	}
+          	if (ambiguityDistance < 1.0f) ambiguityDistance = 1.0f;
+          	if (ambiguityDistance > 32.0f) ambiguityDistance = 32.0f;
+          	for (i = 0; i < tr.refdef.num_dlights; ++i)
+          	{
+          		dlight_t *candidate;
+          		vec3_t delta;
+          		float distanceSquared;
+          		if (!(eligibleMask & (1u << i)) || (usedMask & (1u << i)))
+          			continue;
+          		candidate = &tr.refdef.dlights[i];
+          		if (!R_DWPersistentShadowSpatialMatch(candidate, identity, identityDistance))
+          			continue;
+          		VectorSubtract(candidate->origin, identity->origin, delta);
+          		distanceSquared = DotProduct(delta, delta);
+          		matches++;
+          		if (distanceSquared < bestDistanceSquared)
+          		{
+          			secondDistanceSquared = bestDistanceSquared;
+          			bestDistanceSquared = distanceSquared;
+          			best = i;
+          		}
+          		else if (distanceSquared < secondDistanceSquared)
+          		{
+          			secondDistanceSquared = distanceSquared;
+          		}
+          	}
+          	if (best < 0)
+          		return -1;
+          	if (matches > 1)
+          	{
+          		float bestDistance = sqrtf(bestDistanceSquared);
+          		float secondDistance = sqrtf(secondDistanceSquared);
+          		if (secondDistance - bestDistance < ambiguityDistance)
+          			return -1;
+          	}
+          	return best;
+          }
+
+          static qboolean R_DWPersistentShadowIdentityMatchesLight(const dwPersistentShadowIdentity_t *identity,
+          	const dlight_t *dl, float identityDistance)
+          {
+          	int ordinal;
+          	if (!identity || !identity->valid || !dl || dl->transientBlast)
+          		return qfalse;
+          	ordinal = R_DWPersistentShadowNativeOrdinal(dl);
+          	if (identity->nativeOrdinal >= 0 || ordinal >= 0)
+          		return identity->nativeOrdinal >= 0 && ordinal >= 0 && identity->nativeOrdinal == ordinal ? qtrue : qfalse;
+          	return R_DWPersistentShadowSpatialMatch(dl, identity, identityDistance);
+          }
+
+          static void R_DWPersistentShadowDiag(const char *eventName, int slot, int oldLight, int newLight,
+          	float oldScore, float newScore, int elapsedMs, int capturesThisFrame)
+          {
+          	const dlight_t *dl = NULL;
+          	if (!s_dwPersistentShadowDiag || s_dwPersistentShadowDiag->integer <= 0)
+          		return;
+          	if (newLight >= 0 && newLight < tr.refdef.num_dlights)
+          		dl = &tr.refdef.dlights[newLight];
+          	ri.Printf(PRINT_ALL,
+          		"DLIGHT_SHADOW_PERSISTENT_CACHE event=%s map=%s frame=%d time=%d slot=%d oldLight=%d newLight=%d native=%d ordinal=%d origin=%.1f,%.1f,%.1f oldScore=%.6f newScore=%.6f elapsedMs=%d captures=%d budget=%d\\n",
+          		eventName ? eventName : "UNKNOWN", tr.world ? tr.world->baseName : "<none>",
+          		tr.frameCount, tr.refdef.time, slot, oldLight, newLight,
+          		dl && dl->nativeAuthoredDlight ? 1 : 0, dl ? R_DWPersistentShadowNativeOrdinal(dl) : -1,
+          		dl ? dl->origin[0] : 0.0f, dl ? dl->origin[1] : 0.0f, dl ? dl->origin[2] : 0.0f,
+          		oldScore, newScore, elapsedMs, capturesThisFrame,
+          		r_dlightShadowMaxLights ? r_dlightShadowMaxLights->integer : 0);
+          }
+
+          static void R_DWPersistentShadowResetState(void)
+          {
+          	Com_Memset(s_dwPersistentShadowSlots, 0, sizeof(s_dwPersistentShadowSlots));
+          	R_DWPersistentShadowIdentityClear(&s_dwPersistentChallengeLight);
+          	R_DWPersistentShadowIdentityClear(&s_dwPersistentChallengeVictim);
+          	s_dwPersistentChallengeVictimSlot = -1;
+          	s_dwPersistentChallengeStartTime = 0;
+          }
+
+          static void R_DWPersistentShadowSetEnabled(qboolean enabled)
+          {
+          	if (!enabled)
+          	{
+          		s_dwPersistentShadowWasEnabled = qfalse;
+          		return;
+          	}
+          	if (!s_dwPersistentShadowWasEnabled)
+          	{
+          		R_DWPersistentShadowResetState();
+          		s_dwPersistentShadowMap[0] = '\0';
+          		s_dwPersistentShadowWasEnabled = qtrue;
+          	}
+          }
+
+          static int R_DWPersistentShadowBestUnassigned(const refdef_t *fd, unsigned int eligibleMask,
+          	unsigned int usedMask, qboolean transientOnly)
+          {
+          	int i;
+          	int best = -1;
+          	float bestScore = -1.0f;
+          	for (i = 0; i < tr.refdef.num_dlights; ++i)
+          	{
+          		float score;
+          		dlight_t *dl;
+          		if (!(eligibleMask & (1u << i)) || (usedMask & (1u << i)))
+          			continue;
+          		dl = &tr.refdef.dlights[i];
+          		if (transientOnly && !dl->transientBlast)
+          			continue;
+          		if (!transientOnly && dl->transientBlast)
+          			continue;
+          		score = R_DlightShadowSelectionScore(dl, fd);
+          		if (dl->transientBlast)
+          			score += 2000000.0f;
+          		if (score > bestScore)
+          		{
+          			bestScore = score;
+          			best = i;
+          		}
+          	}
+          	return best;
+          }
+
+          static void R_DWPersistentShadowAssignSlot(int slot, int lightIndex, const refdef_t *fd,
+          	const char *eventName, int oldLight, float oldScore)
+          {
+          	dwPersistentShadowSlot_t *cache;
+          	if (slot < 0 || slot >= DW_PERSISTENT_SHADOW_SLOT_COUNT || lightIndex < 0 || lightIndex >= tr.refdef.num_dlights)
+          		return;
+          	cache = &s_dwPersistentShadowSlots[slot];
+          	cache->occupied = qtrue;
+          	cache->captureValid = qfalse;
+          	R_DWPersistentShadowIdentityFromLight(&cache->identity, &tr.refdef.dlights[lightIndex]);
+          	if (tr.refdef.dlights[lightIndex].transientBlast)
+          	{
+          		cache->identity.valid = qfalse;
+          	}
+          	cache->lastLightIndex = lightIndex;
+          	cache->assignedTime = fd->time;
+          	cache->lastSeenTime = fd->time;
+          	cache->lastCaptureTime = 0;
+          	cache->lastScore = R_DlightShadowSelectionScore(&tr.refdef.dlights[lightIndex], fd);
+          	VectorClear(cache->captureOrigin);
+          	cache->captureRadius = 0.0f;
+          	R_DWPersistentShadowDiag(eventName, slot, oldLight, lightIndex, oldScore, cache->lastScore, 0, 0);
+          }
+
+          static qboolean R_DWPersistentShadowCaptureCompatible(const dwPersistentShadowSlot_t *cache, const dlight_t *dl)
+          {
+          	vec3_t delta;
+          	float maxMovement;
+          	float ratio;
+          	if (!cache || !cache->captureValid || !dl || cache->captureRadius <= 0.0f || dl->radius <= 0.0f)
+          		return qfalse;
+          	maxMovement = dl->radius * 0.50f;
+          	if (maxMovement < 64.0f) maxMovement = 64.0f;
+          	if (maxMovement > 192.0f) maxMovement = 192.0f;
+          	VectorSubtract(dl->origin, cache->captureOrigin, delta);
+          	if (DotProduct(delta, delta) > maxMovement * maxMovement)
+          		return qfalse;
+          	ratio = dl->radius / cache->captureRadius;
+          	return ratio >= 0.50f && ratio <= 2.0f ? qtrue : qfalse;
+          }
+
+          static int R_DWPersistentShadowRefreshClass(const dwPersistentShadowSlot_t *cache, const dlight_t *dl)
+          {
+          	vec3_t delta;
+          	float ratio;
+          	if (!cache || !dl)
+          		return 0;
+          	if (dl->transientBlast)
+          		return 4;
+          	if (!cache->captureValid)
+          		return 3;
+          	VectorSubtract(dl->origin, cache->captureOrigin, delta);
+          	ratio = cache->captureRadius > 0.0f ? dl->radius / cache->captureRadius : 0.0f;
+          	if (DotProduct(delta, delta) > 16.0f * 16.0f || ratio < 0.90f || ratio > 1.10f)
+          		return 2;
+          	return 1;
+          }
+
+          static void R_DWPersistentShadowCaptureLight(const refdef_t *fd, int lightIndex, int shadowSlot)
+          {
+          	viewParms_t shadowParms;
+          	int j;
+          	if (!fd || lightIndex < 0 || lightIndex >= tr.refdef.num_dlights || shadowSlot < 0 || shadowSlot >= MAX_DLIGHT_SHADOWS)
+          		return;
+          	Com_Memset(&shadowParms, 0, sizeof(shadowParms));
+          	{
+          		int dlightShadowSize = r_dlightShadowMapSize ? r_dlightShadowMapSize->integer : PSHADOW_MAP_SIZE;
+          		if (tr.dlightShadowFbo)
+          		{
+          			shadowParms.viewportX = 0;
+          			shadowParms.viewportY = 0;
+          			shadowParms.targetFbo = tr.dlightShadowFbo;
+          		}
+          		else
+          		{
+          			shadowParms.viewportX = tr.refdef.x;
+          			shadowParms.viewportY = glConfig.vidHeight - (tr.refdef.y + dlightShadowSize);
+          		}
+          		shadowParms.viewportWidth = dlightShadowSize;
+          		shadowParms.viewportHeight = dlightShadowSize;
+          	}
+          	shadowParms.isPortal = qfalse;
+          	shadowParms.isMirror = qtrue;
+          	shadowParms.fovX = 90;
+          	shadowParms.fovY = 90;
+          	shadowParms.flags = VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_NOVIEWMODEL;
+          	shadowParms.zFar = tr.refdef.dlights[lightIndex].radius;
+          	VectorCopy(tr.refdef.dlights[lightIndex].origin, shadowParms.or.origin);
+          	for (j = 0; j < 6; ++j)
+          	{
+          		switch (j)
+          		{
+          		case 0:
+          			VectorSet(shadowParms.or.axis[0], -1, 0, 0);
+          			VectorSet(shadowParms.or.axis[1], 0, 0, -1);
+          			VectorSet(shadowParms.or.axis[2], 0, 1, 0);
+          			break;
+          		case 1:
+          			VectorSet(shadowParms.or.axis[0], 1, 0, 0);
+          			VectorSet(shadowParms.or.axis[1], 0, 0, 1);
+          			VectorSet(shadowParms.or.axis[2], 0, 1, 0);
+          			break;
+          		case 2:
+          			VectorSet(shadowParms.or.axis[0], 0, -1, 0);
+          			VectorSet(shadowParms.or.axis[1], 1, 0, 0);
+          			VectorSet(shadowParms.or.axis[2], 0, 0, -1);
+          			break;
+          		case 3:
+          			VectorSet(shadowParms.or.axis[0], 0, 1, 0);
+          			VectorSet(shadowParms.or.axis[1], 1, 0, 0);
+          			VectorSet(shadowParms.or.axis[2], 0, 0, 1);
+          			break;
+          		case 4:
+          			VectorSet(shadowParms.or.axis[0], 0, 0, -1);
+          			VectorSet(shadowParms.or.axis[1], 1, 0, 0);
+          			VectorSet(shadowParms.or.axis[2], 0, 1, 0);
+          			break;
+          		default:
+          			VectorSet(shadowParms.or.axis[0], 0, 0, 1);
+          			VectorSet(shadowParms.or.axis[1], -1, 0, 0);
+          			VectorSet(shadowParms.or.axis[2], 0, 1, 0);
+          			break;
+          		}
+          		R_RenderView(&shadowParms);
+          		R_AddCapShadowmapCmd(shadowSlot, j);
+          	}
+          }
+
+          static void R_DWPersistentShadowRun(const refdef_t *fd, unsigned int eligibleMask, int requestedCaptureBudget)
+          {
+          	int currentLight[DW_PERSISTENT_SHADOW_SLOT_COUNT];
+          	unsigned int usedMask = 0u;
+          	unsigned int capturedSlotMask = 0u;
+          	float identityDistance;
+          	float ambiguityDistance;
+          	float visibleEvictRatio;
+          	int cacheMs;
+          	int reclaimMs;
+          	int visibleEvictMs;
+          	int minResidencyMs;
+          	int captureBudget;
+          	int captureCount = 0;
+          	int slot;
+          	int nowMs;
+          	const char *mapName;
+
+          	if (!fd)
+          		return;
+          	R_DWPersistentShadowEnsureCvars();
+          	nowMs = fd->time;
+          	mapName = tr.world ? tr.world->baseName : "<none>";
+          	if (Q_stricmp(s_dwPersistentShadowMap, mapName))
+          	{
+          		R_DWPersistentShadowResetState();
+          		Q_strncpyz(s_dwPersistentShadowMap, mapName, sizeof(s_dwPersistentShadowMap));
+          	}
+          	identityDistance = s_dwPersistentShadowIdentityDistance ? s_dwPersistentShadowIdentityDistance->value : 64.0f;
+          	ambiguityDistance = s_dwPersistentShadowIdentityAmbiguity ? s_dwPersistentShadowIdentityAmbiguity->value : 8.0f;
+          	cacheMs = s_dwPersistentShadowCacheMs ? s_dwPersistentShadowCacheMs->integer : 15000;
+          	reclaimMs = s_dwPersistentShadowReclaimMs ? s_dwPersistentShadowReclaimMs->integer : 500;
+          	visibleEvictRatio = s_dwPersistentShadowVisibleEvictRatio ? s_dwPersistentShadowVisibleEvictRatio->value : 2.0f;
+          	visibleEvictMs = s_dwPersistentShadowVisibleEvictMs ? s_dwPersistentShadowVisibleEvictMs->integer : 500;
+          	minResidencyMs = s_dwPersistentShadowMinResidencyMs ? s_dwPersistentShadowMinResidencyMs->integer : 1000;
+          	if (cacheMs < 1000) cacheMs = 1000;
+          	if (cacheMs > 120000) cacheMs = 120000;
+          	if (reclaimMs < 0) reclaimMs = 0;
+          	if (reclaimMs > cacheMs) reclaimMs = cacheMs;
+          	if (visibleEvictRatio < 1.0f) visibleEvictRatio = 1.0f;
+          	if (visibleEvictRatio > 8.0f) visibleEvictRatio = 8.0f;
+          	if (visibleEvictMs < 0) visibleEvictMs = 0;
+          	if (visibleEvictMs > 10000) visibleEvictMs = 10000;
+          	if (minResidencyMs < 0) minResidencyMs = 0;
+          	if (minResidencyMs > 30000) minResidencyMs = 30000;
+          	captureBudget = requestedCaptureBudget;
+          	if (captureBudget < 0) captureBudget = 0;
+          	if (captureBudget > 3) captureBudget = 3; // Hard safety: never exceed the accepted 3-capture/18-face frame budget.
+
+          	for (slot = 0; slot < DW_PERSISTENT_SHADOW_SLOT_COUNT; ++slot)
+          		currentLight[slot] = -1;
+
+          	// Phase 1: resolve existing ordinary residents by stable physical identity.
+          	for (slot = 0; slot < DW_PERSISTENT_SHADOW_SLOT_COUNT; ++slot)
+          	{
+          		dwPersistentShadowSlot_t *cache = &s_dwPersistentShadowSlots[slot];
+          		int oldIndex;
+          		int owner;
+          		if (!cache->occupied)
+          			continue;
+          		if (!cache->identity.valid)
+          		{
+          			cache->occupied = qfalse;
+          			cache->captureValid = qfalse;
+          			continue;
+          		}
+          		oldIndex = cache->lastLightIndex;
+          		owner = R_DWPersistentShadowResolveIdentity(eligibleMask, usedMask, &cache->identity,
+          			identityDistance, ambiguityDistance);
+          		if (owner >= 0)
+          		{
+          			currentLight[slot] = owner;
+          			usedMask |= 1u << owner;
+          			cache->lastLightIndex = owner;
+          			cache->lastSeenTime = nowMs;
+          			cache->lastScore = R_DlightShadowSelectionScore(&tr.refdef.dlights[owner], fd);
+          			R_DWPersistentShadowIdentityFromLight(&cache->identity, &tr.refdef.dlights[owner]);
+          			if (oldIndex >= 0 && oldIndex != owner)
+          				R_DWPersistentShadowDiag("CACHE_REBIND", slot, oldIndex, owner, cache->lastScore, cache->lastScore, 0, captureCount);
+          			if (cache->captureValid && !R_DWPersistentShadowCaptureCompatible(cache, &tr.refdef.dlights[owner]))
+          				cache->captureValid = qfalse;
+          		}
+          		else if (cache->lastSeenTime > 0 && nowMs - cache->lastSeenTime > cacheMs)
+          		{
+          			R_DWPersistentShadowDiag("CACHE_EXPIRE", slot, cache->lastLightIndex, -1, cache->lastScore, -1.0f, nowMs - cache->lastSeenTime, captureCount);
+          			Com_Memset(cache, 0, sizeof(*cache));
+          		}
+          	}
+
+          	// Phase 2: transient grenade/dynamite blasts keep accepted immediate priority.
+          	for (;;)
+          	{
+          		int blast = R_DWPersistentShadowBestUnassigned(fd, eligibleMask, usedMask, qtrue);
+          		int target = -1;
+          		float weakestScore = 1.0e30f;
+          		int oldLight = -1;
+          		float oldScore = -1.0f;
+          		if (blast < 0)
+          			break;
+          		for (slot = 0; slot < DW_PERSISTENT_SHADOW_SLOT_COUNT; ++slot)
+          			if (!s_dwPersistentShadowSlots[slot].occupied) { target = slot; break; }
+          		if (target < 0)
+          		{
+          			for (slot = 0; slot < DW_PERSISTENT_SHADOW_SLOT_COUNT; ++slot)
+          			{
+          				if (currentLight[slot] < 0)
+          				{
+          					target = slot;
+          					break;
+          				}
+          			}
+          		}
+          		if (target < 0)
+          		{
+          			for (slot = 0; slot < DW_PERSISTENT_SHADOW_SLOT_COUNT; ++slot)
+          			{
+          				int resident = currentLight[slot];
+          				float score;
+          				if (resident < 0 || tr.refdef.dlights[resident].transientBlast)
+          					continue;
+          				score = R_DlightShadowSelectionScore(&tr.refdef.dlights[resident], fd);
+          				if (score < weakestScore)
+          				{
+          					weakestScore = score;
+          					target = slot;
+          				}
+          			}
+          		}
+          		if (target < 0)
+          			break;
+          		oldLight = currentLight[target];
+          		if (oldLight >= 0)
+          		{
+          			oldScore = R_DlightShadowSelectionScore(&tr.refdef.dlights[oldLight], fd);
+          			usedMask &= ~(1u << oldLight);
+          		}
+          		R_DWPersistentShadowAssignSlot(target, blast, fd, "BLAST_ASSIGN", oldLight, oldScore);
+          		currentLight[target] = blast;
+          		usedMask |= 1u << blast;
+          	}
+
+          	// Phase 3: fill never-used physical cubemap slots with ordinary current lights.
+          	for (;;)
+          	{
+          		int best = R_DWPersistentShadowBestUnassigned(fd, eligibleMask, usedMask, qfalse);
+          		int freeSlot = -1;
+          		if (best < 0)
+          			break;
+          		for (slot = 0; slot < DW_PERSISTENT_SHADOW_SLOT_COUNT; ++slot)
+          			if (!s_dwPersistentShadowSlots[slot].occupied) { freeSlot = slot; break; }
+          		if (freeSlot < 0)
+          			break;
+          		R_DWPersistentShadowAssignSlot(freeSlot, best, fd, "CACHE_ASSIGN", -1, -1.0f);
+          		currentLight[freeSlot] = best;
+          		usedMask |= 1u << best;
+          	}
+
+          	// Phase 4: under pressure, recycle only an off-screen/unresolved resident after
+          	// the short reclaim grace. This prevents stale corridor owners from starving a new area.
+          	for (;;)
+          	{
+          		int best = R_DWPersistentShadowBestUnassigned(fd, eligibleMask, usedMask, qfalse);
+          		int target = -1;
+          		int oldestSeen = 0x7fffffff;
+          		int oldLight;
+          		float oldScore;
+          		if (best < 0)
+          			break;
+          		for (slot = 0; slot < DW_PERSISTENT_SHADOW_SLOT_COUNT; ++slot)
+          		{
+          			dwPersistentShadowSlot_t *cache = &s_dwPersistentShadowSlots[slot];
+          			if (!cache->occupied || currentLight[slot] >= 0)
+          				continue;
+          			if (cache->lastSeenTime > 0 && nowMs - cache->lastSeenTime < reclaimMs)
+          				continue;
+          			if (cache->lastSeenTime < oldestSeen)
+          			{
+          				oldestSeen = cache->lastSeenTime;
+          				target = slot;
+          			}
+          		}
+          		if (target < 0)
+          			break;
+          		oldLight = s_dwPersistentShadowSlots[target].lastLightIndex;
+          		oldScore = s_dwPersistentShadowSlots[target].lastScore;
+          		R_DWPersistentShadowAssignSlot(target, best, fd, "CACHE_RECLAIM", oldLight, oldScore);
+          		currentLight[target] = best;
+          		usedMask |= 1u << best;
+          	}
+
+          	// Phase 5: if more than eight eligible lights are simultaneously represented,
+          	// allow at most one controlled visible eviction after a strong ratio and dwell.
+          	{
+          		int challenger = R_DWPersistentShadowBestUnassigned(fd, eligibleMask, usedMask, qfalse);
+          		int victim = -1;
+          		int victimSlot = -1;
+          		float challengerScore = -1.0f;
+          		float victimScore = 1.0e30f;
+          		if (challenger >= 0)
+          		{
+          			challengerScore = R_DlightShadowSelectionScore(&tr.refdef.dlights[challenger], fd);
+          			for (slot = 0; slot < DW_PERSISTENT_SHADOW_SLOT_COUNT; ++slot)
+          			{
+          				int resident = currentLight[slot];
+          				float score;
+          				if (resident < 0 || tr.refdef.dlights[resident].transientBlast)
+          					continue;
+          				if (nowMs - s_dwPersistentShadowSlots[slot].assignedTime < minResidencyMs)
+          					continue;
+          				score = R_DlightShadowSelectionScore(&tr.refdef.dlights[resident], fd);
+          				if (score < victimScore)
+          				{
+          					victimScore = score;
+          					victim = resident;
+          					victimSlot = slot;
+          				}
+          			}
+          		}
+          		if (challenger >= 0 && victim >= 0 && challengerScore >= victimScore * visibleEvictRatio)
+          		{
+          			qboolean sameChallenge = s_dwPersistentChallengeVictimSlot == victimSlot
+          				&& R_DWPersistentShadowIdentityMatchesLight(&s_dwPersistentChallengeLight,
+          					&tr.refdef.dlights[challenger], identityDistance)
+          				&& R_DWPersistentShadowIdentityMatchesLight(&s_dwPersistentChallengeVictim,
+          					&tr.refdef.dlights[victim], identityDistance);
+          			if (!sameChallenge)
+          			{
+          				R_DWPersistentShadowIdentityFromLight(&s_dwPersistentChallengeLight, &tr.refdef.dlights[challenger]);
+          				R_DWPersistentShadowIdentityFromLight(&s_dwPersistentChallengeVictim, &tr.refdef.dlights[victim]);
+          				s_dwPersistentChallengeVictimSlot = victimSlot;
+          				s_dwPersistentChallengeStartTime = nowMs;
+          			}
+          			else if (nowMs - s_dwPersistentChallengeStartTime >= visibleEvictMs)
+          			{
+          				int elapsed = nowMs - s_dwPersistentChallengeStartTime;
+          				usedMask &= ~(1u << victim);
+          				R_DWPersistentShadowAssignSlot(victimSlot, challenger, fd, "VISIBLE_EVICT", victim, victimScore);
+          				currentLight[victimSlot] = challenger;
+          				usedMask |= 1u << challenger;
+          				R_DWPersistentShadowDiag("VISIBLE_EVICT_COMMIT", victimSlot, victim, challenger,
+          					victimScore, challengerScore, elapsed, captureCount);
+          				R_DWPersistentShadowIdentityClear(&s_dwPersistentChallengeLight);
+          				R_DWPersistentShadowIdentityClear(&s_dwPersistentChallengeVictim);
+          				s_dwPersistentChallengeVictimSlot = -1;
+          				s_dwPersistentChallengeStartTime = 0;
+          			}
+          		}
+          		else
+          		{
+          			R_DWPersistentShadowIdentityClear(&s_dwPersistentChallengeLight);
+          			R_DWPersistentShadowIdentityClear(&s_dwPersistentChallengeVictim);
+          			s_dwPersistentChallengeVictimSlot = -1;
+          			s_dwPersistentChallengeStartTime = 0;
+          		}
+          	}
+
+          	// Phase 6: refresh at most the accepted three cubemaps this frame. Invalid/new
+          	// slots and moving/pulsing lights are prioritized; otherwise oldest capture wins,
+          	// which gives deterministic round-robin refresh across the resident set.
+          	while (captureCount < captureBudget)
+          	{
+          		int bestSlot = -1;
+          		int bestClass = -1;
+          		int bestAge = -1;
+          		float bestScore = -1.0f;
+          		for (slot = 0; slot < DW_PERSISTENT_SHADOW_SLOT_COUNT; ++slot)
+          		{
+          			int light = currentLight[slot];
+          			dwPersistentShadowSlot_t *cache = &s_dwPersistentShadowSlots[slot];
+          			int refreshClass;
+          			int age;
+          			float score;
+          			if (light < 0 || (capturedSlotMask & (1u << slot)))
+          				continue;
+          			refreshClass = R_DWPersistentShadowRefreshClass(cache, &tr.refdef.dlights[light]);
+          			age = cache->lastCaptureTime > 0 ? nowMs - cache->lastCaptureTime : 0x3fffffff;
+          			score = R_DlightShadowSelectionScore(&tr.refdef.dlights[light], fd);
+          			if (bestSlot < 0 || refreshClass > bestClass ||
+          				(refreshClass == bestClass && age > bestAge) ||
+          				(refreshClass == bestClass && age == bestAge && score > bestScore))
+          			{
+          				bestSlot = slot;
+          				bestClass = refreshClass;
+          				bestAge = age;
+          				bestScore = score;
+          			}
+          		}
+          		if (bestSlot < 0)
+          			break;
+          		{
+          			int light = currentLight[bestSlot];
+          			dwPersistentShadowSlot_t *cache = &s_dwPersistentShadowSlots[bestSlot];
+          			R_DWPersistentShadowCaptureLight(fd, light, bestSlot);
+          			cache->captureValid = qtrue;
+          			cache->lastCaptureTime = nowMs;
+          			VectorCopy(tr.refdef.dlights[light].origin, cache->captureOrigin);
+          			cache->captureRadius = tr.refdef.dlights[light].radius;
+          			capturedSlotMask |= 1u << bestSlot;
+          			captureCount++;
+          			if (s_dwPersistentShadowDiag && s_dwPersistentShadowDiag->integer >= 2)
+          				R_DWPersistentShadowDiag("CACHE_CAPTURE", bestSlot, light, light, bestScore, bestScore, 0, captureCount);
+          		}
+          	}
+
+          	// Phase 7: expose every current resident that has a valid cubemap, including
+          	// residents not refreshed this frame. This is the ownership/refresh decoupling.
+          	for (slot = 0; slot < DW_PERSISTENT_SHADOW_SLOT_COUNT; ++slot)
+          	{
+          		int light = currentLight[slot];
+          		dwPersistentShadowSlot_t *cache = &s_dwPersistentShadowSlots[slot];
+          		if (light < 0 || !cache->captureValid)
+          			continue;
+          		tr.refdef.dlightShadowMask |= 1u << light;
+          		tr.refdef.dlightShadowSlot[light] = (signed char)slot;
+          	}
+          	tr.refdef.dlightDiagFacesIssued = captureCount * 6;
+          	if (captureCount > 0)
+          	{
+          		for (slot = 0; slot < DW_PERSISTENT_SHADOW_SLOT_COUNT; ++slot)
+          		{
+          			if (capturedSlotMask & (1u << slot))
+          			{
+          				tr.refdef.dlightDiagSelectedIndex = currentLight[slot];
+          				tr.refdef.dlightDiagSelectedSlot = slot;
+          				break;
+          			}
+          		}
+          	}
+          }
+          '''
+
+          anchor = 'void R_RenderDlightCubemaps(const refdef_t *fd)\n{\n'
+          text = replace_once(text, anchor, helper + '\n' + anchor, 'insert persistent shadow cache helper')
+
+          old_locals = '''\tint maxShadowLights;\n\tint renderedLights = 0;\n\tint historyInitIndex;\n'''
+          new_locals = '''\tint maxShadowLights;\n\tint renderedLights = 0;\n\t// DARKWOLF_PERSISTENT_DLIGHT_SHADOW_CACHE_PC_V0_1\n\tqboolean persistentMode = qfalse;\n\tint historyInitIndex;\n'''
+          text = replace_once(text, old_locals, new_locals, 'persistent-mode local')
+
+          old_after_blast = '''\t{\n\t\tint blastIndex;\n\t\tfor (blastIndex = 0; blastIndex < tr.refdef.num_dlights; blastIndex++)\n\t\t{\n\t\t\tif (tr.refdef.dlights[blastIndex].transientBlast)\n\t\t\t\tpendingLightsMask |= 1u << blastIndex;\n\t\t}\n\t}\n\n\twhile (pendingLightsMask && renderedLights < maxShadowLights)\n'''
+          new_after_blast = '''\t{\n\t\tint blastIndex;\n\t\tfor (blastIndex = 0; blastIndex < tr.refdef.num_dlights; blastIndex++)\n\t\t{\n\t\t\tif (tr.refdef.dlights[blastIndex].transientBlast)\n\t\t\t\tpendingLightsMask |= 1u << blastIndex;\n\t\t}\n\t}\n\n\t// DARKWOLF_PERSISTENT_DLIGHT_SHADOW_CACHE_PC_V0_1\n\t// Fail open to the exact accepted selector whenever old force-select/test-lock\n\t// diagnostics are active. In cache mode, r_dlightShadowMaxLights is only the\n\t// per-frame refresh budget and is hard-capped to the accepted value of three.\n\tR_DWPersistentShadowEnsureCvars();\n\tpersistentMode = s_dwPersistentShadowCache && s_dwPersistentShadowCache->integer == 1\n\t\t&& !(r_dlightShadowTestLock && r_dlightShadowTestLock->integer)\n\t\t&& !(r_dlightDiagForceSelect && r_dlightDiagForceSelect->integer);\n\tR_DWPersistentShadowSetEnabled(persistentMode);\n\tif (persistentMode)\n\t{\n\t\t// Keep legacy compact-slot history inert so rollback starts cleanly.\n\t\tfor (historyInitIndex = 0; historyInitIndex < MAX_DLIGHT_SHADOWS; ++historyInitIndex)\n\t\t{\n\t\t\thistoryLight[historyInitIndex] = -1;\n\t\t\thistoryNativeOrdinal[historyInitIndex] = -1;\n\t\t\thistoryHold[historyInitIndex] = 0;\n\t\t\tVectorClear(historyOrigin[historyInitIndex]);\n\t\t\thistoryRadius[historyInitIndex] = 0.0f;\n\t\t}\n\t\tR_DWPersistentShadowRun(fd, pendingLightsMask, maxShadowLights);\n\t}\n\n\twhile (!persistentMode && pendingLightsMask && renderedLights < maxShadowLights)\n'''
+          text = replace_once(text, old_after_blast, new_after_blast, 'persistent cache branch')
+
+          required = [
+              MARKER,
+              'ri.Cvar_Get("r_dlightShadowPersistentCache", "0", 0)',
+              'ri.Cvar_Get("r_dlightShadowPersistentCacheDiag", "0", 0)',
+              'ri.Cvar_Get("r_dlightShadowPersistentIdentityDistance", "64", 0)',
+              'ri.Cvar_Get("r_dlightShadowPersistentIdentityAmbiguity", "8", 0)',
+              'ri.Cvar_Get("r_dlightShadowPersistentCacheMs", "15000", 0)',
+              'ri.Cvar_Get("r_dlightShadowPersistentReclaimMs", "500", 0)',
+              'ri.Cvar_Get("r_dlightShadowPersistentVisibleEvictRatio", "2.0", 0)',
+              'ri.Cvar_Get("r_dlightShadowPersistentVisibleEvictMs", "500", 0)',
+              'ri.Cvar_Get("r_dlightShadowPersistentMinResidencyMs", "1000", 0)',
+              'captureBudget > 3',
+              'R_DWPersistentShadowCaptureLight(fd, light, bestSlot);',
+              'tr.refdef.dlightShadowMask |= 1u << light;',
+              'tr.refdef.dlightShadowSlot[light] = (signed char)slot;',
+              'while (!persistentMode && pendingLightsMask && renderedLights < maxShadowLights)',
+              'R_AddCapShadowmapCmd(shadowSlot, j);',
+          ]
+          for token in required:
+              if token not in text:
+                  die(f'missing required marker after patch: {token}')
+
+          for forbidden in [
+              'r_dlightShadowMaxLights", "5"',
+              'r_dlightShadowMaxLights", "8"',
+              'r_dlightShadowMapSize",',
+              'DARKWOLF_STABLE_DLIGHT_SHADOW_RESIDENCY_RETURN_REACQUISITION_PC_V0_3',
+          ]:
+              if forbidden in helper:
+                  die(f'forbidden policy mutation/old experiment marker in helper: {forbidden}')
+
+          path.write_text(text, encoding='utf-8', newline='\n')
+          print('Applied Persistent DLight Shadow Cache Production Candidate v0.1')
+          PY_PATCHER
+          actual_patcher_sha="$(sha256sum "$PATCHER_NAME" | awk '{print $1}')"
+          test "$actual_patcher_sha" = "$PATCHER_SHA256" || { echo "ERROR: embedded patcher SHA drift: $actual_patcher_sha" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+
+          python3 "$PATCHER_NAME" source
+          first_sha="$(sha256sum source/SP/code/rend2/tr_main.c | awk '{print $1}')"
+          python3 "$PATCHER_NAME" source
+          second_sha="$(sha256sum source/SP/code/rend2/tr_main.c | awk '{print $1}')"
+          test "$first_sha" = "$second_sha" || { echo "ERROR: patcher is not idempotent" >&2; exit 1; }
+
+          git -C source add -N .
+          git -C source diff --check "$base_commit" -- SP/code/rend2/tr_main.c
+          mapfile -t changed < <(git -C source diff --name-only "$base_commit" -- | LC_ALL=C sort)
+          test "${#changed[@]}" -eq 1 || { printf 'ERROR: expected one changed source file, got %s: %s\n' "${#changed[@]}" "${changed[*]-}" >&2; exit 1; }
+          test "${changed[0]}" = 'SP/code/rend2/tr_main.c' || { echo "ERROR: unexpected source delta: ${changed[0]}" >&2; exit 1; }
+          printf '%s\n' 'SP/code/rend2/tr_main.c' > .release_expected_paths.txt
+
+          # Exact persistent-cache source contract.
+          grep -Fq 'DARKWOLF_PERSISTENT_DLIGHT_SHADOW_CACHE_PC_V0_1' source/SP/code/rend2/tr_main.c
+          grep -Fq 'ri.Cvar_Get("r_dlightShadowPersistentCache", "0", 0)' source/SP/code/rend2/tr_main.c
+          grep -Fq 'DW_PERSISTENT_SHADOW_SLOT_COUNT MAX_DLIGHT_SHADOWS' source/SP/code/rend2/tr_main.c
+          grep -Fq 'if (captureBudget > 3) captureBudget = 3;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_DWPersistentShadowCaptureLight(fd, light, bestSlot);' source/SP/code/rend2/tr_main.c
+          grep -Fq 'tr.refdef.dlightShadowMask |= 1u << light;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'tr.refdef.dlightShadowSlot[light] = (signed char)slot;' source/SP/code/rend2/tr_main.c
+          grep -Fq 'while (!persistentMode && pendingLightsMask && renderedLights < maxShadowLights)' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_AddCapShadowmapCmd(shadowSlot, j);' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'DARKWOLF_STABLE_DLIGHT_SHADOW_RESIDENCY_RETURN_REACQUISITION_PC_V0_3' source/SP/code/rend2/tr_main.c
+          ! grep -Fq 'r_dlightShadowStableResidency' source/SP/code/rend2/tr_main.c
+
+          # Compile and execute the exact new helper policy with high-signal controls.
+          rm -rf .persistent_syntax
+          mkdir -p .persistent_syntax
+          python3 - <<'PY_EXTRACT'
+          from pathlib import Path
+          text=Path('source/SP/code/rend2/tr_main.c').read_text(encoding='utf-8')
+          start=text.index('// DARKWOLF_PERSISTENT_DLIGHT_SHADOW_CACHE_PC_V0_1')
+          func=text.index('void R_RenderDlightCubemaps(const refdef_t *fd)', start)
+          end=text.index('void R_RenderPshadowMaps(const refdef_t *fd)', func)
+          Path('.persistent_syntax/persistent_helper.inc').write_text(text[start:func], encoding='utf-8')
+          Path('.persistent_syntax/persistent_integrated.inc').write_text(text[start:end], encoding='utf-8')
+          PY_EXTRACT
+          cat > .persistent_syntax/harness.c <<'EOF_HELPER_C'
+          #include <stdio.h>
+          #include <string.h>
+          #include <stdarg.h>
+          #include <math.h>
+          #include <stdlib.h>
+          #define MAX_DLIGHTS 32
+          #define MAX_DLIGHT_SHADOWS 8
+          #define MAX_QPATH 64
+          #define PSHADOW_MAP_SIZE 2048
+          #define PRINT_ALL 0
+          #define VPF_SHADOWMAP 1
+          #define VPF_DEPTHSHADOW 2
+          #define VPF_NOVIEWMODEL 4
+          typedef int qboolean;
+          #define qtrue 1
+          #define qfalse 0
+          typedef float vec3_t[3];
+          typedef struct { int integer; float value; } cvar_t;
+          typedef struct { qboolean nativeAuthoredDlight; int fireVolumetricNativeOrdinal; vec3_t origin; vec3_t color; int overdraw; qboolean transientBlast; float radius; qboolean noDlightShadow; } dlight_t;
+          typedef struct { vec3_t vieworg; int time; } refdef_t;
+          typedef struct { vec3_t origin; vec3_t axis[3]; } orientation_t;
+          typedef struct { int viewportX,viewportY,viewportWidth,viewportHeight; void *targetFbo; qboolean isPortal,isMirror; float fovX,fovY; int flags; float zFar; orientation_t or; } viewParms_t;
+          typedef struct { char baseName[MAX_QPATH]; } world_t;
+          typedef struct { int num_dlights; int time,x,y; dlight_t dlights[MAX_DLIGHTS]; unsigned int dlightShadowMask; signed char dlightShadowSlot[MAX_DLIGHTS]; int dlightDiagSelectedIndex,dlightDiagSelectedSlot,dlightDiagFacesIssued; unsigned int dlightMask; } trrefdef_t;
+          typedef struct { trrefdef_t refdef; int frameCount; world_t *world; void *dlightShadowFbo; } trGlobals_t;
+          trGlobals_t tr; static world_t worldObj; struct { int vidHeight; } glConfig;
+          static cvar_t cvMap={2048,2048},cvBudget={3,3};
+          cvar_t *r_dlightShadowMapSize=&cvMap,*r_dlightShadowMaxLights=&cvBudget;
+          typedef struct { cvar_t *(*Cvar_Get)(const char*,const char*,int); void (*Printf)(int,const char*,...); } refimport_t; refimport_t ri;
+          static cvar_t c_enable={1,1},c_diag={0,0},c_dist={64,64},c_amb={8,8},c_cache={15000,15000},c_reclaim={500,500},c_ratio={2,2},c_evictms={500,500},c_minres={1000,1000};
+          static cvar_t *cg(const char*n,const char*d,int f){(void)d;(void)f;if(!strcmp(n,"r_dlightShadowPersistentCache"))return &c_enable;if(!strcmp(n,"r_dlightShadowPersistentCacheDiag"))return &c_diag;if(!strcmp(n,"r_dlightShadowPersistentIdentityDistance"))return &c_dist;if(!strcmp(n,"r_dlightShadowPersistentIdentityAmbiguity"))return &c_amb;if(!strcmp(n,"r_dlightShadowPersistentCacheMs"))return &c_cache;if(!strcmp(n,"r_dlightShadowPersistentReclaimMs"))return &c_reclaim;if(!strcmp(n,"r_dlightShadowPersistentVisibleEvictRatio"))return &c_ratio;if(!strcmp(n,"r_dlightShadowPersistentVisibleEvictMs"))return &c_evictms;if(!strcmp(n,"r_dlightShadowPersistentMinResidencyMs"))return &c_minres;return NULL;}
+          static void pr(int l,const char *fmt,...){(void)l;(void)fmt;}
+          #define VectorCopy(a,b) do{(b)[0]=(a)[0];(b)[1]=(a)[1];(b)[2]=(a)[2];}while(0)
+          #define VectorClear(a) do{(a)[0]=(a)[1]=(a)[2]=0;}while(0)
+          #define VectorSet(a,x,y,z) do{(a)[0]=(x);(a)[1]=(y);(a)[2]=(z);}while(0)
+          #define VectorSubtract(a,b,c) do{(c)[0]=(a)[0]-(b)[0];(c)[1]=(a)[1]-(b)[1];(c)[2]=(a)[2]-(b)[2];}while(0)
+          #define DotProduct(a,b) ((a)[0]*(b)[0]+(a)[1]*(b)[1]+(a)[2]*(b)[2])
+          #define Com_Memset memset
+          static int Q_stricmp(const char*a,const char*b){return strcmp(a,b);} static void Q_strncpyz(char*d,const char*s,size_t n){if(!n)return;strncpy(d,s,n-1);d[n-1]='\0';}
+          static float R_DlightShadowSelectionScore(const dlight_t *dl,const refdef_t *fd){vec3_t d;float ds,rs,l;VectorSubtract(dl->origin,fd->vieworg,d);ds=DotProduct(d,d);rs=dl->radius*dl->radius;l=.2126f*dl->color[0]+.7152f*dl->color[1]+.0722f*dl->color[2];return rs*(.25f+l)/(ds+rs*.25f+1.0f);}
+          static int renderViews=0,capFaces=0;
+          static void R_RenderView(viewParms_t *p){(void)p;renderViews++;}
+          static void R_AddCapShadowmapCmd(int slot,int side){if(slot<0||slot>=8||side<0||side>=6){fprintf(stderr,"bad capture %d %d\n",slot,side);exit(99);}capFaces++;}
+          #include "persistent_helper.inc"
+          static void light(int i,float x,float radius,int native,int ord,int blast){memset(&tr.refdef.dlights[i],0,sizeof(tr.refdef.dlights[i]));tr.refdef.dlights[i].origin[0]=x;tr.refdef.dlights[i].radius=radius;tr.refdef.dlights[i].color[0]=1.0f;tr.refdef.dlights[i].color[1]=0.7f;tr.refdef.dlights[i].color[2]=0.3f;tr.refdef.dlights[i].nativeAuthoredDlight=native;tr.refdef.dlights[i].fireVolumetricNativeOrdinal=ord;tr.refdef.dlights[i].transientBlast=blast;}
+          static void reset_frame(void){tr.refdef.dlightShadowMask=0;memset(tr.refdef.dlightShadowSlot,-1,sizeof(tr.refdef.dlightShadowSlot));tr.refdef.dlightDiagFacesIssued=0;tr.refdef.dlightDiagSelectedIndex=-1;tr.refdef.dlightDiagSelectedSlot=-1;renderViews=0;capFaces=0;}
+          static int popcount(unsigned int x){int n=0;while(x){n+=x&1u;x>>=1;}return n;}
+          int main(void){refdef_t fd;unsigned int mask;int i;memset(&fd,0,sizeof(fd));memset(&tr,0,sizeof(tr));ri.Cvar_Get=cg;ri.Printf=pr;tr.world=&worldObj;strcpy(worldObj.baseName,"crypt1");tr.refdef.num_dlights=12;glConfig.vidHeight=768;R_DWPersistentShadowSetEnabled(qtrue);
+           for(i=0;i<5;i++){ light(i,(float)i*200.0f,300.0f,1,-1,0); }
+           mask=(1u<<5)-1u; fd.time=1000; tr.refdef.time=1000; reset_frame(); R_DWPersistentShadowRun(&fd,mask,3);
+           if(capFaces!=18||tr.refdef.dlightDiagFacesIssued!=18||popcount(tr.refdef.dlightShadowMask)!=3){printf("FAIL frame1 faces=%d mask=%08x\n",capFaces,tr.refdef.dlightShadowMask);return 2;} puts("PASS initial 3-capture cap");
+           fd.time=1016;tr.refdef.time=1016;reset_frame();R_DWPersistentShadowRun(&fd,mask,3);if(capFaces!=18||popcount(tr.refdef.dlightShadowMask)!=5){printf("FAIL frame2 faces=%d residents=%d\n",capFaces,popcount(tr.refdef.dlightShadowMask));return 3;}puts("PASS five persistent residents after two frames");
+           fd.vieworg[0]=800;fd.time=1032;tr.refdef.time=1032;reset_frame();R_DWPersistentShadowRun(&fd,mask,3);if(popcount(tr.refdef.dlightShadowMask)!=5){printf("FAIL camera move ownership changed mask=%08x\n",tr.refdef.dlightShadowMask);return 4;}puts("PASS camera score changes do not evict within capacity");
+           cvBudget.integer=8;fd.time=1048;tr.refdef.time=1048;reset_frame();R_DWPersistentShadowRun(&fd,mask,8);if(capFaces>18||tr.refdef.dlightDiagFacesIssued>18){printf("FAIL high requested budget escaped cap faces=%d\n",capFaces);return 5;}puts("PASS requested budget 8 hard-capped to 3 captures");cvBudget.integer=3;
+           light(10,820,500,0,-1,1);mask|=1u<<10;fd.time=1064;tr.refdef.time=1064;reset_frame();R_DWPersistentShadowRun(&fd,mask,3);if(!(tr.refdef.dlightShadowMask&(1u<<10))||capFaces>18){printf("FAIL blast priority mask=%08x faces=%d\n",tr.refdef.dlightShadowMask,capFaces);return 6;}puts("PASS transient blast immediate and within capture cap");
+           strcpy(worldObj.baseName,"escape1");fd.time=2000;tr.refdef.time=2000;mask=(1u<<2);reset_frame();R_DWPersistentShadowRun(&fd,mask,3);if(!(tr.refdef.dlightShadowMask&(1u<<2))){puts("FAIL map reset assign");return 7;}puts("PASS map change resets and captures cleanly");
+           /* Authored light without ordinal survives per-frame index churn by spatial identity. */
+           strcpy(worldObj.baseName,"churntest"); memset(tr.refdef.dlights,0,sizeof(tr.refdef.dlights)); light(3,300,300,1,-1,0); mask=1u<<3; fd.time=3000; tr.refdef.time=3000; reset_frame(); R_DWPersistentShadowRun(&fd,mask,3); if(!(tr.refdef.dlightShadowMask&(1u<<3))){puts("FAIL churn initial");return 8;}
+           tr.refdef.dlights[10]=tr.refdef.dlights[3]; memset(&tr.refdef.dlights[3],0,sizeof(tr.refdef.dlights[3])); mask=1u<<10; fd.time=3016; tr.refdef.time=3016; reset_frame(); R_DWPersistentShadowRun(&fd,mask,3); if(!(tr.refdef.dlightShadowMask&(1u<<10))){puts("FAIL authored index churn");return 9;} puts("PASS authored no-ordinal index churn rebind");
+           /* Pressure reclaims an off-screen cached slot before evicting any visible resident. */
+           strcpy(worldObj.baseName,"reclaimtest"); memset(tr.refdef.dlights,0,sizeof(tr.refdef.dlights)); for(i=0;i<9;i++){light(i,(float)i*120.0f,300.0f,1,-1,0);} mask=0xffu; fd.vieworg[0]=0; fd.time=4000;tr.refdef.time=4000;reset_frame();R_DWPersistentShadowRun(&fd,mask,3); fd.time=4016;tr.refdef.time=4016;reset_frame();R_DWPersistentShadowRun(&fd,mask,3); fd.time=4032;tr.refdef.time=4032;reset_frame();R_DWPersistentShadowRun(&fd,mask,3);
+           mask=0x7fu|(1u<<8); fd.time=4600;tr.refdef.time=4600;reset_frame();R_DWPersistentShadowRun(&fd,mask,3); if(!(tr.refdef.dlightShadowMask&(1u<<8))){printf("FAIL reclaim new light mask=%08x\n",tr.refdef.dlightShadowMask);return 10;} puts("PASS off-screen resident reclaimed before visible eviction");
+           /* More than eight simultaneously visible lights use ratio+dwell; no instant score churn. */
+           strcpy(worldObj.baseName,"evicttest"); memset(tr.refdef.dlights,0,sizeof(tr.refdef.dlights)); for(i=0;i<8;i++){light(i,2000.0f+(float)i*100.0f,200.0f,1,-1,0);} light(8,0,1200,1,-1,0); mask=0xffu; fd.vieworg[0]=0; fd.time=5000;tr.refdef.time=5000;reset_frame();R_DWPersistentShadowRun(&fd,mask,3); fd.time=5016;tr.refdef.time=5016;reset_frame();R_DWPersistentShadowRun(&fd,mask,3); fd.time=5032;tr.refdef.time=5032;reset_frame();R_DWPersistentShadowRun(&fd,mask,3);
+           mask=0x1ffu; fd.time=6100;tr.refdef.time=6100;reset_frame();R_DWPersistentShadowRun(&fd,mask,3); if(tr.refdef.dlightShadowMask&(1u<<8)){puts("FAIL visible eviction happened without dwell");return 11;} fd.time=6650;tr.refdef.time=6650;reset_frame();R_DWPersistentShadowRun(&fd,mask,3); if(!(tr.refdef.dlightShadowMask&(1u<<8))){printf("FAIL visible eviction did not commit mask=%08x\n",tr.refdef.dlightShadowMask);return 12;} puts("PASS >8 visible lights use controlled ratio+dwell eviction");
+           return 0;}
+          EOF_HELPER_C
+          cc -std=c99 -Wall -Wextra -Werror .persistent_syntax/harness.c -lm -o .persistent_syntax/harness
+          .persistent_syntax/harness | tee .persistent_syntax/helper_output.txt
+          for line in \
+            'PASS initial 3-capture cap' \
+            'PASS five persistent residents after two frames' \
+            'PASS camera score changes do not evict within capacity' \
+            'PASS requested budget 8 hard-capped to 3 captures' \
+            'PASS transient blast immediate and within capture cap' \
+            'PASS map change resets and captures cleanly' \
+            'PASS authored no-ordinal index churn rebind' \
+            'PASS off-screen resident reclaimed before visible eviction' \
+            'PASS >8 visible lights use controlled ratio+dwell eviction'; do
+            grep -Fq "$line" .persistent_syntax/helper_output.txt || { echo "ERROR: helper fixture missing: $line" >&2; exit 1; }
+          done
+
+          cat > .persistent_syntax/integrated_harness.c <<'EOF_INTEGRATED_C'
+          #include <stdio.h>
+          #include <string.h>
+          #include <stdarg.h>
+          #include <math.h>
+          #include <stdlib.h>
+          #define MAX_DLIGHTS 32
+          #define MAX_DLIGHT_SHADOWS 8
+          #define MAX_QPATH 64
+          #define PSHADOW_MAP_SIZE 2048
+          #define PRINT_ALL 0
+          #define VPF_SHADOWMAP 1
+          #define VPF_DEPTHSHADOW 2
+          #define VPF_NOVIEWMODEL 4
+          typedef int qboolean;
+          #define qtrue 1
+          #define qfalse 0
+          typedef float vec3_t[3];
+          typedef struct { int integer; float value; } cvar_t;
+          typedef struct { qboolean nativeAuthoredDlight; int fireVolumetricNativeOrdinal; vec3_t origin; vec3_t color; int overdraw; qboolean transientBlast; float radius; qboolean noDlightShadow; } dlight_t;
+          typedef struct { vec3_t vieworg; int time; } refdef_t;
+          typedef struct { vec3_t origin; vec3_t axis[3]; } orientation_t;
+          typedef struct { int viewportX,viewportY,viewportWidth,viewportHeight; void *targetFbo; qboolean isPortal,isMirror; float fovX,fovY; int flags; float zFar; orientation_t or; } viewParms_t;
+          typedef struct { char baseName[MAX_QPATH]; } world_t;
+          typedef struct { int num_dlights; int time,x,y; dlight_t dlights[MAX_DLIGHTS]; unsigned int dlightShadowMask; signed char dlightShadowSlot[MAX_DLIGHTS]; int dlightDiagInjectedIndex,dlightDiagSelectedIndex,dlightDiagSelectedSlot,dlightDiagFacesIssued; unsigned int dlightMask; } trrefdef_t;
+          typedef struct { trrefdef_t refdef; int frameCount; world_t *world; void *dlightShadowFbo; } trGlobals_t;
+          trGlobals_t tr; static world_t worldObj; struct { int vidHeight; } glConfig;
+          int dlightMaterialDiagLockValid,dlightMaterialDiagLockCurrentIndex; float dlightMaterialDiagLockRadius; vec3_t dlightMaterialDiagLockOrigin,dlightMaterialDiagLockColor;
+          static cvar_t cvMap={2048,2048},cvBudget={3,3},cvZero={0,0},cvHyst={0,.25f},cvHold={12,12};
+          cvar_t *r_dlightShadowMapSize=&cvMap,*r_dlightShadowMaxLights=&cvBudget,*r_dlightShadowTestLock=&cvZero,*r_dlightDiagForceSelect=&cvZero,*r_dlightShadowHysteresis=&cvHyst,*r_dlightShadowHoldFrames=&cvHold;
+          typedef struct { cvar_t *(*Cvar_Get)(const char*,const char*,int); int (*Cvar_VariableIntegerValue)(const char*); int (*Milliseconds)(void); void (*Printf)(int,const char*,...); } refimport_t; refimport_t ri;
+          static cvar_t c_enable={1,1},c_diag={0,0},c_dist={64,64},c_amb={8,8},c_cache={15000,15000},c_reclaim={500,500},c_ratio={2,2},c_evictms={500,500},c_minres={1000,1000};
+          static cvar_t *cg(const char*n,const char*d,int f){(void)d;(void)f;if(!strcmp(n,"r_dlightShadowPersistentCache"))return &c_enable;if(!strcmp(n,"r_dlightShadowPersistentCacheDiag"))return &c_diag;if(!strcmp(n,"r_dlightShadowPersistentIdentityDistance"))return &c_dist;if(!strcmp(n,"r_dlightShadowPersistentIdentityAmbiguity"))return &c_amb;if(!strcmp(n,"r_dlightShadowPersistentCacheMs"))return &c_cache;if(!strcmp(n,"r_dlightShadowPersistentReclaimMs"))return &c_reclaim;if(!strcmp(n,"r_dlightShadowPersistentVisibleEvictRatio"))return &c_ratio;if(!strcmp(n,"r_dlightShadowPersistentVisibleEvictMs"))return &c_evictms;if(!strcmp(n,"r_dlightShadowPersistentMinResidencyMs"))return &c_minres;return &cvZero;}
+          static int cvi(const char*n){(void)n;return 0;} static int ms(void){return tr.refdef.time;} static void pr(int l,const char*f,...){(void)l;(void)f;}
+          #define VectorCopy(a,b) do{(b)[0]=(a)[0];(b)[1]=(a)[1];(b)[2]=(a)[2];}while(0)
+          #define VectorClear(a) do{(a)[0]=(a)[1]=(a)[2]=0;}while(0)
+          #define VectorSet(a,x,y,z) do{(a)[0]=(x);(a)[1]=(y);(a)[2]=(z);}while(0)
+          #define VectorSubtract(a,b,c) do{(c)[0]=(a)[0]-(b)[0];(c)[1]=(a)[1]-(b)[1];(c)[2]=(a)[2]-(b)[2];}while(0)
+          #define DotProduct(a,b) ((a)[0]*(b)[0]+(a)[1]*(b)[1]+(a)[2]*(b)[2])
+          #define Com_Memset memset
+          static int Q_stricmp(const char*a,const char*b){return strcmp(a,b);} static void Q_strncpyz(char*d,const char*s,size_t n){if(!n)return;strncpy(d,s,n-1);d[n-1]='\0';}
+          static float R_DlightShadowSelectionScore(const dlight_t *dl,const refdef_t *fd){vec3_t d;float ds,rs,l;VectorSubtract(dl->origin,fd->vieworg,d);ds=DotProduct(d,d);rs=dl->radius*dl->radius;l=.2126f*dl->color[0]+.7152f*dl->color[1]+.0722f*dl->color[2];return rs*(.25f+l)/(ds+rs*.25f+1.0f);}
+          static qboolean R_DlightShadowHistoryMatches(const dlight_t *dl,const vec3_t oldOrigin,float oldRadius){vec3_t d;float maxr,maxm,ratio;if(oldRadius<=0||dl->radius<=0)return qfalse;maxr=dl->radius>oldRadius?dl->radius:oldRadius;maxm=maxr*.5f;if(maxm<64)maxm=64;VectorSubtract(dl->origin,oldOrigin,d);if(DotProduct(d,d)>maxm*maxm)return qfalse;ratio=dl->radius/oldRadius;return ratio>=.5f&&ratio<=2.0f;}
+          static void R_DarkWolfNativeShadowTrace(const refdef_t*fd,unsigned int m,int b){(void)fd;(void)m;(void)b;}
+          static int capFaces=0; static void R_RenderView(viewParms_t*p){(void)p;} static void R_AddCapShadowmapCmd(int s,int side){if(s<0||s>=8||side<0||side>=6)exit(91);capFaces++;}
+          #include "persistent_integrated.inc"
+          int main(void){refdef_t fd;memset(&fd,0,sizeof(fd));memset(&tr,0,sizeof(tr));ri.Cvar_Get=cg;ri.Cvar_VariableIntegerValue=cvi;ri.Milliseconds=ms;ri.Printf=pr;tr.world=&worldObj;strcpy(worldObj.baseName,"crypt1");tr.refdef.num_dlights=1;tr.refdef.dlights[0].radius=300;tr.refdef.dlights[0].color[0]=1;tr.refdef.dlightMask=0xffffffffu & ~(1u<<0);fd.time=1000;tr.refdef.time=1000;R_RenderDlightCubemaps(&fd);if(capFaces!=6||!(tr.refdef.dlightShadowMask&1u)||tr.refdef.dlightShadowSlot[0]<0){printf("FAIL integrated faces=%d mask=%u slot=%d\n",capFaces,tr.refdef.dlightShadowMask,(int)tr.refdef.dlightShadowSlot[0]);return 2;}puts("PASS integrated persistent R_RenderDlightCubemaps");return 0;}
+          EOF_INTEGRATED_C
+          cc -std=c99 -Wall -Wextra -Werror .persistent_syntax/integrated_harness.c -lm -o .persistent_syntax/integrated_harness
+          .persistent_syntax/integrated_harness | tee .persistent_syntax/integrated_output.txt
+          grep -Fq 'PASS integrated persistent R_RenderDlightCubemaps' .persistent_syntax/integrated_output.txt
+
+          echo "Persistent DLight Shadow Cache PC v0.1 exact-anchor + policy + integrated syntax PASS"
+
+      - name: Generate one-file delta and 67-path cumulative patches with replay proofs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          git -C source diff --binary "$base_commit" -- SP/code/rend2/tr_main.c > "$DELTA_NAME"
+          test -s "$DELTA_NAME"
+          test "$(grep -c '^diff --git ' "$DELTA_NAME")" -eq 1 || { echo "ERROR: production-candidate delta must contain exactly 1 section" >&2; exit 1; }
+          
+          mapfile -t all_paths < <(git -C source diff --name-only "$UPSTREAM_SHA" -- | LC_ALL=C sort)
+          test "${#all_paths[@]}" -eq 67 || { echo "ERROR: cumulative path set drift: ${#all_paths[@]} expected 67" >&2; exit 1; }
+          printf '%s\n' "${all_paths[@]}" | grep -Fxq 'SP/code/rend2/tr_main.c'
+          git -C source diff --binary "$UPSTREAM_SHA" -- "${all_paths[@]}" > "$CUMULATIVE_NAME"
+          test -s "$CUMULATIVE_NAME"
+          test "$(grep -c '^diff --git ' "$CUMULATIVE_NAME")" -eq 67 || { echo "ERROR: cumulative must contain exactly 67 path sections" >&2; exit 1; }
+          
+          rm -rf replay-delta replay-cumulative
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$base_commit"
+          git -C replay-delta apply --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --reverse --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          cmp source/SP/code/rend2/tr_main.c replay-delta/SP/code/rend2/tr_main.c
+          
+          git clone -q source replay-cumulative
+          git -C replay-cumulative checkout -q --detach "$UPSTREAM_SHA"
+          git -C replay-cumulative apply --check --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --reverse --check --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          for rel in "${all_paths[@]}"; do
+            cmp "source/$rel" "replay-cumulative/$rel"
+          done
+          echo "One-file persistent-cache production-candidate delta + 67-path cumulative clean replay proofs PASS"
+
+      - name: Build canonical Windows x64 SP production-candidate renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -x source/SP/cross-make-mingw64.sh || { echo "ERROR: canonical SP MinGW64 build script missing" >&2; exit 1; }
+          jobs="$(nproc)"
+          if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh -j"$jobs" \
+              BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          )
+          mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | LC_ALL=C sort)
+          test "${#renderers[@]}" -eq 1 || { printf 'ERROR: expected exactly one Rend2 production-candidate renderer, got %s: %s\n' "${#renderers[@]}" "${renderers[*]-}" >&2; exit 1; }
+          renderer="${renderers[0]}"
+          test -s "$renderer"
+          file "$renderer" | tee .candidate_renderer_file.txt
+          grep -Fq 'PE32+' .candidate_renderer_file.txt || { echo "ERROR: Rend2 renderer is not PE32+ Windows x64" >&2; exit 1; }
+          printf '%s\n' "$renderer" > .candidate_renderer_path
+          sha256sum "$renderer" > .candidate_renderer_sha256
+          echo "Windows x64 SP Rend2 production-candidate build PASS: $renderer"
+
+      - name: Stage exact accepted base plus Rend2-only runtime replacement
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          renderer="$(cat .candidate_renderer_path)"
+          rm -rf runtime
+          mkdir -p runtime
+          stage="runtime/$RELEASE_BASENAME"
+          cp -a "$base" "$stage"
+          cp -f "$renderer" "$stage/renderer_sp_rend2_x64.dll"
+          
+          find "$base" -type f -printf '%P\n' | LC_ALL=C sort > .base_files.txt
+          find "$stage" -type f -printf '%P\n' | LC_ALL=C sort > .stage_files_pre_docs.txt
+          diff -u .base_files.txt .stage_files_pre_docs.txt
+          changed=0
+          while IFS= read -r rel; do
+            if ! cmp -s "$base/$rel" "$stage/$rel"; then
+              case "$rel" in
+                renderer_sp_rend2_x64.dll) changed=$((changed + 1)) ;;
+                *) echo "ERROR: forbidden runtime drift before docs: $rel" >&2; exit 1 ;;
+              esac
+            fi
+          done < .base_files.txt
+          test "$changed" -eq 1 || { echo "ERROR: expected exactly one runtime replacement, got $changed" >&2; exit 1; }
+          ! cmp -s "$base/renderer_sp_rend2_x64.dll" "$stage/renderer_sp_rend2_x64.dll"
+          cmp "$base/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$base/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$base/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$base/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$base/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          printf '%s\n' "$stage" > .stage_path
+          echo "Accepted-base + Rend2-only production-candidate runtime replacement contract PASS"
+
+      - name: Add production-candidate provenance and runtime test contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          base="$(cat .base_stage_path)"
+          mkdir -p "$stage/docs"
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          cp "$base/docs/SHA256SUMS.txt" "$stage/docs/BASE_SHA256SUMS_RUN_34465281051.txt"
+
+          cat > "$stage/docs/$CONTRACT_NAME" <<EOF_CONTRACT
+          DARKWOLF REND2 - PERSISTENT DLIGHT SHADOW CACHE PRODUCTION CANDIDATE V0.1
+
+          parent_run=34465281051
+          parent_head=$BASE_RUN_HEAD_SHA
+          parent_workflow=$BASE_WORKFLOW_PATH
+          parent_workflow_blob=$BASE_WORKFLOW_BLOB_SHA
+          parent_artifact_id=$BASE_ARTIFACT_ID
+          parent_artifact_digest=$BASE_ARTIFACT_DIGEST
+          parent_inner_zip_sha256=$BASE_INNER_ZIP_SHA256
+          parent_manifest_sha256=$BASE_MANIFEST_SHA256
+          parent_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          upstream_sha=$UPSTREAM_SHA
+
+          status=PRODUCTION_CANDIDATE_NOT_YET_PROMOTED
+          source_delta=SP/code/rend2/tr_main.c_ONLY
+          runtime_binary_delta=renderer_sp_rend2_x64.dll_ONLY
+          master_cvar=r_dlightShadowPersistentCache
+          master_default=0
+          mode0=EXACT_ACCEPTED_RUN_34465281051_SELECTOR
+          mode1=EIGHT_PERSISTENT_DLIGHT_SHADOW_SLOTS_WITH_THREE_CAPTURE_REFRESH_BUDGET
+          rollback=/r_dlightShadowPersistentCache 0
+          vid_restart_required=NO
+          root_cause=VIEW_DEPENDENT_SCORE_REASSIGNS_SMALL_SHADOW_OWNER_POOL
+          rejected_fix_family=V0_3_HOLD_RESIDENCY_RETURN_REACQUISITION
+          physical_shadow_textures=8_EXISTING_NO_NEW_ALLOCATION
+          persistent_resident_capacity=8
+          capture_budget_source=r_dlightShadowMaxLights
+          capture_budget_hard_cap=3
+          max_shadow_faces_per_frame=18
+          backend_mapping=EXISTING_DLIGHTSHADOWMASK_PLUS_DLIGHTSHADOWSLOT
+          new_fbo_allocation=NONE
+          new_shadow_texture_allocation=NONE
+          shadow_map_resolution_change=NONE
+          direct_light_change=NONE
+          dlight_origin_radius_color_change=NONE
+          shader_change=NONE
+          backend_change=NONE
+          caster_submission_change=NONE
+          coplanar_fix_change=NONE
+          firevol_change=NONE
+          electroshocker_change=NONE
+          loper_change=NONE
+          portal_pvs_change=NONE
+          native_strong_identity=FIREVOL_NATIVE_ORDINAL_WHEN_AVAILABLE
+          identity_fallback=ORIGIN_COLOR_OVERDRAW_PLUS_NATIVE_CLASS
+          identity_ambiguity=FAIL_OPEN
+          cache_metadata_ms_default=15000
+          offscreen_reclaim_ms_default=500
+          visible_overcapacity_evict_ratio_default=2.0
+          visible_overcapacity_evict_dwell_ms_default=500
+          visible_overcapacity_min_residency_ms_default=1000
+          refresh_policy=INVALID_FIRST_THEN_MOVING_OR_PULSING_THEN_OLDEST_CAPTURE_ROUND_ROBIN
+          transient_blast_policy=IMMEDIATE_PRIORITY_WITHIN_SAME_THREE_CAPTURE_BUDGET
+          stale_capture_safety=INVALIDATE_IF_ORIGIN_OR_RADIUS_LEAVES_EXISTING_HISTORY_COMPATIBILITY
+          high_budget_safety=REQUESTED_BUDGET_ABOVE_3_DOES_NOT_EXCEED_THREE_CAPTURES_IN_CACHE_MODE
+          EOF_CONTRACT
+
+          cat > "$stage/docs/$README_NAME" <<'EOF_README'
+          DARKWOLF / ioRTCW REND2 SP
+          PERSISTENT DLIGHT SHADOW CACHE PRODUCTION CANDIDATE V0.1
+
+          WHAT CHANGED
+          The existing eight point-shadow cubemap textures are used as persistent shadow storage.
+          Only up to three cubemaps are rendered/refreshed in one frame. A light that is not
+          refreshed this frame keeps using its last valid cubemap instead of immediately losing
+          shadow ownership because another light moved above it in camera-dependent score.
+
+          THIS IS A CANDIDATE, NOT A NEW BASELINE.
+          Parent remains runtime-accepted Run 34465281051.
+
+          ENABLE
+            /r_dlightShadowMaxLights 3
+            /r_dlightShadowPersistentCache 1
+            /r_dlightShadowPersistentCacheDiag 1
+          No vid_restart is required.
+
+          PRIMARY TEST - crypt1
+          1. Use the same ceiling-torch/corridor reproduction.
+          2. Approach and move away several times.
+          3. Turn into the other corridor and remain there for several seconds.
+          4. Return to the original ceiling torch.
+          PASS: the original shadow does not disappear for the old 750 ms owner-preemption reason;
+                after any necessary cache refresh it is present again within only a few frames.
+          FAIL: seconds-long shadow loss/reappearance still tracks corridor movement.
+
+          REGRESSION CHECKS
+          - grenade/dynamite: blast shadow remains immediate;
+          - FireVol torch: no lighting/shadow regression;
+          - escape1/electroshocker: accepted direct light remains unchanged;
+          - Loper/electrical scenes: no direct-light regression;
+          - portal/PVS scenes: no returned light leaking;
+          - FPS/stability: no material regression or crash.
+
+          DIAGNOSTIC
+          r_dlightShadowPersistentCacheDiag 1 logs only assignment/rebind/reclaim/eviction transitions.
+          Mode 2 additionally logs cubemap refresh events and is normally unnecessary.
+
+          ROLLBACK
+            /r_dlightShadowPersistentCache 0
+          This restores exact accepted Run 34465281051 shadow-selection behavior without vid_restart.
+
+          DO NOT use r_dlightShadowMaxLights 5/6/8 as the production workaround. In cache mode the
+          renderer intentionally hard-caps actual cubemap captures to 3 per frame even if a larger
+          value is requested.
+          EOF_README
+
+          grep -Fq 'status=PRODUCTION_CANDIDATE_NOT_YET_PROMOTED' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'persistent_resident_capacity=8' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'capture_budget_hard_cap=3' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'max_shadow_faces_per_frame=18' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'new_shadow_texture_allocation=NONE' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'transient_blast_policy=IMMEDIATE_PRIORITY_WITHIN_SAME_THREE_CAPTURE_BUDGET' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq '/r_dlightShadowPersistentCache 1' "$stage/docs/$README_NAME"
+          grep -Fq '/r_dlightShadowMaxLights 3' "$stage/docs/$README_NAME"
+          echo "Persistent-cache production-candidate provenance + runtime contract PASS"
+
+      - name: Validate packaged content and regenerate manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          stage="$(cat .stage_path)"
+          
+          cmp "$base/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$base/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$base/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$base/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$base/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cmp "$base/OpenAL64.dll" "$stage/OpenAL64.dll"
+          cmp "$base/SDL264.dll" "$stage/SDL264.dll"
+          cmp "$base/Main/autoexec.cfg" "$stage/Main/autoexec.cfg"
+          ! cmp -s "$base/renderer_sp_rend2_x64.dll" "$stage/renderer_sp_rend2_x64.dll"
+          
+          if find "$stage" -type f \( -iname 'pak*.pk3' -o -iname '*.pak' -o -iname '*.bsp' -o -iname '*.aas' -o -iname '*.map' \) -print -quit | grep -q .; then
+            echo "ERROR: commercial/map data found in staged production-candidate release" >&2
+            exit 1
+          fi
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          (cd "$stage" && sha256sum -c docs/SHA256SUMS.txt)
+          echo "Packaged production-candidate content + SHA256 manifest PASS"
+
+      - name: Final static guard against persistent-cache v0.1 scope drift
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          test "$(git -C source diff --name-only "$base_commit" -- | wc -l)" -eq 1
+          git -C source diff --name-only "$base_commit" -- | LC_ALL=C sort | diff -u .release_expected_paths.txt -
+          git -C source diff --check "$base_commit" -- SP/code/rend2/tr_main.c
+
+          for rel in \
+            SP/code/rend2/tr_world.c SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h \
+            SP/code/rend2/tr_scene.c SP/code/rend2/tr_surface.c SP/code/rend2/tr_shade.c \
+            SP/code/rend2/tr_backend.c SP/code/rend2/tr_vbo.c SP/code/rend2/tr_glsl.c SP/code/rend2/tr_image.c \
+            SP/code/rend2/glsl/lightall_fp.glsl SP/code/rend2/glsl/lightall_vp.glsl SP/code/rend2/glsl/dlight_fp.glsl SP/code/rend2/glsl/dlight_vp.glsl \
+            SP/code/cgame/cg_ents.c SP/code/cgame/cg_event.c SP/code/cgame/cg_local.h \
+            SP/code/cgame/cg_main.c SP/code/cgame/cg_weapons.c SP/code/cgame/cg_localents.c \
+            SP/code/game/g_misc.c SP/code/game/g_mover.c SP/code/game/g_props.c SP/code/server/sv_snapshot.c; do
+            git -C source diff --quiet "$base_commit" -- "$rel" || { echo "ERROR: protected accepted source drift: $rel" >&2; exit 1; }
+          done
+
+          added="$(git -C source diff -U0 "$base_commit" -- SP/code/rend2/tr_main.c | grep -E '^\+[^+]' | sed 's/^+//' || true)"
+          grep -Fq 'DARKWOLF_PERSISTENT_DLIGHT_SHADOW_CACHE_PC_V0_1' <<<"$added"
+          grep -Fq 'r_dlightShadowPersistentCache' <<<"$added"
+          grep -Fq 'DW_PERSISTENT_SHADOW_SLOT_COUNT MAX_DLIGHT_SHADOWS' <<<"$added"
+          grep -Fq 'if (captureBudget > 3) captureBudget = 3;' <<<"$added"
+          grep -Fq 'CACHE_ASSIGN' <<<"$added"
+          grep -Fq 'CACHE_RECLAIM' <<<"$added"
+          grep -Fq 'VISIBLE_EVICT_COMMIT' <<<"$added"
+          grep -Fq 'BLAST_ASSIGN' <<<"$added"
+          grep -Fq 'R_DWPersistentShadowCaptureLight' <<<"$added"
+          grep -Fq 'tr.refdef.dlightShadowMask |= 1u << light;' <<<"$added"
+          grep -Fq 'tr.refdef.dlightShadowSlot[light] = (signed char)slot;' <<<"$added"
+          grep -Fq 'while (!persistentMode && pendingLightsMask && renderedLights < maxShadowLights)' <<<"$added"
+          ! grep -Fq 'DARKWOLF_STABLE_DLIGHT_SHADOW_RESIDENCY_RETURN_REACQUISITION_PC_V0_3' <<<"$added"
+          ! grep -Fq 'r_dlightShadowStableResidency' <<<"$added"
+          ! grep -Fq 'r_dlightShadowTransitionDiag' <<<"$added"
+          ! grep -Fq 'R_CreateImage' <<<"$added"
+          ! grep -Fq 'FBO_Create' <<<"$added"
+          ! grep -Fq 'ri.Cvar_Set' <<<"$added"
+
+          grep -Fq '#define MAX_DLIGHT_SHADOWS 8' source/SP/code/rend2/tr_local.h
+          grep -Fq 'GL_BindToTMU(tr.shadowCubemaps[shadowSlot], TB_CUBEMAP);' source/SP/code/rend2/tr_shade.c
+
+          python3 - <<'PY_FINAL'
+          from pathlib import Path
+          import re, subprocess
+          base=Path('.base_source_commit').read_text().strip()
+          diff=subprocess.check_output(['git','-C','source','diff','-U0',base,'--','SP/code/rend2/tr_main.c'], text=True)
+          added=chr(10).join(ln[1:] for ln in diff.splitlines() if ln.startswith('+') and not ln.startswith('+++'))
+          forbidden=('rocket','escape1','swf','8581','9587','DARKWOLF_STABLE_DLIGHT_SHADOW_RESIDENCY_RETURN_REACQUISITION_PC_V0_3','r_dlightShadowStableResidency','r_dlightShadowTransitionDiag')
+          for token in forbidden:
+              if token.lower() in added.lower():
+                  raise SystemExit(f'ERROR: forbidden map/old-experiment hardcode in persistent-cache source: {token}')
+          for pat,desc in [
+              (r'^\s*tr\.refdef\.dlights\s*\[[^]]+\]\.radius\s*=', 'DLight radius write'),
+              (r'^\s*tr\.refdef\.dlights\s*\[[^]]+\]\.origin\s*\[', 'DLight origin write'),
+              (r'^\s*tr\.refdef\.dlights\s*\[[^]]+\]\.color\s*\[', 'DLight color write'),
+              (r'\bR_CreateImage\b', 'new shadow texture allocation'),
+              (r'\bFBO_Create\b', 'new FBO allocation'),
+              (r'\bri\.Cvar_Set\b', 'cvar mutation'),
+          ]:
+              m=re.search(pat, added, re.M)
+              if m:
+                  raise SystemExit(f'ERROR: forbidden candidate mutation: {desc}: {m.group(0)!r}')
+          if added.count('R_AddCapShadowmapCmd(shadowSlot, j);') != 1:
+              raise SystemExit('ERROR: expected exactly one new persistent capture command call')
+          if 'captureBudget > 3) captureBudget = 3' not in added:
+              raise SystemExit('ERROR: three-capture hard safety cap missing')
+          print('Final persistent-cache one-file scope/resource guard PASS')
+          PY_FINAL
+
+          echo "Final Persistent DLight Shadow Cache PC v0.1 scope guard PASS"
+
+      - name: Package production-candidate release ZIP and sidecar
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          test "$(basename "$stage")" = "$RELEASE_BASENAME"
+          rm -f "runtime/${RELEASE_BASENAME}.zip" "runtime/${RELEASE_BASENAME}.zip.sha256"
+          (cd runtime && zip -r -9 "${RELEASE_BASENAME}.zip" "$RELEASE_BASENAME")
+          (cd runtime && sha256sum "${RELEASE_BASENAME}.zip" > "${RELEASE_BASENAME}.zip.sha256")
+          unzip -tq "runtime/${RELEASE_BASENAME}.zip"
+          cat "runtime/${RELEASE_BASENAME}.zip.sha256"
+
+      - name: Upload Persistent DLight Shadow Cache Production Candidate v0.1
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            runtime/${{ env.RELEASE_BASENAME }}.zip
+            runtime/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
