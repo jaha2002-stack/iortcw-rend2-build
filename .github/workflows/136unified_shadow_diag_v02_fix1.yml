@@ -1,0 +1,764 @@
+name: Build DarkWolf Rend2 Unified Caster + Receiver Gate + Tesla Source Identity Diagnostic v0.2 Fix1 over Run 35081824222 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-unified-shadow-diagnostic-v0-2-fix1-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Unified Caster + Receiver Gate + Tesla Source Identity Diagnostic v0.2 Fix1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      PARENT_RUN_ID: "35081824222"
+      PARENT_RUN_HEAD_SHA: ed309554924fc392b100b1e0428649fa0ec1cf18
+      PARENT_WORKFLOW_PATH: '.github/workflows/134shadow_delivery_diag_v01_fix2.yml'
+      PARENT_WORKFLOW_BLOB_SHA: 36a2ad7f792e9cb1822901acf69613268916daeb
+      PARENT_ARTIFACT_ID: "10441020428"
+      PARENT_ARTIFACT_NAME: iortcw-rend2-physical-lamp-shadow-slot-receiver-delivery-diagnostic-v0-1-fix2-full-sp-windows-x64-1
+      PARENT_ARTIFACT_DIGEST: sha256:8ff058a23e80b8ca1c7449951cbc466ee5c969012a74ca5d67bd52725a186794
+      PARENT_INNER_SHA256: 3dad0181d2b3814e096999d8629f2170a0a04f3bc08bf783fddc0f81c2896bdf
+      PARENT_RELEASE_BASENAME: iortcw-rend2-physical-lamp-shadow-slot-receiver-delivery-diagnostic-v0-1-fix2-full-sp-windows-x64-1
+      PARENT_CUMULATIVE_NAME: darkwolf-rend2-cumulative-physical-lamp-shadow-slot-receiver-delivery-diagnostic-v0-1-fix2-sp.patch
+      PARENT_CUMULATIVE_SHA256: df5e2f3fdf7360a67e641e432b30b61b245f984d27cb54660074b76e55aff39c
+      PARENT_CONTRACT_NAME: PHYSICAL_LAMP_SHADOW_SLOT_RECEIVER_DELIVERY_DIAGNOSTIC_V0_1_FIX2_CONTRACT.txt
+
+      PATCHER_NAME: apply_shadow_unified_diag_v02.py
+      PATCHER_SHA256: e649d9d1c6ebf23596f159f1fba4e74903ab8a4c98b45504a8193ba8063d11d9
+      PATCHER_GZIP_SHA256: 1a2df36cd0ac746f08f9088d3bb6f8043e4fe62f8f39b7633ed88fb29a9fc884
+      DELTA_NAME: darkwolf-unified-caster-receiver-tesla-source-identity-diagnostic-v0-2-over-run-35081824222.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-unified-caster-receiver-tesla-source-identity-diagnostic-v0-2-sp.patch
+      CONTRACT_NAME: UNIFIED_CASTER_RECEIVER_TESLA_SOURCE_IDENTITY_DIAGNOSTIC_V0_2_CONTRACT.txt
+      README_NAME: README_UNIFIED_SHADOW_DIAGNOSTIC_V0_2_RU.txt
+      RELEASE_BASENAME: iortcw-rend2-unified-caster-receiver-tesla-source-identity-diagnostic-v0-2-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Preflight workflow YAML LF and Bash syntax
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: workflow cannot be resolved: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY_PREFLIGHT'
+          from pathlib import Path
+          import subprocess, sys, yaml
+          p = Path(sys.argv[1])
+          raw = p.read_bytes()
+          if b'\r' in raw:
+              raise SystemExit('ERROR: CR byte in workflow; LF-only required')
+          doc = yaml.safe_load(raw.decode('utf-8'))
+          expected = 'Build DarkWolf Rend2 Unified Caster + Receiver Gate + Tesla Source Identity Diagnostic v0.2 Fix1 over Run 35081824222 SP'
+          if doc.get('name') != expected:
+              raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+          checked = 0
+          for job_name, job in (doc.get('jobs') or {}).items():
+              for index, step in enumerate(job.get('steps') or [], 1):
+                  script = step.get('run')
+                  if not script:
+                      continue
+                  proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                      print(proc.stderr, file=sys.stderr)
+                      raise SystemExit(proc.returncode)
+                  checked += 1
+          if checked < 10:
+              raise SystemExit(f'ERROR: unexpectedly small Bash contract: {checked} blocks')
+          print(f'Workflow YAML + LF + Bash syntax PASS: {checked} Bash blocks')
+          PY_PREFLIGHT
+
+      - name: Verify exact successful parent Run 35081824222
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$PARENT_RUN_HEAD_SHA" || { echo "ERROR: parent HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: parent run is not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$PARENT_WORKFLOW_PATH" || { echo "ERROR: parent workflow path drift" >&2; exit 1; }
+          workflow_blob="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${PARENT_WORKFLOW_PATH}?ref=${PARENT_RUN_HEAD_SHA}" --jq '.sha')"
+          test "$workflow_blob" = "$PARENT_WORKFLOW_BLOB_SHA" || { echo "ERROR: parent workflow blob drift: $workflow_blob" >&2; exit 1; }
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${PARENT_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: exact parent artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$PARENT_ARTIFACT_NAME" || { echo "ERROR: parent artifact name drift" >&2; exit 1; }
+          test "$expired" = false || { echo "ERROR: parent artifact expired" >&2; exit 1; }
+          test "$adigest" = "$PARENT_ARTIFACT_DIGEST" || { echo "ERROR: parent artifact digest drift: $adigest" >&2; exit 1; }
+          echo "Exact parent Run 35081824222 provenance PASS"
+
+      - name: Download and verify exact parent release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf parent-artifact parent-release
+          mkdir -p parent-artifact parent-release
+          gh run download "$PARENT_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$PARENT_ARTIFACT_NAME" --dir parent-artifact
+          z="parent-artifact/${PARENT_RELEASE_BASENAME}.zip"
+          sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"
+          sidecar_sha="$(awk '{print $1}' "$sidecar")"
+          test "$inner_sha" = "$sidecar_sha" || { echo "ERROR: parent inner ZIP/sidecar SHA mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$PARENT_INNER_SHA256" || { echo "ERROR: parent inner ZIP SHA drift: $inner_sha" >&2; exit 1; }
+          unzip -tq "$z"
+          unzip -q "$z" -d parent-release
+          mapfile -t roots < <(find parent-release -mindepth 1 -maxdepth 1 -type d -print | sort)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one parent release root" >&2; exit 1; }
+          parent="${roots[0]}"
+          test "$(basename "$parent")" = "$PARENT_RELEASE_BASENAME" || { echo "ERROR: parent release root name drift" >&2; exit 1; }
+          printf '%s\n' "$parent" > .parent_stage_path
+          test -s "$parent/docs/SHA256SUMS.txt"
+          (cd "$parent" && sha256sum -c docs/SHA256SUMS.txt)
+          test -s "$parent/docs/$PARENT_CUMULATIVE_NAME"
+          test "$(sha256sum "$parent/docs/$PARENT_CUMULATIVE_NAME" | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256" || { echo "ERROR: parent cumulative SHA drift" >&2; exit 1; }
+          test -s "$parent/docs/$PARENT_CONTRACT_NAME"
+          grep -Fq 'status=DIAGNOSTIC_ONLY_NOT_PRODUCTION' "$parent/docs/$PARENT_CONTRACT_NAME"
+          grep -Fq 'source_delta=SP/code/rend2/tr_main.c_AND_SP/code/rend2/tr_shade.c_AND_SP/code/rend2/tr_world.c_TELEMETRY_ONLY' "$parent/docs/$PARENT_CONTRACT_NAME"
+          grep -Fq 'rb_rendershadowmap_change=NONE' "$parent/docs/$PARENT_CONTRACT_NAME"
+          for rel in ioWolfSP.x64.exe renderer_sp_rend2_x64.dll renderer_sp_opengl1_x64.dll \
+                     Main/cgame_sp_x64.dll Main/qagame_sp_x64.dll Main/ui_sp_x64.dll \
+                     OpenAL64.dll SDL264.dll Main/autoexec.cfg; do
+            test -s "$parent/$rel" || { echo "ERROR: missing protected parent runtime: $rel" >&2; exit 1; }
+          done
+          echo "Parent release integrity + v0.1 delivery diagnostic contract PASS"
+
+      - name: Reconstruct exact Run 35081824222 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$parent/docs/$PARENT_CUMULATIVE_NAME" .parent-cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source add -N .
+          git -C source diff --name-only "$UPSTREAM_SHA" -- | LC_ALL=C sort > .parent_actual_paths.txt
+
+          python3 - <<'PY_PARENT'
+          from pathlib import Path
+          import re, subprocess
+          patch = Path('.parent-cumulative.patch').read_text(encoding='utf-8').splitlines()
+          records = []
+          current = None
+          for line in patch:
+              m = re.match(r'diff --git a/(.+) b/(.+)$', line)
+              if m:
+                  if m.group(1) != m.group(2):
+                      raise SystemExit(f'ERROR: parent rename/path mismatch: {line}')
+                  current = m.group(2)
+                  continue
+              if current and line.startswith('index '):
+                  m = re.match(r'index ([0-9a-f]+)\.\.([0-9a-f]+)(?: [0-9]+)?$', line)
+                  if not m:
+                      raise SystemExit(f'ERROR: malformed parent index line for {current}: {line}')
+                  records.append((current, m.group(2)))
+                  current = None
+          if len(records) != 67 or len({p for p, _ in records}) != 67:
+              raise SystemExit(f'ERROR: parent cumulative contract drift: sections={len(records)} unique={len({p for p, _ in records})}')
+          expected_paths = sorted(p for p, _ in records)
+          actual_paths = Path('.parent_actual_paths.txt').read_text(encoding='utf-8').splitlines()
+          if expected_paths != actual_paths:
+              raise SystemExit('ERROR: reconstructed parent path set drift')
+          for rel, expected_prefix in records:
+              got = subprocess.check_output(['git', '-C', 'source', 'hash-object', rel], text=True).strip()
+              if not got.startswith(expected_prefix):
+                  raise SystemExit(f'ERROR: parent postimage blob drift: {rel} expected-prefix={expected_prefix} got={got}')
+          print('Exact Run 35081824222 cumulative path + postimage blob contract PASS: 67 files')
+          PY_PARENT
+
+          scene=source/SP/code/rend2/tr_scene.c
+          mainc=source/SP/code/rend2/tr_main.c
+          world=source/SP/code/rend2/tr_world.c
+          shade=source/SP/code/rend2/tr_shade.c
+          grep -Fq 'DARKWOLF_EXACT8_PHYSICAL_FIXTURE_CLASSIFIER_EXTENSION_V0_1' "$scene"
+          grep -Fq 'DARKWOLF_PHYSICAL_FIXTURE_SECOND_PASS_X1_X2_V0_1' "$scene"
+          grep -Fq 'DARKWOLF_PHYSICAL_FIXTURE_XLIGHT_SPAWNFLAGS16_V0_1' "$scene"
+          grep -Fq 'DARKWOLF_ALPHA_TESTED_OPAQUE_CASTER_FIX_EXPERIMENT_V0_1' "$shade"
+          grep -Fq 'RB_RenderShadowmap( input, alphaAware );' "$shade"
+          grep -Fq 'DARKWOLF_PHYSICAL_LAMP_SHADOW_SLOT_RECEIVER_DELIVERY_DIAG_V0_1' "$mainc"
+          grep -Fq 'DARKWOLF_SHADOW_DELIVERY_TARGET_SURFACE_DIAG_V0_1' "$world"
+          grep -Fq 'DARKWOLF_SHADOW_DELIVERY_RECEIVER_ROUTE_DIAG_V0_1' "$shade"
+
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -q -m 'Reconstructed exact Run 35081824222 source postimage'
+          parent_commit="$(git -C source rev-parse HEAD)"
+          printf '%s\n' "$parent_commit" > .parent_source_commit
+          test "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA" || { echo "ERROR: reconstructed parent source parent mismatch" >&2; exit 1; }
+          echo "Exact parent source postimage reconstruction PASS: $parent_commit"
+
+      - name: Materialize validate and apply Unified v0.2 telemetry-only patcher
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME.gz.b64" <<'PATCHER_B64'
+          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
+          PATCHER_B64
+          base64 -d "$PATCHER_NAME.gz.b64" > "$PATCHER_NAME.gz"
+          test "$(sha256sum "$PATCHER_NAME.gz" | awk '{print $1}')" = "$PATCHER_GZIP_SHA256" || { echo "ERROR: embedded patcher gzip SHA drift" >&2; exit 1; }
+          gzip -dc "$PATCHER_NAME.gz" > "$PATCHER_NAME"
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: embedded patcher SHA drift" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+          grep -Fq 'SP/code/rend2/tr_main.c' "$PATCHER_NAME"
+          grep -Fq 'SP/code/rend2/tr_backend.c' "$PATCHER_NAME"
+          grep -Fq 'SP/code/rend2/tr_shade.c' "$PATCHER_NAME"
+          ! grep -Fq 'SP/code/rend2/tr_scene.c' "$PATCHER_NAME"
+          ! grep -Fq 'SP/code/rend2/tr_world.c' "$PATCHER_NAME"
+
+          python3 "$PATCHER_NAME" source
+          python3 "$PATCHER_NAME" source
+
+          parent_commit="$(cat .parent_source_commit)"
+          git -C source diff --name-only "$parent_commit" -- | LC_ALL=C sort > .release_paths.txt
+          cat > .release_expected_paths.txt <<'EOF_PATHS'
+          SP/code/rend2/tr_backend.c
+          SP/code/rend2/tr_main.c
+          SP/code/rend2/tr_shade.c
+          EOF_PATHS
+          diff -u .release_expected_paths.txt .release_paths.txt || { echo "ERROR: Unified v0.2 source allowlist drift" >&2; exit 1; }
+          git -C source diff --check "$parent_commit" -- SP/code/rend2/tr_backend.c SP/code/rend2/tr_main.c SP/code/rend2/tr_shade.c
+
+          backend=source/SP/code/rend2/tr_backend.c
+          mainc=source/SP/code/rend2/tr_main.c
+          shade=source/SP/code/rend2/tr_shade.c
+          grep -Fq 'DARKWOLF_UNIFIED_CASTER_EARLY_DEPTH_GATE_DIAG_V0_2' "$backend"
+          grep -Fq 'DARKWOLF_UNIFIED_CASTER_RECEIVER_TESLA_SOURCE_IDENTITY_DIAG_V0_2' "$mainc"
+          grep -Fq 'DARKWOLF_UNIFIED_RECEIVER_GATE_DIAG_V0_2' "$shade"
+          grep -Fq 'shadow_unified_diag_v02.txt' "$mainc"
+          grep -Fq 'shadow_unified_diag_v02_verdict.txt' "$mainc"
+          grep -Fq 'TESLA_ENDPOINT' "$mainc"
+          grep -Fq 'TESLA_MUZZLE' "$mainc"
+          grep -Fq 'ORDINARY_MUZZLE' "$mainc"
+          grep -Fq 'CASTER_FAIL=' "$mainc"
+          grep -Fq 'RECEIVER_FALLBACK=' "$mainc"
+          grep -Fq 'RECEIVER_GATE_FAIL=' "$mainc"
+          grep -Fq 'TESLA_ENDPOINT_GEOMETRY=' "$mainc"
+          grep -Fq 'TESLA_MUZZLE_UNSHADOWED_FILL=' "$mainc"
+          grep -Fq 'SHADOW_DELIVERY_OK=' "$mainc"
+
+          # Frozen/runtime-proven alpha-aware caster experiment and v0.1 delivery diagnostic remain present.
+          grep -Fq 'DARKWOLF_ALPHA_TESTED_OPAQUE_CASTER_FIX_EXPERIMENT_V0_1' "$shade"
+          grep -Fq 'RB_RenderShadowmap( input, alphaAware );' "$shade"
+          grep -Fq 'DARKWOLF_PHYSICAL_LAMP_SHADOW_SLOT_RECEIVER_DELIVERY_DIAG_V0_1' "$mainc"
+          grep -Fq 'DARKWOLF_SHADOW_DELIVERY_RECEIVER_ROUTE_DIAG_V0_1' "$shade"
+
+          # Telemetry-only guard: the child may observe RB_RenderShadowmap calls but must not modify call arguments/policy.
+          if git -C source diff -U0 "$parent_commit" -- SP/code/rend2/tr_shade.c | grep -E '^[+-][^+-].*RB_RenderShadowmap' >/dev/null; then
+            echo "ERROR: Unified v0.2 must not alter RB_RenderShadowmap call/policy" >&2
+            exit 1
+          fi
+          added="$(git -C source diff -U0 "$parent_commit" -- SP/code/rend2/tr_backend.c SP/code/rend2/tr_main.c SP/code/rend2/tr_shade.c | grep -E '^\+[^+]' || true)"
+          for forbidden in             'r_dlightShadowCasterMode->integer =' 'r_dlightShadowMaxLights->integer ='             'r_staticPromoteMaxLights' 'shader->sort =' 'r_dlightMode->integer ='             'Bloom' 'ToneMap' 'Exposure' 'materialHeuristicClass =' 'VPF_FIREVOL_SYNTHETIC_SHADOW ='; do
+            if grep -Fq "$forbidden" <<<"$added"; then
+              echo "ERROR: telemetry-only guard found forbidden added token: $forbidden" >&2
+              exit 1
+            fi
+          done
+          if grep -Eq '(^|[^[:alnum:]_])(dl|candidate|diagDl)->noDlightShadow[[:space:]]*=' <<<"$added"; then
+            echo "ERROR: Unified v0.2 must not write noDlightShadow policy" >&2
+            exit 1
+          fi
+          # Fix1: guard only actual writes to compact shadow-selection state.
+          # The failed predecessor Run 35090723342 used [^;]*= and falsely treated the
+          # legitimate read-only expression `...dlightShadowMask & ... slot >= 0` as a write.
+          shadow_state_lhs_re='(tr|backEnd)\.refdef\.dlight(ShadowMask|ShadowSlot)(\[[^]]+\])?[[:space:]]*(=([^=]|$)|[|&^+*/%-]=|\+\+|--)'
+          shadow_state_prefix_re='(\+\+|--)[[:space:]]*(tr|backEnd)\.refdef\.dlight(ShadowMask|ShadowSlot)(\[[^]]+\])?'
+
+          # Self-test the policy guard before trusting it. Reads/comparisons must pass;
+          # real direct/compound writes must be rejected.
+          for probe in \
+            'int selected = ((tr.refdef.dlightShadowMask & (1u << i)) && slot >= 0) ? 1 : 0;' \
+            'int slot = (int)tr.refdef.dlightShadowSlot[i];' \
+            'if (tr.refdef.dlightShadowMask == expected) {}' \
+            'if (backEnd.refdef.dlightShadowSlot[i] >= 0) {}'; do
+            if grep -Eq "$shadow_state_lhs_re|$shadow_state_prefix_re" <<<"$probe"; then
+              echo "ERROR: Fix1 shadow-state guard self-test rejected a read/comparison: $probe" >&2
+              exit 1
+            fi
+          done
+          for probe in \
+            'tr.refdef.dlightShadowMask = 0;' \
+            'tr.refdef.dlightShadowMask |= 1u << i;' \
+            'backEnd.refdef.dlightShadowSlot[i] = 0;' \
+            '++tr.refdef.dlightShadowMask'; do
+            if ! grep -Eq "$shadow_state_lhs_re|$shadow_state_prefix_re" <<<"$probe"; then
+              echo "ERROR: Fix1 shadow-state guard self-test missed a write: $probe" >&2
+              exit 1
+            fi
+          done
+          if grep -Eq "$shadow_state_lhs_re|$shadow_state_prefix_re" <<<"$added"; then
+            echo "ERROR: Unified v0.2 must not write shadow selection/slot state" >&2
+            exit 1
+          fi
+          echo "Fix1 precise shadow-selection/slot read-vs-write guard PASS"
+          echo "Unified v0.2 telemetry-only source scope PASS"
+
+      - name: Generate three-file delta and 67-path cumulative with clean replay proofs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_commit="$(cat .parent_source_commit)"
+          git -C source diff --binary "$parent_commit" -- SP/code/rend2/tr_backend.c SP/code/rend2/tr_main.c SP/code/rend2/tr_shade.c > "$DELTA_NAME"
+          test -s "$DELTA_NAME"
+          test "$(grep -c '^diff --git ' "$DELTA_NAME")" -eq 3 || { echo "ERROR: Unified v0.2 delta must contain exactly three source sections" >&2; exit 1; }
+
+          mapfile -t all_paths < <(git -C source diff --name-only "$UPSTREAM_SHA" -- | LC_ALL=C sort)
+          test "${#all_paths[@]}" -eq 67 || { echo "ERROR: cumulative path set drift: ${#all_paths[@]} expected 67" >&2; exit 1; }
+          git -C source diff --binary "$UPSTREAM_SHA" -- "${all_paths[@]}" > "$CUMULATIVE_NAME"
+          test -s "$CUMULATIVE_NAME"
+          test "$(grep -c '^diff --git ' "$CUMULATIVE_NAME")" -eq 67 || { echo "ERROR: cumulative must contain exactly 67 path sections" >&2; exit 1; }
+
+          rm -rf replay-delta replay-cumulative
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$parent_commit"
+          git -C replay-delta apply --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --reverse --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          cmp source/SP/code/rend2/tr_backend.c replay-delta/SP/code/rend2/tr_backend.c
+          cmp source/SP/code/rend2/tr_main.c replay-delta/SP/code/rend2/tr_main.c
+          cmp source/SP/code/rend2/tr_shade.c replay-delta/SP/code/rend2/tr_shade.c
+
+          git clone -q source replay-cumulative
+          git -C replay-cumulative checkout -q --detach "$UPSTREAM_SHA"
+          git -C replay-cumulative apply --check --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --reverse --check --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          for rel in "${all_paths[@]}"; do cmp "source/$rel" "replay-cumulative/$rel"; done
+          echo "Unified v0.2 delta + 67-path cumulative clean replay proofs PASS"
+
+      - name: Build canonical Windows x64 SP diagnostic candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -x source/SP/cross-make-mingw64.sh || { echo "ERROR: canonical SP MinGW64 build script missing" >&2; exit 1; }
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh -j"$jobs" \
+              BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          )
+          mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | LC_ALL=C sort)
+          test "${#renderers[@]}" -eq 1 || { printf 'ERROR: expected exactly one Rend2 renderer, got %s: %s\n' "${#renderers[@]}" "${renderers[*]-}" >&2; exit 1; }
+          renderer="${renderers[0]}"
+          test -s "$renderer"
+          file "$renderer" | tee .renderer_file.txt
+          grep -Fq 'PE32+' .renderer_file.txt || { echo "ERROR: Rend2 renderer is not PE32+ Windows x64" >&2; exit 1; }
+          printf '%s\n' "$renderer" > .renderer_path
+          sha256sum "$renderer" > .renderer_sha256
+          echo "Windows x64 SP Unified shadow diagnostic v0.2 build PASS: $renderer"
+
+      - name: Stage exact parent plus Rend2-only runtime replacement
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"
+          renderer="$(cat .renderer_path)"
+          rm -rf runtime
+          mkdir -p runtime
+          stage="runtime/$RELEASE_BASENAME"
+          cp -a "$parent" "$stage"
+          cp -f "$renderer" "$stage/renderer_sp_rend2_x64.dll"
+
+          find "$parent" -type f -printf '%P\n' | LC_ALL=C sort > .parent_files.txt
+          find "$stage" -type f -printf '%P\n' | LC_ALL=C sort > .stage_files_pre_docs.txt
+          diff -u .parent_files.txt .stage_files_pre_docs.txt
+          changed=0
+          while IFS= read -r rel; do
+            if ! cmp -s "$parent/$rel" "$stage/$rel"; then
+              case "$rel" in
+                renderer_sp_rend2_x64.dll) changed=$((changed + 1)) ;;
+                *) echo "ERROR: forbidden runtime drift before docs: $rel" >&2; exit 1 ;;
+              esac
+            fi
+          done < .parent_files.txt
+          test "$changed" -eq 1 || { echo "ERROR: expected exactly one runtime replacement, got $changed" >&2; exit 1; }
+          printf '%s\n' "$stage" > .stage_path
+          echo "Exact parent + Rend2-only runtime replacement contract PASS"
+
+      - name: Add Unified v0.2 provenance contract decision table and test plan
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          mkdir -p "$stage/docs"
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+
+          cat > "$stage/docs/$CONTRACT_NAME" <<EOF_CONTRACT
+          DARKWOLF REND2 - UNIFIED CASTER + RECEIVER GATE + TESLA SOURCE IDENTITY DIAGNOSTIC V0.2
+
+          parent_run=$PARENT_RUN_ID
+          parent_head=$PARENT_RUN_HEAD_SHA
+          parent_artifact_id=$PARENT_ARTIFACT_ID
+          parent_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          parent_inner_sha256=$PARENT_INNER_SHA256
+          parent_cumulative_sha256=$PARENT_CUMULATIVE_SHA256
+          upstream_sha=$UPSTREAM_SHA
+
+          status=DIAGNOSTIC_ONLY_NOT_PRODUCTION
+          root_question=WHY_SAME_GEOMETRY_CASTS_OR_RECEIVES_FROM_ORDINARY_MUZZLE_BUT_DIFFERS_FOR_TESLA_OR_OTHER_POINT_LIGHTS
+          source_identity=STABLE_LOGICAL_UID_BY_RUNTIME_SOURCE_CLASS_PLUS_TIME_ORIGIN_INDEX_HISTORY_NOT_LIGHTINDEX_ONLY
+          source_classifier=HEURISTIC_RUNTIME_FIELDS_V0_2_DIAGNOSTIC_ONLY
+          source_delta=SP/code/rend2/tr_backend.c_AND_SP/code/rend2/tr_main.c_AND_SP/code/rend2/tr_shade.c_TELEMETRY_ONLY
+          runtime_delta=renderer_sp_rend2_x64.dll_ONLY
+          rb_rendershadowmap_change=NONE
+          alpha_test_policy_change=NONE
+          caster_policy_change=NONE
+          receiver_policy_change=NONE
+          dlight_selection_policy_change=NONE
+          shadow_slot_policy_change=NONE
+          shadow_budget_default_change=NONE
+          tesla_eligibility_policy_change=NONE
+          physical_classifier_change=NONE
+          static_promote_change=NONE
+          pvs_residency_change=NONE
+          firevol_change=NONE
+          bloom_tonemap_exposure_change=NONE
+          materials_pbr_gi_change=NONE
+          sun_directional_change=NONE
+          diagnostic_controls=EXISTING_r_shadowDeliveryDiag_AND_r_shadowDeliveryDiagArm
+          output_main=shadow_unified_diag_v02.txt
+          output_verdict=shadow_unified_diag_v02_verdict.txt
+          decision_classes=CASTER_FAIL|RECEIVER_FALLBACK|RECEIVER_GATE_FAIL|TESLA_ENDPOINT_GEOMETRY|TESLA_MUZZLE_UNSHADOWED_FILL|SHADOW_DELIVERY_OK
+
+          future_clean_production_reference_run=34962735592
+          future_clean_production_rule=RECONSTRUCT_FROZEN_RUN_34962735592_AND_APPLY_ONLY_RUNTIME_ACCEPTED_SEMANTIC_SHADOW_IMPROVEMENTS
+          future_clean_production_must_strip=V0_1_AND_V0_2_DIAGNOSTIC_TELEMETRY_AND_UNREGISTERED_DIAGNOSTIC_CONTROLS
+          EOF_CONTRACT
+
+          cat > "$stage/docs/$README_NAME" <<'EOF_README'
+          DARKWOLF / ioRTCW REND2 SP
+          UNIFIED CASTER + RECEIVER GATE + TESLA SOURCE IDENTITY DIAGNOSTIC V0.2
+
+          ROOT QUESTION
+          For the same caster/receiver scene, where exactly does behavior diverge between
+          ORDINARY_MUZZLE, TESLA_ENDPOINT and TESLA_MUZZLE?
+
+          THIS BUILD DOES NOT CHANGE VISUAL POLICY
+          It keeps the runtime-tested alpha-aware Mode-2 caster experiment from Run 35071483766
+          and the v0.1 delivery telemetry from Run 35081824222. It only adds unified telemetry.
+          Do not interpret CI success as runtime acceptance.
+
+          SOURCE IDENTITY
+          The report no longer treats lightIndex as identity. It emits stable logical sourceUid/type,
+          first/last timestamp, first/last origin, first/last lightIndex and indexChanges.
+          Requested source labels:
+            ORDINARY_MUZZLE
+            TESLA_ENDPOINT
+            TESLA_MUZZLE
+          Classification uses existing renderer fields/color/radius/noDlightShadow and is diagnostic-only.
+
+          WHAT IS TRACED
+          Source:
+            sourceUid/type/time/origin/index history, eligibility, selected slot, cubemap validity.
+          Caster corridor between source and aimed receiver:
+            exact BSP/MDV surface where supported, WORLD/BMODEL/MDV, model, shader, sort,
+            alphaTest, surfaceFlags, early depth gate, RB_RenderShadowmap stage reach, alphaAware.
+          Receiver:
+            front-end dlightBits, tess.dlightBits, shader sort, surfaceFlags, numUnfoggedPasses,
+            lightall eligibility, exact Forward/Fallback/SKIP reason, useShadow, sampled slot.
+
+          CONTROLS
+            r_dlightShadowCasterMode 2
+            set r_shadowDeliveryDiagArm 1
+            set r_shadowDeliveryDiag 0
+          Aim at the RECEIVER wall/floor where the shadow should land, not at the grate itself.
+          Each ARM resets/overwrites the diagnostic report. Save the files before the next scene.
+
+          REQUIRED TEST A - XLABS KNOWN ALPHA-GRATE / POSITIVE CONTROL
+          1. devmap xlabs
+          2. r_dlightShadowCasterMode 2
+          3. Go to the exact grate where ordinary weapon muzzle light already produced a cutout/grid shadow.
+          4. Aim at the receiver wall/floor behind/below it.
+          5. set r_shadowDeliveryDiagArm 1
+          6. Fire 3-5 ordinary weapon shots through the grate.
+          7. If available in the same geometry, use Tesla for several seconds without moving the target aim.
+          8. set r_shadowDeliveryDiag 0
+          9. Save outputs as XLABS_UNIFIED_V02_*.
+
+          REQUIRED TEST B - BOSS2 TESLA-PROBLEM GRATE
+          1. devmap boss2
+          2. r_dlightShadowCasterMode 2
+          3. Use the same grate where Tesla previously failed to show the expected shadow.
+          4. Aim at the receiver surface behind/below the grate.
+          5. set r_shadowDeliveryDiagArm 1
+          6. First fire 3-5 ordinary weapon shots, then use Tesla several seconds.
+          7. set r_shadowDeliveryDiag 0
+          8. Save outputs as BOSS2_UNIFIED_V02_*.
+
+          REQUIRED TEST C - SFM RECEIVER-GATE CONTROL
+          1. devmap sfm
+          2. Use one of the same grate/gate scenes from the v0.1 run where front-end influence existed
+             but receiverRecordCount remained zero.
+          3. Aim at the receiver surface, ARM, perform ordinary shots and Tesla if available, then disable.
+          4. Save outputs as SFM_UNIFIED_V02_*.
+
+          OPTIONAL CONTROL - TRAM FALLBACK RECEIVER
+          Repeat on the tram grate scene that previously resolved to ProjectDlightTexture.
+          This is useful only as a known RECEIVER_FALLBACK control; it is not required if the three tests above are clear.
+
+          OUTPUT FILES
+            shadow_unified_diag_v02.txt
+            shadow_unified_diag_v02_verdict.txt
+            shadow_delivery_diag_v01.txt
+            shadow_delivery_diag_v01_verdict.txt
+            dlight_material_probe.txt
+            rtcwconsole.log
+
+          DECISION TABLE
+          CASTER_FAIL=1
+            -> corridor caster was seen for a shadow-delivered source but failed early-depth/stage reach.
+          RECEIVER_FALLBACK=1
+            -> target is lit through ProjectDlightTexture rather than ForwardDlight cubemap sampling.
+          RECEIVER_GATE_FAIL=1
+            -> front-end dlight influence exists but target batch is missing/skipped before receiver route.
+          TESLA_ENDPOINT_GEOMETRY=1
+            -> Tesla endpoint reaches/samples the receiver but has no caster in the source-to-target corridor
+               while ordinary muzzle does; source/caster geometry relationship is supported.
+          TESLA_MUZZLE_UNSHADOWED_FILL=1
+            -> Tesla muzzle contributes to the target with noDlightShadow while endpoint shadow is also sampled;
+               unshadowed electric fill can visually wash out the endpoint shadow.
+          SHADOW_DELIVERY_OK=1
+            -> at least ordinary muzzle or Tesla endpoint has selected cubemap + receiver shadow sampling.
+          Flags are independent. More than one may be true in the same scene.
+
+          DO NOT CHANGE DURING A CAPTURE
+          r_dlightShadowMaxLights, r_staticPromoteMaxLights, Bloom, ToneMap, Exposure,
+          FireVol, GI/PBR/material controls, lamp residency/classifier or Tesla eligibility policy.
+
+          AFTER THIS EXPERIMENT
+          The clean Production release must NOT be built by shipping this diagnostic child.
+          It must reconstruct frozen Run 34962735592 and apply only the semantic shadow changes
+          proven and runtime-accepted by the completed experiments, then remove all diagnostic telemetry.
+          EOF_README
+
+          grep -Fq 'future_clean_production_reference_run=34962735592' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'TESLA_MUZZLE_UNSHADOWED_FILL' "$stage/docs/$README_NAME"
+          grep -Fq 'REQUIRED TEST C - SFM RECEIVER-GATE CONTROL' "$stage/docs/$README_NAME"
+          echo "Unified v0.2 provenance + decision table + test plan PASS"
+
+      - name: Validate packaged content and regenerate manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"
+          stage="$(cat .stage_path)"
+          cmp "$parent/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$parent/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$parent/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$parent/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$parent/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cmp "$parent/OpenAL64.dll" "$stage/OpenAL64.dll"
+          cmp "$parent/SDL264.dll" "$stage/SDL264.dll"
+          cmp "$parent/Main/autoexec.cfg" "$stage/Main/autoexec.cfg"
+          ! cmp -s "$parent/renderer_sp_rend2_x64.dll" "$stage/renderer_sp_rend2_x64.dll"
+          if find "$stage" -type f \( -iname 'pak*.pk3' -o -iname '*.pak' -o -iname '*.bsp' -o -iname '*.aas' -o -iname '*.map' \) -print -quit | grep -q .; then
+            echo "ERROR: commercial/map data found in staged release" >&2
+            exit 1
+          fi
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          (cd "$stage" && sha256sum -c docs/SHA256SUMS.txt)
+          echo "Packaged content + SHA256 manifest PASS"
+
+      - name: Final Unified v0.2 telemetry-only scope guard
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_commit="$(cat .parent_source_commit)"
+          mapfile -t changed < <(git -C source diff --name-only "$parent_commit" -- | LC_ALL=C sort)
+          test "${#changed[@]}" -eq 3
+          test "${changed[0]}" = 'SP/code/rend2/tr_backend.c'
+          test "${changed[1]}" = 'SP/code/rend2/tr_main.c'
+          test "${changed[2]}" = 'SP/code/rend2/tr_shade.c'
+          git -C source diff --check "$parent_commit" -- "${changed[@]}"
+          grep -Fq 'DARKWOLF_ALPHA_TESTED_OPAQUE_CASTER_FIX_EXPERIMENT_V0_1' source/SP/code/rend2/tr_shade.c
+          grep -Fq 'DARKWOLF_PHYSICAL_LAMP_SHADOW_SLOT_RECEIVER_DELIVERY_DIAG_V0_1' source/SP/code/rend2/tr_main.c
+          grep -Fq 'DARKWOLF_UNIFIED_CASTER_EARLY_DEPTH_GATE_DIAG_V0_2' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'DARKWOLF_UNIFIED_CASTER_RECEIVER_TESLA_SOURCE_IDENTITY_DIAG_V0_2' source/SP/code/rend2/tr_main.c
+          grep -Fq 'DARKWOLF_UNIFIED_RECEIVER_GATE_DIAG_V0_2' source/SP/code/rend2/tr_shade.c
+          echo "Final Unified v0.2 telemetry-only scope guard PASS"
+
+      - name: Package diagnostic release ZIP and sidecar
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          test "$(basename "$stage")" = "$RELEASE_BASENAME"
+          rm -f "runtime/${RELEASE_BASENAME}.zip" "runtime/${RELEASE_BASENAME}.zip.sha256"
+          (cd runtime && zip -r -9 "${RELEASE_BASENAME}.zip" "$RELEASE_BASENAME")
+          (cd runtime && sha256sum "${RELEASE_BASENAME}.zip" > "${RELEASE_BASENAME}.zip.sha256")
+          unzip -tq "runtime/${RELEASE_BASENAME}.zip"
+          cat "runtime/${RELEASE_BASENAME}.zip.sha256"
+
+      - name: Upload Unified Caster Receiver Tesla Diagnostic v0.2
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            runtime/${{ env.RELEASE_BASENAME }}.zip
+            runtime/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
