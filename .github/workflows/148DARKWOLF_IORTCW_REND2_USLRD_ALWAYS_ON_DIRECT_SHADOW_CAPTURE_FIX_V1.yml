@@ -1,0 +1,705 @@
+name: Build DarkWolf Rend2 USLRD Always-On Direct + Shadow Capture Fix v1 over Run 35345608693 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-uslrd-always-on-direct-shadow-capture-fix-v1-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: USLRD Always-On Direct + Shadow Capture Fix v1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      PARENT_RUN_ID: "35345608693"
+      PARENT_RUN_HEAD_SHA: 789645d2caccd98abe2bd0d3b4b54b10f615248f
+      PARENT_WORKFLOW_PATH: '.github/workflows/147DARKWOLF_IORTCW_REND2_USLRD_PHYSICAL_SHADOW_GROUP_CONTINUITY_FIX_V2_CI_REPAIR.yml'
+      PARENT_WORKFLOW_BLOB_SHA: 9b06a817059deec0355f14467daf7f1323f72ee3
+      PARENT_ARTIFACT_ID: "10546960769"
+      PARENT_ARTIFACT_NAME: iortcw-rend2-uslrd-physical-shadow-group-continuity-fix-v2-ci-repair-full-sp-windows-x64-1
+      PARENT_ARTIFACT_DIGEST: sha256:56af4bbe0fbd2dce0252792ecce440b818567e29bc0b0c0ef3a11f383d6bf9d9
+      PARENT_INNER_SHA256: 3bf33b024c500e776cc5dc02bdea745fbf11a837a40d9fd32449a3671ec35b86
+      PARENT_RELEASE_BASENAME: iortcw-rend2-uslrd-physical-shadow-group-continuity-fix-v2-ci-repair-full-sp-windows-x64-1
+      PARENT_CUMULATIVE_NAME: darkwolf-rend2-cumulative-uslrd-physical-shadow-group-continuity-fix-v2-sp.patch
+      PARENT_CUMULATIVE_SHA256: af9f93e477ac94aea25361626585afd20cca7080ac5235cad6963aaa0db88cc1
+      PARENT_CONTRACT_NAME: USLRD_PHYSICAL_SHADOW_GROUP_CONTINUITY_FIX_V2_CONTRACT.txt
+      PARENT_CONTRACT_SHA256: ad5c50e8426c34eee83b178682c2c96c3bc68a8555668175e2e62cdd1f8f0760
+      PARENT_RENDERER_SHA256: c417ab089db369d5e9f70683569017f287e85325c8f8e378bf8b399f38275cc2
+
+      PATCHER_NAME: apply_uslrd_always_on_direct_shadow_capture_fix_v1.py
+      PATCHER_SHA256: ad443a7a2304d97934d9aedcbb83df730390f278c94599dce3cd0824ff907ce2
+      PATCHER_GZIP_SHA256: 6614abf67e45b4f38c320b60c6d46513dea4c3740edf03d3c1d3b2098e4d9f05
+      DELTA_NAME: darkwolf-uslrd-always-on-direct-shadow-capture-fix-v1-over-run-35345608693.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-uslrd-always-on-direct-shadow-capture-fix-v1-sp.patch
+      CONTRACT_NAME: USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1_CONTRACT.txt
+      VALIDATION_NAME: STATIC_VALIDATION_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1.txt
+      README_NAME: README_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1_RU.txt
+      TEST_PLAN_NAME: USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1_TEST_PLAN_RU.txt
+      RELEASE_BASENAME: iortcw-rend2-uslrd-always-on-direct-shadow-capture-fix-v1-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Preflight workflow YAML LF Bash Python and embedded patcher identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: workflow cannot be resolved: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY_PREFLIGHT'
+          from pathlib import Path
+          import base64,gzip,hashlib,re,subprocess,sys,yaml
+          p=Path(sys.argv[1]); raw=p.read_bytes(); txt=raw.decode('utf-8')
+          if b'\r' in raw: raise SystemExit('ERROR: CR byte in workflow; LF-only required')
+          doc=yaml.safe_load(txt)
+          expected='Build DarkWolf Rend2 USLRD Always-On Direct + Shadow Capture Fix v1 over Run 35345608693 SP'
+          if doc.get('name') != expected: raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+          checked=0; py_checked=0
+          for job_name,job in (doc.get('jobs') or {}).items():
+              for index,step in enumerate(job.get('steps') or [],1):
+                  script=step.get('run')
+                  if not script: continue
+                  proc=subprocess.run(['bash','-n'],input=script,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}',file=sys.stderr)
+                      print(proc.stderr,file=sys.stderr); raise SystemExit(proc.returncode)
+                  checked += 1
+                  lines=script.splitlines(); pos=0
+                  while pos < len(lines):
+                      hm=re.search(r"\bpython3\b.*<<'([^']+)'",lines[pos])
+                      if not hm: pos += 1; continue
+                      tag=hm.group(1); body=[]; pos += 1
+                      while pos < len(lines) and lines[pos].strip()!=tag:
+                          body.append(lines[pos]); pos += 1
+                      if pos>=len(lines): raise SystemExit(f'ERROR: unclosed Python heredoc {tag}')
+                      compile('\n'.join(body)+'\n',f'<workflow:{job_name}:{index}:{tag}>','exec')
+                      py_checked += 1; pos += 1
+          if checked < 11: raise SystemExit(f'ERROR: unexpectedly small Bash contract: {checked}')
+          if py_checked < 4: raise SystemExit(f'ERROR: unexpectedly small Python contract: {py_checked}')
+          start_marker='cat > "$PATCHER_NAME.gz.b64" <<\'PATCHER_B64\''
+          end_marker='          PATCHER_B64'
+          start=txt.find(start_marker)
+          if start<0: raise SystemExit('ERROR: embedded patcher start marker missing')
+          start=txt.find('\n',start)+1; end=txt.find('\n'+end_marker,start)
+          if start<=0 or end<0: raise SystemExit('ERROR: embedded patcher end marker missing')
+          enc=''.join(line.strip() for line in txt[start:end].splitlines())
+          gz=base64.b64decode(enc,validate=True); py=gzip.decompress(gz)
+          if hashlib.sha256(gz).hexdigest()!='6614abf67e45b4f38c320b60c6d46513dea4c3740edf03d3c1d3b2098e4d9f05': raise SystemExit('ERROR: patcher gzip SHA drift')
+          if hashlib.sha256(py).hexdigest()!='ad443a7a2304d97934d9aedcbb83df730390f278c94599dce3cd0824ff907ce2': raise SystemExit('ERROR: patcher SHA drift')
+          if b'DARKWOLF_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1' not in py: raise SystemExit('ERROR: patcher marker missing')
+          print(f'Workflow preflight PASS: {checked} Bash blocks, {py_checked} Python blocks')
+          PY_PREFLIGHT
+
+      - name: Verify exact parent Run 35345608693
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$PARENT_RUN_HEAD_SHA" || { echo "ERROR: parent HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: parent run not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$PARENT_WORKFLOW_PATH" || { echo "ERROR: parent workflow path drift" >&2; exit 1; }
+          workflow_blob="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${PARENT_WORKFLOW_PATH}?ref=${PARENT_RUN_HEAD_SHA}" --jq '.sha')"
+          test "$workflow_blob" = "$PARENT_WORKFLOW_BLOB_SHA" || { echo "ERROR: parent workflow blob drift: $workflow_blob" >&2; exit 1; }
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${PARENT_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: exact parent artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$PARENT_ARTIFACT_NAME" || { echo "ERROR: artifact name drift" >&2; exit 1; }
+          test "$expired" = false || { echo "ERROR: artifact expired" >&2; exit 1; }
+          test "$adigest" = "$PARENT_ARTIFACT_DIGEST" || { echo "ERROR: artifact digest drift: $adigest" >&2; exit 1; }
+          echo "Exact parent Run 35345608693 provenance PASS"
+
+      - name: Download and verify exact Run 35345608693 package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf parent-artifact parent-release
+          mkdir -p parent-artifact parent-release
+          gh run download "$PARENT_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$PARENT_ARTIFACT_NAME" --dir parent-artifact
+          z="parent-artifact/${PARENT_RELEASE_BASENAME}.zip"; sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"; sidecar_sha="$(awk '{print $1}' "$sidecar")"
+          test "$inner_sha" = "$sidecar_sha" || { echo "ERROR: parent ZIP/sidecar mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$PARENT_INNER_SHA256" || { echo "ERROR: parent inner SHA drift: $inner_sha" >&2; exit 1; }
+          unzip -tq "$z"; unzip -q "$z" -d parent-release
+          mapfile -t roots < <(find parent-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one parent release root" >&2; exit 1; }
+          parent="${roots[0]}"
+          test "$(basename "$parent")" = "$PARENT_RELEASE_BASENAME"
+          printf '%s\n' "$parent" > .parent_stage_path
+          (cd "$parent" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$parent/docs/$PARENT_CUMULATIVE_NAME" | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256" || { echo "ERROR: parent cumulative SHA drift" >&2; exit 1; }
+          test "$(sha256sum "$parent/docs/$PARENT_CONTRACT_NAME" | awk '{print $1}')" = "$PARENT_CONTRACT_SHA256" || { echo "ERROR: parent contract SHA drift" >&2; exit 1; }
+          test "$(sha256sum "$parent/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$PARENT_RENDERER_SHA256" || { echo "ERROR: parent renderer SHA drift" >&2; exit 1; }
+          grep -Fq 'status=FIX_CANDIDATE_RUNTIME_ACCEPTANCE_REQUIRED' "$parent/docs/$PARENT_CONTRACT_NAME"
+          grep -Fq 'direct_shadow_budget=UNCHANGED' "$parent/docs/$PARENT_CONTRACT_NAME"
+          grep -Fq 'localvol_production_path=ALL_CURRENTLY_DELIVERED_PHYSICAL_GROUPS_WITH_EXISTING_DISTANCE_WEIGHT' "$parent/docs/$PARENT_CONTRACT_NAME"
+          sha256sum "$parent/renderer_sp_rend2_x64.dll" > .parent_renderer_sha256
+          sha256sum "$parent/ioWolfSP.x64.exe" > .parent_exe_sha256
+          sha256sum "$parent/Main/cgame_sp_x64.dll" > .parent_cgame_sha256
+          sha256sum "$parent/Main/qagame_sp_x64.dll" > .parent_qagame_sha256
+          sha256sum "$parent/Main/ui_sp_x64.dll" > .parent_ui_sha256
+          sha256sum "$parent/renderer_sp_opengl1_x64.dll" > .parent_ogl1_sha256
+          echo "Exact Run 35345608693 package/hash/manifest/contract PASS"
+
+      - name: Reconstruct exact Run 35345608693 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$parent/docs/$PARENT_CUMULATIVE_NAME" .parent-cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source add -N .
+          git -C source diff --name-only "$UPSTREAM_SHA" -- | LC_ALL=C sort > .parent_actual_paths.txt
+          python3 - <<'PY_PARENT'
+          from pathlib import Path
+          import re,subprocess
+          lines=Path('.parent-cumulative.patch').read_text(encoding='utf-8').splitlines()
+          records=[]; current=None
+          for line in lines:
+              m=re.match(r'diff --git a/(.+) b/(.+)$',line)
+              if m:
+                  if m.group(1)!=m.group(2): raise SystemExit(f'ERROR: rename/path mismatch: {line}')
+                  current=m.group(2); continue
+              if current and line.startswith('index '):
+                  m=re.match(r'index ([0-9a-f]+)\.\.([0-9a-f]+)(?: [0-9]+)?$',line)
+                  if not m: raise SystemExit(f'ERROR: malformed index for {current}: {line}')
+                  records.append((current,m.group(2))); current=None
+          if len(records)!=67 or len({p for p,_ in records})!=67: raise SystemExit(f'ERROR: cumulative section drift {len(records)}')
+          expected=sorted(p for p,_ in records); actual=Path('.parent_actual_paths.txt').read_text().splitlines()
+          if expected!=actual: raise SystemExit('ERROR: parent path set drift')
+          for rel,prefix in records:
+              got=subprocess.check_output(['git','-C','source','hash-object',rel],text=True).strip()
+              if not got.startswith(prefix): raise SystemExit(f'ERROR: postimage blob drift {rel} expected={prefix} got={got}')
+          print('Exact Run 35345608693 source postimage PASS: 67 files')
+          PY_PARENT
+          python3 - <<'PY_PARENT_FACTS'
+          from pathlib import Path
+          scene=Path('source/SP/code/rend2/tr_scene.c').read_text()
+          main=Path('source/SP/code/rend2/tr_main.c').read_text()
+          backend=Path('source/SP/code/rend2/tr_backend.c').read_text()
+          init=Path('source/SP/code/rend2/tr_init.c').read_text()
+          facts=[
+            ('parent cap 28','#define STATIC_PROMOTE_PRODUCTION_MAX_ACTIVE 28' in scene),
+            ('parent default 24','r_staticPromoteMaxLights = ri.Cvar_Get( "r_staticPromoteMaxLights", "24", CVAR_ARCHIVE );' in init),
+            ('parent range 28','ri.Cvar_CheckRange( r_staticPromoteMaxLights, 1, 28, qtrue );' in init),
+            ('parent PVS direct gate','else if (light->unifiedVisibilityTier < DWSP_TIER_LATENT)' in scene),
+            ('parent localvol tier gate','dl->staticPromoteVisibilityTier < DWSP_TIER_LATENT' in backend),
+            ('parent shadow PVS gate','dl->staticPromoteVisibilityTier <= DWSP_TIER_SPHERE_PVS_CONNECTED' in main),
+            ('parent surface boost','score *= 1.15f;' in main),
+            ('parent V2 separate capture','dlightShadowCaptureOrigin' in main),
+            ('parent capture exact source','R_DarkWolfStaticPromoteShadowGroupCaptureParams(bestLight, shadowParms.or.origin' in main),
+          ]
+          bad=[n for n,ok in facts if not ok]
+          if bad: raise SystemExit('ERROR: parent root-cause contract drift: '+', '.join(bad))
+          print('Parent root-cause facts PASS')
+          PY_PARENT_FACTS
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -q -m 'Reconstructed exact Run 35345608693 source postimage'
+          parent_commit="$(git -C source rev-parse HEAD)"
+          printf '%s\n' "$parent_commit" > .parent_source_commit
+          test "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA"
+          echo "Exact parent source reconstruction PASS: $parent_commit"
+
+      - name: Materialize validate and apply Always-On Direct Shadow Capture Fix v1
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME.gz.b64" <<'PATCHER_B64'
+          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
+          PATCHER_B64
+          base64 -d "$PATCHER_NAME.gz.b64" > "$PATCHER_NAME.gz"
+          test "$(sha256sum "$PATCHER_NAME.gz" | awk '{print $1}')" = "$PATCHER_GZIP_SHA256" || { echo "ERROR: patcher gzip SHA drift" >&2; exit 1; }
+          gzip -dc "$PATCHER_NAME.gz" > "$PATCHER_NAME"
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: patcher SHA drift" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" --check source
+          python3 "$PATCHER_NAME" source
+          set +e
+          python3 "$PATCHER_NAME" --check source >/tmp/repeat.out 2>&1
+          repeat_rc=$?
+          set -e
+          test "$repeat_rc" -ne 0 || { echo "ERROR: patcher repeat guard failed" >&2; exit 1; }
+          mapfile -t changed < <(git -C source diff --name-only "$(cat .parent_source_commit)" -- | LC_ALL=C sort)
+          expected=(SP/code/rend2/tr_backend.c SP/code/rend2/tr_init.c SP/code/rend2/tr_main.c SP/code/rend2/tr_scene.c)
+          test "${#changed[@]}" -eq 4 || { printf 'ERROR: changed count=%s\n' "${#changed[@]}" >&2; printf '%s\n' "${changed[@]}" >&2; exit 1; }
+          test "$(printf '%s\n' "${changed[@]}")" = "$(printf '%s\n' "${expected[@]}")" || { echo "ERROR: changed-file allowlist drift" >&2; printf '%s\n' "${changed[@]}" >&2; exit 1; }
+          python3 - <<'PY_POLICY'
+          from pathlib import Path
+          import re,subprocess,hashlib
+          marker='DARKWOLF_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1'
+          files={p:Path('source')/p for p in [
+            'SP/code/rend2/tr_scene.c','SP/code/rend2/tr_main.c','SP/code/rend2/tr_backend.c','SP/code/rend2/tr_init.c']}
+          txt={p:f.read_text() for p,f in files.items()}
+          scene=txt['SP/code/rend2/tr_scene.c']; main=txt['SP/code/rend2/tr_main.c']; backend=txt['SP/code/rend2/tr_backend.c']; init=txt['SP/code/rend2/tr_init.c']
+          req=[
+            ('cap32','#define STATIC_PROMOTE_PRODUCTION_MAX_ACTIVE 32' in scene),
+            ('default32','r_staticPromoteMaxLights = ri.Cvar_Get( "r_staticPromoteMaxLights", "32", CVAR_ARCHIVE );' in init),
+            ('range32','ri.Cvar_CheckRange( r_staticPromoteMaxLights, 1, 32, qtrue );' in init),
+            ('allaccepted cvar','r_staticPromoteAllAcceptedDelivery' in scene and '"1", CVAR_ARCHIVE' in scene),
+            ('allaccepted select','!light->unifiedClassAccepted' in scene),
+            ('backend delivery truth','dl->staticPromoteFixtureId >= 0) ? qtrue : qfalse;' in backend),
+            ('capture cvar','r_staticPromoteShadowCaptureOffset' in main and '"16", CVAR_ARCHIVE' in main),
+            ('synthetic-only capture deembed','staticPromoteFixtureId >= 1000000' in main),
+            ('capture deembed','VectorSubtract(fd->vieworg, shadowParms.or.origin, toView);' in main and 'physicalGroupRadius += captureOffset;' in main),
+            ('shadow all delivered','if (R_DarkWolfStaticPromoteShadowGroupEligible(dl))\n            mask |= 1u << i;' in main),
+          ]
+          bad=[n for n,ok in req if not ok]
+          if bad: raise SystemExit('ERROR: required mechanism missing: '+', '.join(bad))
+          # Function-local proof: no PVS/tier eligibility remains in the v1 shadow-expansion function.
+          st=main.index('static unsigned int R_DarkWolfStaticPromoteShadowExpandPending')
+          en=main.index('static unsigned int R_DarkWolfStaticPromoteShadowClearGroup',st)
+          fn=main[st:en]
+          if 'staticPromoteVisibilityTier <=' in fn: raise SystemExit('ERROR: shadow expansion still PVS/tier gated')
+          ss=main.index('static float R_DarkWolfStaticPromoteShadowGroupSelectionScore')
+          se=main.index('static void R_DarkWolfStaticPromoteShadowGroupCaptureParams',ss)
+          if '1.15f' in main[ss:se]: raise SystemExit('ERROR: PVS surface score boost still present')
+          # The existing physical score formula and the lamp shadow budget are not retuned.
+          parent=subprocess.check_output(['git','-C','source','show',f"{Path('.parent_source_commit').read_text().strip()}:SP/code/rend2/tr_main.c"],text=True)
+          def block(s,sig):
+              a=s.index(sig); b=s.index('{',a); d=0
+              for i in range(b,len(s)):
+                  if s[i]=='{': d+=1
+                  elif s[i]=='}':
+                      d-=1
+                      if d==0:return s[a:i+1]
+              raise SystemExit('unclosed '+sig)
+          for sig in ['static float R_DlightShadowSelectionScore','static qboolean R_DarkWolfShadowSourceIsPersistent']:
+              if hashlib.sha256(block(parent,sig).encode()).digest()!=hashlib.sha256(block(main,sig).encode()).digest():
+                  raise SystemExit('ERROR: protected shadow primitive changed: '+sig)
+          diff=subprocess.check_output(['git','-C','source','diff','--unified=0',Path('.parent_source_commit').read_text().strip(),'--'] ,text=True)
+          delta=[ln for ln in diff.splitlines() if (ln.startswith('+') or ln.startswith('-')) and not ln.startswith('+++') and not ln.startswith('---')]
+          forbidden=['r_dlightShadowStrength','r_dlightShadowBias','r_dlightShadowSoftness','r_dlightShadowMapSize','r_staticPromoteGain','r_staticPromoteDirectGain','r_staticPromoteRadiusScale','r_staticPromoteMinRadius','r_staticPromoteMaxRadius','r_staticPromoteMaxColor','Cvar_Set(']
+          for tok in forbidden:
+              if any(tok in ln for ln in delta): raise SystemExit('ERROR: forbidden tuning changed: '+tok)
+          added='\n'.join(ln[1:] for ln in delta if ln.startswith('+'))
+          for tok in ['swf','escape1','factory','xlabs']:
+              if re.search(r'(?i)(^|[^a-z0-9_])'+re.escape(tok)+r'([^a-z0-9_]|$)',added):
+                  raise SystemExit('ERROR: map-specific source token introduced: '+tok)
+          print('Always-On Direct + Shadow Capture v1 policy audit PASS')
+          PY_POLICY
+          echo "v1 source allowlist/policy PASS"
+
+      - name: Generate v1 delta cumulative and exact replay proofs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_commit="$(cat .parent_source_commit)"
+          git -C source diff --binary --full-index "$parent_commit" -- \
+            SP/code/rend2/tr_backend.c SP/code/rend2/tr_init.c SP/code/rend2/tr_main.c SP/code/rend2/tr_scene.c > "$DELTA_NAME"
+          git -C source diff --binary --full-index "$UPSTREAM_SHA" -- > "$CUMULATIVE_NAME"
+          test -s "$DELTA_NAME" && test -s "$CUMULATIVE_NAME"
+          git -C source apply --reverse --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          rm -rf replay-delta replay-cumulative
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$parent_commit"
+          git -C replay-delta apply --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --binary --whitespace=nowarn "../$DELTA_NAME"
+          for rel in SP/code/rend2/tr_backend.c SP/code/rend2/tr_init.c SP/code/rend2/tr_main.c SP/code/rend2/tr_scene.c; do cmp "source/$rel" "replay-delta/$rel"; done
+          git clone -q source replay-cumulative
+          git -C replay-cumulative checkout -q --detach "$UPSTREAM_SHA"
+          git -C replay-cumulative apply --check --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          mapfile -t all_paths < <(git -C source diff --name-only "$UPSTREAM_SHA" -- | LC_ALL=C sort)
+          for rel in "${all_paths[@]}"; do cmp "source/$rel" "replay-cumulative/$rel"; done
+          sha256sum "$DELTA_NAME" > .delta_sha256
+          sha256sum "$CUMULATIVE_NAME" > .cumulative_sha256
+          echo "v1 exact delta/reverse/replay + cumulative replay PASS"
+
+      - name: Build canonical Windows x64 SP v1 candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -x source/SP/cross-make-mingw64.sh
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh -j"$jobs" \
+              BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          )
+          mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | LC_ALL=C sort)
+          mapfile -t cgames < <(find source/SP/build -type f -name cgame_sp_x64.dll -print | LC_ALL=C sort)
+          mapfile -t exes < <(find source/SP/build -type f -name ioWolfSP.x64.exe -print | LC_ALL=C sort)
+          mapfile -t ogl1s < <(find source/SP/build -type f -name renderer_sp_opengl1_x64.dll -print | LC_ALL=C sort)
+          mapfile -t qagames < <(find source/SP/build -type f -name qagame_sp_x64.dll -print | LC_ALL=C sort)
+          mapfile -t uis < <(find source/SP/build -type f -name ui_sp_x64.dll -print | LC_ALL=C sort)
+          test "${#renderers[@]}" -eq 1 && test "${#cgames[@]}" -eq 1 && test "${#exes[@]}" -eq 1 && test "${#ogl1s[@]}" -eq 1 && test "${#qagames[@]}" -eq 1 && test "${#uis[@]}" -eq 1
+          renderer="${renderers[0]}"; file "$renderer" | tee .renderer_file.txt; grep -Fq 'PE32+' .renderer_file.txt
+          printf '%s\n' "$renderer" > .renderer_path
+          sha256sum "$renderer" > .renderer_sha256
+          echo "Canonical Windows x64 SP v1 compile/output contract PASS"
+
+      - name: Stage exact Run 35345608693 runtime and replace Rend2 renderer only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"; renderer="$(cat .renderer_path)"
+          rm -rf runtime; mkdir -p runtime; stage="runtime/$RELEASE_BASENAME"
+          cp -a "$parent" "$stage"; cp -f "$renderer" "$stage/renderer_sp_rend2_x64.dll"; rm -f "$stage/docs/SHA256SUMS.txt"
+          cmp "$parent/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$parent/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$parent/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$parent/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$parent/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          printf '%s\n' "$stage" > .stage_path
+          echo "Runtime staging PASS: exact Run 35345608693 donor + new Rend2 renderer only"
+
+      - name: Add v1 controls provenance and one-pass runtime protocol
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"; mkdir -p "$stage/docs"
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"; cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"; cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          delta_sha="$(awk '{print $1}' .delta_sha256)"; cumulative_sha="$(awk '{print $1}' .cumulative_sha256)"; renderer_sha="$(awk '{print $1}' .renderer_sha256)"
+          cat > "$stage/Main/USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1.cfg" <<'EOF_CFG'
+          seta r_staticPromoteUnifiedResidency 1
+          seta r_staticPromoteAllAcceptedDelivery 1
+          seta r_staticPromoteMaxLights 32
+          seta r_staticPromotePhysicalShadowGroup 1
+          seta r_staticPromotePhysicalGroupMergeRadius 16
+          seta r_staticPromotePhysicalGroupDiag 0
+          seta r_staticPromoteLocalVolShadowContinuity 1
+          seta r_staticPromoteLocalVolAllActive 1
+          seta r_staticPromoteShadowCaptureOffset 16
+          seta r_dlightShadowMaxLights 3
+          seta r_staticPromoteUnifiedDiag 0
+          seta r_staticPromoteRootCauseDiag 0
+          EOF_CFG
+          cat > "$stage/Main/USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1_DIAG.cfg" <<'EOF_CFG'
+          seta r_staticPromoteUnifiedResidency 1
+          seta r_staticPromoteAllAcceptedDelivery 1
+          seta r_staticPromoteMaxLights 32
+          seta r_staticPromotePhysicalShadowGroup 1
+          seta r_staticPromotePhysicalGroupMergeRadius 16
+          seta r_staticPromotePhysicalGroupDiag 1
+          seta r_staticPromoteLocalVolShadowContinuity 1
+          seta r_staticPromoteLocalVolAllActive 1
+          seta r_staticPromoteShadowCaptureOffset 16
+          seta r_dlightShadowMaxLights 3
+          seta r_staticPromoteUnifiedDiag 1
+          seta r_staticPromoteRootCauseDiag 0
+          EOF_CFG
+          cat > "$stage/Main/USLRD_ALWAYS_ON_DIRECT_CAPTURE0_AB_V1.cfg" <<'EOF_CFG'
+          seta r_staticPromoteUnifiedResidency 1
+          seta r_staticPromoteAllAcceptedDelivery 1
+          seta r_staticPromoteMaxLights 32
+          seta r_staticPromotePhysicalShadowGroup 1
+          seta r_staticPromoteLocalVolShadowContinuity 1
+          seta r_staticPromoteLocalVolAllActive 1
+          seta r_staticPromoteShadowCaptureOffset 0
+          seta r_dlightShadowMaxLights 3
+          seta r_staticPromoteUnifiedDiag 1
+          seta r_staticPromotePhysicalGroupDiag 1
+          EOF_CFG
+          cat > "$stage/Main/USLRD_PARENT_RUN35345608693_AB_V1.cfg" <<'EOF_CFG'
+          seta r_staticPromoteUnifiedResidency 1
+          seta r_staticPromoteAllAcceptedDelivery 0
+          seta r_staticPromoteMaxLights 24
+          seta r_staticPromotePhysicalShadowGroup 1
+          seta r_staticPromoteLocalVolShadowContinuity 1
+          seta r_staticPromoteLocalVolAllActive 1
+          seta r_staticPromoteShadowCaptureOffset 0
+          seta r_dlightShadowMaxLights 3
+          seta r_staticPromoteUnifiedDiag 1
+          seta r_staticPromotePhysicalGroupDiag 1
+          EOF_CFG
+          cat > "$stage/RUN_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1.cmd" <<'EOF_CMD'
+          @echo off
+          start "" ioWolfSP.x64.exe +set cl_renderer rend2 +exec USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1.cfg
+          EOF_CMD
+          cat > "$stage/RUN_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1_DIAG.cmd" <<'EOF_CMD'
+          @echo off
+          start "" ioWolfSP.x64.exe +set cl_renderer rend2 +exec USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1_DIAG.cfg
+          EOF_CMD
+          cat > "$stage/docs/$CONTRACT_NAME" <<EOF_CONTRACT
+          DARKWOLF / IORTCW REND2 SP - USLRD ALWAYS-ON DIRECT + SHADOW CAPTURE FIX V1
+          parent_run=$PARENT_RUN_ID
+          parent_head=$PARENT_RUN_HEAD_SHA
+          parent_artifact_id=$PARENT_ARTIFACT_ID
+          parent_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          parent_inner_sha256=$PARENT_INNER_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          status=FIX_CANDIDATE_RUNTIME_ACCEPTANCE_REQUIRED
+          attempt_budget=FINAL_ATTEMPT_1_OF_2
+          source_delta_files=4
+          source_delta_allowlist=SP/code/rend2/tr_backend.c,SP/code/rend2/tr_init.c,SP/code/rend2/tr_main.c,SP/code/rend2/tr_scene.c
+          patcher_sha256=$PATCHER_SHA256
+          delta_sha256=$delta_sha
+          cumulative_sha256=$cumulative_sha
+          renderer_sha256=$renderer_sha
+          runtime_binary_replacements=renderer_sp_rend2_x64.dll_ONLY
+          runtime_evidence=RUN_35345608693_SWF_DEDUP_SYNTHETIC15_ACCEPTED15_BUT_ACTIVE10_TO12_AND_THREE_LAMP_DEFECT_UNCHANGED
+          swf_three_lamp_row_runtime_identity=FIXTURES_1000016_1000009_1000011_SYNTHETIC16_9_11_ALIGNED_X_683_954_1255_Y_APPROX_MINUS360_Z_APPROX490_TO506
+          swf_three_lamp_shadow_events=FIXTURE1000016_44_FIXTURE1000009_57_FIXTURE1000011_46_ALL_SLOTS_0_TO2
+          root_cause_A=DIRECT_DELIVERY_STILL_PVS_TIER_GATED_DESPITE_HEADROOM32_OVERFLOW0
+          root_cause_B=SHADOW_ELIGIBILITY_AND_SCORE_STILL_DEPEND_ON_PVS_SURFACE_TIERS
+          root_cause_C_candidate=SYNTHETIC_SHADOW_CAPTURE_ORIGIN_EQUALS_RAW_LEARNED_POINT_WITH_NO_DEEMBED_CHECK_RUNTIME_AB_REQUIRED
+          direct_delivery=ALL_CLASSIFIER_ACCEPTED_FIXTURES_WHILE_TRUE_MAX_DLIGHTS_HEADROOM_EXISTS
+          staticpromote_max_active=32
+          staticpromote_maxlights_default=32
+          staticpromote_maxlights_range=1_TO_32
+          direct_pvs_role=TELEMETRY_AND_RELEVANCE_ONLY_NOT_ON_OFF
+          localvol_delivery_truth=DELIVERED_STATICPROMOTE_DLIGHT_ID_NOT_PVS_TIER
+          persistent_shadow_budget_default=UNCHANGED_3
+          persistent_shadow_budget_runtime_cvar=r_dlightShadowMaxLights_USER_ADJUSTABLE_0_TO_MAX_DLIGHT_SHADOWS
+          shadow_candidate_set=ALL_DELIVERED_STATICPROMOTE_PERSISTENT_LIGHTS
+          shadow_score=UNCHANGED_BASE_DISTANCE_RADIUS_LUMINANCE_NO_PVS_BOOST
+          shadow_capture_direct_origin=UNCHANGED
+          shadow_capture_separate_origin=SYNTHETIC_ONLY_OFFSET_TOWARD_CAMERA_FREE_SPACE_DEFAULT_16_ADJUSTABLE_0_TO_32
+          localvol_shadow_sampling=SHADOW_INDEPENDENT
+          dynamic_transient_shadow_reserve=UNCHANGED_2
+          shadow_strength_resolution_bias_softness=UNCHANGED
+          synthetic_registry_file_format=UNCHANGED
+          map_special_case=NONE
+          bloom_tonemap_exposure_change=NONE
+          firevol_change=NONE
+          ssgi_sunvol_change=NONE
+          mtr_material_change=NONE
+          gameplay_ai_map_content_change=NONE
+          EOF_CONTRACT
+          cat > "$stage/docs/$TEST_PLAN_NAME" <<'EOF_TEST'
+          USLRD ALWAYS-ON DIRECT + SHADOW CAPTURE FIX V1 - FINAL ATTEMPT 1/2
+
+          PRIMARY SWF TEST WITH THE SAME DEDUP synthetic file (15 SWF sources)
+          1. Start RUN_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1_DIAG.cmd.
+          2. Do not change Bloom/ToneMap/Exposure/material/lighting gain/radius/shadow strength.
+          3. Go to the exact same three-lamp row and repeat the same approach/retreat/turn/leave/return route.
+          4. Diagnostic identity expected for that row: Synthetic fixtures 1000016 / 1000009 / 1000011 (origins approximately X=683/954/1255, Y=-348/-362/-372, Z=494/506/489).
+
+          REQUIRED DIRECT INVARIANT
+          - With acceptedFixtures=15 and headroom=32, promotedRoutes/submittedPromoted/active must remain 15 (minus only a real native route, if any).
+          - PVS tier may change SURFACE/SPHERE/HELD/LATENT, but the accepted Direct light must not disappear.
+          - maxLights must report 32 and overflow must stay 0 in this SWF test.
+
+          REQUIRED SHADOW INVARIANT
+          - Only slots 0..2 are persistent lamp shadow slots while r_dlightShadowMaxLights=3.
+          - Those slots may move among the nearest/relevant delivered lamps using the unchanged distance/radius/luminance score.
+          - PVS/tier must not prevent a delivered lamp from competing for a slot.
+
+          CAPTURE-DEEMBED ROOT-CAUSE TEST IN THE SAME BINARY
+          - Default is r_staticPromoteShadowCaptureOffset 16 (Synthetic fixtures only; BSP/native fixtures remain at offset 0).
+          - USLRD_SHADOW_GROUP lines now print both direct= and capture=.
+          - If the three lamps still dim, set /r_staticPromoteShadowCaptureOffset 0 and repeat once, then /r_staticPromoteShadowCaptureOffset 24 and repeat once. No rebuild is required.
+          - If 16/24 fixes the dim/no-player-shadow behavior while 0 reproduces it, raw synthetic point embedding is proven.
+
+          SHADOW-BUDGET CHECK IN THE SAME BINARY
+          - Default remains /r_dlightShadowMaxLights 3.
+          - If desired, set /r_dlightShadowMaxLights 5 and repeat briefly. This changes only persistent cubemap count; Direct lights remain all-active.
+          - Return to 3 for acceptance unless five slots are intentionally chosen later.
+
+          A/B FILES
+          - USLRD_ALWAYS_ON_DIRECT_CAPTURE0_AB_V1.cfg keeps always-on Direct delivery but disables capture de-embedding.
+          - USLRD_PARENT_RUN35345608693_AB_V1.cfg restores parent delivery (24/PVS-gated) and zero capture offset inside this same renderer.
+
+          ACCEPTANCE
+          - No bright/dim switching caused by approach/retreat/turn/previously visited lamp.
+          - Nearby selected lamps produce coherent player/world shadows instead of broad self-occlusion darkness.
+          - Factory, Escape1 doctor office, X-Labs and transient weapon/Tesla/explosion shadows show no regression.
+          - Startup/map transitions/save-load stable; FPS recorded.
+          EOF_TEST
+          cat > "$stage/$README_NAME" <<'EOF_README'
+          DARKWOLF / ioRTCW Rend2 SP - USLRD Always-On Direct + Shadow Capture Fix v1
+
+          This is final-attempt candidate 1 of 2, based on runtime evidence from successful Run 35345608693 with the deduplicated SWF synthetic file.
+
+          The previous candidate proved that duplicate grouping was not the root cause. The aligned three-lamp SWF row is identifiable in the runtime log as Synthetic fixtures 1000016, 1000009 and 1000011; all are singleton shadow groups and all repeatedly receive/move between slots 0..2. The remaining architecture still violated the target in three places: accepted Direct lights were PVS/tier gated (15 accepted but only 10-12 active), shadow candidacy/score still used PVS tiers, and the cubemap capture origin remained the exact raw synthetic point even though r_staticPromoteSynthetic does not de-embed that point from fixture/ceiling geometry.
+
+          V1 makes Direct delivery independent from PVS while true MAX_DLIGHTS headroom exists, raises the StaticPromote ceiling/range to 32, makes all delivered persistent lamps eligible for the scarce shadow selector, removes the PVS surface score boost, and offsets only the shadow capture point toward camera free-space for Synthetic fixtures only by an adjustable 0..32 units (default 16). Direct light origin/color/radius are unchanged, and non-Synthetic fixtures keep offset 0.
+
+          Primary diagnostic launcher: RUN_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1_DIAG.cmd
+          Production-style launcher: RUN_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1.cmd
+          EOF_README
+          cp "$stage/$README_NAME" "$stage/docs/$README_NAME"
+          cat > "$stage/docs/$VALIDATION_NAME" <<EOF_VALIDATION
+          USLRD ALWAYS-ON DIRECT + SHADOW CAPTURE FIX V1 - CI VALIDATION RECORD
+          parent_run=$PARENT_RUN_ID
+          parent_head=$PARENT_RUN_HEAD_SHA
+          parent_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          parent_inner_sha256=$PARENT_INNER_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          parent_package_manifest=PASS
+          parent_source_reconstruction=PASS_67_FILES
+          patcher_identity_pycompile=PASS
+          patcher_check_apply_repeat_guard=PASS
+          changed_file_allowlist=PASS_4_FILES
+          no_map_special_case=PASS
+          protected_shadow_score_function=UNCHANGED
+          forbidden_lighting_tuning=UNCHANGED
+          delta_reverse_check=PASS
+          delta_clean_replay=PASS
+          cumulative_clean_replay=PASS
+          mingw_sp_compile=PASS_THIS_RUN
+          pe32_renderer=PASS
+          runtime_status=FIX_CANDIDATE_ACCEPTANCE_REQUIRED
+          EOF_VALIDATION
+          echo "v1 controls/provenance/runtime protocol PASS"
+
+      - name: Final v1 package policy audit and SHA manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          required=(
+            ioWolfSP.x64.exe renderer_sp_rend2_x64.dll renderer_sp_opengl1_x64.dll
+            Main/cgame_sp_x64.dll Main/qagame_sp_x64.dll Main/ui_sp_x64.dll OpenAL64.dll SDL264.dll
+            Main/autoexec.cfg RUN_DARKWOLF_PRODUCTION.cmd
+            Main/USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1.cfg
+            Main/USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1_DIAG.cfg
+            Main/USLRD_ALWAYS_ON_DIRECT_CAPTURE0_AB_V1.cfg
+            Main/USLRD_PARENT_RUN35345608693_AB_V1.cfg
+            RUN_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1.cmd
+            RUN_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1_DIAG.cmd
+            "$README_NAME" "docs/$README_NAME" "docs/$CONTRACT_NAME" "docs/$VALIDATION_NAME"
+            "docs/$TEST_PLAN_NAME" "docs/$PATCHER_NAME" "docs/$DELTA_NAME" "docs/$CUMULATIVE_NAME"
+          )
+          for rel in "${required[@]}"; do test -s "$stage/$rel" || { echo "ERROR: required package file missing: $rel" >&2; exit 1; }; done
+          grep -Fq 'r_staticPromoteAllAcceptedDelivery 1' "$stage/Main/USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1.cfg"
+          grep -Fq 'r_staticPromoteMaxLights 32' "$stage/Main/USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1.cfg"
+          grep -Fq 'r_staticPromoteShadowCaptureOffset 16' "$stage/Main/USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1.cfg"
+          grep -Fq 'r_dlightShadowMaxLights 3' "$stage/Main/USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1.cfg"
+          grep -Fq 'r_staticPromoteShadowCaptureOffset 0' "$stage/Main/USLRD_ALWAYS_ON_DIRECT_CAPTURE0_AB_V1.cfg"
+          grep -Fq 'r_staticPromoteAllAcceptedDelivery 0' "$stage/Main/USLRD_PARENT_RUN35345608693_AB_V1.cfg"
+          grep -Fq 'cl_renderer rend2' "$stage/RUN_DARKWOLF_PRODUCTION.cmd"
+          # The exact parent executable/game DLLs must remain byte-identical; only Rend2 renderer is replaced.
+          parent="$(cat .parent_stage_path)"
+          cmp "$parent/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$parent/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$parent/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$parent/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$parent/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          if find "$stage" -type f -iname 'pak*.pk3' -print -quit | grep -q .; then echo "ERROR: commercial pak*.pk3 found" >&2; exit 1; fi
+          if find "$stage" -type f \( -iname '*.sav' -o -iname 'wolfconfig.cfg' \) -print -quit | grep -q .; then echo "ERROR: user save/config found" >&2; exit 1; fi
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt && sha256sum -c docs/SHA256SUMS.txt)
+          echo "Final v1 package/runtime/commercial-asset policy PASS"
+
+      - name: Package full SP USLRD v1 candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          rm -rf out; mkdir -p out
+          archive="out/${RELEASE_BASENAME}.zip"
+          (cd runtime && find "$RELEASE_BASENAME" -type f -print | LC_ALL=C sort | zip -X -9 "$GITHUB_WORKSPACE/$archive" -@)
+          test -s "$archive"; unzip -tq "$archive"
+          sha256sum "$archive" | sed "s#  out/#  #" > "out/${RELEASE_BASENAME}.zip.sha256"
+          cat "out/${RELEASE_BASENAME}.zip.sha256"
+
+      - name: Upload full SP USLRD v1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            out/${{ env.RELEASE_BASENAME }}.zip
+            out/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
