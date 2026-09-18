@@ -1,0 +1,605 @@
+name: Build DarkWolf Rend2 Clean Production Release v1 over Run 35356962371 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-clean-production-release-v1-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: DarkWolf Rend2 Clean Production Release v1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      PARENT_RUN_ID: "35356962371"
+      PARENT_RUN_HEAD_SHA: c8b79541fe00a1385a39308824de60bc09f6a788
+      PARENT_WORKFLOW_PATH: '.github/workflows/150DARKWOLF_IORTCW_REND2_USLRD_STABLE_SYNTHETIC_SHADOW_CAPTURE_FINAL_V2_CI_REPAIR.yml'
+      PARENT_WORKFLOW_BLOB_SHA: a8a8840086c75f74ea80e853032cd81aed9e3039
+      PARENT_ARTIFACT_ID: "10552111977"
+      PARENT_ARTIFACT_NAME: iortcw-rend2-uslrd-stable-synthetic-shadow-capture-final-v2-ci-repair-full-sp-windows-x64-1
+      PARENT_ARTIFACT_DIGEST: sha256:44b48660442e8cee87562e9c05d254990e845bd33748f43b8a45464bca6e9896
+      PARENT_INNER_SHA256: dd564a3e7fc919dc60c729f4e9e0405afd706f68495fd9439f47649ddf2d3f81
+      PARENT_RELEASE_BASENAME: iortcw-rend2-uslrd-stable-synthetic-shadow-capture-final-v2-ci-repair-full-sp-windows-x64-1
+      PARENT_CUMULATIVE_NAME: darkwolf-rend2-cumulative-uslrd-stable-synthetic-shadow-capture-final-v2-sp.patch
+      PARENT_CUMULATIVE_SHA256: d5695d4015fd74fedd9c6a0da95dbe35eef8779a2234c72a00c0eb863cf184f7
+      PARENT_CONTRACT_NAME: USLRD_STABLE_SYNTHETIC_SHADOW_CAPTURE_FINAL_V2_CONTRACT.txt
+      PARENT_CONTRACT_SHA256: 4f092793bd297c6f685e2cc431d464f56551b51812aaf05e8fa63f0693d9528a
+      PARENT_RENDERER_SHA256: d0c0a4a02f66bba05a159b4978d2f176779b5fe1f54c9ee912e472c4da998d84
+
+      PATCHER_NAME: apply_darkwolf_uslrd_clean_production_v1.py
+      PATCHER_SHA256: 6d8c0fd0c7ea82ff83f8c0e604ff0fc194878691d4f93a0644407bdbe7ae2f94
+      PATCHER_GZIP_SHA256: e1c2da35989fb5ccda60069b21ae9713e4e8d89db7fd500dfc2fb16980879393
+      DELTA_NAME: darkwolf-uslrd-clean-production-v1-over-run-35356962371.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch
+      CONTRACT_NAME: DARKWOLF_REND2_CLEAN_PRODUCTION_RELEASE_V1_CONTRACT.txt
+      VALIDATION_NAME: STATIC_VALIDATION_DARKWOLF_REND2_CLEAN_PRODUCTION_RELEASE_V1.txt
+      README_NAME: README_DARKWOLF_REND2_CLEAN_PRODUCTION_RELEASE_V1_RU.txt
+      KNOWN_ISSUES_NAME: DARKWOLF_REND2_CLEAN_PRODUCTION_RELEASE_V1_KNOWN_ISSUES_RU.txt
+      RELEASE_BASENAME: iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Preflight workflow YAML LF Bash Python and embedded patcher identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: workflow cannot be resolved: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY_PREFLIGHT'
+          from pathlib import Path
+          import base64,gzip,hashlib,re,subprocess,sys,yaml
+          p=Path(sys.argv[1]); raw=p.read_bytes(); txt=raw.decode('utf-8')
+          if b'\r' in raw: raise SystemExit('ERROR: CR byte in workflow; LF-only required')
+          doc=yaml.safe_load(txt)
+          expected='Build DarkWolf Rend2 Clean Production Release v1 over Run 35356962371 SP'
+          if doc.get('name') != expected: raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+          checked=0; py_checked=0
+          for job_name,job in (doc.get('jobs') or {}).items():
+              for index,step in enumerate(job.get('steps') or [],1):
+                  script=step.get('run')
+                  if not script: continue
+                  proc=subprocess.run(['bash','-n'],input=script,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}',file=sys.stderr)
+                      print(proc.stderr,file=sys.stderr); raise SystemExit(proc.returncode)
+                  checked += 1
+                  lines=script.splitlines(); pos=0
+                  while pos < len(lines):
+                      hm=re.search(r"\bpython3\b.*<<'([^']+)'",lines[pos])
+                      if not hm: pos += 1; continue
+                      tag=hm.group(1); body=[]; pos += 1
+                      while pos < len(lines) and lines[pos].strip()!=tag:
+                          body.append(lines[pos]); pos += 1
+                      if pos>=len(lines): raise SystemExit(f'ERROR: unclosed Python heredoc {tag}')
+                      compile('\n'.join(body)+'\n',f'<workflow:{job_name}:{index}:{tag}>','exec')
+                      py_checked += 1; pos += 1
+          if checked < 11: raise SystemExit(f'ERROR: unexpectedly small Bash contract: {checked}')
+          if py_checked < 3: raise SystemExit(f'ERROR: unexpectedly small Python contract: {py_checked}')
+          start_marker='cat > "$PATCHER_NAME.gz.b64" <<\'PATCHER_B64\''
+          end_marker='          PATCHER_B64'
+          start=txt.find(start_marker)
+          if start<0: raise SystemExit('ERROR: embedded patcher start marker missing')
+          start=txt.find('\n',start)+1; end=txt.find('\n'+end_marker,start)
+          if start<=0 or end<0: raise SystemExit('ERROR: embedded patcher end marker missing')
+          enc=''.join(line.strip() for line in txt[start:end].splitlines())
+          gz=base64.b64decode(enc,validate=True); py=gzip.decompress(gz)
+          env=(doc.get('jobs') or {}).get('build-windows-x64',{}).get('env',{})
+          if hashlib.sha256(gz).hexdigest()!=env.get('PATCHER_GZIP_SHA256'): raise SystemExit('ERROR: patcher gzip SHA drift')
+          if hashlib.sha256(py).hexdigest()!=env.get('PATCHER_SHA256'): raise SystemExit('ERROR: patcher SHA drift')
+          if b'DARKWOLF_USLRD_CLEAN_PRODUCTION_V1' not in py: raise SystemExit('ERROR: cleanup patcher marker missing')
+          print(f'Workflow preflight PASS: {checked} Bash blocks, {py_checked} Python blocks')
+          PY_PREFLIGHT
+
+      - name: Verify exact runtime-tested parent Run 35356962371
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$PARENT_RUN_HEAD_SHA" || { echo "ERROR: parent HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: parent run not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$PARENT_WORKFLOW_PATH" || { echo "ERROR: parent workflow path drift" >&2; exit 1; }
+          workflow_blob="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${PARENT_WORKFLOW_PATH}?ref=${PARENT_RUN_HEAD_SHA}" --jq '.sha')"
+          test "$workflow_blob" = "$PARENT_WORKFLOW_BLOB_SHA" || { echo "ERROR: parent workflow blob drift: $workflow_blob" >&2; exit 1; }
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${PARENT_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: exact parent artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$PARENT_ARTIFACT_NAME" || { echo "ERROR: artifact name drift" >&2; exit 1; }
+          test "$expired" = false || { echo "ERROR: artifact expired" >&2; exit 1; }
+          test "$adigest" = "$PARENT_ARTIFACT_DIGEST" || { echo "ERROR: artifact digest drift: $adigest" >&2; exit 1; }
+          echo "Exact runtime-tested parent Run 35356962371 provenance PASS"
+
+      - name: Download and verify exact Run 35356962371 package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf parent-artifact parent-release
+          mkdir -p parent-artifact parent-release
+          gh run download "$PARENT_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$PARENT_ARTIFACT_NAME" --dir parent-artifact
+          z="parent-artifact/${PARENT_RELEASE_BASENAME}.zip"; sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"; sidecar_sha="$(awk '{print $1}' "$sidecar")"
+          test "$inner_sha" = "$sidecar_sha" || { echo "ERROR: parent ZIP/sidecar mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$PARENT_INNER_SHA256" || { echo "ERROR: parent inner SHA drift: $inner_sha" >&2; exit 1; }
+          unzip -tq "$z"; unzip -q "$z" -d parent-release
+          mapfile -t roots < <(find parent-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one parent release root" >&2; exit 1; }
+          parent="${roots[0]}"
+          test "$(basename "$parent")" = "$PARENT_RELEASE_BASENAME"
+          printf '%s\n' "$parent" > .parent_stage_path
+          (cd "$parent" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$parent/docs/$PARENT_CUMULATIVE_NAME" | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256" || { echo "ERROR: parent cumulative SHA drift" >&2; exit 1; }
+          test "$(sha256sum "$parent/docs/$PARENT_CONTRACT_NAME" | awk '{print $1}')" = "$PARENT_CONTRACT_SHA256" || { echo "ERROR: parent contract SHA drift" >&2; exit 1; }
+          test "$(sha256sum "$parent/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$PARENT_RENDERER_SHA256" || { echo "ERROR: parent renderer SHA drift" >&2; exit 1; }
+          grep -Fq 'staticpromote_max_active=UNCHANGED_32' "$parent/docs/$PARENT_CONTRACT_NAME"
+          grep -Fq 'persistent_shadow_budget_default=UNCHANGED_3' "$parent/docs/$PARENT_CONTRACT_NAME"
+          grep -Fq 'shadow_capture_offset_default=32' "$parent/docs/$PARENT_CONTRACT_NAME"
+          grep -Fq 'shadow_capture_direction=PER_SYNTHETIC_FIXTURE_WORLD_SPACE_CACHE' "$parent/docs/$PARENT_CONTRACT_NAME"
+          echo "Exact Run 35356962371 package/hash/manifest/contract PASS"
+
+      - name: Reconstruct exact Run 35356962371 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$parent/docs/$PARENT_CUMULATIVE_NAME" .parent-cumulative.patch
+          test "$(sha256sum .parent-cumulative.patch | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256"
+          git -C source apply --check --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source add -N .
+          section_count="$(grep -c '^diff --git ' .parent-cumulative.patch)"
+          test "$section_count" -eq 67 || { echo "ERROR: parent cumulative section drift: $section_count" >&2; exit 1; }
+          python3 - <<'PY_PARENT_FACTS'
+          from pathlib import Path
+          init=Path('source/SP/code/rend2/tr_init.c').read_text()
+          scene=Path('source/SP/code/rend2/tr_scene.c').read_text()
+          backend=Path('source/SP/code/rend2/tr_backend.c').read_text()
+          main=Path('source/SP/code/rend2/tr_main.c').read_text()
+          facts=[
+            ('cap32','#define STATIC_PROMOTE_PRODUCTION_MAX_ACTIVE 32' in scene),
+            ('maxlights32','r_staticPromoteMaxLights = ri.Cvar_Get( "r_staticPromoteMaxLights", "32", CVAR_ARCHIVE );' in init),
+            ('parent shadow default1','r_dlightShadowMaxLights = ri.Cvar_Get( "r_dlightShadowMaxLights", "1", CVAR_ARCHIVE );' in init),
+            ('parent unified cvar','r_staticPromoteUnifiedResidency = ri.Cvar_Get( "r_staticPromoteUnifiedResidency", "1", CVAR_ARCHIVE );' in init),
+            ('parent all accepted cvar','r_staticPromoteAllAcceptedDelivery' in scene),
+            ('parent localvol allactive cvar','r_staticPromoteLocalVolAllActive' in backend),
+            ('parent stable capture cvar','r_staticPromoteShadowCaptureStable' in main),
+            ('parent capture offset cvar','r_staticPromoteShadowCaptureOffset' in main),
+            ('stable capture marker','DARKWOLF_USLRD_STABLE_SYNTHETIC_SHADOW_CAPTURE_FINAL_V2' in main),
+          ]
+          bad=[n for n,ok in facts if not ok]
+          if bad: raise SystemExit('ERROR: exact parent source fact drift: '+', '.join(bad))
+          print('Exact Run 35356962371 source facts PASS')
+          PY_PARENT_FACTS
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -q -m 'Reconstructed exact Run 35356962371 source postimage'
+          parent_commit="$(git -C source rev-parse HEAD)"
+          printf '%s\n' "$parent_commit" > .parent_source_commit
+          test "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA"
+          echo "Exact runtime-tested parent source reconstruction PASS: $parent_commit"
+
+      - name: Materialize validate and apply Clean Production cleanup
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME.gz.b64" <<'PATCHER_B64'
+          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
+          /RcRMd0PGDoAAA==
+          PATCHER_B64
+          base64 -d "$PATCHER_NAME.gz.b64" > "$PATCHER_NAME.gz"
+          test "$(sha256sum "$PATCHER_NAME.gz" | awk '{print $1}')" = "$PATCHER_GZIP_SHA256" || { echo "ERROR: patcher gzip SHA drift" >&2; exit 1; }
+          gzip -dc "$PATCHER_NAME.gz" > "$PATCHER_NAME"
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: patcher SHA drift" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" --check source
+          python3 "$PATCHER_NAME" source
+          set +e
+          python3 "$PATCHER_NAME" --check source >/tmp/repeat.out 2>&1
+          repeat_rc=$?
+          set -e
+          test "$repeat_rc" -ne 0 || { echo "ERROR: patcher repeat guard failed" >&2; exit 1; }
+          mapfile -t changed < <(git -C source diff --name-only "$(cat .parent_source_commit)" -- | LC_ALL=C sort)
+          expected=(SP/code/rend2/tr_backend.c SP/code/rend2/tr_init.c SP/code/rend2/tr_main.c SP/code/rend2/tr_scene.c)
+          test "${#changed[@]}" -eq 4 || { printf 'ERROR: changed count=%s\n' "${#changed[@]}" >&2; printf '%s\n' "${changed[@]}" >&2; exit 1; }
+          test "$(printf '%s\n' "${changed[@]}")" = "$(printf '%s\n' "${expected[@]}")" || { echo "ERROR: changed-file allowlist drift" >&2; printf '%s\n' "${changed[@]}" >&2; exit 1; }
+          python3 - <<'PY_POLICY'
+          from pathlib import Path
+          import re,subprocess
+          files=[Path('source/SP/code/rend2/tr_init.c'),Path('source/SP/code/rend2/tr_scene.c'),Path('source/SP/code/rend2/tr_backend.c'),Path('source/SP/code/rend2/tr_main.c')]
+          txt='\n'.join(p.read_text() for p in files)
+          if txt.count('DARKWOLF_USLRD_CLEAN_PRODUCTION_V1') < 4:
+              raise SystemExit('ERROR: clean-production markers missing')
+          forbidden=[
+            'r_staticPromoteUnifiedResidency','r_staticPromoteUnifiedDiag','r_staticPromoteRootCauseDiag',
+            'r_staticPromoteRootCauseCapture','r_staticPromoteRootCauseFocus','r_staticPromoteRootCauseSampleMs',
+            'r_staticPromoteAllAcceptedDelivery','r_staticPromoteLocalVolShadowContinuity','r_staticPromoteLocalVolRebalance',
+            'r_staticPromoteLocalVolSwitchRatio','r_staticPromoteLocalVolCompanionMergeRadius','r_staticPromoteLocalVolAllActive',
+            'r_staticPromotePhysicalShadowGroup','r_staticPromotePhysicalGroupMergeRadius','r_staticPromotePhysicalGroupDiag',
+            'r_staticPromoteShadowCaptureOffset','r_staticPromoteShadowCaptureStable'
+          ]
+          for name in forbidden:
+              if f'Cvar_Get("{name}"' in txt or f'Cvar_Get( "{name}"' in txt:
+                  raise SystemExit('ERROR: experiment/diagnostic cvar still registered: '+name)
+          init=files[0].read_text(); scene=files[1].read_text(); main=files[3].read_text()
+          req=[
+            ('maxlights32','r_staticPromoteMaxLights = ri.Cvar_Get( "r_staticPromoteMaxLights", "32", CVAR_ARCHIVE )' in init),
+            ('shadowbudget3','r_dlightShadowMaxLights = ri.Cvar_Get( "r_dlightShadowMaxLights", "3", CVAR_ARCHIVE )' in init),
+            ('allaccepted fixed','s_uslrdProductionAllAcceptedDelivery = qtrue' in scene),
+            ('capture offset32 internal','s_uslrdMainProductionCaptureOffsetCvar.value = 32.0f' in main),
+            ('capture stable internal','s_rStaticPromoteShadowCaptureStable = &s_uslrdMainProductionOnCvar' in main),
+          ]
+          bad=[n for n,ok in req if not ok]
+          if bad: raise SystemExit('ERROR: accepted production invariant missing: '+', '.join(bad))
+          parent_commit=Path('.parent_source_commit').read_text().strip()
+          diff=subprocess.check_output(['git','-C','source','diff','--unified=0',parent_commit,'--'],text=True)
+          delta=[ln for ln in diff.splitlines() if (ln.startswith('+') or ln.startswith('-')) and not ln.startswith('+++') and not ln.startswith('---')]
+          forbidden_tuning=['r_dlightShadowStrength','r_dlightShadowBias','r_dlightShadowSoftness','r_dlightShadowMapSize','r_staticPromoteGain','r_staticPromoteDirectGain','r_staticPromoteRadiusScale','r_staticPromoteMinRadius','r_staticPromoteMaxRadius','r_staticPromoteMaxColor','r_volumetricFire','r_ssgi','r_forceToneMap','r_forceAutoExposure','r_bloom']
+          for tok in forbidden_tuning:
+              if any(tok in ln for ln in delta): raise SystemExit('ERROR: unrelated/tuning delta introduced: '+tok)
+          added='\n'.join(ln[1:] for ln in delta if ln.startswith('+'))
+          for tok in ['swf','escape1','factory','xlabs']:
+              if re.search(r'(?i)(^|[^a-z0-9_])'+re.escape(tok)+r'([^a-z0-9_]|$)',added):
+                  raise SystemExit('ERROR: map-specific production source token introduced: '+tok)
+          print('Clean Production source/cvar/tuning policy PASS')
+          PY_POLICY
+          echo "Clean Production cleanup source allowlist/policy PASS"
+
+      - name: Generate cleanup delta cumulative and exact replay proofs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_commit="$(cat .parent_source_commit)"
+          git -C source diff --binary --full-index "$parent_commit" -- \
+            SP/code/rend2/tr_backend.c SP/code/rend2/tr_init.c SP/code/rend2/tr_main.c SP/code/rend2/tr_scene.c > "$DELTA_NAME"
+          git -C source diff --binary --full-index "$UPSTREAM_SHA" -- > "$CUMULATIVE_NAME"
+          test -s "$DELTA_NAME" && test -s "$CUMULATIVE_NAME"
+          git -C source apply --reverse --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          rm -rf replay-delta replay-cumulative
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$parent_commit"
+          git -C replay-delta apply --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --binary --whitespace=nowarn "../$DELTA_NAME"
+          for rel in SP/code/rend2/tr_backend.c SP/code/rend2/tr_init.c SP/code/rend2/tr_main.c SP/code/rend2/tr_scene.c; do cmp "source/$rel" "replay-delta/$rel"; done
+          git clone -q source replay-cumulative
+          git -C replay-cumulative checkout -q --detach "$UPSTREAM_SHA"
+          git -C replay-cumulative apply --check --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          mapfile -t all_paths < <(git -C source diff --name-only "$UPSTREAM_SHA" -- | LC_ALL=C sort)
+          for rel in "${all_paths[@]}"; do cmp "source/$rel" "replay-cumulative/$rel"; done
+          sha256sum "$DELTA_NAME" > .delta_sha256
+          sha256sum "$CUMULATIVE_NAME" > .cumulative_sha256
+          echo "Clean Production exact delta/reverse/replay + cumulative replay PASS"
+
+      - name: Build canonical Windows x64 SP Clean Production renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -x source/SP/cross-make-mingw64.sh
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh -j"$jobs" \
+              BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          )
+          mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | LC_ALL=C sort)
+          mapfile -t cgames < <(find source/SP/build -type f -name cgame_sp_x64.dll -print | LC_ALL=C sort)
+          mapfile -t exes < <(find source/SP/build -type f -name ioWolfSP.x64.exe -print | LC_ALL=C sort)
+          mapfile -t ogl1s < <(find source/SP/build -type f -name renderer_sp_opengl1_x64.dll -print | LC_ALL=C sort)
+          mapfile -t qagames < <(find source/SP/build -type f -name qagame_sp_x64.dll -print | LC_ALL=C sort)
+          mapfile -t uis < <(find source/SP/build -type f -name ui_sp_x64.dll -print | LC_ALL=C sort)
+          test "${#renderers[@]}" -eq 1 && test "${#cgames[@]}" -eq 1 && test "${#exes[@]}" -eq 1 && test "${#ogl1s[@]}" -eq 1 && test "${#qagames[@]}" -eq 1 && test "${#uis[@]}" -eq 1
+          renderer="${renderers[0]}"; file "$renderer" | tee .renderer_file.txt; grep -Fq 'PE32+' .renderer_file.txt
+          printf '%s\n' "$renderer" > .renderer_path
+          sha256sum "$renderer" > .renderer_sha256
+          echo "Canonical Windows x64 SP Clean Production compile/output contract PASS"
+
+      - name: Stage exact Run 35356962371 runtime and replace Rend2 renderer only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"; renderer="$(cat .renderer_path)"
+          rm -rf runtime; mkdir -p runtime; stage="runtime/$RELEASE_BASENAME"
+          cp -a "$parent" "$stage"
+          cp -f "$renderer" "$stage/renderer_sp_rend2_x64.dll"
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          cmp "$parent/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$parent/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$parent/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$parent/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$parent/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          printf '%s\n' "$stage" > .stage_path
+          echo "Runtime staging PASS: exact tested Run 35356962371 donor + Clean Production Rend2 renderer only"
+
+      - name: Strip USLRD experiment surface and add Clean Production provenance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"; parent="$(cat .parent_stage_path)"
+
+          # Remove current-workstream diagnostic/A-B controls and experiment launchers from the user-facing package.
+          find "$stage/Main" -maxdepth 1 -type f -name 'USLRD_*' -delete
+          find "$stage" -maxdepth 1 -type f -name 'RUN_USLRD_*' -delete
+          find "$stage" -maxdepth 1 -type f -name 'README_USLRD_*' -delete
+          find "$stage/docs" -maxdepth 1 -type f \( \
+            -name 'README_USLRD_*' -o -name 'USLRD_*' -o -name 'STATIC_VALIDATION_USLRD_*' -o \
+            -name 'darkwolf-rend2-cumulative-uslrd-*' -o -name 'darkwolf-uslrd-*' -o -name 'apply_uslrd_*' \
+          \) -delete
+
+          mkdir -p "$stage/docs"
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          delta_sha="$(awk '{print $1}' .delta_sha256)"
+          cumulative_sha="$(awk '{print $1}' .cumulative_sha256)"
+          renderer_sha="$(awk '{print $1}' .renderer_sha256)"
+
+          cat > "$stage/docs/$CONTRACT_NAME" <<EOF_CONTRACT
+          DARKWOLF / IORTCW REND2 SP - USLRD CLEAN PRODUCTION RELEASE V1
+          parent_run=$PARENT_RUN_ID
+          parent_head=$PARENT_RUN_HEAD_SHA
+          parent_artifact_id=$PARENT_ARTIFACT_ID
+          parent_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          parent_inner_sha256=$PARENT_INNER_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          status=CLEAN_PRODUCTION_BROAD_TEST_BASE
+          runtime_user_result=RUN_35356962371_REPORTED_LARGELY_SUCCESSFUL
+          source_cleanup_files=4
+          source_cleanup_allowlist=SP/code/rend2/tr_backend.c,SP/code/rend2/tr_init.c,SP/code/rend2/tr_main.c,SP/code/rend2/tr_scene.c
+          patcher_sha256=$PATCHER_SHA256
+          delta_sha256=$delta_sha
+          cumulative_sha256=$cumulative_sha
+          renderer_sha256=$renderer_sha
+          runtime_binary_replacements=renderer_sp_rend2_x64.dll_ONLY
+          direct_staticpromote_max=32
+          direct_delivery=ALL_CLASSIFIER_ACCEPTED_WHILE_REAL_MAX_DLIGHTS_HEADROOM_EXISTS
+          direct_delivery_experiment_cvar=REMOVED_BAKED_ON
+          unified_residency_experiment_cvar=REMOVED_BAKED_ON
+          physical_shadow_group_experiment_cvar=REMOVED_BAKED_ON
+          physical_group_merge_radius_experiment_cvar=REMOVED_BAKED_16
+          localvol_shadow_continuity_experiment_cvar=REMOVED_BAKED_ON
+          localvol_allactive_experiment_cvar=REMOVED_BAKED_ON
+          stable_synthetic_capture_experiment_cvar=REMOVED_BAKED_ON
+          synthetic_capture_offset_experiment_cvar=REMOVED_BAKED_32
+          uslrd_diagnostic_cvars=NOT_REGISTERED
+          uslrd_diagnostic_cfg_cmd=REMOVED_FROM_PACKAGE
+          periodic_staticpromote_status_telemetry=DISABLED
+          physical_residency_telemetry=DISABLED
+          staticpromote_maxlights_runtime_cvar=r_staticPromoteMaxLights_DEFAULT_32
+          point_shadow_budget_runtime_cvar=r_dlightShadowMaxLights_DEFAULT_3_USER_ADJUSTABLE_0_TO_MAX
+          shadow_strength=UNCHANGED_PARENT_0_88_DEFAULT
+          shadow_resolution_bias_softness=UNCHANGED
+          shadow_selector=UNCHANGED_PARENT
+          shadow_capture_algorithm=UNCHANGED_PARENT_STABLE_WORLD_SPACE_CACHE_OFFSET32
+          localvol_algorithm=UNCHANGED_PARENT_ALLACTIVE_SHADOW_INDEPENDENT
+          bloom_tonemap_exposure_change=NONE
+          firevol_change=NONE
+          ssgi_sunvol_change=NONE
+          mtr_material_change=NONE
+          gameplay_ai_map_content_change=NONE
+          known_residual_A=USER_REPORT_ONE_LAMP_STILL_VISUALLY_CHANGES_WITH_DISTANCE_WHILE_LOG_SHOWS_ALL_15_DIRECT_LIGHTS_ACTIVE_MAX32_OVERFLOW0
+          known_residual_B=POINT_SHADOW_BEHAVIOR_REQUIRES_SEPARATE_FOLLOWUP_AND_IS_NOT_DECLARED_FINAL_ACCEPTED
+          EOF_CONTRACT
+
+          cat > "$stage/$README_NAME" <<'EOF_README'
+          DARKWOLF / ioRTCW Rend2 Single Player - USLRD Clean Production Release v1
+
+          База этого релиза - runtime-tested Run 35356962371. Пользователь подтвердил, что результат в целом успешный и пригоден для расширенного тестирования игры.
+
+          В Clean Production сохранена принятая архитектура:
+          - до 32 StaticPromote Direct Lights при наличии реального MAX_DLIGHTS headroom;
+          - Direct Light не зависит от трех point-shadow slots;
+          - point-shadow budget по умолчанию 3 через существующий production cvar r_dlightShadowMaxLights;
+          - при необходимости r_dlightShadowMaxLights можно изменить на 4/5 без новой сборки;
+          - stable Synthetic shadow capture использует зафиксированное world-space направление и offset 32;
+          - LocalVol остается all-active и shadow-independent.
+
+          Удалено из пользовательской поверхности:
+          - USLRD diagnostic cfg/cmd;
+          - A/B launchers текущей исследовательской цепочки;
+          - experiment-only USLRD cvars. Принятые значения зафиксированы внутри renderer.
+          - периодическая USLRD/StaticPromote telemetry текущего исследования.
+
+          Сохранены production controls r_staticPromoteMaxLights и r_dlightShadowMaxLights.
+
+          Известные остаточные вопросы, которые НЕ маскируются этим Clean Release:
+          1) Пользователь визуально наблюдает одну лампу, которая все еще меняет яркость при приближении/удалении. Runtime-лог при этом показывает active=15, maxLights=32, overflow=0, поэтому это не исчерпание лимита Direct Light.
+          2) Качество/корректность point-light shadows требует отдельного исследования и следующего независимого shadow workstream.
+
+          Для широкого теста запускайте обычный RUN_DARKWOLF_PRODUCTION.cmd. Специальный USLRD cfg больше не нужен.
+          Обычные BALANCED/CINEMATIC/PERFORMANCE launchers теперь запускают r_volumetricLocal=1, чтобы Clean Release соответствовал фактически протестированному USLRD runtime, а не старому pre-USLRD launcher override.
+          EOF_README
+          cp "$stage/$README_NAME" "$stage/docs/$README_NAME"
+
+          cat > "$stage/docs/$KNOWN_ISSUES_NAME" <<'EOF_KNOWN'
+          DARKWOLF USLRD CLEAN PRODUCTION RELEASE V1 - KNOWN RESIDUALS
+
+          A. Одна лампа в тестовой сцене SWF по визуальному наблюдению все еще может менять яркость при изменении дистанции. В приложенном runtime-логе Clean-базы все 751 status snapshots имеют active=15 и overflow=0 при maxLights=32. Это исключает переполнение Direct-light бюджета как непосредственную причину наблюдения.
+
+          B. Point-light shadow correctness/quality не считается закрытой задачей. Три shadow slots остаются отдельным динамическим бюджетом. Их дальнейшая архитектура и качество должны исследоваться отдельно, не смешиваясь с этим Clean Production baseline.
+          EOF_KNOWN
+
+          cat > "$stage/docs/$VALIDATION_NAME" <<EOF_VALIDATION
+          DARKWOLF USLRD CLEAN PRODUCTION RELEASE V1 - CI VALIDATION RECORD
+          parent_run=$PARENT_RUN_ID
+          parent_head=$PARENT_RUN_HEAD_SHA
+          parent_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          parent_inner_sha256=$PARENT_INNER_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          parent_package_manifest=PASS
+          parent_source_reconstruction=PASS_67_FILES
+          patcher_identity_pycompile=PASS
+          patcher_check_apply_repeat_guard=PASS
+          cleanup_source_allowlist=PASS_4_FILES
+          experiment_cvar_registration_guard=PASS
+          direct_max32_invariant=PASS
+          point_shadow_default3_invariant=PASS
+          diagnostic_runtime_surface_removed=PASS
+          unrelated_tuning_guard=PASS
+          delta_reverse_check=PASS
+          delta_clean_replay=PASS
+          cumulative_clean_replay=PASS
+          mingw_sp_compile=PASS_THIS_RUN
+          pe32_renderer=PASS
+          runtime_status=CLEAN_PRODUCTION_BROAD_TEST_REQUIRED
+          EOF_VALIDATION
+
+          # The tested USLRD path had LocalVol active. Normalize all standard production launchers to that tested state
+          # instead of inheriting the old pre-USLRD +set r_volumetricLocal 0 override.
+          for launcher in RUN_DARKWOLF_PRODUCTION.cmd RUN_DARKWOLF_PRODUCTION_CINEMATIC.cmd RUN_DARKWOLF_PRODUCTION_PERFORMANCE.cmd; do
+            test -s "$stage/$launcher"
+            sed -i 's/+set r_volumetricLocal 0/+set r_volumetricLocal 1/g' "$stage/$launcher"
+            grep -Fq '+set r_volumetricLocal 1' "$stage/$launcher"
+            if grep -Fq '+set r_volumetricLocal 0' "$stage/$launcher"; then echo "ERROR: stale LocalVol-off launcher override: $launcher" >&2; exit 1; fi
+          done
+          cmp "$parent/Main/autoexec.cfg" "$stage/Main/autoexec.cfg"
+          echo "Clean Production package cleanup/provenance PASS"
+
+      - name: Final Clean Production package policy audit and SHA manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"; parent="$(cat .parent_stage_path)"
+          required=(
+            ioWolfSP.x64.exe renderer_sp_rend2_x64.dll renderer_sp_opengl1_x64.dll
+            Main/cgame_sp_x64.dll Main/qagame_sp_x64.dll Main/ui_sp_x64.dll OpenAL64.dll SDL264.dll
+            Main/autoexec.cfg RUN_DARKWOLF_PRODUCTION.cmd RUN_DARKWOLF_PRODUCTION_CINEMATIC.cmd RUN_DARKWOLF_PRODUCTION_PERFORMANCE.cmd
+            "$README_NAME" "docs/$README_NAME" "docs/$CONTRACT_NAME" "docs/$VALIDATION_NAME" "docs/$KNOWN_ISSUES_NAME"
+            "docs/$PATCHER_NAME" "docs/$DELTA_NAME" "docs/$CUMULATIVE_NAME"
+          )
+          for rel in "${required[@]}"; do test -s "$stage/$rel" || { echo "ERROR: required package file missing: $rel" >&2; exit 1; }; done
+
+          # No current USLRD experiment cfg/cmd should survive in the Clean package.
+          if find "$stage/Main" -maxdepth 1 -type f -name 'USLRD_*' -print -quit | grep -q .; then echo "ERROR: USLRD experiment cfg survived" >&2; exit 1; fi
+          if find "$stage" -maxdepth 1 -type f -name 'RUN_USLRD_*' -print -quit | grep -q .; then echo "ERROR: USLRD experiment launcher survived" >&2; exit 1; fi
+          if find "$stage" -maxdepth 1 -type f -iname '*USLRD*DIAG*' -print -quit | grep -q .; then echo "ERROR: USLRD diagnostic surface survived" >&2; exit 1; fi
+
+          grep -Fq 'cl_renderer rend2' "$stage/RUN_DARKWOLF_PRODUCTION.cmd"
+          grep -Fq '+set r_volumetricLocal 1' "$stage/RUN_DARKWOLF_PRODUCTION.cmd"
+          grep -Fq '+set r_volumetricLocal 1' "$stage/RUN_DARKWOLF_PRODUCTION_CINEMATIC.cmd"
+          grep -Fq '+set r_volumetricLocal 1' "$stage/RUN_DARKWOLF_PRODUCTION_PERFORMANCE.cmd"
+          grep -Fq 'point_shadow_budget_runtime_cvar=r_dlightShadowMaxLights_DEFAULT_3_USER_ADJUSTABLE_0_TO_MAX' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'direct_staticpromote_max=32' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'known_residual_A=' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'known_residual_B=' "$stage/docs/$CONTRACT_NAME"
+
+          cmp "$parent/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$parent/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$parent/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$parent/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$parent/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          if find "$stage" -type f -iname 'pak*.pk3' -print -quit | grep -q .; then echo "ERROR: commercial pak*.pk3 found" >&2; exit 1; fi
+          if find "$stage" -type f \( -iname '*.sav' -o -iname 'wolfconfig.cfg' \) -print -quit | grep -q .; then echo "ERROR: user save/config found" >&2; exit 1; fi
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt && sha256sum -c docs/SHA256SUMS.txt)
+          echo "Final Clean Production package/runtime/commercial-asset policy PASS"
+
+      - name: Package full SP Clean Production release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          rm -rf out; mkdir -p out
+          archive="out/${RELEASE_BASENAME}.zip"
+          (cd runtime && find "$RELEASE_BASENAME" -type f -print | LC_ALL=C sort | zip -X -9 "$GITHUB_WORKSPACE/$archive" -@)
+          test -s "$archive"; unzip -tq "$archive"
+          sha256sum "$archive" | sed "s#  out/#  #" > "out/${RELEASE_BASENAME}.zip.sha256"
+          cat "out/${RELEASE_BASENAME}.zip.sha256"
+
+      - name: Upload full SP Clean Production artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            out/${{ env.RELEASE_BASENAME }}.zip
+            out/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
