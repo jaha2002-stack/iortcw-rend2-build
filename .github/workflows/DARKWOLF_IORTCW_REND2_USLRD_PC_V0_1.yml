@@ -1,0 +1,748 @@
+name: Build DarkWolf Rend2 Unified StaticPromote Lamp Residency Delivery PC v0.1 over Run 35150218437 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-uslrd-pc-v0-1-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: USLRD PC v0.1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      PARENT_RUN_ID: "35150218437"
+      PARENT_RUN_HEAD_SHA: 7e457acaf98289db11f29a7ff68638422a4cdeda
+      PARENT_WORKFLOW_PATH: '.github/workflows/stage11_shadow_clean_production_v1-1.yml'
+      PARENT_WORKFLOW_BLOB_SHA: 4a72ef127ebf8c4adabe8d412bc183ffc37a25f1
+      PARENT_ARTIFACT_ID: "10469110629"
+      PARENT_ARTIFACT_NAME: iortcw-rend2-stage11-unified-asset-shadow-coverage-clean-production-v1-full-sp-windows-x64-1
+      PARENT_ARTIFACT_DIGEST: sha256:059a3e7914ad5a8d25f56910bd238eb37ec274deae817178d35a8975b01d6d15
+      PARENT_INNER_SHA256: b790230a7f37988fd2c4483f480f42a57d85ef85380bfe5fc95748f1e82d6bd6
+      PARENT_RELEASE_BASENAME: iortcw-rend2-stage11-unified-asset-shadow-coverage-clean-production-v1-full-sp-windows-x64-1
+      PARENT_CUMULATIVE_NAME: darkwolf-rend2-cumulative-stage11-unified-asset-shadow-coverage-clean-production-v1-sp.patch
+      PARENT_CUMULATIVE_SHA256: 07df73bf297d22e044f59d3cd80e3c976b9f17517f0435b51be39931de7a4230
+      PARENT_CONTRACT_NAME: STAGE11_UNIFIED_ASSET_SHADOW_COVERAGE_CLEAN_PRODUCTION_V1_CONTRACT.txt
+      PARENT_CONTRACT_SHA256: 11538668d3d6bcf537acb1fb2caa0d4672ed92f2f29ac3fda73e0ac63bb18485
+      PARENT_RENDERER_SHA256: 37181f593e9cb576de3d5a8e5fbc2cb60841c124d3b6014eb813fc47392a463c
+      PARENT_CGAME_SHA256: 4e208e26614dacdb0d6e814d6f96ac7d1f592a0ef7a27c1861a07342c674ce81
+      PARENT_EXE_SHA256: 05497aaee40b2c8583c6aaaeca738e27204e91f5fb493c9d95255dd38fda3513
+      PARENT_OGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      PARENT_QAGAME_SHA256: 79858e7faa02e2b50a209c8e2c752f822e92c81579d4da760fb9b87a635caec2
+      PARENT_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+
+      PATCHER_NAME: apply_uslrd_v0_1.py
+      PATCHER_SHA256: 4a0ffe0e30167147e3317647ad128ce7ed03c55f9120f53bba93203d3dcf836d
+      PATCHER_GZIP_SHA256: 2fc0ac1af74c8d27128c309f5b991f8f785a56d89e9c4441a7dcea940793a093
+      DELTA_NAME: darkwolf-uslrd-pc-v0-1-over-run-35150218437.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-uslrd-pc-v0-1-sp.patch
+      CONTRACT_NAME: USLRD_V0_1_CONTRACT.txt
+      VALIDATION_NAME: STATIC_VALIDATION_USLRD_V0_1.txt
+      README_NAME: README_USLRD_V0_1_RU.txt
+      TEST_PLAN_NAME: USLRD_V0_1_TEST_PLAN_RU.txt
+      RELEASE_BASENAME: iortcw-rend2-uslrd-pc-v0-1-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Preflight workflow YAML LF Bash and embedded patcher identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: workflow cannot be resolved: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY_PREFLIGHT'
+          from pathlib import Path
+          import subprocess, sys, yaml
+          p=Path(sys.argv[1]); raw=p.read_bytes()
+          if b'\r' in raw: raise SystemExit('ERROR: CR byte in workflow; LF-only required')
+          doc=yaml.safe_load(raw.decode('utf-8'))
+          expected='Build DarkWolf Rend2 Unified StaticPromote Lamp Residency Delivery PC v0.1 over Run 35150218437 SP'
+          if doc.get('name') != expected: raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+          checked=0
+          for job_name,job in (doc.get('jobs') or {}).items():
+              for index,step in enumerate(job.get('steps') or [],1):
+                  script=step.get('run')
+                  if not script: continue
+                  proc=subprocess.run(['bash','-n'],input=script,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}',file=sys.stderr)
+                      print(proc.stderr,file=sys.stderr); raise SystemExit(proc.returncode)
+                  checked += 1
+          if checked < 11: raise SystemExit(f'ERROR: unexpectedly small Bash contract: {checked}')
+          print(f'Workflow YAML + LF + Bash syntax PASS: {checked} Bash blocks')
+          PY_PREFLIGHT
+
+      - name: Verify exact frozen baseline Run 35150218437
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$PARENT_RUN_HEAD_SHA" || { echo "ERROR: baseline HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: baseline run is not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$PARENT_WORKFLOW_PATH" || { echo "ERROR: baseline workflow path drift" >&2; exit 1; }
+          workflow_blob="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${PARENT_WORKFLOW_PATH}?ref=${PARENT_RUN_HEAD_SHA}" --jq '.sha')"
+          test "$workflow_blob" = "$PARENT_WORKFLOW_BLOB_SHA" || { echo "ERROR: baseline workflow blob drift: $workflow_blob" >&2; exit 1; }
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${PARENT_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: exact baseline artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$PARENT_ARTIFACT_NAME" || { echo "ERROR: baseline artifact name drift" >&2; exit 1; }
+          test "$expired" = false || { echo "ERROR: baseline artifact expired" >&2; exit 1; }
+          test "$adigest" = "$PARENT_ARTIFACT_DIGEST" || { echo "ERROR: baseline artifact digest drift: $adigest" >&2; exit 1; }
+          echo "Exact frozen baseline Run 35150218437 provenance PASS"
+
+      - name: Download and verify exact Run 35150218437 runtime package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf parent-artifact parent-release
+          mkdir -p parent-artifact parent-release
+          gh run download "$PARENT_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$PARENT_ARTIFACT_NAME" --dir parent-artifact
+          z="parent-artifact/${PARENT_RELEASE_BASENAME}.zip"
+          sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"
+          sidecar_sha="$(awk '{print $1}' "$sidecar")"
+          test "$inner_sha" = "$sidecar_sha" || { echo "ERROR: baseline inner ZIP/sidecar mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$PARENT_INNER_SHA256" || { echo "ERROR: baseline inner ZIP SHA drift: $inner_sha" >&2; exit 1; }
+          unzip -tq "$z"
+          unzip -q "$z" -d parent-release
+          mapfile -t roots < <(find parent-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one baseline release root" >&2; exit 1; }
+          parent="${roots[0]}"
+          test "$(basename "$parent")" = "$PARENT_RELEASE_BASENAME" || { echo "ERROR: baseline release root drift" >&2; exit 1; }
+          printf '%s\n' "$parent" > .parent_stage_path
+          test -s "$parent/docs/SHA256SUMS.txt"
+          (cd "$parent" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$parent/docs/$PARENT_CUMULATIVE_NAME" | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256"
+          test "$(sha256sum "$parent/docs/$PARENT_CONTRACT_NAME" | awk '{print $1}')" = "$PARENT_CONTRACT_SHA256"
+          test "$(sha256sum "$parent/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$PARENT_RENDERER_SHA256"
+          test "$(sha256sum "$parent/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$parent/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$parent/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OGL1_SHA256"
+          test "$(sha256sum "$parent/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$parent/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          grep -Fq 'status=CLEAN_PRODUCTION_RELEASE_RUNTIME_ACCEPTED_DONOR' "$parent/docs/$PARENT_CONTRACT_NAME"
+          grep -Fq 'cumulative_source_files=67' "$parent/docs/$PARENT_CONTRACT_NAME"
+          echo "Exact Run 35150218437 package/hash/manifest PASS"
+
+      - name: Reconstruct exact Run 35150218437 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$parent/docs/$PARENT_CUMULATIVE_NAME" .parent-cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source add -N .
+          git -C source diff --name-only "$UPSTREAM_SHA" -- | LC_ALL=C sort > .parent_actual_paths.txt
+          python3 - <<'PY_PARENT'
+          from pathlib import Path
+          import re, subprocess
+          lines=Path('.parent-cumulative.patch').read_text(encoding='utf-8').splitlines()
+          records=[]; current=None
+          for line in lines:
+              m=re.match(r'diff --git a/(.+) b/(.+)$',line)
+              if m:
+                  if m.group(1)!=m.group(2): raise SystemExit(f'ERROR: rename/path mismatch: {line}')
+                  current=m.group(2); continue
+              if current and line.startswith('index '):
+                  m=re.match(r'index ([0-9a-f]+)\.\.([0-9a-f]+)(?: [0-9]+)?$',line)
+                  if not m: raise SystemExit(f'ERROR: malformed index for {current}: {line}')
+                  records.append((current,m.group(2))); current=None
+          if len(records)!=67 or len({p for p,_ in records})!=67: raise SystemExit(f'ERROR: cumulative section drift: {len(records)}')
+          expected=sorted(p for p,_ in records); actual=Path('.parent_actual_paths.txt').read_text().splitlines()
+          if expected!=actual: raise SystemExit('ERROR: baseline path set drift')
+          for rel,prefix in records:
+              got=subprocess.check_output(['git','-C','source','hash-object',rel],text=True).strip()
+              if not got.startswith(prefix): raise SystemExit(f'ERROR: postimage blob drift: {rel} expected-prefix={prefix} got={got}')
+          print('Exact Run 35150218437 source postimage PASS: 67 files')
+          PY_PARENT
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -q -m 'Reconstructed exact Run 35150218437 source postimage'
+          parent_commit="$(git -C source rev-parse HEAD)"
+          printf '%s\n' "$parent_commit" > .parent_source_commit
+          test "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA"
+          echo "Exact frozen source reconstruction PASS: $parent_commit"
+
+      - name: Audit frozen StaticPromote architecture and protect unrelated files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY_AUDIT'
+          from pathlib import Path
+          import re
+          root=Path('source/SP/code')
+          scene=(root/'rend2/tr_scene.c').read_text()
+          backend=(root/'rend2/tr_backend.c').read_text()
+          init=(root/'rend2/tr_init.c').read_text()
+          local=(root/'rend2/tr_local.h').read_text()
+          facts=[
+              ('persistent fixtures','STATIC_PROMOTE_PERSISTENT_MAX_FIXTURES 1024' in scene),
+              ('production max active','STATIC_PROMOTE_PRODUCTION_MAX_ACTIVE 28' in scene),
+              ('legacy 28 influence slots','STATIC_PROMOTE_INFLUENCE_MAX_LEAVES 28' in scene),
+              ('legacy 26 directions','directions[26]' in scene),
+              ('full-sphere diagnostic','R_DarkWolfPCRBE2E07ScanVolumeLeaves' in scene and 'PCRB_E2E07_MAX_UNIQUE_LEAF_PAIRS 512' in scene),
+              ('selected max-dlights state','SELECTED_DROP_MAX_DLIGHTS' in scene),
+              ('legacy selector','R_StaticPromoteSelectPersistentInfluence' in scene),
+              ('local vol max4','#define LOCAL_VOLUMETRIC_MULTI_MAX 4' in backend),
+              ('max lights default24','r_staticPromoteMaxLights = ri.Cvar_Get( "r_staticPromoteMaxLights", "24"' in init),
+              ('hold default8000','r_staticPromotePVSHoldMs = ri.Cvar_Get( "r_staticPromotePVSHoldMs", "8000"' in init),
+              ('dlight stable marker baseline','qboolean localVolumetricLamp' in local),
+          ]
+          bad=[n for n,ok in facts if not ok]
+          if bad: raise SystemExit('ERROR: frozen architecture fact drift: '+', '.join(bad))
+          maxdef=[]
+          for p in root.rglob('*.[ch]'):
+              try: s=p.read_text(errors='ignore')
+              except OSError: continue
+              if re.search(r'#\s*define\s+MAX_DLIGHTS\s+32\b',s): maxdef.append(str(p))
+          if not maxdef: raise SystemExit('ERROR: MAX_DLIGHTS=32 definition not found')
+          print('Frozen architecture audit PASS; MAX_DLIGHTS=32 at '+maxdef[0])
+          PY_AUDIT
+          protected=(
+            SP/code/rend2/tr_shade.c
+            SP/code/rend2/tr_main.c
+            SP/code/rend2/glsl/dlight_fp.glsl
+            SP/code/rend2/glsl/lightall_fp.glsl
+            SP/code/cgame/cg_main.c
+            SP/code/cgame/cg_weapons.c
+            SP/code/server/sv_snapshot.c
+            SP/code/rend2/tr_world.c
+          )
+          : > .protected.before
+          for rel in "${protected[@]}"; do test -f "source/$rel"; sha256sum "source/$rel" >> .protected.before; done
+          echo "Frozen unrelated-file hash baseline captured PASS"
+
+      - name: Materialize validate and apply USLRD v0.1 patcher
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME.gz.b64" <<'PATCHER_B64'
+          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
+          I/0xJq4AAA==
+          PATCHER_B64
+          sed -i 's/^[[:space:]]*//' "$PATCHER_NAME.gz.b64"
+          base64 -d "$PATCHER_NAME.gz.b64" > "$PATCHER_NAME.gz"
+          test "$(sha256sum "$PATCHER_NAME.gz" | awk '{print $1}')" = "$PATCHER_GZIP_SHA256" || { echo "ERROR: embedded patcher gzip SHA drift" >&2; exit 1; }
+          gzip -dc "$PATCHER_NAME.gz" > "$PATCHER_NAME"
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: embedded patcher SHA drift" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" --root source --check-only
+          python3 "$PATCHER_NAME" --root source
+          if python3 "$PATCHER_NAME" --root source --check-only >/tmp/reapply.out 2>&1; then
+            echo "ERROR: repeat-apply guard failed; patcher accepted already-patched source" >&2; cat /tmp/reapply.out; exit 1
+          fi
+          git -C source diff --check "$(cat .parent_source_commit)" -- SP/code/rend2/tr_scene.c SP/code/rend2/tr_local.h SP/code/rend2/tr_backend.c SP/code/rend2/tr_init.c
+          git -C source diff --name-only "$(cat .parent_source_commit)" -- | LC_ALL=C sort > .uslrd_paths.txt
+          cat > .uslrd_expected_paths.txt <<'EOF_PATHS'
+          SP/code/rend2/tr_backend.c
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          SP/code/rend2/tr_scene.c
+          EOF_PATHS
+          sed -i 's/^[[:space:]]*//' .uslrd_expected_paths.txt
+          cmp .uslrd_expected_paths.txt .uslrd_paths.txt || { echo "ERROR: USLRD changed-file allowlist drift" >&2; diff -u .uslrd_expected_paths.txt .uslrd_paths.txt || true; exit 1; }
+          while read -r hash path; do test "$(sha256sum "$path" | awk '{print $1}')" = "$hash" || { echo "ERROR: protected file changed: $path" >&2; exit 1; }; done < .protected.before
+          grep -Fq 'DARKWOLF_USLRD_V0_1' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'R_StaticPromoteSelectPersistentInfluenceLegacy' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'R_StaticPromoteSelectPersistentInfluenceUnified' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'USLRD_MAX_INFLUENCE_PAIRS 512' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'MAX_DLIGHTS - r_numdlights' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'R_StaticPromoteUSLRDFindNativeRuntimeDlight' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'staticPromoteFixtureId' source/SP/code/rend2/tr_local.h
+          grep -Fq 'RB_LocalVolumetricUSLRDPreemptLowerTier' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'r_staticPromoteUnifiedResidency = ri.Cvar_Get( "r_staticPromoteUnifiedResidency", "1", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_staticPromoteUnifiedDiag = ri.Cvar_Get( "r_staticPromoteUnifiedDiag", "0", CVAR_ARCHIVE );' source/SP/code/rend2/tr_init.c
+          git -C source diff --unified=0 "$(cat .parent_source_commit)" -- SP/code/rend2/tr_scene.c SP/code/rend2/tr_backend.c > .uslrd_map_audit.patch
+          if grep -Ei '^\+.*(factory|escape1|escape2|village1|boss2|x-labs|xlabs)' .uslrd_map_audit.patch; then
+            echo "ERROR: USLRD delta introduced a map-specific production token" >&2; exit 1
+          fi
+          echo "USLRD v0.1 4-file renderer delta / protected-file / no-per-map policy PASS"
+
+      - name: Generate USLRD delta cumulative and exact replay proofs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_commit="$(cat .parent_source_commit)"
+          git -C source diff --binary --full-index "$parent_commit" -- SP/code/rend2/tr_scene.c SP/code/rend2/tr_local.h SP/code/rend2/tr_backend.c SP/code/rend2/tr_init.c > "$DELTA_NAME"
+          test -s "$DELTA_NAME"
+          git -C source diff --binary --full-index "$UPSTREAM_SHA" -- > "$CUMULATIVE_NAME"
+          test -s "$CUMULATIVE_NAME"
+          git -C source apply --reverse --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          rm -rf replay-delta replay-cumulative
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$parent_commit"
+          git -C replay-delta apply --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --reverse --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          for rel in SP/code/rend2/tr_scene.c SP/code/rend2/tr_local.h SP/code/rend2/tr_backend.c SP/code/rend2/tr_init.c; do cmp "source/$rel" "replay-delta/$rel"; done
+          git clone -q source replay-cumulative
+          git -C replay-cumulative checkout -q --detach "$UPSTREAM_SHA"
+          git -C replay-cumulative apply --check --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --reverse --check --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          mapfile -t all_paths < <(git -C source diff --name-only "$UPSTREAM_SHA" -- | LC_ALL=C sort)
+          for rel in "${all_paths[@]}"; do cmp "source/$rel" "replay-cumulative/$rel"; done
+          sha256sum "$DELTA_NAME" > .delta_sha256
+          sha256sum "$CUMULATIVE_NAME" > .cumulative_sha256
+          echo "USLRD exact delta/reverse/clean replay + cumulative replay PASS"
+
+      - name: Build canonical Windows x64 SP USLRD candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -x source/SP/cross-make-mingw64.sh || { echo "ERROR: canonical SP MinGW64 build script missing" >&2; exit 1; }
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh -j"$jobs" \
+              BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          )
+          mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | LC_ALL=C sort)
+          mapfile -t cgames < <(find source/SP/build -type f -name cgame_sp_x64.dll -print | LC_ALL=C sort)
+          mapfile -t exes < <(find source/SP/build -type f -name ioWolfSP.x64.exe -print | LC_ALL=C sort)
+          mapfile -t ogl1s < <(find source/SP/build -type f -name renderer_sp_opengl1_x64.dll -print | LC_ALL=C sort)
+          mapfile -t qagames < <(find source/SP/build -type f -name qagame_sp_x64.dll -print | LC_ALL=C sort)
+          mapfile -t uis < <(find source/SP/build -type f -name ui_sp_x64.dll -print | LC_ALL=C sort)
+          test "${#renderers[@]}" -eq 1 && test "${#cgames[@]}" -eq 1 && test "${#exes[@]}" -eq 1 \
+            && test "${#ogl1s[@]}" -eq 1 && test "${#qagames[@]}" -eq 1 && test "${#uis[@]}" -eq 1
+          renderer="${renderers[0]}"
+          file "$renderer" | tee .renderer_file.txt
+          grep -Fq 'PE32+' .renderer_file.txt || { echo "ERROR: Rend2 renderer is not PE32+ Windows x64" >&2; exit 1; }
+          printf '%s\n' "$renderer" > .renderer_path
+          sha256sum "$renderer" > .renderer_sha256
+          echo "Canonical Windows x64 SP compile/output contract PASS"
+
+      - name: Stage exact Run 35150218437 runtime and replace renderer only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"; renderer="$(cat .renderer_path)"
+          rm -rf runtime; mkdir -p runtime
+          stage="runtime/$RELEASE_BASENAME"
+          cp -a "$parent" "$stage"
+          cp -f "$renderer" "$stage/renderer_sp_rend2_x64.dll"
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          cmp "$parent/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$parent/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$parent/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$parent/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$parent/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_CGAME_SHA256"
+          printf '%s\n' "$stage" > .stage_path
+          echo "Runtime staging PASS: exact frozen donor + Rend2 renderer replacement only"
+
+      - name: Add USLRD A B controls provenance and test plan
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"; mkdir -p "$stage/docs"
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          delta_sha="$(awk '{print $1}' .delta_sha256)"; cumulative_sha="$(awk '{print $1}' .cumulative_sha256)"; renderer_sha="$(awk '{print $1}' .renderer_sha256)"
+          cat > "$stage/Main/USLRD_V0_1_LEGACY.cfg" <<'EOF_LEGACY'
+          seta r_staticPromoteUnifiedResidency 0
+          seta r_staticPromoteUnifiedDiag 1
+          EOF_LEGACY
+          cat > "$stage/Main/USLRD_V0_1_UNIFIED.cfg" <<'EOF_UNIFIED'
+          seta r_staticPromoteUnifiedResidency 1
+          seta r_staticPromoteUnifiedDiag 1
+          EOF_UNIFIED
+          sed -i 's/^[[:space:]]*//' "$stage/Main/USLRD_V0_1_LEGACY.cfg" "$stage/Main/USLRD_V0_1_UNIFIED.cfg"
+          cat > "$stage/RUN_USLRD_V0_1_LEGACY.cmd" <<'EOF_CMD_A'
+          @echo off
+          start "" ioWolfSP.x64.exe +set cl_renderer rend2 +exec USLRD_V0_1_LEGACY.cfg
+          EOF_CMD_A
+          cat > "$stage/RUN_USLRD_V0_1_UNIFIED.cmd" <<'EOF_CMD_B'
+          @echo off
+          start "" ioWolfSP.x64.exe +set cl_renderer rend2 +exec USLRD_V0_1_UNIFIED.cfg
+          EOF_CMD_B
+          sed -i 's/^[[:space:]]*//' "$stage/RUN_USLRD_V0_1_LEGACY.cmd" "$stage/RUN_USLRD_V0_1_UNIFIED.cmd"
+
+          cat > "$stage/docs/$CONTRACT_NAME" <<EOF_CONTRACT
+          DARKWOLF / IORTCW REND2 SP - UNIFIED STATICPROMOTE LAMP RESIDENCY + DELIVERY PC V0.1
+          frozen_baseline_run=$PARENT_RUN_ID
+          frozen_baseline_head=$PARENT_RUN_HEAD_SHA
+          frozen_baseline_workflow=$PARENT_WORKFLOW_PATH
+          frozen_baseline_artifact_id=$PARENT_ARTIFACT_ID
+          frozen_baseline_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          frozen_baseline_inner_sha256=$PARENT_INNER_SHA256
+          frozen_baseline_cumulative_sha256=$PARENT_CUMULATIVE_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          status=BEHAVIOR_CHANGING_PC_RUNTIME_ACCEPTANCE_REQUIRED
+          source_delta_files=4
+          source_delta_allowlist=SP/code/rend2/tr_scene.c;SP/code/rend2/tr_local.h;SP/code/rend2/tr_backend.c;SP/code/rend2/tr_init.c
+          patcher_sha256=$PATCHER_SHA256
+          delta_sha256=$delta_sha
+          cumulative_sha256=$cumulative_sha
+          renderer_sha256=$renderer_sha
+          runtime_binary_replacements=renderer_sp_rend2_x64.dll
+          master_cvar=r_staticPromoteUnifiedResidency
+          master_default=1
+          diagnostic_cvar=r_staticPromoteUnifiedDiag
+          diagnostic_default=0
+          legacy_ab_path=EXACT_LEGACY_SELECTOR_WHEN_MASTER_0
+          production_full_sphere_pairs=512
+          full_sphere_scan_frequency=ONCE_PER_REGISTRY_GENERATION
+          selection_order=VISIBILITY_TIER_THEN_PHYSICAL_PRIORITY_THEN_PREVIOUS_OWNER_THEN_STABLE_REGISTRY_ORDER
+          dlight_budget=TRUE_GLOBAL_FRONTEND_HEADROOM_MAX_DLIGHTS_MINUS_R_NUMDLIGHTS
+          native_policy=NATIVE_PREFERRED_PROMOTED_FALLBACK_IF_RUNTIME_NATIVE_ABSENT
+          volumetric_policy=SAME_STABLE_FIXTURE_ID_AND_VISIBILITY_TIER_MAX4_WITH_LOWER_TIER_PREEMPTION
+          direct_light_distance_fade=NONE_ADDED
+          map_whitelist=NONE
+          entity_whitelist=NONE
+          shader_whitelist=NONE
+          coordinate_whitelist=NONE
+          static_promote_gain_change=NONE
+          static_promote_radius_tuning_change=NONE
+          stage11_shadow_change=NONE
+          mtr_material_change=NONE
+          bloom_tonemap_exposure_change=NONE
+          firevol_algorithm_change=NONE
+          tesla_experiment_change=NONE
+          gameplay_ai_map_content_change=NONE
+          EOF_CONTRACT
+          sed -i 's/^[[:space:]]*//' "$stage/docs/$CONTRACT_NAME"
+
+          cat > "$stage/docs/$TEST_PLAN_NAME" <<'EOF_TEST'
+          USLRD v0.1 - COMPACT MULTI-MAP ACCEPTANCE PASS
+
+          ROOT QUESTION
+          Does one class-independent runtime ownership policy stop already-recognized StaticPromote lamps from dimming/popping across distance and PVS/portal movement without regressing known-good lamps?
+
+          CONTROL A - LEGACY
+          Run RUN_USLRD_V0_1_LEGACY.cmd. This sets r_staticPromoteUnifiedResidency 0 and keeps compact diagnostics on.
+
+          TEST B - UNIFIED
+          Run RUN_USLRD_V0_1_UNIFIED.cmd. This sets r_staticPromoteUnifiedResidency 1 and keeps compact diagnostics on.
+
+          MAP MATRIX
+          1) Village1 - current problem anchor if applicable.
+          2) Escape2 - current problem anchor if applicable.
+          3) Factory - known-good regression anchor.
+          4) Escape1 - known-good regression anchor.
+          Optional quick check: X-Labs.
+
+          MOVEMENT SCRIPT PER LAMP
+          Start where enhanced light/halo is clearly active. Walk toward the lamp and stand close. Walk away while keeping influenced wall/floor visible. Turn into neighboring corridor/wing and return. Rotate camera away/back. Cross nearest doorway/portal/PVS transition and return.
+
+          PASS
+          Unified does not downgrade promoted/brighter state to ordinary/dim merely from approach/retreat; visible connected geometry inside the sphere keeps delivery; no nearby portal flicker; local halo is not blocked by stale lower-tier far owner; native loss has promoted fallback; truly disconnected/unrelated area still releases the lamp; no obvious leaks; Factory/Escape1 unchanged; no crash or major sustained FPS regression.
+
+          DECISION TABLE
+          Legacy bad / Unified clean on problem maps, anchors clean -> USLRD architecture supported; proceed to Clean Production after one regression confirmation.
+          Legacy bad / Unified bad with USLRD decision=BUDGET_EVICTED -> inspect actual global budget occupancy before any tuning build.
+          Legacy bad / Unified bad with FULL_SPHERE_NO_PVS -> residency evidence is still absent; inspect BSP/PVS linkage, not gain/radius tuning.
+          Legacy bad / Unified bad with AREA_PORTAL_DISCONNECTED -> portal/area connectivity is the blocker; do not disable PVS globally.
+          Unified direct light clean but halo missing and USLRD_VOL shows no ownership -> local-volumetric ownership remains the failing layer.
+          Factory/Escape1 regress in Unified -> reject candidate; compare transition log before any follow-up build.
+
+          RETURN
+          Report map/lamp, whether A or B, what visibly changed, approximate FPS, and only the USLRD_TRANSITION / USLRD_SUMMARY / USLRD_VOL lines surrounding a failure.
+          EOF_TEST
+          sed -i 's/^[[:space:]]*//' "$stage/docs/$TEST_PLAN_NAME"
+
+          cat > "$stage/$README_NAME" <<'EOF_README'
+          DARKWOLF / ioRTCW Rend2 SP - USLRD PC v0.1
+
+          This is one integrated Production Candidate over frozen Run 35150218437.
+          One renderer binary contains both the exact legacy StaticPromote selector (master CVar 0) and the USLRD v0.1 path (master CVar 1).
+
+          USLRD v0.1 adds: precomputed real promoted-light sphere to BSP leaf/cluster/area coverage; current-visibility-first selection; true global DLight headroom awareness; Native Preferred / Promoted Fallback based on current runtime source presence; stable StaticPromote fixture identity shared with the four-slot local volumetric pool; tier-aware replacement of stale lower-relevance volumetric owners; transition-only diagnostics.
+
+          It does NOT retune StaticPromote gain/directGain/radius/color, does not change Stage 11 shadows, MTR/materials, Bloom/ToneMap/Exposure, FireVol, Tesla-specific experiments, maps, game logic or AI.
+
+          Use RUN_USLRD_V0_1_LEGACY.cmd for control A and RUN_USLRD_V0_1_UNIFIED.cmd for test B. See docs/USLRD_V0_1_TEST_PLAN_RU.txt.
+          EOF_README
+          sed -i 's/^[[:space:]]*//' "$stage/$README_NAME"
+          cp "$stage/$README_NAME" "$stage/docs/$README_NAME"
+
+          cat > "$stage/docs/$VALIDATION_NAME" <<EOF_VALIDATION
+          USLRD V0.1 - CI VALIDATION RECORD
+          exact_baseline_run=$PARENT_RUN_ID
+          exact_baseline_head=$PARENT_RUN_HEAD_SHA
+          exact_baseline_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          exact_baseline_inner_sha256=$PARENT_INNER_SHA256
+          exact_baseline_cumulative_sha256=$PARENT_CUMULATIVE_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          workflow_yaml_lf_bash=PASS
+          baseline_package_manifest=PASS
+          baseline_source_reconstruction=PASS_67_FILES
+          frozen_architecture_assertions=PASS
+          patcher_base64_gzip_sha_pycompile=PASS
+          patcher_check_only_apply_repeat_guard=PASS
+          changed_file_allowlist=PASS_4_RENDERER_FILES
+          protected_file_hashes=PASS
+          no_per_map_special_case=PASS
+          delta_reverse_check=PASS
+          delta_clean_replay=PASS
+          cumulative_clean_replay=PASS_EXACT_REPLAY
+          mingw_sp_compile=PASS_THIS_RUN
+          pe32_renderer=PASS
+          runtime_status=NOT_TESTED_REQUIRES_USER_AB
+          EOF_VALIDATION
+          sed -i 's/^[[:space:]]*//' "$stage/docs/$VALIDATION_NAME"
+          echo "USLRD provenance + A/B controls + test plan PASS"
+
+      - name: Final package policy audit and SHA manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          for rel in ioWolfSP.x64.exe renderer_sp_rend2_x64.dll renderer_sp_opengl1_x64.dll \
+                     Main/cgame_sp_x64.dll Main/qagame_sp_x64.dll Main/ui_sp_x64.dll \
+                     OpenAL64.dll SDL264.dll Main/autoexec.cfg RUN_DARKWOLF_PRODUCTION.cmd \
+                     Main/USLRD_V0_1_LEGACY.cfg Main/USLRD_V0_1_UNIFIED.cfg \
+                     RUN_USLRD_V0_1_LEGACY.cmd RUN_USLRD_V0_1_UNIFIED.cmd \
+                     "$README_NAME" "docs/$README_NAME" "docs/$CONTRACT_NAME" "docs/$VALIDATION_NAME" \
+                     "docs/$TEST_PLAN_NAME" "docs/$PATCHER_NAME" "docs/$DELTA_NAME" "docs/$CUMULATIVE_NAME"; do
+            test -s "$stage/$rel" || { echo "ERROR: required USLRD package file missing: $rel" >&2; exit 1; }
+          done
+          grep -Fq 'r_staticPromoteUnifiedResidency 0' "$stage/Main/USLRD_V0_1_LEGACY.cfg"
+          grep -Fq 'r_staticPromoteUnifiedResidency 1' "$stage/Main/USLRD_V0_1_UNIFIED.cfg"
+          grep -Fq 'cl_renderer rend2' "$stage/RUN_DARKWOLF_PRODUCTION.cmd"
+          if find "$stage" -type f -iname 'pak*.pk3' -print -quit | grep -q .; then echo "ERROR: commercial pak*.pk3 found" >&2; exit 1; fi
+          if find "$stage" -type f \( -iname '*.sav' -o -iname 'wolfconfig.cfg' \) -print -quit | grep -q .; then echo "ERROR: user save/config found" >&2; exit 1; fi
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt && sha256sum -c docs/SHA256SUMS.txt)
+          echo "Final USLRD package/runtime-binary/commercial-asset policy PASS"
+
+      - name: Package full SP USLRD Production Candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          rm -rf out; mkdir -p out
+          archive="out/${RELEASE_BASENAME}.zip"
+          (cd runtime && find "$RELEASE_BASENAME" -type f -print | LC_ALL=C sort | zip -X -9 "$GITHUB_WORKSPACE/$archive" -@)
+          test -s "$archive"; unzip -tq "$archive"
+          sha256sum "$archive" | sed "s#  out/#  #" > "out/${RELEASE_BASENAME}.zip.sha256"
+          cat "out/${RELEASE_BASENAME}.zip.sha256"
+
+      - name: Upload full SP USLRD Production Candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            out/${{ env.RELEASE_BASENAME }}.zip
+            out/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
