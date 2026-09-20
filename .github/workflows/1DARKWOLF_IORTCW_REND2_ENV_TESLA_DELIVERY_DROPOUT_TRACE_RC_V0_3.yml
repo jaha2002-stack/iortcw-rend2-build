@@ -1,0 +1,1240 @@
+name: Build DarkWolf Rend2 Environmental Tesla Delivery Dropout Trace RC v0.3 over RC v0.2 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-env-tesla-dropout-trace-rc-v0-3-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Environmental Tesla Delivery Dropout Root-Cause Trace RC v0.3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      PARENT_RUN_ID: "35503262322"
+      PARENT_RUN_HEAD_SHA: 80fde84b6e91febd5ab5a8c10e37ed0d6dd01476
+      PARENT_WORKFLOW_PATH: '.github/workflows/DARKWOLF_IORTCW_REND2_ESCAPE1_TABLE_SHADOW_RC_V0_2_PERSISTENT_PHYSICAL_SET_RESIDENCY.yml'
+      PARENT_WORKFLOW_BLOB_SHA: 4562dd060604bb81cefdfd18ac056fc64cd4c1a5
+      PARENT_ARTIFACT_ID: "10603017159"
+      PARENT_ARTIFACT_NAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+      PARENT_ARTIFACT_DIGEST: sha256:51ef9cb590b5e9c2ae96d8305eb4e63bae005b993acdca48af7b6ff51e0d0409
+      PARENT_INNER_SHA256: efe9a4f3b33e5dd4b621ed3fa0d87abe677c85d09ca29088a380d813b5c082bb
+      PARENT_RELEASE_BASENAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+      PARENT_CUMULATIVE_NAME: darkwolf-rend2-cumulative-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-sp.patch
+      PARENT_CUMULATIVE_SHA256: 1b766221df31b483877cee2378e3696c7a992abc9cd61628e945b16c145bebe2
+      PARENT_MANIFEST_SHA256: 988bc7051a6728ed0df4293ff850187d9916b81c0bd7c4d5c29eff3f396fbae6
+      PARENT_EXE_SHA256: 05497aaee40b2c8583c6aaaeca738e27204e91f5fb493c9d95255dd38fda3513
+      PARENT_CGAME_SHA256: 4e208e26614dacdb0d6e814d6f96ac7d1f592a0ef7a27c1861a07342c674ce81
+      PARENT_RENDERER_SHA256: d7efccd6923e0b0b8ea8c87355f9e014699543682cca75367e8b4cef99eca78c
+      PARENT_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      PARENT_QAGAME_SHA256: 79858e7faa02e2b50a209c8e2c752f822e92c81579d4da760fb9b87a635caec2
+      PARENT_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+
+      PATCHER_NAME: apply_env_tesla_delivery_dropout_trace_rc_v0_3.py
+      PATCHER_SHA256: 6aae32bee635521665b92e944327df1a3414a422e74765f02eb927589f999a7c
+      DELTA_NAME: darkwolf-env-tesla-delivery-dropout-trace-rc-v0-3-over-rc-v0-2.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-env-tesla-delivery-dropout-trace-rc-v0-3-sp.patch
+      VALIDATION_NAME: STATIC_VALIDATION_ENV_TESLA_DROPOUT_TRACE_RC_V0_3.txt
+      README_NAME: README_ENV_TESLA_DROPOUT_TRACE_RC_V0_3_RU.txt
+      CFG_NAME: TESLA_DROPOUT_RC_V0_3.cfg
+      RELEASE_BASENAME: iortcw-rend2-env-tesla-delivery-dropout-trace-rc-v0-3-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Preflight workflow YAML and shell blocks
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel"
+          python3 - "$workflow_rel" <<'PY_PREFLIGHT'
+          from pathlib import Path
+          import subprocess, sys, yaml
+          p=Path(sys.argv[1])
+          raw=p.read_bytes()
+          if b'\r' in raw:
+              raise SystemExit('ERROR: workflow must be LF-only')
+          doc=yaml.safe_load(raw.decode('utf-8'))
+          checked=0
+          for job in (doc.get('jobs') or {}).values():
+              for step in job.get('steps') or []:
+                  script=step.get('run')
+                  if not script:
+                      continue
+                  proc=subprocess.run(['bash','-n'], input=script, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(proc.stderr, file=sys.stderr)
+                      raise SystemExit('ERROR: bash -n failed for '+str(step.get('name')))
+                  checked += 1
+          if checked < 10:
+              raise SystemExit(f'ERROR: unexpectedly small workflow shell contract: {checked}')
+          print(f'Workflow preflight PASS: {checked} shell blocks')
+          PY_PREFLIGHT
+
+      - name: Verify exact runtime-tested RC v0.2 parent provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$PARENT_RUN_HEAD_SHA" || { echo "ERROR: parent HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: parent run not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$PARENT_WORKFLOW_PATH" || { echo "ERROR: parent workflow path drift" >&2; exit 1; }
+          workflow_blob="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${PARENT_WORKFLOW_PATH}?ref=${PARENT_RUN_HEAD_SHA}" --jq '.sha')"
+          test "$workflow_blob" = "$PARENT_WORKFLOW_BLOB_SHA" || { echo "ERROR: parent workflow blob drift: $workflow_blob" >&2; exit 1; }
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${PARENT_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: exact parent artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$PARENT_ARTIFACT_NAME"
+          test "$expired" = false
+          test "$adigest" = "$PARENT_ARTIFACT_DIGEST" || { echo "ERROR: parent artifact digest drift" >&2; exit 1; }
+          echo "Exact RC v0.2 parent provenance PASS"
+
+      - name: Download and verify exact RC v0.2 parent package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf parent-artifact parent-release
+          mkdir -p parent-artifact parent-release
+          gh run download "$PARENT_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$PARENT_ARTIFACT_NAME" --dir parent-artifact
+          z="parent-artifact/${PARENT_RELEASE_BASENAME}.zip"
+          sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"
+          sidecar_sha="$(awk '{print $1}' "$sidecar")"
+          test "$inner_sha" = "$sidecar_sha" || { echo "ERROR: parent ZIP/sidecar mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$PARENT_INNER_SHA256" || { echo "ERROR: parent inner SHA drift: $inner_sha" >&2; exit 1; }
+          unzip -tq "$z"
+          unzip -q "$z" -d parent-release
+          mapfile -t roots < <(find parent-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1
+          parent="${roots[0]}"
+          test "$(basename "$parent")" = "$PARENT_RELEASE_BASENAME"
+          printf '%s\n' "$parent" > .parent_stage_path
+          test "$(sha256sum "$parent/docs/SHA256SUMS.txt" | awk '{print $1}')" = "$PARENT_MANIFEST_SHA256"
+          (cd "$parent" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$parent/docs/$PARENT_CUMULATIVE_NAME" | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256"
+          test "$(sha256sum "$parent/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$parent/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$parent/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$PARENT_RENDERER_SHA256"
+          test "$(sha256sum "$parent/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$parent/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$parent/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          echo "Exact RC v0.2 package/hash/manifest PASS"
+
+      - name: Reconstruct exact RC v0.2 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$parent/docs/$PARENT_CUMULATIVE_NAME" .parent-cumulative.patch
+          test "$(sha256sum .parent-cumulative.patch | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256"
+          test "$(grep -c '^diff --git ' .parent-cumulative.patch)" -eq 67
+          git -C source apply --check --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.parent-cumulative.patch
+          grep -Fq 'DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2' source/SP/code/rend2/tr_main.c
+          grep -Fq 'DARKWOLF_ELECTROSHOCKER_VISIBLE_INFLUENCE_RESIDENCY_PRODUCTION_V1' source/SP/code/server/sv_snapshot.c
+          grep -Fq 'CG_EFFECTLIGHT_ENVIRONMENTAL_TESLA' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'DWSHADOW_SOURCE_TESLA_ENDPOINT' source/SP/code/rend2/tr_main.c
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -q -m 'Reconstructed exact RC v0.2 source postimage'
+          parent_commit="$(git -C source rev-parse HEAD)"
+          printf '%s\n' "$parent_commit" > .parent_source_commit
+          test "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA"
+          echo "Exact RC v0.2 source reconstruction PASS: $parent_commit"
+
+      - name: Materialize and apply transition-only Tesla dropout trace RC v0.3
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME" <<'PY_PATCHER'
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('source')
+          SERVER = root / 'SP/code/server/sv_snapshot.c'
+          CGENTS = root / 'SP/code/cgame/cg_ents.c'
+          CGMAIN = root / 'SP/code/cgame/cg_main.c'
+          CGLOCAL = root / 'SP/code/cgame/cg_local.h'
+          TRMAIN = root / 'SP/code/rend2/tr_main.c'
+          TRSCENE = root / 'SP/code/rend2/tr_scene.c'
+          TRLOCAL = root / 'SP/code/rend2/tr_local.h'
+          MARK = 'DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3'
+
+
+          def die(msg):
+              raise SystemExit('ERROR: ' + msg)
+
+
+          def find_function_span(text: str, name: str):
+              needle = name + '('
+              pos = text.find(needle)
+              if pos < 0:
+                  die(f'function {name} not found')
+              start = text.rfind('\n', 0, pos) + 1
+              brace = text.find('{', pos)
+              if brace < 0:
+                  die(f'opening brace not found for {name}')
+              depth = 0
+              i = brace
+              in_string = False
+              in_char = False
+              escape = False
+              line_comment = False
+              block_comment = False
+              while i < len(text):
+                  c = text[i]
+                  n = text[i + 1] if i + 1 < len(text) else ''
+                  if line_comment:
+                      if c == '\n':
+                          line_comment = False
+                  elif block_comment:
+                      if c == '*' and n == '/':
+                          block_comment = False
+                          i += 1
+                  elif in_string:
+                      if escape:
+                          escape = False
+                      elif c == '\\':
+                          escape = True
+                      elif c == '"':
+                          in_string = False
+                  elif in_char:
+                      if escape:
+                          escape = False
+                      elif c == '\\':
+                          escape = True
+                      elif c == "'":
+                          in_char = False
+                  else:
+                      if c == '/' and n == '/':
+                          line_comment = True
+                          i += 1
+                      elif c == '/' and n == '*':
+                          block_comment = True
+                          i += 1
+                      elif c == '"':
+                          in_string = True
+                      elif c == "'":
+                          in_char = True
+                      elif c == '{':
+                          depth += 1
+                      elif c == '}':
+                          depth -= 1
+                          if depth == 0:
+                              end = i + 1
+                              if end < len(text) and text[end] == '\n':
+                                  end += 1
+                              return start, end
+                  i += 1
+              die(f'closing brace not found for {name}')
+
+
+          def insert_after_function(text: str, name: str, block: str):
+              _, end = find_function_span(text, name)
+              return text[:end] + '\n' + block.rstrip() + '\n' + text[end:]
+
+
+          def replace_once(text: str, old: str, new: str, label: str):
+              count = text.count(old)
+              if count != 1:
+                  die(f'{label}: expected exactly 1 anchor, found {count}')
+              return text.replace(old, new, 1)
+
+
+          def replace_in_function(text: str, name: str, old: str, new: str, label: str):
+              start, end = find_function_span(text, name)
+              body = text[start:end]
+              count = body.count(old)
+              if count != 1:
+                  die(f'{label}: expected exactly 1 anchor inside {name}, found {count}')
+              body = body.replace(old, new, 1)
+              return text[:start] + body + text[end:]
+
+
+          files = [SERVER, CGENTS, CGMAIN, CGLOCAL, TRMAIN, TRSCENE, TRLOCAL]
+          for p in files:
+              if not p.is_file():
+                  die(f'missing source file {p}')
+
+          sv = SERVER.read_text(encoding='utf-8')
+          cge = CGENTS.read_text(encoding='utf-8')
+          cgm = CGMAIN.read_text(encoding='utf-8')
+          cgl = CGLOCAL.read_text(encoding='utf-8')
+          trm = TRMAIN.read_text(encoding='utf-8')
+          trs = TRSCENE.read_text(encoding='utf-8')
+          trl = TRLOCAL.read_text(encoding='utf-8')
+
+          if any(MARK in t for t in (sv, cge, cgm, cgl, trm, trs, trl)):
+              die('RC v0.3 trace marker already present; repeat apply rejected')
+
+          # Exact RC v0.2 / accepted-production lineage guards.
+          for token in [
+              'DARKWOLF_ELECTROSHOCKER_VISIBLE_INFLUENCE_RESIDENCY_PRODUCTION_V1',
+              'SV_DarkWolfDlightInfluenceBounds',
+              'SV_DarkWolfDlightInfluenceVisible',
+              'DW_DLIGHT_INFLUENCE_MAX_LEAFS 1024',
+              'ET_TESLA_EF',
+              'static void SV_BuildClientSnapshot( client_t *client )',
+          ]:
+              if token not in sv:
+                  die(f'server source contract missing {token}')
+          for token in [
+              'REND2_EFFECT_LIGHTING_V8',
+              'CG_EFFECTLIGHT_ENVIRONMENTAL_TESLA',
+              'CG_AddEffectLightToScene( electricLightOrigin,',
+              'void CG_AddPacketEntities( void )',
+              'case ET_TESLA_EF:',
+          ]:
+              if token not in cge:
+                  die(f'cgame ents source contract missing {token}')
+          for token in [
+              'void CG_AddEffectLightToScene( const vec3_t origin, float radius,',
+              'trap_R_AddLightToScene( origin, radius * radiusScale,',
+          ]:
+              if token not in cgm:
+                  die(f'cgame main source contract missing {token}')
+          for token in [
+              'CG_EFFECTLIGHT_ENVIRONMENTAL_TESLA',
+              'void CG_AddEffectLightToScene( const vec3_t origin, float radius,',
+          ]:
+              if token not in cgl:
+                  die(f'cgame local source contract missing {token}')
+          for token in [
+              'DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2',
+              'DWSHADOW_SOURCE_TESLA_ENDPOINT',
+              'void R_RenderDlightCubemaps(const refdef_t *fd)',
+          ]:
+              if token not in trm:
+                  die(f'rend2 main source contract missing {token}')
+          if 'R_RenderDlightCubemaps(fd);' not in trs:
+              die('rend2 scene cubemap caller contract missing')
+          if 'void R_RenderDlightCubemaps(const refdef_t *fd);' not in trl:
+              die('rend2 local prototype contract missing')
+
+          # ---------------------------------------------------------------------------
+          # SERVER: observe final snapshot presence only. No visibility decision is altered.
+          # Heavy leaf audit executes only when final Tesla presence changes.
+          # ---------------------------------------------------------------------------
+          server_block = r'''
+          // DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3
+          // Passive, transition-only root-cause trace. It never changes snapshot inclusion.
+          // The production visible-influence helper above remains byte-for-byte behaviorally authoritative.
+          typedef enum {
+          	DW_TESLA_TRACE_NORMAL_VISIBLE = 0,
+          	DW_TESLA_TRACE_AREA_REJECT,
+          	DW_TESLA_TRACE_NO_CLUSTERS,
+          	DW_TESLA_TRACE_PVS_REJECT,
+          	DW_TESLA_TRACE_UNLINKED,
+          	DW_TESLA_TRACE_NOCLIENT,
+          	DW_TESLA_TRACE_SINGLECLIENT_FILTER,
+          	DW_TESLA_TRACE_CAMERA_FILTER
+          } dwTeslaTraceNormalReason_t;
+
+          typedef struct dwTeslaTraceInfluence_s {
+          	int evaluated;
+          	int pass;
+          	int leafCount;
+          	int lastLeaf;
+          	int overflow;
+          	int matchingArea;
+          	int matchingCluster;
+          	int pvsBit;
+          	float radius;
+          	vec3_t center;
+          	vec3_t mins;
+          	vec3_t maxs;
+          } dwTeslaTraceInfluence_t;
+
+          static byte s_dwTeslaTraceServerKnown[MAX_GENTITIES];
+          static byte s_dwTeslaTraceServerPresent[MAX_GENTITIES];
+
+          static const char *SV_DarkWolfTeslaTraceNormalReasonName(int reason)
+          {
+          	switch (reason)
+          	{
+          	case DW_TESLA_TRACE_NORMAL_VISIBLE: return "NORMAL_VISIBLE";
+          	case DW_TESLA_TRACE_AREA_REJECT: return "AREA_REJECT";
+          	case DW_TESLA_TRACE_NO_CLUSTERS: return "NO_CLUSTERS";
+          	case DW_TESLA_TRACE_PVS_REJECT: return "PVS_REJECT";
+          	case DW_TESLA_TRACE_UNLINKED: return "UNLINKED";
+          	case DW_TESLA_TRACE_NOCLIENT: return "NOCLIENT";
+          	case DW_TESLA_TRACE_SINGLECLIENT_FILTER: return "SINGLECLIENT_FILTER";
+          	case DW_TESLA_TRACE_CAMERA_FILTER: return "CAMERA_FILTER";
+          	default: return "UNKNOWN";
+          	}
+          }
+
+          static int SV_DarkWolfTeslaTraceNormalVisibility(const sharedEntity_t *ent,
+          	const svEntity_t *svEnt, int clientArea, int clientCluster, const byte *clientpvs,
+          	const sharedEntity_t *playerEnt)
+          {
+          	int i;
+          	int l = 0;
+
+          	if (!ent || !ent->r.linked)
+          		return DW_TESLA_TRACE_UNLINKED;
+          	if (ent->r.svFlags & SVF_NOCLIENT)
+          		return DW_TESLA_TRACE_NOCLIENT;
+          	if ((ent->r.svFlags & SVF_SINGLECLIENT) && ent->r.singleClient != playerEnt->s.number)
+          		return DW_TESLA_TRACE_SINGLECLIENT_FILTER;
+          	if ((ent->r.svFlags & SVF_NOTSINGLECLIENT) && ent->r.singleClient == playerEnt->s.number)
+          		return DW_TESLA_TRACE_SINGLECLIENT_FILTER;
+          	if ((playerEnt->s.eFlags & EF_VIEWING_CAMERA) && !(ent->r.svFlags & SVF_PORTAL))
+          		return DW_TESLA_TRACE_CAMERA_FILTER;
+          	if (ent->r.svFlags & SVF_BROADCAST)
+          		return DW_TESLA_TRACE_NORMAL_VISIBLE;
+
+          	if (!CM_AreasConnected(clientArea, svEnt->areanum) &&
+          		!CM_AreasConnected(clientArea, svEnt->areanum2))
+          		return DW_TESLA_TRACE_AREA_REJECT;
+
+          	if (!svEnt->numClusters)
+          		return DW_TESLA_TRACE_NO_CLUSTERS;
+
+          	for (i = 0; i < svEnt->numClusters; ++i)
+          	{
+          		l = svEnt->clusternums[i];
+          		if (clientpvs[l >> 3] & (1 << (l & 7)))
+          			return DW_TESLA_TRACE_NORMAL_VISIBLE;
+          	}
+
+          	if (svEnt->lastCluster)
+          	{
+          		for (; l <= svEnt->lastCluster; ++l)
+          			if (clientpvs[l >> 3] & (1 << (l & 7)))
+          				return DW_TESLA_TRACE_NORMAL_VISIBLE;
+          	}
+
+          	(void)clientCluster;
+          	return DW_TESLA_TRACE_PVS_REJECT;
+          }
+
+          static void SV_DarkWolfTeslaTraceInfluence(const sharedEntity_t *ent, int clientArea,
+          	const byte *clientpvs, dwTeslaTraceInfluence_t *out)
+          {
+          	int leafs[DW_DLIGHT_INFLUENCE_MAX_LEAFS];
+          	int lastLeaf = -1;
+          	int count = 0;
+          	int i;
+          	dwDlightInfluenceInfo_t info;
+
+          	Com_Memset(out, 0, sizeof(*out));
+          	out->lastLeaf = -1;
+          	out->matchingArea = -1;
+          	out->matchingCluster = -1;
+          	out->pvsBit = -1;
+          	if (!ent || !clientpvs || ent->s.eType != ET_TESLA_EF)
+          		return;
+          	if (!SV_DarkWolfDlightInfluenceBounds(ent, &info) || info.kind != DW_DLIGHT_KIND_TESLA)
+          		return;
+
+          	out->evaluated = 1;
+          	VectorCopy(info.center, out->center);
+          	VectorCopy(info.mins, out->mins);
+          	VectorCopy(info.maxs, out->maxs);
+          	out->radius = (info.maxs[0] - info.mins[0]) * 0.5f;
+          	count = CM_BoxLeafnums(info.mins, info.maxs, leafs, ARRAY_LEN(leafs), &lastLeaf);
+          	out->leafCount = count;
+          	out->lastLeaf = lastLeaf;
+          	out->overflow = (count == (int)ARRAY_LEN(leafs) && count > 0 &&
+          		lastLeaf != leafs[count - 1]) ? 1 : 0;
+
+          	for (i = 0; i < count; ++i)
+          	{
+          		int area = CM_LeafArea(leafs[i]);
+          		int cluster = CM_LeafCluster(leafs[i]);
+          		int pvsBit;
+          		if (area < 0 || cluster < 0)
+          			continue;
+          		if (!CM_AreasConnected(clientArea, area))
+          			continue;
+          		pvsBit = (clientpvs[cluster >> 3] & (1 << (cluster & 7))) ? 1 : 0;
+          		if (out->matchingArea < 0)
+          		{
+          			out->matchingArea = area;
+          			out->matchingCluster = cluster;
+          			out->pvsBit = pvsBit;
+          		}
+          		if (pvsBit)
+          		{
+          			out->matchingArea = area;
+          			out->matchingCluster = cluster;
+          			out->pvsBit = 1;
+          			out->pass = 1;
+          			break;
+          		}
+          	}
+          }
+          '''
+          sv = insert_after_function(sv, 'SV_DarkWolfDlightInfluenceVisible', server_block)
+
+          server_final_block = r'''
+          // DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3
+          static qboolean SV_DarkWolfTeslaTraceSnapshotContains(const snapshotEntityNumbers_t *eNums, int entityNum)
+          {
+          	int i;
+          	for (i = 0; i < eNums->numSnapshotEntities; ++i)
+          		if (eNums->snapshotEntities[i] == entityNum)
+          			return qtrue;
+          	return qfalse;
+          }
+
+          static void SV_DarkWolfTeslaTraceFinalSnapshot(client_t *client, const vec3_t viewOrigin,
+          	const snapshotEntityNumbers_t *eNums)
+          {
+          	int e;
+          	int leafnum = CM_PointLeafnum(viewOrigin);
+          	int clientArea = CM_LeafArea(leafnum);
+          	int clientCluster = CM_LeafCluster(leafnum);
+          	byte *clientpvs = CM_ClusterPVS(clientCluster);
+          	sharedEntity_t *playerEnt = client->gentity;
+          	int clientNum = (int)(client - svs.clients);
+
+          	if (!playerEnt || !clientpvs)
+          		return;
+
+          	for (e = 0; e < sv.num_entities; ++e)
+          	{
+          		sharedEntity_t *ent = SV_GentityNum(e);
+          		svEntity_t *svEnt;
+          		qboolean present;
+          		int normalReason;
+          		int normalVisible;
+          		int expectedVisible;
+          		int attemptedAdd;
+          		const char *transition;
+          		const char *finalReason;
+          		dwTeslaTraceInfluence_t influence;
+
+          		if (!ent || ent->s.eType != ET_TESLA_EF)
+          			continue;
+          		present = SV_DarkWolfTeslaTraceSnapshotContains(eNums, e);
+          		if (s_dwTeslaTraceServerKnown[e] && s_dwTeslaTraceServerPresent[e] == (present ? 1 : 0))
+          			continue;
+
+          		transition = !s_dwTeslaTraceServerKnown[e]
+          			? (present ? "INIT->PRESENT" : "INIT->MISSING")
+          			: (present ? "MISSING->PRESENT" : "PRESENT->MISSING");
+          		s_dwTeslaTraceServerKnown[e] = 1;
+          		s_dwTeslaTraceServerPresent[e] = present ? 1 : 0;
+
+          		svEnt = SV_SvEntityForGentity(ent);
+          		normalReason = SV_DarkWolfTeslaTraceNormalVisibility(ent, svEnt, clientArea,
+          			clientCluster, clientpvs, playerEnt);
+          		normalVisible = (normalReason == DW_TESLA_TRACE_NORMAL_VISIBLE) ? 1 : 0;
+          		SV_DarkWolfTeslaTraceInfluence(ent, clientArea, clientpvs, &influence);
+          		expectedVisible = normalVisible || influence.pass;
+          		attemptedAdd = (svEnt->snapshotCounter == sv.snapshotCounter) ? 1 : 0;
+
+          		if (present)
+          		{
+          			if (normalVisible)
+          				finalReason = "NORMAL_VISIBLE";
+          			else if (influence.pass)
+          				finalReason = "INFLUENCE_FALLBACK_PASS";
+          			else
+          				finalReason = "PRESENT_OTHER_PATH";
+          		}
+          		else if (normalReason == DW_TESLA_TRACE_UNLINKED)
+          			finalReason = "UNLINKED";
+          		else if (normalReason == DW_TESLA_TRACE_NOCLIENT)
+          			finalReason = "NOCLIENT";
+          		else if (expectedVisible && attemptedAdd)
+          			finalReason = "SNAPSHOT_FULL";
+          		else if (influence.evaluated && !influence.pass &&
+          			(normalReason == DW_TESLA_TRACE_AREA_REJECT ||
+          			 normalReason == DW_TESLA_TRACE_NO_CLUSTERS ||
+          			 normalReason == DW_TESLA_TRACE_PVS_REJECT))
+          			finalReason = "INFLUENCE_FALLBACK_FAIL";
+          		else
+          			finalReason = SV_DarkWolfTeslaTraceNormalReasonName(normalReason);
+
+          		Com_Printf(
+          			"TESLA_DROPOUT_SV transition=%s serverTime=%d snapshotCounter=%d client=%d entityNum=%d present=%d linked=%d eType=%d isTesla=%d svFlags=0x%x dl_intensity=%d time=%d time2=%d origin=%.3f,%.3f,%.3f origin2=%.3f,%.3f,%.3f clientArea=%d clientCluster=%d entArea1=%d entArea2=%d numClusters=%d lastCluster=%d normalVisible=%d normalReason=%s finalReason=%s snapshotCount=%d snapshotMax=%d attemptedAdd=%d influenceEvaluated=%d influencePass=%d center=%.3f,%.3f,%.3f radius=%.3f mins=%.3f,%.3f,%.3f maxs=%.3f,%.3f,%.3f leafCount=%d lastLeaf=%d leafOverflow=%d matchingArea=%d matchingCluster=%d pvsBit=%d\n",
+          			transition, svs.time, sv.snapshotCounter, clientNum, e, present ? 1 : 0,
+          			ent->r.linked ? 1 : 0, ent->s.eType, ent->s.eType == ET_TESLA_EF ? 1 : 0,
+          			ent->r.svFlags, ent->s.dl_intensity, ent->s.time, ent->s.time2,
+          			ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+          			ent->s.origin2[0], ent->s.origin2[1], ent->s.origin2[2],
+          			clientArea, clientCluster, svEnt->areanum, svEnt->areanum2,
+          			svEnt->numClusters, svEnt->lastCluster, normalVisible,
+          			SV_DarkWolfTeslaTraceNormalReasonName(normalReason), finalReason,
+          			eNums->numSnapshotEntities, MAX_SNAPSHOT_ENTITIES, attemptedAdd,
+          			influence.evaluated, influence.pass,
+          			influence.center[0], influence.center[1], influence.center[2], influence.radius,
+          			influence.mins[0], influence.mins[1], influence.mins[2],
+          			influence.maxs[0], influence.maxs[1], influence.maxs[2],
+          			influence.leafCount, influence.lastLeaf, influence.overflow,
+          			influence.matchingArea, influence.matchingCluster, influence.pvsBit);
+          	}
+          }
+          '''
+          sv = insert_after_function(sv, 'SV_AddEntToSnapshot', server_final_block)
+
+          sv = replace_in_function(
+              sv, 'SV_BuildClientSnapshot',
+              '''\tqsort( entityNumbers.snapshotEntities, entityNumbers.numSnapshotEntities,\n\t\t   sizeof( entityNumbers.snapshotEntities[0] ), SV_QsortEntityNumbers );\n''',
+              '''\tqsort( entityNumbers.snapshotEntities, entityNumbers.numSnapshotEntities,\n\t\t   sizeof( entityNumbers.snapshotEntities[0] ), SV_QsortEntityNumbers );\n\n\t// DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3\n\t// Observe the FINAL snapshot after every recursive portal/PVS pass; no inclusion decision is changed.\n\tSV_DarkWolfTeslaTraceFinalSnapshot(client, org, &entityNumbers);\n''',
+              'server final snapshot observer')
+
+          # ---------------------------------------------------------------------------
+          # CGAME: distinguish snapshot receipt -> CG_Efx execution -> AddLight submission.
+          # ---------------------------------------------------------------------------
+          cgame_trace_block = r'''
+          // DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3
+          typedef struct dwTeslaCgTraceState_s {
+          	byte known;
+          	byte received;
+          	byte efxExecuted;
+          	byte addLightSubmitted;
+          	byte currentValid;
+          	int lastSignature;
+          	int dlIntensity;
+          	int stateTime;
+          	int stateTime2;
+          	int lightType;
+          	int overdraw;
+          	float pulse;
+          	vec3_t origin;
+          	vec3_t origin2;
+          	vec3_t computedOrigin;
+          	float computedRadius;
+          	vec3_t computedColor;
+          } dwTeslaCgTraceState_t;
+
+          static dwTeslaCgTraceState_t s_dwTeslaCgTrace[MAX_GENTITIES];
+          static int s_dwTeslaCgTraceActiveEntity = -1;
+
+          static void CG_DarkWolfTeslaDropTraceRememberState(int n, const entityState_t *s)
+          {
+          	dwTeslaCgTraceState_t *t;
+          	if (n < 0 || n >= MAX_GENTITIES || !s)
+          		return;
+          	t = &s_dwTeslaCgTrace[n];
+          	t->known = 1;
+          	t->dlIntensity = s->dl_intensity;
+          	t->stateTime = s->time;
+          	t->stateTime2 = s->time2;
+          	VectorCopy(s->origin, t->origin);
+          	VectorCopy(s->origin2, t->origin2);
+          }
+
+          static void CG_DarkWolfTeslaDropTraceFrameBegin(void)
+          {
+          	int i;
+          	int num;
+          	for (i = 0; i < MAX_GENTITIES; ++i)
+          	{
+          		if (!s_dwTeslaCgTrace[i].known)
+          			continue;
+          		s_dwTeslaCgTrace[i].received = 0;
+          		s_dwTeslaCgTrace[i].efxExecuted = 0;
+          		s_dwTeslaCgTrace[i].addLightSubmitted = 0;
+          		s_dwTeslaCgTrace[i].currentValid = 0;
+          		s_dwTeslaCgTrace[i].lightType = -1;
+          		s_dwTeslaCgTrace[i].overdraw = 0;
+          		s_dwTeslaCgTrace[i].computedRadius = 0.0f;
+          		VectorClear(s_dwTeslaCgTrace[i].computedOrigin);
+          		VectorClear(s_dwTeslaCgTrace[i].computedColor);
+          	}
+          	if (!cg.snap)
+          		return;
+          	for (num = 0; num < cg.snap->numEntities; ++num)
+          	{
+          		const entityState_t *s = &cg.snap->entities[num];
+          		int n = s->number;
+          		if (s->eType != ET_TESLA_EF || n < 0 || n >= MAX_GENTITIES)
+          			continue;
+          		CG_DarkWolfTeslaDropTraceRememberState(n, s);
+          		s_dwTeslaCgTrace[n].received = 1;
+          		s_dwTeslaCgTrace[n].currentValid = cg_entities[n].currentValid ? 1 : 0;
+          	}
+          }
+
+          static void CG_DarkWolfTeslaDropTraceEfxBegin(centity_t *cent)
+          {
+          	int n;
+          	dwTeslaCgTraceState_t *t;
+          	if (!cent || cent->currentState.eType != ET_TESLA_EF)
+          		return;
+          	n = cent->currentState.number;
+          	if (n < 0 || n >= MAX_GENTITIES)
+          		return;
+          	CG_DarkWolfTeslaDropTraceRememberState(n, &cent->currentState);
+          	t = &s_dwTeslaCgTrace[n];
+          	t->efxExecuted = 1;
+          	t->currentValid = cent->currentValid ? 1 : 0;
+          	t->pulse = cg_dlightEffectEnhance.integer
+          		? (0.90f + 0.10f * sin(0.019f * (float)cg.time + 0.73f * (float)n))
+          		: -1.0f;
+          	s_dwTeslaCgTraceActiveEntity = n;
+          }
+
+          static void CG_DarkWolfTeslaDropTraceEfxEnd(void)
+          {
+          	s_dwTeslaCgTraceActiveEntity = -1;
+          }
+
+          void CG_DarkWolfTeslaDropTraceLightSubmitted(const vec3_t origin, float radius,
+          	float r, float g, float b, int overdraw, cgEffectLightType_t type)
+          {
+          	int n = s_dwTeslaCgTraceActiveEntity;
+          	dwTeslaCgTraceState_t *t;
+          	if (n < 0 || n >= MAX_GENTITIES)
+          		return;
+          	t = &s_dwTeslaCgTrace[n];
+          	t->addLightSubmitted = 1;
+          	t->lightType = (int)type;
+          	t->overdraw = overdraw;
+          	VectorCopy(origin, t->computedOrigin);
+          	t->computedRadius = radius;
+          	VectorSet(t->computedColor, r, g, b);
+          }
+
+          static void CG_DarkWolfTeslaDropTraceFrameEnd(void)
+          {
+          	int n;
+          	for (n = 0; n < MAX_GENTITIES; ++n)
+          	{
+          		dwTeslaCgTraceState_t *t = &s_dwTeslaCgTrace[n];
+          		int signature;
+          		const char *transition;
+          		if (!t->known)
+          			continue;
+          		signature = (t->received ? 1 : 0) | (t->efxExecuted ? 2 : 0) |
+          			(t->addLightSubmitted ? 4 : 0);
+          		if (t->lastSignature == signature + 1)
+          			continue;
+          		transition = (t->lastSignature == 0)
+          			? "INIT"
+          			: ((t->lastSignature - 1) == 7 && signature != 7 ? "PRESENT->MISSING" :
+          			   ((t->lastSignature - 1) != 7 && signature == 7 ? "MISSING->PRESENT" : "PIPELINE_CHANGE"));
+          		CG_Printf(
+          			"TESLA_DROPOUT_CG transition=%s cgTime=%d entityNum=%d eType=%d received=%s cgEfx=%s addLight=%s currentValid=%d dl_intensity=%d time=%d time2=%d continuous=%d pulse=%.6f origin=%.3f,%.3f,%.3f origin2=%.3f,%.3f,%.3f computedOrigin=%.3f,%.3f,%.3f computedRadius=%.3f computedColor=%.6f,%.6f,%.6f lightType=%d overdraw=0x%x\n",
+          			transition, cg.time, n, ET_TESLA_EF,
+          			t->received ? "yes" : "no", t->efxExecuted ? "yes" : "no",
+          			t->addLightSubmitted ? "yes" : "no", t->currentValid,
+          			t->dlIntensity, t->stateTime, t->stateTime2,
+          			cg_dlightEffectEnhance.integer ? 1 : 0, t->pulse,
+          			t->origin[0], t->origin[1], t->origin[2],
+          			t->origin2[0], t->origin2[1], t->origin2[2],
+          			t->computedOrigin[0], t->computedOrigin[1], t->computedOrigin[2],
+          			t->computedRadius,
+          			t->computedColor[0], t->computedColor[1], t->computedColor[2],
+          			t->lightType, t->overdraw);
+          		t->lastSignature = signature + 1;
+          	}
+          }
+          '''
+          cge = insert_after_function(cge, 'CG_Efx', cgame_trace_block)
+
+          cge = replace_once(
+              cge,
+              '''\tcase ET_TESLA_EF:\n\tcase ET_SPOTLIGHT_EF:\n\tcase ET_EFFECT3:\n\t\tCG_Efx( cent );\n\t\tbreak;\n''',
+              '''\tcase ET_TESLA_EF:\n\t\t// DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3\n\t\tCG_DarkWolfTeslaDropTraceEfxBegin( cent );\n\t\tCG_Efx( cent );\n\t\tCG_DarkWolfTeslaDropTraceEfxEnd();\n\t\tbreak;\n\tcase ET_SPOTLIGHT_EF:\n\tcase ET_EFFECT3:\n\t\tCG_Efx( cent );\n\t\tbreak;\n''',
+              'cgame ET_TESLA_EF process hook')
+
+          cge = replace_in_function(
+              cge, 'CG_AddPacketEntities',
+              '''\tint\tclcount;\n\n''',
+              '''\tint\tclcount;\n\n\t// DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3\n\tCG_DarkWolfTeslaDropTraceFrameBegin();\n\n''',
+              'cgame frame begin hook')
+
+          cge = replace_in_function(
+              cge, 'CG_AddPacketEntities',
+              '''\t// Ridah, add the flamethrower sounds\n\tCG_UpdateFlamethrowerSounds();\n''',
+              '''\t// DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3\n\tCG_DarkWolfTeslaDropTraceFrameEnd();\n\n\t// Ridah, add the flamethrower sounds\n\tCG_UpdateFlamethrowerSounds();\n''',
+              'cgame frame end hook')
+
+          cgm = replace_in_function(
+              cgm, 'CG_AddEffectLightToScene',
+              '''\ttrap_R_AddLightToScene( origin, radius * radiusScale,\n\t\tr * intensityScale, g * intensityScale, b * intensityScale, overdraw );\n''',
+              '''\t// DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3\n\t// Observe the exact final values submitted to the renderer; never gate or modify the call.\n\tCG_DarkWolfTeslaDropTraceLightSubmitted( origin, radius * radiusScale,\n\t\tr * intensityScale, g * intensityScale, b * intensityScale, overdraw, type );\n\ttrap_R_AddLightToScene( origin, radius * radiusScale,\n\t\tr * intensityScale, g * intensityScale, b * intensityScale, overdraw );\n''',
+              'cgame AddLight submission hook')
+
+          cgl = replace_once(
+              cgl,
+              '''void CG_AddEffectLightToScene( const vec3_t origin, float radius,\n\t\t\t\t\t\t\t\tfloat r, float g, float b, int overdraw,\n\t\t\t\t\t\t\t\tcgEffectLightType_t type );\n''',
+              '''void CG_AddEffectLightToScene( const vec3_t origin, float radius,\n\t\t\t\t\t\t\t\tfloat r, float g, float b, int overdraw,\n\t\t\t\t\t\t\t\tcgEffectLightType_t type );\n// DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3\nvoid CG_DarkWolfTeslaDropTraceLightSubmitted( const vec3_t origin, float radius,\n\tfloat r, float g, float b, int overdraw, cgEffectLightType_t type );\n''',
+              'cgame trace prototype')
+
+          # ---------------------------------------------------------------------------
+          # REND2: observe semantic TESLA_ENDPOINT presence after the point-shadow selector.
+          # ---------------------------------------------------------------------------
+          renderer_block = r'''
+          // DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3
+          // Passive semantic endpoint transition trace. No selection, slot, shadow, or light data is modified.
+          void R_DarkWolfTeslaDropTraceRenderer(const refdef_t *fd)
+          {
+          	static qboolean initialized = qfalse;
+          	static qboolean lastPresent = qfalse;
+          	static int lastIndex = -1;
+          	static vec3_t lastOrigin;
+          	static float lastRadius = 0.0f;
+          	static vec3_t lastColor;
+          	static int lastShadowSlot = -1;
+          	int i;
+          	int count = 0;
+          	int first = -1;
+          	qboolean present;
+          	const char *transition;
+
+          	if (!fd || (fd->rdflags & RDF_NOWORLDMODEL))
+          		return;
+          	for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i)
+          	{
+          		if (tr.refdef.dlights[i].shadowSourceClass != DWSHADOW_SOURCE_TESLA_ENDPOINT)
+          			continue;
+          		if (first < 0)
+          			first = i;
+          		++count;
+          	}
+          	present = count > 0 ? qtrue : qfalse;
+          	if (initialized && present == lastPresent)
+          		return;
+          	transition = !initialized ? (present ? "INIT->PRESENT" : "INIT->MISSING")
+          		: (present ? "MISSING->PRESENT" : "PRESENT->MISSING");
+
+          	if (present && first >= 0)
+          	{
+          		dlight_t *dl = &tr.refdef.dlights[first];
+          		int slot = tr.refdef.dlightShadowSlot[first];
+          		ri.Printf(PRINT_ALL,
+          			"TESLA_DROPOUT_R transition=%s time=%d present=1 r_numdlights=%d teslaCount=%d index=%d origin=%.3f,%.3f,%.3f radius=%.3f color=%.6f,%.6f,%.6f shadowSlot=%d noShadow=%d lastIndex=%d lastOrigin=%.3f,%.3f,%.3f lastRadius=%.3f lastColor=%.6f,%.6f,%.6f lastShadowSlot=%d\\n",
+          			transition, fd->time, tr.refdef.num_dlights, count, first,
+          			dl->origin[0], dl->origin[1], dl->origin[2], dl->radius,
+          			dl->color[0], dl->color[1], dl->color[2], slot, dl->noDlightShadow ? 1 : 0,
+          			lastIndex, lastOrigin[0], lastOrigin[1], lastOrigin[2], lastRadius,
+          			lastColor[0], lastColor[1], lastColor[2], lastShadowSlot);
+          		lastIndex = first;
+          		VectorCopy(dl->origin, lastOrigin);
+          		lastRadius = dl->radius;
+          		VectorCopy(dl->color, lastColor);
+          		lastShadowSlot = slot;
+          	}
+          	else
+          	{
+          		ri.Printf(PRINT_ALL,
+          			"TESLA_DROPOUT_R transition=%s time=%d present=0 r_numdlights=%d teslaCount=0 index=-1 origin=0.000,0.000,0.000 radius=0.000 color=0.000000,0.000000,0.000000 shadowSlot=-1 noShadow=-1 lastIndex=%d lastOrigin=%.3f,%.3f,%.3f lastRadius=%.3f lastColor=%.6f,%.6f,%.6f lastShadowSlot=%d\\n",
+          			transition, fd->time, tr.refdef.num_dlights,
+          			lastIndex, lastOrigin[0], lastOrigin[1], lastOrigin[2], lastRadius,
+          			lastColor[0], lastColor[1], lastColor[2], lastShadowSlot);
+          	}
+          	lastPresent = present;
+          	initialized = qtrue;
+          }
+          '''
+          trm = insert_after_function(trm, 'R_RenderDlightCubemaps', renderer_block)
+
+          trs = replace_once(
+              trs,
+              '''\tif (!( fd->rdflags & RDF_NOWORLDMODEL ) && tr.refdef.num_dlights && r_dlightMode->integer >= 2)\n\t{\n\t\tR_RenderDlightCubemaps(fd);\n\t}\n''',
+              '''\tif (!( fd->rdflags & RDF_NOWORLDMODEL ) && tr.refdef.num_dlights && r_dlightMode->integer >= 2)\n\t{\n\t\tR_RenderDlightCubemaps(fd);\n\t}\n\t// DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3\n\tR_DarkWolfTeslaDropTraceRenderer(fd);\n''',
+              'renderer post-selector trace hook')
+
+          trl = replace_once(
+              trl,
+              'void R_RenderDlightCubemaps(const refdef_t *fd);\n',
+              'void R_RenderDlightCubemaps(const refdef_t *fd);\n'
+              '// DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3\n'
+              'void R_DarkWolfTeslaDropTraceRenderer(const refdef_t *fd);\n',
+              'renderer trace prototype')
+
+          # Write postimage.
+          SERVER.write_text(sv, encoding='utf-8')
+          CGENTS.write_text(cge, encoding='utf-8')
+          CGMAIN.write_text(cgm, encoding='utf-8')
+          CGLOCAL.write_text(cgl, encoding='utf-8')
+          TRMAIN.write_text(trm, encoding='utf-8')
+          TRSCENE.write_text(trs, encoding='utf-8')
+          TRLOCAL.write_text(trl, encoding='utf-8')
+          print('Applied ' + MARK)
+          PY_PATCHER
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: embedded patcher SHA drift" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" source
+
+          parent_commit="$(cat .parent_source_commit)"
+          mapfile -t changed < <(git -C source diff --name-only "$parent_commit" -- | LC_ALL=C sort)
+          expected=(
+            SP/code/cgame/cg_ents.c
+            SP/code/cgame/cg_local.h
+            SP/code/cgame/cg_main.c
+            SP/code/rend2/tr_local.h
+            SP/code/rend2/tr_main.c
+            SP/code/rend2/tr_scene.c
+            SP/code/server/sv_snapshot.c
+          )
+          test "${#changed[@]}" -eq "${#expected[@]}" || { printf 'ERROR: changed count=%s\n' "${#changed[@]}" >&2; printf '%s\n' "${changed[@]}" >&2; exit 1; }
+          test "$(printf '%s\n' "${changed[@]}")" = "$(printf '%s\n' "${expected[@]}")" || { echo "ERROR: source allowlist drift" >&2; exit 1; }
+
+          for rel in "${expected[@]}"; do
+            grep -Fq 'DARKWOLF_ENV_TESLA_DELIVERY_DROPOUT_TRACE_RC_V0_3' "source/$rel" || { echo "ERROR: marker missing in $rel" >&2; exit 1; }
+          done
+          grep -Fq 'TESLA_DROPOUT_SV transition=' source/SP/code/server/sv_snapshot.c
+          grep -Fq 'TESLA_DROPOUT_CG transition=' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'TESLA_DROPOUT_R transition=' source/SP/code/rend2/tr_main.c
+
+          # Diagnostic-only policy: no new runtime knob, command, map/fixture special case, or rendering tuning.
+          git -C source diff "$parent_commit" -- > .trace-delta-text.patch
+          if grep -E '^\+.*(Cvar_Get|Cvar_Register|Cmd_AddCommand|ri\.Cmd_AddCommand|trap_Cvar_Register)' .trace-delta-text.patch; then
+            echo "ERROR: RC v0.3 introduced a new cvar/command surface" >&2; exit 1
+          fi
+          if grep -Ei '^\+.*(escape1|fixture[ =]*(741|742|743|744)|bloom|tonemap|exposure)' .trace-delta-text.patch; then
+            echo "ERROR: map/fixture/postprocess-specific production source leaked into trace" >&2; exit 1
+          fi
+          for forbidden in             'r_dlightShadowStrength' 'r_dlightShadowMapSize' 'r_dlightShadowMaxLights'             'r_staticPromoteMaxLights' 'cg_dlightElectricRadiusScale' 'cg_dlightElectricIntensityScale'; do
+            if grep -F '^+' .trace-delta-text.patch | grep -Fq "$forbidden"; then
+              echo "ERROR: forbidden tuning change: $forbidden" >&2; exit 1
+            fi
+          done
+          echo "RC v0.3 transition-only source allowlist/policy PASS"
+
+      - name: Generate diagnostic delta cumulative and exact replay proofs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_commit="$(cat .parent_source_commit)"
+          git -C source diff --binary --full-index "$parent_commit" -- \
+            SP/code/server/sv_snapshot.c \
+            SP/code/cgame/cg_ents.c SP/code/cgame/cg_main.c SP/code/cgame/cg_local.h \
+            SP/code/rend2/tr_main.c SP/code/rend2/tr_scene.c SP/code/rend2/tr_local.h > "$DELTA_NAME"
+          git -C source diff --binary --full-index "$UPSTREAM_SHA" -- > "$CUMULATIVE_NAME"
+          test -s "$DELTA_NAME" && test -s "$CUMULATIVE_NAME"
+          git -C source apply --reverse --check --binary --whitespace=nowarn "../$DELTA_NAME"
+
+          rm -rf replay-delta replay-cumulative
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$parent_commit"
+          git -C replay-delta apply --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --binary --whitespace=nowarn "../$DELTA_NAME"
+          for rel in \
+            SP/code/server/sv_snapshot.c \
+            SP/code/cgame/cg_ents.c SP/code/cgame/cg_main.c SP/code/cgame/cg_local.h \
+            SP/code/rend2/tr_main.c SP/code/rend2/tr_scene.c SP/code/rend2/tr_local.h; do
+            cmp "source/$rel" "replay-delta/$rel"
+          done
+
+          git clone -q source replay-cumulative
+          git -C replay-cumulative checkout -q --detach "$UPSTREAM_SHA"
+          git -C replay-cumulative apply --check --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          mapfile -t all_paths < <(git -C source diff --name-only "$UPSTREAM_SHA" -- | LC_ALL=C sort)
+          for rel in "${all_paths[@]}"; do cmp "source/$rel" "replay-cumulative/$rel"; done
+          sha256sum "$DELTA_NAME" > .delta_sha256
+          sha256sum "$CUMULATIVE_NAME" > .cumulative_sha256
+          echo "RC v0.3 delta/reverse/replay + cumulative replay PASS"
+
+      - name: Build canonical Windows x64 SP trace binaries
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -x source/SP/cross-make-mingw64.sh
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh -j"$jobs" \
+              BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          )
+          mapfile -t exes < <(find source/SP/build -type f -name ioWolfSP.x64.exe -print | LC_ALL=C sort)
+          mapfile -t cgames < <(find source/SP/build -type f -name cgame_sp_x64.dll -print | LC_ALL=C sort)
+          mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | LC_ALL=C sort)
+          mapfile -t qagames < <(find source/SP/build -type f -name qagame_sp_x64.dll -print | LC_ALL=C sort)
+          mapfile -t uis < <(find source/SP/build -type f -name ui_sp_x64.dll -print | LC_ALL=C sort)
+          mapfile -t ogl1s < <(find source/SP/build -type f -name renderer_sp_opengl1_x64.dll -print | LC_ALL=C sort)
+          test "${#exes[@]}" -eq 1 && test "${#cgames[@]}" -eq 1 && test "${#renderers[@]}" -eq 1
+          test "${#qagames[@]}" -eq 1 && test "${#uis[@]}" -eq 1 && test "${#ogl1s[@]}" -eq 1
+          file "${exes[0]}" | tee .exe_file.txt; grep -Fq 'PE32+' .exe_file.txt
+          file "${cgames[0]}" | tee .cgame_file.txt; grep -Fq 'PE32+' .cgame_file.txt
+          file "${renderers[0]}" | tee .renderer_file.txt; grep -Fq 'PE32+' .renderer_file.txt
+          printf '%s\n' "${exes[0]}" > .exe_path
+          printf '%s\n' "${cgames[0]}" > .cgame_path
+          printf '%s\n' "${renderers[0]}" > .renderer_path
+          sha256sum "${exes[0]}" > .exe_sha256
+          sha256sum "${cgames[0]}" > .cgame_sha256
+          sha256sum "${renderers[0]}" > .renderer_sha256
+          echo "Canonical Windows x64 SP trace compile/output PASS"
+
+      - name: Stage exact RC v0.2 runtime and replace only EXE cgame Rend2
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"
+          exe="$(cat .exe_path)"
+          cgame="$(cat .cgame_path)"
+          renderer="$(cat .renderer_path)"
+          rm -rf runtime
+          mkdir -p runtime
+          stage="runtime/$RELEASE_BASENAME"
+          cp -a "$parent" "$stage"
+          cp -f "$exe" "$stage/ioWolfSP.x64.exe"
+          cp -f "$cgame" "$stage/Main/cgame_sp_x64.dll"
+          cp -f "$renderer" "$stage/renderer_sp_rend2_x64.dll"
+          rm -f "$stage/docs/SHA256SUMS.txt"
+
+          # Frozen runtime systems remain exact RC v0.2 bytes.
+          test "$(sha256sum "$stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          cmp "$parent/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$parent/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$parent/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          printf '%s\n' "$stage" > .stage_path
+          echo "Runtime staging PASS: exact RC v0.2 donor + trace EXE/cgame/Rend2 only"
+
+      - name: Add RC v0.3 diagnostic surface and provenance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          mkdir -p "$stage/docs"
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          delta_sha="$(awk '{print $1}' .delta_sha256)"
+          cumulative_sha="$(awk '{print $1}' .cumulative_sha256)"
+          exe_sha="$(awk '{print $1}' .exe_sha256)"
+          cgame_sha="$(awk '{print $1}' .cgame_sha256)"
+          renderer_sha="$(awk '{print $1}' .renderer_sha256)"
+
+          cat > "$stage/Main/$CFG_NAME" <<'EOF_CFG'
+          // DarkWolf Environmental Tesla Delivery Dropout Root-Cause Trace RC v0.3
+          // Logging only. No rendering/visibility/shadow behavior cvars are changed.
+          set logfile "2"
+          echo "TESLA DROPOUT RC v0.3 transition trace active. Reproduce the blackout naturally; avoid firing the Tesla weapon during capture."
+          EOF_CFG
+
+          cat > "$stage/$README_NAME" <<'EOF_README'
+          DARKWOLF / ioRTCW Rend2 Single Player
+          RC v0.3 - ENVIRONMENTAL TESLA DELIVERY DROPOUT ROOT-CAUSE TRACE
+
+          PURPOSE
+          -------
+          Diagnostic only. RC v0.2 already removed the unwanted second/dark table shadow and its
+          Persistent Physical Shadow Set Residency is preserved. This RC does NOT attempt to fix
+          the brief room blackout. It determines exactly where an environmental ET_TESLA_EF light
+          disappears in the SERVER -> SNAPSHOT -> CGAME -> REND2 chain.
+
+          TRACE POLICY
+          ------------
+          No periodic frame spam. Lines are emitted only when Tesla state changes.
+          Prefixes:
+            TESLA_DROPOUT_SV  - final server snapshot PRESENT/MISSING transition.
+            TESLA_DROPOUT_CG  - snapshot receipt / CG_Efx / AddLight pipeline transition.
+            TESLA_DROPOUT_R   - semantic DWSHADOW_SOURCE_TESLA_ENDPOINT PRESENT/MISSING transition.
+
+          SERVER LINE INCLUDES
+          --------------------
+          entityNum, linked, ET_TESLA_EF identity, svFlags, dl_intensity, time/time2,
+          origin/origin2, clientArea/clientCluster, entity areas/clusters, normal visibility result,
+          exact normal rejection reason, final reason, snapshot capacity/attempted-add state,
+          influence center/radius/mins/maxs, CM_BoxLeafnums count, lastLeaf, exact overflow test,
+          matching area/cluster and PVS bit.
+
+          Final reasons include:
+            NORMAL_VISIBLE
+            AREA_REJECT
+            PVS_REJECT
+            NO_CLUSTERS
+            SNAPSHOT_FULL
+            UNLINKED
+            NOCLIENT
+            INFLUENCE_FALLBACK_PASS
+            INFLUENCE_FALLBACK_FAIL
+          Additional filter labels may appear only if stock single-client/camera gates are responsible.
+
+          IMPORTANT OVERFLOW TEST
+          -----------------------
+          ioRTCW documents CM_BoxLeafnums overflow as:
+            count == listsize AND lastLeaf != list[listsize - 1]
+          RC v0.3 records that exact condition as leafOverflow. The production influence list remains
+          1024 leaves; the tracer does not enlarge it and therefore cannot hide an overflow defect.
+
+          CGAME LINE INCLUDES
+          -------------------
+          entityNum, received=yes/no, CG_Efx=yes/no, AddLight=yes/no, currentValid,
+          dl_intensity, time/time2, whether continuous enhanced pulse is active, pulse value,
+          origin/origin2, exact computed light origin, final scaled radius/color, light type and overdraw.
+
+          REND2 LINE INCLUDES
+          -------------------
+          TESLA_ENDPOINT presence transition, r_numdlights, semantic Tesla count, index,
+          origin/radius/color, point-shadow slot/noShadow plus the last known endpoint state on dropout.
+
+          TEST
+          ----
+          1. Launch normal RUN_DARKWOLF_PRODUCTION.cmd.
+          2. Load escape1 and enter the doctor's office / nearby area where the brief blackout was observed.
+          3. Execute:
+               exec TESLA_DROPOUT_RC_V0_3.cfg
+          4. Move/play normally until the room briefly darkens. Do NOT fire the player Tesla weapon during
+             the capture; that would create another semantic TESLA_ENDPOINT and make the renderer aggregate
+             transition less clear.
+          5. You do not need r_dlightShadowSnapshot. The trace is automatic but transition-only.
+          6. After a blackout, continue for a few seconds so the PRESENT recovery transition is captured.
+          7. Quit normally and send rtcwconsole.log. A short video is useful but not required.
+
+          INTERPRETATION
+          --------------
+          SV PRESENT->MISSING first:
+            server snapshot/delivery is the root-cause stage. Read normalReason/finalReason and influence data.
+          SV remains PRESENT but CG received/CG_Efx/AddLight changes:
+            cgame snapshot processing or effect-light submission is the root-cause stage.
+          CG AddLight remains yes but REND2 goes PRESENT->MISSING:
+            renderer scene ingestion/capacity/semantic decode is the root-cause stage.
+          REND2 remains PRESENT while the room visibly blacks out:
+            the source reaches Rend2; investigate lighting application/shader/receiver state next.
+
+          UNCHANGED
+          ---------
+          No new behavior cvar or console command.
+          No map coordinates or fixture IDs in source.
+          No visibility/PVS policy change.
+          No CM_BoxLeafnums capacity change.
+          No Direct Light radius/color/intensity/falloff change.
+          No point-shadow budget/strength/resolution/filter/bias change.
+          No StaticPromote grouping/delivery change.
+          No Bloom/ToneMap/Exposure change.
+          No Materials/SSGI/SunVol/FireVol/LocalVol algorithm change.
+          EOF_README
+          cp "$stage/$README_NAME" "$stage/docs/$README_NAME"
+
+          cat > "$stage/docs/$VALIDATION_NAME" <<EOF_VALIDATION
+          DARKWOLF ENVIRONMENTAL TESLA DELIVERY DROPOUT TRACE RC V0.3 - CI RECORD
+          status=DIAGNOSTIC_TRACE_ONLY_NO_FIX
+          parent_run=$PARENT_RUN_ID
+          parent_head=$PARENT_RUN_HEAD_SHA
+          parent_artifact_id=$PARENT_ARTIFACT_ID
+          parent_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          parent_inner_sha256=$PARENT_INNER_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          parent_second_shadow_fix=PRESERVED_RC_V0_2_PERSISTENT_PHYSICAL_SET_RESIDENCY
+          source_allowlist=SP/code/server/sv_snapshot.c,SP/code/cgame/cg_ents.c,SP/code/cgame/cg_main.c,SP/code/cgame/cg_local.h,SP/code/rend2/tr_main.c,SP/code/rend2/tr_scene.c,SP/code/rend2/tr_local.h
+          runtime_binary_replacements=ioWolfSP.x64.exe,Main/cgame_sp_x64.dll,renderer_sp_rend2_x64.dll
+          frozen_runtime=renderer_sp_opengl1_x64.dll,Main/qagame_sp_x64.dll,Main/ui_sp_x64.dll
+          telemetry_policy=TRANSITION_ONLY
+          server_observation=FINAL_SNAPSHOT_AFTER_ALL_PORTAL_PVS_PASSES
+          server_heavy_leaf_audit=ONLY_ON_PRESENCE_TRANSITION
+          leaf_capacity=UNCHANGED_1024
+          leaf_overflow_test=COUNT_EQUALS_CAP_AND_LASTLEAF_DIFFERS_FROM_LAST_STORED
+          cgame_observation=RECEIVED_TO_CG_EFX_TO_FINAL_ADDLIGHT
+          renderer_observation=SEMANTIC_TESLA_ENDPOINT_AFTER_SHADOW_SELECTOR
+          new_behavior_cvar=NONE
+          new_console_command=NONE
+          map_specific_source_logic=NONE
+          fixture_specific_source_logic=NONE
+          visibility_behavior_change=NONE
+          direct_light_tuning_change=NONE
+          point_shadow_tuning_change=NONE
+          staticpromote_change=NONE
+          bloom_tonemap_exposure_change=NONE
+          material_gi_sunvol_firevol_localvol_algorithm_change=NONE
+          patcher_sha256=$PATCHER_SHA256
+          delta_sha256=$delta_sha
+          cumulative_sha256=$cumulative_sha
+          exe_sha256=$exe_sha
+          cgame_sha256=$cgame_sha
+          renderer_sha256=$renderer_sha
+          mingw_sp_compile=PASS_THIS_RUN
+          EOF_VALIDATION
+          echo "RC v0.3 diagnostic surface/provenance PASS"
+
+      - name: Final RC v0.3 package policy audit and SHA manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          parent="$(cat .parent_stage_path)"
+          required=(
+            ioWolfSP.x64.exe renderer_sp_rend2_x64.dll renderer_sp_opengl1_x64.dll
+            Main/cgame_sp_x64.dll Main/qagame_sp_x64.dll Main/ui_sp_x64.dll
+            RUN_DARKWOLF_PRODUCTION.cmd "Main/$CFG_NAME" "$README_NAME"
+            "docs/$README_NAME" "docs/$VALIDATION_NAME" "docs/$PATCHER_NAME"
+            "docs/$DELTA_NAME" "docs/$CUMULATIVE_NAME"
+          )
+          for rel in "${required[@]}"; do test -s "$stage/$rel" || { echo "ERROR: required file missing: $rel" >&2; exit 1; }; done
+
+          # Only the three trace-bearing binaries may differ from the exact RC v0.2 runtime donor.
+          cmp "$parent/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$parent/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$parent/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cmp "$parent/Main/autoexec.cfg" "$stage/Main/autoexec.cfg"
+          grep -Fq 'cl_renderer rend2' "$stage/RUN_DARKWOLF_PRODUCTION.cmd"
+
+          # Diagnostic cfg is sterile: logfile + echo only, no renderer/game behavior tuning.
+          python3 - "$stage/Main/$CFG_NAME" <<'PY_CFG'
+          from pathlib import Path
+          import sys
+          lines=[x.strip() for x in Path(sys.argv[1]).read_text(encoding='utf-8').splitlines()
+                 if x.strip() and not x.lstrip().startswith('//')]
+          if len(lines) != 2 or lines[0] != 'set logfile "2"' or not lines[1].startswith('echo '):
+              raise SystemExit('ERROR: diagnostic cfg is not sterile')
+          print('Diagnostic cfg sterile PASS')
+          PY_CFG
+
+          if find "$stage" -type f -iname 'pak*.pk3' -print -quit | grep -q .; then echo "ERROR: commercial pak*.pk3 found" >&2; exit 1; fi
+          if find "$stage" -type f \( -iname '*.sav' -o -iname 'wolfconfig.cfg' \) -print -quit | grep -q .; then echo "ERROR: user save/config found" >&2; exit 1; fi
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt && sha256sum -c docs/SHA256SUMS.txt)
+          echo "Final RC v0.3 package/runtime policy PASS"
+
+      - name: Package full SP RC v0.3 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          rm -rf out
+          mkdir -p out
+          archive="out/${RELEASE_BASENAME}.zip"
+          (cd runtime && find "$RELEASE_BASENAME" -type f -print | LC_ALL=C sort | zip -X -9 "$GITHUB_WORKSPACE/$archive" -@)
+          test -s "$archive"
+          unzip -tq "$archive"
+          sha256sum "$archive" | sed "s#  out/#  #" > "out/${RELEASE_BASENAME}.zip.sha256"
+          cat "out/${RELEASE_BASENAME}.zip.sha256"
+
+      - name: Upload Environmental Tesla Dropout Trace RC v0.3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            out/${{ env.RELEASE_BASENAME }}.zip
+            out/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
