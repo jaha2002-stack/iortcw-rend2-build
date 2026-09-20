@@ -1,0 +1,849 @@
+name: Build DarkWolf Rend2 Environmental Tesla Light Residency Decoupling RC v0.4 over RC v0.2 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-env-tesla-light-residency-decoupling-rc-v0-4-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Environmental Tesla Light Residency Decoupling RC v0.4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      PARENT_RUN_ID: "35503262322"
+      PARENT_RUN_HEAD_SHA: 80fde84b6e91febd5ab5a8c10e37ed0d6dd01476
+      PARENT_WORKFLOW_PATH: '.github/workflows/DARKWOLF_IORTCW_REND2_ESCAPE1_TABLE_SHADOW_RC_V0_2_PERSISTENT_PHYSICAL_SET_RESIDENCY.yml'
+      PARENT_WORKFLOW_BLOB_SHA: 4562dd060604bb81cefdfd18ac056fc64cd4c1a5
+      PARENT_ARTIFACT_ID: "10603017159"
+      PARENT_ARTIFACT_NAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+      PARENT_ARTIFACT_DIGEST: sha256:51ef9cb590b5e9c2ae96d8305eb4e63bae005b993acdca48af7b6ff51e0d0409
+      PARENT_INNER_SHA256: efe9a4f3b33e5dd4b621ed3fa0d87abe677c85d09ca29088a380d813b5c082bb
+      PARENT_RELEASE_BASENAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+      PARENT_CUMULATIVE_NAME: darkwolf-rend2-cumulative-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-sp.patch
+      PARENT_CUMULATIVE_SHA256: 1b766221df31b483877cee2378e3696c7a992abc9cd61628e945b16c145bebe2
+      PARENT_MANIFEST_SHA256: 988bc7051a6728ed0df4293ff850187d9916b81c0bd7c4d5c29eff3f396fbae6
+      PARENT_EXE_SHA256: 05497aaee40b2c8583c6aaaeca738e27204e91f5fb493c9d95255dd38fda3513
+      PARENT_CGAME_SHA256: 4e208e26614dacdb0d6e814d6f96ac7d1f592a0ef7a27c1861a07342c674ce81
+      PARENT_RENDERER_SHA256: d7efccd6923e0b0b8ea8c87355f9e014699543682cca75367e8b4cef99eca78c
+      PARENT_OPENGL1_SHA256: 90b9c51f62c6849ae5eec6583dcf710d3d9ad1e19e91a58128e81c5cbe51833e
+      PARENT_QAGAME_SHA256: 79858e7faa02e2b50a209c8e2c752f822e92c81579d4da760fb9b87a635caec2
+      PARENT_UI_SHA256: e585fbbf0d8877916443322466f68c93b5eec9e0f1a104c50ddd6d5c9d447d35
+
+      PATCHER_NAME: apply_env_tesla_light_residency_decoupling_rc_v0_4.py
+      PATCHER_SHA256: 854962837c0ef04cf04245e218526b1a98ffc6b9c41a74d08acc5d720944d180
+      DELTA_NAME: darkwolf-env-tesla-light-residency-decoupling-rc-v0-4-over-rc-v0-2.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-env-tesla-light-residency-decoupling-rc-v0-4-sp.patch
+      VALIDATION_NAME: STATIC_VALIDATION_ENV_TESLA_LIGHT_RESIDENCY_RC_V0_4.txt
+      README_NAME: README_ENV_TESLA_LIGHT_RESIDENCY_RC_V0_4.txt
+      CFG_NAME: TESLA_LIGHT_RESIDENCY_RC_V0_4.cfg
+      RELEASE_BASENAME: iortcw-rend2-env-tesla-light-residency-decoupling-rc-v0-4-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Preflight workflow YAML and shell blocks
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel"
+          python3 - "$workflow_rel" <<'PY_PREFLIGHT'
+          from pathlib import Path
+          import subprocess, sys, yaml
+          p=Path(sys.argv[1])
+          raw=p.read_bytes()
+          if b'\r' in raw:
+              raise SystemExit('ERROR: workflow must be LF-only')
+          doc=yaml.safe_load(raw.decode('utf-8'))
+          checked=0
+          for job in (doc.get('jobs') or {}).values():
+              for step in job.get('steps') or []:
+                  script=step.get('run')
+                  if not script:
+                      continue
+                  proc=subprocess.run(['bash','-n'], input=script, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(proc.stderr, file=sys.stderr)
+                      raise SystemExit('ERROR: bash -n failed for '+str(step.get('name')))
+                  checked += 1
+          if checked < 10:
+              raise SystemExit(f'ERROR: unexpectedly small workflow shell contract: {checked}')
+          print(f'Workflow preflight PASS: {checked} shell blocks')
+          PY_PREFLIGHT
+
+      - name: Verify exact runtime-tested RC v0.2 parent provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$PARENT_RUN_HEAD_SHA" || { echo "ERROR: parent HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: parent run not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$PARENT_WORKFLOW_PATH" || { echo "ERROR: parent workflow path drift" >&2; exit 1; }
+          workflow_blob="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${PARENT_WORKFLOW_PATH}?ref=${PARENT_RUN_HEAD_SHA}" --jq '.sha')"
+          test "$workflow_blob" = "$PARENT_WORKFLOW_BLOB_SHA" || { echo "ERROR: parent workflow blob drift: $workflow_blob" >&2; exit 1; }
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${PARENT_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${PARENT_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: exact parent artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$PARENT_ARTIFACT_NAME"
+          test "$expired" = false
+          test "$adigest" = "$PARENT_ARTIFACT_DIGEST" || { echo "ERROR: parent artifact digest drift" >&2; exit 1; }
+          echo "Exact RC v0.2 parent provenance PASS"
+
+      - name: Download and verify exact RC v0.2 parent package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf parent-artifact parent-release
+          mkdir -p parent-artifact parent-release
+          gh run download "$PARENT_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$PARENT_ARTIFACT_NAME" --dir parent-artifact
+          z="parent-artifact/${PARENT_RELEASE_BASENAME}.zip"
+          sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"
+          sidecar_sha="$(awk '{print $1}' "$sidecar")"
+          test "$inner_sha" = "$sidecar_sha" || { echo "ERROR: parent ZIP/sidecar mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$PARENT_INNER_SHA256" || { echo "ERROR: parent inner SHA drift: $inner_sha" >&2; exit 1; }
+          unzip -tq "$z"
+          unzip -q "$z" -d parent-release
+          mapfile -t roots < <(find parent-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1
+          parent="${roots[0]}"
+          test "$(basename "$parent")" = "$PARENT_RELEASE_BASENAME"
+          printf '%s\n' "$parent" > .parent_stage_path
+          test "$(sha256sum "$parent/docs/SHA256SUMS.txt" | awk '{print $1}')" = "$PARENT_MANIFEST_SHA256"
+          (cd "$parent" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$parent/docs/$PARENT_CUMULATIVE_NAME" | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256"
+          test "$(sha256sum "$parent/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$parent/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_CGAME_SHA256"
+          test "$(sha256sum "$parent/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$PARENT_RENDERER_SHA256"
+          test "$(sha256sum "$parent/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$parent/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$parent/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          echo "Exact RC v0.2 package/hash/manifest PASS"
+
+      - name: Reconstruct exact RC v0.2 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$parent/docs/$PARENT_CUMULATIVE_NAME" .parent-cumulative.patch
+          test "$(sha256sum .parent-cumulative.patch | awk '{print $1}')" = "$PARENT_CUMULATIVE_SHA256"
+          test "$(grep -c '^diff --git ' .parent-cumulative.patch)" -eq 67
+          git -C source apply --check --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.parent-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.parent-cumulative.patch
+          grep -Fq 'DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2' source/SP/code/rend2/tr_main.c
+          grep -Fq 'DARKWOLF_ELECTROSHOCKER_VISIBLE_INFLUENCE_RESIDENCY_PRODUCTION_V1' source/SP/code/server/sv_snapshot.c
+          grep -Fq 'CG_EFFECTLIGHT_ENVIRONMENTAL_TESLA' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'DWSHADOW_SOURCE_TESLA_ENDPOINT' source/SP/code/rend2/tr_main.c
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -q -m 'Reconstructed exact RC v0.2 source postimage'
+          parent_commit="$(git -C source rev-parse HEAD)"
+          printf '%s\n' "$parent_commit" > .parent_source_commit
+          test "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA"
+          echo "Exact RC v0.2 source reconstruction PASS: $parent_commit"
+
+      - name: Apply Environmental Tesla Light Residency Decoupling RC v0.4
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME" <<'PY_PATCHER'
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('source')
+          CGENTS = root / 'SP/code/cgame/cg_ents.c'
+          MARK = 'DARKWOLF_ENV_TESLA_LIGHT_RESIDENCY_DECOUPLING_RC_V0_4'
+
+
+          def die(msg):
+              raise SystemExit('ERROR: ' + msg)
+
+
+          def find_function_span(text: str, name: str):
+              needle = name + '('
+              pos = text.find(needle)
+              if pos < 0:
+                  die(f'function {name} not found')
+              start = text.rfind('\n', 0, pos) + 1
+              brace = text.find('{', pos)
+              if brace < 0:
+                  die(f'opening brace not found for {name}')
+              depth = 0
+              i = brace
+              in_string = False
+              in_char = False
+              escape = False
+              line_comment = False
+              block_comment = False
+              while i < len(text):
+                  c = text[i]
+                  n = text[i + 1] if i + 1 < len(text) else ''
+                  if line_comment:
+                      if c == '\n':
+                          line_comment = False
+                      i += 1
+                      continue
+                  if block_comment:
+                      if c == '*' and n == '/':
+                          block_comment = False
+                          i += 2
+                          continue
+                      i += 1
+                      continue
+                  if in_string:
+                      if escape:
+                          escape = False
+                      elif c == '\\':
+                          escape = True
+                      elif c == '"':
+                          in_string = False
+                      i += 1
+                      continue
+                  if in_char:
+                      if escape:
+                          escape = False
+                      elif c == '\\':
+                          escape = True
+                      elif c == "'":
+                          in_char = False
+                      i += 1
+                      continue
+                  if c == '/' and n == '/':
+                      line_comment = True
+                      i += 2
+                      continue
+                  if c == '/' and n == '*':
+                      block_comment = True
+                      i += 2
+                      continue
+                  if c == '"':
+                      in_string = True
+                      i += 1
+                      continue
+                  if c == "'":
+                      in_char = True
+                      i += 1
+                      continue
+                  if c == '{':
+                      depth += 1
+                  elif c == '}':
+                      depth -= 1
+                      if depth == 0:
+                          end = i + 1
+                          if end < len(text) and text[end] == '\n':
+                              end += 1
+                          return start, end
+                  i += 1
+              die(f'closing brace not found for {name}')
+
+
+          def replace_once(text: str, old: str, new: str, label: str):
+              count = text.count(old)
+              if count != 1:
+                  die(f'{label}: expected exactly 1 anchor, found {count}')
+              return text.replace(old, new, 1)
+
+
+          def replace_in_function(text: str, name: str, old: str, new: str, label: str):
+              start, end = find_function_span(text, name)
+              body = text[start:end]
+              count = body.count(old)
+              if count != 1:
+                  die(f'{label}: expected exactly 1 anchor inside {name}, found {count}')
+              body = body.replace(old, new, 1)
+              return text[:start] + body + text[end:]
+
+
+          if not CGENTS.is_file():
+              die(f'missing source file {CGENTS}')
+          cge = CGENTS.read_text(encoding='utf-8')
+          if MARK in cge:
+              die('RC v0.4 marker already present; repeat apply rejected')
+
+          # Exact runtime-tested RC v0.2 source lineage guards.
+          for token in [
+              'REND2_EFFECT_LIGHTING_V8',
+              'DARKWOLF_TRIGGERED_VS_ALWAYS_ON_TESLA_SHADOW_ELIGIBILITY_PC_V0_2',
+              'DARKWOLF_TESLA_SHADOW_SEMANTIC_TRIGGERED',
+              'CG_EFFECTLIGHT_ENVIRONMENTAL_TESLA',
+              'CG_AddEffectLightToScene( electricLightOrigin,',
+              'float pulse = 0.90f + 0.10f * sin( 0.019f * (float)cg.time + 0.73f * (float)cent->currentState.number );',
+              'void CG_AddPacketEntities( void )',
+              'case ET_TESLA_EF:',
+          ]:
+              if token not in cge:
+                  die(f'cgame source contract missing {token}')
+
+          helper = r'''
+          // DARKWOLF_ENV_TESLA_LIGHT_RESIDENCY_DECOUPLING_RC_V0_4
+          // Light-only continuity for scripted environmental Tesla effects.
+          // The ET_TESLA_EF entity, bolt animation, damage and server link/unlink lifetime remain stock.
+          // Only a previously observed CG_EFFECTLIGHT_ENVIRONMENTAL_TESLA direct light may survive
+          // a short snapshot absence. The 650 ms window is deliberately just above the measured
+          // 500 ms UnlinkEntity -> LinkEntity blackout and expires automatically.
+          #define DARKWOLF_ENV_TESLA_LIGHT_GRACE_MS 650
+
+          typedef struct dwEnvTeslaLightResidency_s {
+          	qboolean valid;
+          	qboolean seenThisFrame;
+          	qboolean graceActive;
+          	int lastLiveTime;
+          	int entityNum;
+          	int dlIntensity;
+          	int baseRadius;
+          	vec3_t origin;
+          	vec3_t origin2;
+          } dwEnvTeslaLightResidency_t;
+
+          static dwEnvTeslaLightResidency_t s_dwEnvTeslaLightResidency[MAX_GENTITIES];
+          static int s_dwEnvTeslaLastFrameTime = -1;
+
+          static void CG_DarkWolfEnvTeslaGraceClearAll(void)
+          {
+          	memset(s_dwEnvTeslaLightResidency, 0, sizeof(s_dwEnvTeslaLightResidency));
+          }
+
+          static void CG_DarkWolfEnvTeslaGraceFrameBegin(void)
+          {
+          	int i;
+
+          	// Preserve legacy/A-B behavior when enhanced effect lighting is disabled.
+          	if (!cg_dlightEffectEnhance.integer)
+          	{
+          		CG_DarkWolfEnvTeslaGraceClearAll();
+          		s_dwEnvTeslaLastFrameTime = cg.time;
+          		return;
+          	}
+
+          	// A level/time reset must never resurrect a cache from a previous timeline.
+          	if (s_dwEnvTeslaLastFrameTime >= 0 && cg.time < s_dwEnvTeslaLastFrameTime)
+          		CG_DarkWolfEnvTeslaGraceClearAll();
+          	s_dwEnvTeslaLastFrameTime = cg.time;
+
+          	for (i = 0; i < MAX_GENTITIES; ++i)
+          		s_dwEnvTeslaLightResidency[i].seenThisFrame = qfalse;
+          }
+
+          static void CG_DarkWolfEnvTeslaGraceObserve(centity_t *cent)
+          {
+          	dwEnvTeslaLightResidency_t *s;
+          	int n;
+          	int gap;
+
+          	if (!cent || !cg_dlightEffectEnhance.integer)
+          		return;
+          	if (cent->currentState.eType != ET_TESLA_EF ||
+          		cent->currentState.effect3Time != DARKWOLF_TESLA_SHADOW_SEMANTIC_TRIGGERED)
+          		return;
+
+          	n = cent->currentState.number;
+          	if (n < 0 || n >= MAX_GENTITIES)
+          		return;
+
+          	s = &s_dwEnvTeslaLightResidency[n];
+          	gap = s->valid ? cg.time - s->lastLiveTime : 0;
+          	if (s->graceActive)
+          	{
+          		CG_Printf("ENV_TESLA_GRACE transition=RESUME cgTime=%d entityNum=%d gapMs=%d graceMs=%d\n",
+          			cg.time, n, gap, DARKWOLF_ENV_TESLA_LIGHT_GRACE_MS);
+          	}
+
+          	s->valid = qtrue;
+          	s->seenThisFrame = qtrue;
+          	s->graceActive = qfalse;
+          	s->lastLiveTime = cg.time;
+          	s->entityNum = n;
+          	s->dlIntensity = cent->currentState.dl_intensity;
+          	s->baseRadius = cent->currentState.time;
+          	VectorCopy(cent->currentState.origin, s->origin);
+          	VectorCopy(cent->currentState.origin2, s->origin2);
+          }
+
+          static void CG_DarkWolfEnvTeslaGraceSubmit(const dwEnvTeslaLightResidency_t *s)
+          {
+          	vec3_t electricLightOrigin;
+          	vec3_t electricDir;
+          	float electricDistance;
+          	float electricOffset;
+          	float pulse;
+          	int r, g, b;
+
+          	if (!s || !s->valid || s->baseRadius <= 0)
+          		return;
+
+          	pulse = 0.90f + 0.10f * sin(0.019f * (float)cg.time + 0.73f * (float)s->entityNum);
+          	VectorCopy(s->origin, electricLightOrigin);
+          	VectorSubtract(s->origin2, s->origin, electricDir);
+          	electricDistance = VectorNormalize(electricDir);
+          	if (electricDistance > 1.0f)
+          	{
+          		electricOffset = electricDistance * 0.08f;
+          		if (electricOffset > 32.0f)
+          			electricOffset = 32.0f;
+          		VectorMA(s->origin, electricOffset, electricDir, electricLightOrigin);
+          	}
+
+          	r = s->dlIntensity & 255;
+          	g = (s->dlIntensity >> 8) & 255;
+          	b = (s->dlIntensity >> 16) & 255;
+          	CG_AddEffectLightToScene(electricLightOrigin,
+          		(float)s->baseRadius * (0.98f + 0.02f * pulse),
+          		((float)r / 255.0f) * pulse,
+          		((float)g / 255.0f) * pulse,
+          		((float)b / 255.0f) * pulse, 0,
+          		CG_EFFECTLIGHT_ENVIRONMENTAL_TESLA);
+          }
+
+          static void CG_DarkWolfEnvTeslaGraceFrameEnd(void)
+          {
+          	int i;
+
+          	if (!cg_dlightEffectEnhance.integer)
+          		return;
+
+          	for (i = 0; i < MAX_GENTITIES; ++i)
+          	{
+          		dwEnvTeslaLightResidency_t *s = &s_dwEnvTeslaLightResidency[i];
+          		int age;
+
+          		if (!s->valid || s->seenThisFrame)
+          			continue;
+
+          		// Never overlay the cache on an ET_TESLA_EF that is already live again under
+          		// a different semantic path. A live entity wins; the cache is only for absence.
+          		if (cg_entities[i].currentValid && cg_entities[i].currentState.eType == ET_TESLA_EF)
+          		{
+          			s->valid = qfalse;
+          			s->graceActive = qfalse;
+          			continue;
+          		}
+
+          		age = cg.time - s->lastLiveTime;
+          		if (age <= 0)
+          		{
+          			s->valid = qfalse;
+          			s->graceActive = qfalse;
+          			continue;
+          		}
+
+          		if (age <= DARKWOLF_ENV_TESLA_LIGHT_GRACE_MS)
+          		{
+          			if (!s->graceActive)
+          			{
+          				CG_Printf("ENV_TESLA_GRACE transition=START cgTime=%d entityNum=%d ageMs=%d graceMs=%d radius=%d origin=%.3f,%.3f,%.3f\n",
+          					cg.time, s->entityNum, age, DARKWOLF_ENV_TESLA_LIGHT_GRACE_MS,
+          					s->baseRadius, s->origin[0], s->origin[1], s->origin[2]);
+          			}
+          			s->graceActive = qtrue;
+          			CG_DarkWolfEnvTeslaGraceSubmit(s);
+          			continue;
+          		}
+
+          		if (s->graceActive)
+          		{
+          			CG_Printf("ENV_TESLA_GRACE transition=EXPIRE cgTime=%d entityNum=%d ageMs=%d graceMs=%d\n",
+          				cg.time, s->entityNum, age, DARKWOLF_ENV_TESLA_LIGHT_GRACE_MS);
+          		}
+          		s->valid = qfalse;
+          		s->graceActive = qfalse;
+          	}
+          }
+          '''
+
+          cge = replace_once(
+              cge,
+              'extern void CG_Explodef( vec3_t origin, vec3_t dir, int mass, int type, qhandle_t sound, int forceLowGrav, qhandle_t shader, int parent, qboolean damage );\n',
+              helper.rstrip() + '\n\nextern void CG_Explodef( vec3_t origin, vec3_t dir, int mass, int type, qhandle_t sound, int forceLowGrav, qhandle_t shader, int parent, qboolean damage );\n',
+              'environmental Tesla grace helper anchor')
+
+          cge = replace_in_function(
+              cge, 'CG_Efx',
+              '''\t\t\t\tCG_AddEffectLightToScene( electricLightOrigin,\n\t\t\t\t\t(float)cent->currentState.time * ( 0.98f + 0.02f * pulse ),\n''',
+              '''\t\t\t\t// DARKWOLF_ENV_TESLA_LIGHT_RESIDENCY_DECOUPLING_RC_V0_4\n\t\t\t\t// Cache source state only for the established environmental Tesla semantic.\n\t\t\t\t// The live AddLight call below is intentionally unchanged.\n\t\t\t\tif ( teslaLightType == CG_EFFECTLIGHT_ENVIRONMENTAL_TESLA ) {\n\t\t\t\t\tCG_DarkWolfEnvTeslaGraceObserve( cent );\n\t\t\t\t}\n\t\t\t\tCG_AddEffectLightToScene( electricLightOrigin,\n\t\t\t\t\t(float)cent->currentState.time * ( 0.98f + 0.02f * pulse ),\n''',
+              'live environmental Tesla cache hook')
+
+          cge = replace_in_function(
+              cge, 'CG_AddPacketEntities',
+              '''\tint\tclcount;\n\n''',
+              '''\tint\tclcount;\n\n\t// DARKWOLF_ENV_TESLA_LIGHT_RESIDENCY_DECOUPLING_RC_V0_4\n\tCG_DarkWolfEnvTeslaGraceFrameBegin();\n\n''',
+              'grace frame begin hook')
+
+          cge = replace_in_function(
+              cge, 'CG_AddPacketEntities',
+              '''\t// Ridah, add the flamethrower sounds\n\tCG_UpdateFlamethrowerSounds();\n''',
+              '''\t// DARKWOLF_ENV_TESLA_LIGHT_RESIDENCY_DECOUPLING_RC_V0_4\n\t// Replay only cached light data after all live packet entities had a chance to submit.\n\tCG_DarkWolfEnvTeslaGraceFrameEnd();\n\n\t// Ridah, add the flamethrower sounds\n\tCG_UpdateFlamethrowerSounds();\n''',
+              'grace frame end hook')
+
+          # Hard postconditions.
+          if cge.count(MARK) < 4:
+              die('unexpectedly small RC v0.4 marker count')
+          for token in [
+              '#define DARKWOLF_ENV_TESLA_LIGHT_GRACE_MS 650',
+              'CG_DarkWolfEnvTeslaGraceObserve( cent );',
+              'CG_DarkWolfEnvTeslaGraceFrameBegin();',
+              'CG_DarkWolfEnvTeslaGraceFrameEnd();',
+              'ENV_TESLA_GRACE transition=START',
+              'ENV_TESLA_GRACE transition=RESUME',
+              'ENV_TESLA_GRACE transition=EXPIRE',
+              'CG_EFFECTLIGHT_ENVIRONMENTAL_TESLA);',
+          ]:
+              if token not in cge:
+                  die(f'postcondition missing {token}')
+
+          CGENTS.write_text(cge, encoding='utf-8')
+          print('Applied ' + MARK)
+          PY_PATCHER
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: embedded patcher SHA drift" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" source
+
+          parent_commit="$(cat .parent_source_commit)"
+          mapfile -t changed < <(git -C source diff --name-only "$parent_commit" -- | LC_ALL=C sort)
+          test "${#changed[@]}" -eq 1 || { printf 'ERROR: changed count=%s\n' "${#changed[@]}" >&2; printf '%s\n' "${changed[@]}" >&2; exit 1; }
+          test "${changed[0]}" = 'SP/code/cgame/cg_ents.c' || { echo "ERROR: source allowlist drift" >&2; exit 1; }
+
+          grep -Fq 'DARKWOLF_ENV_TESLA_LIGHT_RESIDENCY_DECOUPLING_RC_V0_4' source/SP/code/cgame/cg_ents.c
+          grep -Fq '#define DARKWOLF_ENV_TESLA_LIGHT_GRACE_MS 650' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'ENV_TESLA_GRACE transition=START' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'ENV_TESLA_GRACE transition=RESUME' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'ENV_TESLA_GRACE transition=EXPIRE' source/SP/code/cgame/cg_ents.c
+
+          git -C source diff "$parent_commit" -- SP/code/cgame/cg_ents.c > .rcv04-delta-text.patch
+          if grep -E '^\+.*(Cvar_Get|Cvar_Register|Cmd_AddCommand|ri\.Cmd_AddCommand|trap_Cvar_Register)' .rcv04-delta-text.patch; then
+            echo "ERROR: RC v0.4 introduced a new cvar/command surface" >&2; exit 1
+          fi
+          if grep -Ei '^\+.*(escape1|doctor|guard|entityNum[ =]*235|fixture[ =]*(741|742|743|744)|bloom|tonemap|exposure)' .rcv04-delta-text.patch; then
+            echo "ERROR: map/entity/postprocess-specific source logic leaked into RC v0.4" >&2; exit 1
+          fi
+          for forbidden in \
+            'r_dlightShadowStrength' 'r_dlightShadowMapSize' 'r_dlightShadowMaxLights' \
+            'r_staticPromoteMaxLights' 'cg_dlightElectricRadiusScale' 'cg_dlightElectricIntensityScale'; do
+            if grep '^+' .rcv04-delta-text.patch | grep -Fq "$forbidden"; then
+              echo "ERROR: forbidden tuning change: $forbidden" >&2; exit 1
+            fi
+          done
+          echo "RC v0.4 one-file light-only source allowlist/policy PASS"
+
+      - name: Generate RC v0.4 delta cumulative and exact replay proofs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent_commit="$(cat .parent_source_commit)"
+          git -C source diff --binary --full-index "$parent_commit" -- SP/code/cgame/cg_ents.c > "$DELTA_NAME"
+          git -C source diff --binary --full-index "$UPSTREAM_SHA" -- > "$CUMULATIVE_NAME"
+          test -s "$DELTA_NAME" && test -s "$CUMULATIVE_NAME"
+          git -C source apply --reverse --check --binary --whitespace=nowarn "../$DELTA_NAME"
+
+          rm -rf replay-delta replay-cumulative
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$parent_commit"
+          git -C replay-delta apply --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --binary --whitespace=nowarn "../$DELTA_NAME"
+          cmp source/SP/code/cgame/cg_ents.c replay-delta/SP/code/cgame/cg_ents.c
+
+          git clone -q source replay-cumulative
+          git -C replay-cumulative checkout -q --detach "$UPSTREAM_SHA"
+          git -C replay-cumulative apply --check --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          mapfile -t all_paths < <(git -C source diff --name-only "$UPSTREAM_SHA" -- | LC_ALL=C sort)
+          for rel in "${all_paths[@]}"; do cmp "source/$rel" "replay-cumulative/$rel"; done
+          sha256sum "$DELTA_NAME" > .delta_sha256
+          sha256sum "$CUMULATIVE_NAME" > .cumulative_sha256
+          echo "RC v0.4 delta/reverse/replay + cumulative replay PASS"
+
+      - name: Build canonical Windows x64 SP cgame candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -x source/SP/cross-make-mingw64.sh
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh -j"$jobs" \
+              BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          )
+          mapfile -t cgames < <(find source/SP/build -type f -name cgame_sp_x64.dll -print | LC_ALL=C sort)
+          test "${#cgames[@]}" -eq 1
+          file "${cgames[0]}" | tee .cgame_file.txt
+          grep -Fq 'PE32+' .cgame_file.txt
+          printf '%s\n' "${cgames[0]}" > .cgame_path
+          sha256sum "${cgames[0]}" > .cgame_sha256
+          echo "Canonical Windows x64 SP cgame compile/output PASS"
+
+      - name: Stage exact RC v0.2 runtime and replace only cgame
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          parent="$(cat .parent_stage_path)"
+          cgame="$(cat .cgame_path)"
+          rm -rf runtime
+          mkdir -p runtime
+          stage="runtime/$RELEASE_BASENAME"
+          cp -a "$parent" "$stage"
+          cp -f "$cgame" "$stage/Main/cgame_sp_x64.dll"
+          rm -f "$stage/docs/SHA256SUMS.txt"
+
+          # Every non-cgame runtime binary remains exact runtime-tested RC v0.2 bytes.
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$PARENT_EXE_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$PARENT_RENDERER_SHA256"
+          test "$(sha256sum "$stage/renderer_sp_opengl1_x64.dll" | awk '{print $1}')" = "$PARENT_OPENGL1_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$PARENT_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$PARENT_UI_SHA256"
+          cmp "$parent/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$parent/renderer_sp_rend2_x64.dll" "$stage/renderer_sp_rend2_x64.dll"
+          cmp "$parent/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$parent/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$parent/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          if cmp -s "$parent/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"; then
+            echo "ERROR: cgame replacement unexpectedly identical to RC v0.2 donor" >&2; exit 1
+          fi
+          printf '%s\n' "$stage" > .stage_path
+          echo "Runtime staging PASS: exact RC v0.2 donor + cgame-only RC v0.4 replacement"
+
+      - name: Add RC v0.4 focused test surface and provenance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          mkdir -p "$stage/docs"
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+          delta_sha="$(awk '{print $1}' .delta_sha256)"
+          cumulative_sha="$(awk '{print $1}' .cumulative_sha256)"
+          cgame_sha="$(awk '{print $1}' .cgame_sha256)"
+
+          cat > "$stage/Main/$CFG_NAME" <<'EOF_CFG'
+          // DarkWolf Environmental Tesla Light Residency Decoupling RC v0.4
+          // The behavior fix is compiled in. This cfg only enables logfile capture.
+          set logfile "2"
+          echo "ENV TESLA LIGHT RESIDENCY RC v0.4 active. Test doctor office and guard room; transition-only ENV_TESLA_GRACE lines will be logged."
+          EOF_CFG
+
+          cat > "$stage/$README_NAME" <<'EOF_README'
+          DARKWOLF / ioRTCW Rend2 Single Player
+          RC v0.4 - ENVIRONMENTAL TESLA LIGHT RESIDENCY DECOUPLING
+
+          ROOT CAUSE ALREADY PROVEN BY RC v0.3
+          ------------------------------------
+          The short scene blackout is caused before Rend2. A scripted environmental ET_TESLA_EF
+          can be UnlinkEntity'd for about 500 ms. During that window it disappears from the server
+          snapshot, CG_Efx does not run and the enhanced environmental Tesla Direct Light vanishes.
+          The entity later LinkEntity's again and the light returns.
+
+          RC v0.4 BEHAVIOR
+          ----------------
+          - The server entity lifetime is untouched.
+          - Tesla bolt/electric effect lifetime is untouched.
+          - Damage/gameplay is untouched.
+          - A previously live CG_EFFECTLIGHT_ENVIRONMENTAL_TESLA light is cached client-side.
+          - If that exact environmental light disappears from packet entities, only its Direct Light
+            is reconstructed for at most 650 ms.
+          - The normal deterministic Tesla pulse continues from current cg.time during the grace,
+            rather than freezing the last brightness sample.
+          - If the source returns inside the grace, live submission resumes normally.
+          - If it does not return by 650 ms, the cache expires and the light turns off normally.
+          - Player/NPC Tesla weapon lighting is not eligible for this cache.
+          - Generic CG_EFFECTLIGHT_ELECTRIC is not eligible.
+
+          WHY THE PARENT IS RC v0.2
+          -------------------------
+          RC v0.3 was diagnostic-only. RC v0.4 reconstructs exact runtime-tested RC v0.2
+          Run 35503262322 and changes only SP/code/cgame/cg_ents.c. In the runtime package only
+          Main/cgame_sp_x64.dll is replaced. The Rend2 renderer binary is byte-for-byte RC v0.2,
+          preserving the already accepted Persistent Physical Shadow Set Residency fix.
+
+          TRANSITION LOGS
+          ---------------
+          ENV_TESLA_GRACE transition=START
+            A previously live environmental Tesla light is absent and light-only grace begins.
+          ENV_TESLA_GRACE transition=RESUME
+            The real ET_TESLA_EF returned before the 650 ms grace expired.
+          ENV_TESLA_GRACE transition=EXPIRE
+            The source remained absent longer than 650 ms; cached light was stopped.
+          There is no per-frame telemetry.
+
+          TEST - ESCAPE1
+          --------------
+          1. Launch normal RUN_DARKWOLF_PRODUCTION.cmd.
+          2. Execute: exec TESLA_LIGHT_RESIDENCY_RC_V0_4.cfg
+          3. Reproduce the route/standing positions where the short blackout was previously seen.
+          4. Test BOTH locations:
+             - doctor's office with the stationary Tesla;
+             - guard room where the same scene darkening was caught later.
+          5. Avoid firing the player Tesla weapon while judging the environmental blackout.
+          6. Continue several seconds after each expected event so START->RESUME or START->EXPIRE
+             is present in rtcwconsole.log.
+          7. Also re-check the table: the normal first shadow must remain and the unwanted second
+             dark shadow must remain absent.
+
+          ACCEPTANCE SIGNAL
+          -----------------
+          Strong confirmation is:
+          - ENV_TESLA_GRACE START appears;
+          - the room does NOT visibly black out;
+          - the electric bolt itself still follows its normal scripted on/off behavior;
+          - ENV_TESLA_GRACE RESUME follows at roughly the previously measured 500 ms gap;
+          - table shadow fix remains unchanged.
+
+          SAFETY BOUNDARIES
+          -----------------
+          No map coordinates, room names or entityNum 235 are used by source logic.
+          No server/PVS/influence logic change.
+          No LinkEntity/UnlinkEntity change.
+          No MAX_DLIGHTS or point-shadow budget change.
+          No shadow strength/map size/filter/bias change.
+          No StaticPromote change.
+          No Direct Light radius/color/intensity tuning change.
+          No Bloom/ToneMap/Exposure change.
+          No Materials/SSGI/SunVol/FireVol/LocalVol algorithm change.
+          No new behavior cvar or console command.
+          EOF_README
+          cp "$stage/$README_NAME" "$stage/docs/$README_NAME"
+
+          cat > "$stage/docs/$VALIDATION_NAME" <<EOF_VALIDATION
+          DARKWOLF ENVIRONMENTAL TESLA LIGHT RESIDENCY DECOUPLING RC V0.4 - CI RECORD
+          status=FIX_CANDIDATE_RUNTIME_ACCEPTANCE_REQUIRED
+          root_cause_input=RC_V0_3_RUN_35506107611_SERVER_UNLINKED_TO_CGAME_MISSING_TO_REND2_MISSING
+          parent_run=$PARENT_RUN_ID
+          parent_head=$PARENT_RUN_HEAD_SHA
+          parent_artifact_id=$PARENT_ARTIFACT_ID
+          parent_artifact_digest=$PARENT_ARTIFACT_DIGEST
+          parent_inner_sha256=$PARENT_INNER_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          parent_second_shadow_fix=PRESERVED_RC_V0_2_PERSISTENT_PHYSICAL_SET_RESIDENCY
+          source_allowlist=SP/code/cgame/cg_ents.c_ONLY
+          runtime_binary_replacements=Main/cgame_sp_x64.dll_ONLY
+          frozen_runtime=ioWolfSP.x64.exe,renderer_sp_rend2_x64.dll,renderer_sp_opengl1_x64.dll,Main/qagame_sp_x64.dll,Main/ui_sp_x64.dll
+          semantic_gate=CG_EFFECTLIGHT_ENVIRONMENTAL_TESLA_ONLY
+          enhanced_effect_gate=cg_dlightEffectEnhance_EXISTING_ONLY
+          light_grace_ms=650
+          measured_unlink_window_ms=500
+          grace_reconstructs=DIRECT_LIGHT_ONLY
+          pulse_during_grace=CONTINUES_FROM_CURRENT_CG_TIME
+          tesla_entity_lifetime_change=NONE
+          tesla_bolt_change=NONE
+          tesla_damage_gameplay_change=NONE
+          player_npc_tesla_weapon_change=NONE
+          server_snapshot_pvs_change=NONE
+          renderer_change=NONE_BYTE_IDENTICAL_RC_V0_2
+          map_specific_source_logic=NONE
+          fixture_or_entity_specific_source_logic=NONE
+          new_behavior_cvar=NONE
+          new_console_command=NONE
+          telemetry_policy=TRANSITION_ONLY_START_RESUME_EXPIRE
+          point_shadow_tuning_change=NONE
+          staticpromote_change=NONE
+          direct_light_tuning_change=NONE_VALUES_RECONSTRUCT_EXISTING_ENV_TESLA_FORMULA
+          bloom_tonemap_exposure_change=NONE
+          material_gi_sunvol_firevol_localvol_algorithm_change=NONE
+          patcher_sha256=$PATCHER_SHA256
+          delta_sha256=$delta_sha
+          cumulative_sha256=$cumulative_sha
+          cgame_sha256=$cgame_sha
+          mingw_sp_compile=PASS_THIS_RUN
+          EOF_VALIDATION
+          echo "RC v0.4 focused test surface/provenance PASS"
+
+      - name: Final RC v0.4 package policy audit and SHA manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          parent="$(cat .parent_stage_path)"
+          required=(
+            ioWolfSP.x64.exe renderer_sp_rend2_x64.dll renderer_sp_opengl1_x64.dll
+            Main/cgame_sp_x64.dll Main/qagame_sp_x64.dll Main/ui_sp_x64.dll
+            RUN_DARKWOLF_PRODUCTION.cmd "Main/$CFG_NAME" "$README_NAME"
+            "docs/$README_NAME" "docs/$VALIDATION_NAME" "docs/$PATCHER_NAME"
+            "docs/$DELTA_NAME" "docs/$CUMULATIVE_NAME"
+          )
+          for rel in "${required[@]}"; do test -s "$stage/$rel" || { echo "ERROR: required file missing: $rel" >&2; exit 1; }; done
+
+          cmp "$parent/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$parent/renderer_sp_rend2_x64.dll" "$stage/renderer_sp_rend2_x64.dll"
+          cmp "$parent/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$parent/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$parent/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cmp "$parent/Main/autoexec.cfg" "$stage/Main/autoexec.cfg"
+          grep -Fq 'cl_renderer rend2' "$stage/RUN_DARKWOLF_PRODUCTION.cmd"
+          if cmp -s "$parent/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"; then
+            echo "ERROR: cgame did not change" >&2; exit 1
+          fi
+
+          python3 - "$stage/Main/$CFG_NAME" <<'PY_CFG'
+          from pathlib import Path
+          import sys
+          lines=[x.strip() for x in Path(sys.argv[1]).read_text(encoding='utf-8').splitlines()
+                 if x.strip() and not x.lstrip().startswith('//')]
+          if len(lines) != 2 or lines[0] != 'set logfile "2"' or not lines[1].startswith('echo '):
+              raise SystemExit('ERROR: RC v0.4 cfg is not sterile')
+          print('RC v0.4 cfg sterile PASS')
+          PY_CFG
+
+          if find "$stage" -type f -iname 'pak*.pk3' -print -quit | grep -q .; then echo "ERROR: commercial pak*.pk3 found" >&2; exit 1; fi
+          if find "$stage" -type f \( -iname '*.sav' -o -iname 'wolfconfig.cfg' \) -print -quit | grep -q .; then echo "ERROR: user save/config found" >&2; exit 1; fi
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt && sha256sum -c docs/SHA256SUMS.txt)
+          echo "Final RC v0.4 package/runtime policy PASS"
+
+      - name: Package full SP RC v0.4 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          rm -rf out
+          mkdir -p out
+          archive="out/${RELEASE_BASENAME}.zip"
+          (cd runtime && find "$RELEASE_BASENAME" -type f -print | LC_ALL=C sort | zip -X -9 "$GITHUB_WORKSPACE/$archive" -@)
+          test -s "$archive"
+          unzip -tq "$archive"
+          sha256sum "$archive" | sed "s#  out/#  #" > "out/${RELEASE_BASENAME}.zip.sha256"
+          cat "out/${RELEASE_BASENAME}.zip.sha256"
+
+      - name: Upload Environmental Tesla Light Residency Decoupling RC v0.4 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            out/${{ env.RELEASE_BASENAME }}.zip
+            out/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
