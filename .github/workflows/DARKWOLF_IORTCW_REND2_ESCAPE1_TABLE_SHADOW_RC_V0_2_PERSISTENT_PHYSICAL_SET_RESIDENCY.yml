@@ -1,0 +1,698 @@
+name: Build DarkWolf Rend2 Escape1 Table Shadow RC v0.2 Persistent Physical Set Residency over Clean Production Run 35361762179 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-escape1-table-shadow-rc-v0-2-residency-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: DarkWolf Rend2 Escape1 Table Shadow RC v0.2 Persistent Physical Set Residency
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "35361762179"
+      BASE_RUN_HEAD_SHA: 79642f3242ce270e946ef0a13d2863f421b228b5
+      BASE_WORKFLOW_PATH: '.github/workflows/DARKWOLF_IORTCW_REND2_CLEAN_PRODUCTION_RELEASE_V1.yml'
+      BASE_WORKFLOW_BLOB_SHA: 3b32afd3940d7b4c2c772d06478efdfeeb8960c2
+      BASE_ARTIFACT_ID: "10555091293"
+      BASE_ARTIFACT_NAME: iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:6cd0e66d9e8e68ac4499a2e41b9ab0286b40942e14106b4b6ddc92ba38e3abb1
+      BASE_INNER_SHA256: 9b24185302c468b47b9c0125a31eb9b1edd9518e7cbd0084a80710c52d395a4b
+      BASE_RELEASE_BASENAME: iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch
+      BASE_CUMULATIVE_SHA256: 7041376f9dccc1be3a2172ef5834c73bb270cc76d768ad1ad115b0567c1077a0
+      BASE_RENDERER_SHA256: 84053287054333b89ffdc0d733e7231371098674fa75932f044598fa67df1701
+
+      PATCHER_NAME: apply_escape1_table_shadow_rc_v0_2_persistent_physical_set_residency.py
+      DELTA_NAME: darkwolf-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-over-clean-production.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-sp.patch
+      VALIDATION_NAME: STATIC_VALIDATION_ESCAPE1_TABLE_SHADOW_RC_V0_2.txt
+      README_NAME: README_ESCAPE1_TABLE_SHADOW_RC_V0_2_RU.txt
+      CFG_NAME: ESCAPE1_TABLE_SHADOW_RC_V0_2.cfg
+      RELEASE_BASENAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Verify exact Clean Production Run 35361762179 provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: base HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: base run not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: base workflow path drift" >&2; exit 1; }
+          workflow_blob="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${BASE_WORKFLOW_PATH}?ref=${BASE_RUN_HEAD_SHA}" --jq '.sha')"
+          test "$workflow_blob" = "$BASE_WORKFLOW_BLOB_SHA" || { echo "ERROR: base workflow blob drift: $workflow_blob" >&2; exit 1; }
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: exact base artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: artifact name drift" >&2; exit 1; }
+          test "$expired" = false || { echo "ERROR: artifact expired" >&2; exit 1; }
+          test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: artifact digest drift: $adigest" >&2; exit 1; }
+          echo "Exact Clean Production provenance PASS"
+
+      - name: Download and verify exact Clean Production package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+          sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"
+          sidecar_sha="$(awk '{print $1}' "$sidecar")"
+          test "$inner_sha" = "$sidecar_sha" || { echo "ERROR: base ZIP/sidecar mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$BASE_INNER_SHA256" || { echo "ERROR: base inner SHA drift: $inner_sha" >&2; exit 1; }
+          unzip -tq "$z"
+          unzip -q "$z" -d base-release
+          mapfile -t roots < <(find base-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one release root" >&2; exit 1; }
+          base="${roots[0]}"
+          test "$(basename "$base")" = "$BASE_RELEASE_BASENAME"
+          printf '%s\n' "$base" > .base_stage_path
+          (cd "$base" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$base/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          echo "Exact Clean Production package/hash/manifest PASS"
+
+      - name: Reconstruct exact Clean Production source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" .base-cumulative.patch
+          test "$(sha256sum .base-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(grep -c '^diff --git ' .base-cumulative.patch)" -eq 67
+          git -C source apply --check --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.base-cumulative.patch
+          grep -Fq 'static float R_DlightShadowSelectionScore' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_DarkWolfStaticPromoteShadowGroupCanonicalId' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_DarkWolfStaticPromoteShadowExpandPending' source/SP/code/rend2/tr_main.c
+          grep -Fq 'r_dlightShadowMaxLights = ri.Cvar_Get( "r_dlightShadowMaxLights", "3", CVAR_ARCHIVE )' source/SP/code/rend2/tr_init.c
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -q -m 'Reconstructed exact Clean Production Run 35361762179 source postimage'
+          clean_commit="$(git -C source rev-parse HEAD)"
+          printf '%s\n' "$clean_commit" > .clean_source_commit
+          test "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA"
+          echo "Exact Clean Production source reconstruction PASS: $clean_commit"
+
+      - name: Apply Persistent Physical Shadow Set Residency RC v0.2
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME" <<'PY_PATCHER'
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('source')
+          main = root / 'SP/code/rend2/tr_main.c'
+          init = root / 'SP/code/rend2/tr_init.c'
+          local = root / 'SP/code/rend2/tr_local.h'
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'ERROR: {label}: expected exactly one anchor, got {count}')
+              return text.replace(old, new, 1)
+
+          main_text = main.read_text()
+          init_text = init.read_text()
+          local_text = local.read_text()
+
+          marker = 'DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2'
+          if marker in main_text or marker in init_text or marker in local_text:
+              raise SystemExit('ERROR: RC v0.2 residency patch already applied')
+
+          residency_and_diag_globals = r'''
+          // DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2
+          // Generic persistent-physical shadow residency.  This is deliberately
+          // map/fixture agnostic: an already selected StaticPromote physical group
+          // remains a resident shadow owner while the main camera is still inside
+          // that group's physical capture radius plus the existing shadow hysteresis
+          // margin.  Resident identities are consumed as a SET before any fresh
+          // score challenger is admitted to the persistent budget.  This prevents
+          // compact-slot rank migration from opening a false vacancy and admitting
+          // an overlapping fourth lamp merely because camera-distance scores cross.
+          // Direct-light delivery, radii/colors, grouping, shadow strength, budgets,
+          // dynamic/Tesla/blast slots, materials and post-processing are untouched.
+          static int R_DarkWolfPersistentPhysicalShadowResidentCandidate(
+              int stableGroupId, const vec3_t viewOrigin, unsigned int pendingLightsMask,
+              float *distanceOut, float *limitOut)
+          {
+              int i;
+              int canonicalIndex = -1;
+              vec3_t captureOrigin, delta;
+              float captureRadius = 0.0f;
+              float hysteresis = r_dlightShadowHysteresis
+                  ? Com_Clamp(0.0f, 0.5f, r_dlightShadowHysteresis->value) : 0.0f;
+              float residencyLimit;
+              float distance;
+
+              if (distanceOut) *distanceOut = -1.0f;
+              if (limitOut) *limitOut = -1.0f;
+              if (stableGroupId < 0)
+                  return -1;
+
+              for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i)
+              {
+                  dlight_t *candidate = &tr.refdef.dlights[i];
+                  if (!(pendingLightsMask & (1u << i)))
+                      continue;
+                  if (!R_DarkWolfStaticPromoteShadowGroupEligible(candidate))
+                      continue;
+                  if (R_DarkWolfStaticPromoteShadowGroupCanonicalIndex(i) != i)
+                      continue;
+                  if (R_DarkWolfStaticPromoteShadowGroupCanonicalId(i) != stableGroupId)
+                      continue;
+                  canonicalIndex = i;
+                  break;
+              }
+
+              if (canonicalIndex < 0)
+                  return -1;
+
+              R_DarkWolfStaticPromoteShadowGroupCaptureParams(
+                  canonicalIndex, captureOrigin, &captureRadius, NULL);
+              if (captureRadius <= 0.0f)
+                  return -1;
+
+              residencyLimit = captureRadius * (1.0f + hysteresis);
+              VectorSubtract(captureOrigin, viewOrigin, delta);
+              distance = sqrtf(DotProduct(delta, delta));
+              if (distanceOut) *distanceOut = distance;
+              if (limitOut) *limitOut = residencyLimit;
+
+              return distance <= residencyLimit ? canonicalIndex : -1;
+          }
+
+          // On-demand validation snapshot inherited from RC v0.1.  No continuous
+          // telemetry is enabled; this only records state when the command is used.
+          static qboolean s_dlightShadowSnapshotViewValid = qfalse;
+          static vec3_t s_dlightShadowSnapshotViewOrigin;
+          static int s_dlightShadowSnapshotViewTime = 0;
+
+          '''
+          main_text = replace_once(
+              main_text,
+              'void R_RenderDlightCubemaps(const refdef_t *fd)\n{\n',
+              residency_and_diag_globals + 'void R_RenderDlightCubemaps(const refdef_t *fd)\n{\n',
+              'tr_main residency globals anchor')
+
+          camera_anchor = '''\tint persistentShadowBudget = 0;\n\tint dynamicShadowBudget = 0; // DARKWOLF_STAGE11_UNIFIED_ASSET_SHADOW_COVERAGE_CLEAN_PRODUCTION_V1: fixed accepted transient reserve = 2.\n\n'''
+          camera_insert = camera_anchor + '''\t// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2\n\t// Cache the exact selector camera for the on-demand snapshot only.\n\tif (fd)\n\t{\n\t\tVectorCopy(fd->vieworg, s_dlightShadowSnapshotViewOrigin);\n\t\ts_dlightShadowSnapshotViewTime = fd->time;\n\t\ts_dlightShadowSnapshotViewValid = qtrue;\n\t}\n\n'''
+          main_text = replace_once(main_text, camera_anchor, camera_insert, 'tr_main camera anchor')
+
+          expand_anchor = '''\tpendingLightsMask = R_DarkWolfStaticPromoteShadowExpandPending(pendingLightsMask);\n\n\twhile (pendingLightsMask && renderedLights < maxShadowLights)\n'''
+          expand_insert = '''\tpendingLightsMask = R_DarkWolfStaticPromoteShadowExpandPending(pendingLightsMask);\n\n\t// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2\n\t// Build the resident physical OWNER SET once for this frame from the previous\n\t// compact persistent slots.  A previous group is resident only while it still\n\t// exists/qualifies and the camera remains within its capture sphere enlarged\n\t// by the existing r_dlightShadowHysteresis margin.  No map names, fixture IDs,\n\t// coordinates or new tuning cvars participate in this decision.\n\t{\n\t\tint residentGroupBySlot[MAX_DLIGHT_SHADOWS];\n\t\tint residentIndexBySlot[MAX_DLIGHT_SHADOWS];\n\t\tint residencySlot;\n\n\t\tfor (residencySlot = 0; residencySlot < MAX_DLIGHT_SHADOWS; ++residencySlot)\n\t\t{\n\t\t\tresidentGroupBySlot[residencySlot] = -1;\n\t\t\tresidentIndexBySlot[residencySlot] = -1;\n\t\t}\n\n\t\tfor (residencySlot = 0; residencySlot < persistentShadowBudget; ++residencySlot)\n\t\t{\n\t\t\tint stableGroupId = historyStaticPromoteGroupId[residencySlot];\n\t\t\tint residentIndex;\n\t\t\tint earlierSlot;\n\t\t\tqboolean duplicateResident = qfalse;\n\n\t\t\tif (stableGroupId < 0)\n\t\t\t\tcontinue;\n\t\t\tfor (earlierSlot = 0; earlierSlot < residencySlot; ++earlierSlot)\n\t\t\t\tif (residentGroupBySlot[earlierSlot] == stableGroupId)\n\t\t\t\t\tduplicateResident = qtrue;\n\t\t\tif (duplicateResident)\n\t\t\t\tcontinue;\n\n\t\t\tresidentIndex = R_DarkWolfPersistentPhysicalShadowResidentCandidate(\n\t\t\t\tstableGroupId, fd->vieworg, pendingLightsMask, NULL, NULL);\n\t\t\tif (residentIndex < 0)\n\t\t\t\tcontinue;\n\t\t\tresidentGroupBySlot[residencySlot] = stableGroupId;\n\t\t\tresidentIndexBySlot[residencySlot] = residentIndex;\n\t\t}\n\n\t\twhile (pendingLightsMask && renderedLights < maxShadowLights)\n'''
+          main_text = replace_once(main_text, expand_anchor, expand_insert, 'resident set precompute anchor')
+
+          loop_start_anchor = '''\t\tint i;\n\t\tint j;\n\n\t\tfor (i = 0; i < tr.refdef.num_dlights; i++)\n'''
+          loop_start_insert = '''\t\tint i;\n\t\tint j;\n\t\tqboolean selectedFromResidentSet = qfalse;\n\n\t\t// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2\n\t\t// Persistent physical residents are consumed before score challengers.\n\t\t// Prefer the historical compact slot; if that slot became vacant, compact\n\t\t// another still-resident identity forward.  Only after the resident set is\n\t\t// exhausted may a new physical owner enter the persistent budget.\n\t\tif (renderedLights < persistentShadowBudget && !r_dlightDiagForceSelect->integer)\n\t\t{\n\t\t\tint residentSourceSlot = -1;\n\t\t\tif (shadowSlot >= 0 && shadowSlot < persistentShadowBudget &&\n\t\t\t\tresidentIndexBySlot[shadowSlot] >= 0 &&\n\t\t\t\t(pendingLightsMask & (1u << residentIndexBySlot[shadowSlot])))\n\t\t\t{\n\t\t\t\tresidentSourceSlot = shadowSlot;\n\t\t\t}\n\t\t\telse\n\t\t\t{\n\t\t\t\tint scanSlot;\n\t\t\t\tfor (scanSlot = 0; scanSlot < persistentShadowBudget; ++scanSlot)\n\t\t\t\t{\n\t\t\t\t\tint residentIndex = residentIndexBySlot[scanSlot];\n\t\t\t\t\tif (residentIndex >= 0 && (pendingLightsMask & (1u << residentIndex)))\n\t\t\t\t\t{\n\t\t\t\t\t\tresidentSourceSlot = scanSlot;\n\t\t\t\t\t\tbreak;\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\n\t\t\tif (residentSourceSlot >= 0)\n\t\t\t{\n\t\t\t\tbestLight = residentIndexBySlot[residentSourceSlot];\n\t\t\t\tbestScore = R_DarkWolfStaticPromoteShadowGroupSelectionScore(bestLight, fd);\n\t\t\t\tselectedFromResidentSet = qtrue;\n\t\t\t\tresidentIndexBySlot[residentSourceSlot] = -1;\n\t\t\t\tresidentGroupBySlot[residentSourceSlot] = -1;\n\t\t\t}\n\t\t}\n\n\t\tif (bestLight < 0)\n\t\t{\n\t\tfor (i = 0; i < tr.refdef.num_dlights; i++)\n'''
+          main_text = replace_once(main_text, loop_start_anchor, loop_start_insert, 'selector loop start anchor')
+
+          loop_end_anchor = '''\t\t\tif (score > bestScore)\n\t\t\t{\n\t\t\t\tbestScore = score;\n\t\t\t\tbestLight = i;\n\t\t\t}\n\t\t}\n\n\t\tif (bestLight < 0)\n'''
+          loop_end_insert = '''\t\t\tif (score > bestScore)\n\t\t\t{\n\t\t\t\tbestScore = score;\n\t\t\t\tbestLight = i;\n\t\t\t}\n\t\t}\n\t\t}\n\n\t\tif (bestLight < 0)\n'''
+          main_text = replace_once(main_text, loop_end_anchor, loop_end_insert, 'selector loop end anchor')
+
+          history_anchor = '''\t\tif (!tr.refdef.dlights[bestLight].transientBlast\n\t\t\t&& shadowSlot >= 0 && shadowSlot < MAX_DLIGHT_SHADOWS)\n'''
+          history_insert = '''\t\tif (!selectedFromResidentSet\n\t\t\t&& !tr.refdef.dlights[bestLight].transientBlast\n\t\t\t&& shadowSlot >= 0 && shadowSlot < MAX_DLIGHT_SHADOWS)\n'''
+          main_text = replace_once(main_text, history_anchor, history_insert, 'legacy per-slot hysteresis gate anchor')
+
+          # Close the resident-set scope immediately after the original selector while loop.
+          close_anchor = '''\t\trenderedLights++;\n\t}\n\n\t// DARKWOLF_PHYSICAL_LIGHT_DELIVERY_RESIDENCY_DIAG_V0_1: delivery has reached Rend2; record actual cubemap selection after all six-face work.'''
+          close_insert = '''\t\trenderedLights++;\n\t}\n\t}\n\n\t// DARKWOLF_PHYSICAL_LIGHT_DELIVERY_RESIDENCY_DIAG_V0_1: delivery has reached Rend2; record actual cubemap selection after all six-face work.'''
+          main_text = replace_once(main_text, close_anchor, close_insert, 'resident set scope close anchor')
+
+          command_code = r'''
+          // DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2
+          static const char *R_DlightShadowSnapshotSourceName(int sourceClass)
+          {
+              switch (sourceClass)
+              {
+              case DWSHADOW_SOURCE_PERSISTENT_PHYSICAL: return "PERSISTENT_PHYSICAL";
+              case DWSHADOW_SOURCE_PERSISTENT_FIRE: return "PERSISTENT_FIRE";
+              case DWSHADOW_SOURCE_ORDINARY_MUZZLE: return "ORDINARY_MUZZLE";
+              case DWSHADOW_SOURCE_TESLA_ENDPOINT: return "TESLA_ENDPOINT";
+              case DWSHADOW_SOURCE_TESLA_MUZZLE: return "TESLA_MUZZLE";
+              case DWSHADOW_SOURCE_TRANSIENT_EXPLOSION: return "TRANSIENT_EXPLOSION";
+              case DWSHADOW_SOURCE_OTHER_DYNAMIC: return "OTHER_DYNAMIC";
+              default: return "UNCLASSIFIED";
+              }
+          }
+
+          static float R_DlightShadowSnapshotScore(const dlight_t *dl)
+          {
+              vec3_t delta;
+              float distanceSquared;
+              float radiusSquared;
+              float luminance;
+
+              if (!dl || !s_dlightShadowSnapshotViewValid)
+                  return -1.0f;
+              VectorSubtract(dl->origin, s_dlightShadowSnapshotViewOrigin, delta);
+              distanceSquared = DotProduct(delta, delta);
+              radiusSquared = dl->radius * dl->radius;
+              luminance = 0.2126f * dl->color[0] + 0.7152f * dl->color[1] + 0.0722f * dl->color[2];
+              return radiusSquared * (0.25f + luminance) /
+                  (distanceSquared + radiusSquared * 0.25f + 1.0f);
+          }
+
+          static void R_DlightShadowSnapshotGroupStats(int index, int *groupIdOut, float *groupScoreOut)
+          {
+              int groupId = -1;
+              float groupScore = R_DlightShadowSnapshotScore(&tr.refdef.dlights[index]);
+              int i;
+
+              if (R_DarkWolfStaticPromoteShadowGroupEligible(&tr.refdef.dlights[index]))
+              {
+                  groupId = R_DarkWolfStaticPromoteShadowGroupCanonicalId(index);
+                  groupScore = -1.0f;
+                  for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i)
+                  {
+                      float score;
+                      if (!R_DarkWolfStaticPromoteShadowGroupEligible(&tr.refdef.dlights[i]))
+                          continue;
+                      if (R_DarkWolfStaticPromoteShadowGroupCanonicalId(i) != groupId)
+                          continue;
+                      score = R_DlightShadowSnapshotScore(&tr.refdef.dlights[i]);
+                      if (score > groupScore)
+                          groupScore = score;
+                  }
+              }
+
+              *groupIdOut = groupId;
+              *groupScoreOut = groupScore;
+          }
+
+          void R_DlightShadowSnapshot_f(void)
+          {
+              const char *label = (ri.Cmd_Argc() >= 2) ? ri.Cmd_Argv(1) : "SNAP";
+              const char *mapName = tr.world ? tr.world->baseName : "<none>";
+              int persistentBudget = r_dlightShadowMaxLights ? r_dlightShadowMaxLights->integer : -1;
+              unsigned int allMask = tr.refdef.num_dlights >= 32 ? 0xFFFFFFFFu : ((1u << tr.refdef.num_dlights) - 1u);
+              int i;
+
+              if (!s_dlightShadowSnapshotViewValid)
+              {
+                  ri.Printf(PRINT_WARNING, "TABLE_SHADOW_SNAPSHOT_ERROR label=%s reason=no_selector_view_yet\\n", label);
+                  return;
+              }
+
+              ri.Printf(PRINT_ALL,
+                  "TABLE_SHADOW_SNAPSHOT_BEGIN label=%s map=%s frame=%d time=%d selectorTime=%d cam=%.3f,%.3f,%.3f numDlights=%d persistentBudget=%d dynamicReserve=2 shadowMask=0x%08x policy=PERSISTENT_PHYSICAL_SET_RESIDENCY_V02\\n",
+                  label, mapName, tr.frameCount, tr.refdef.time, s_dlightShadowSnapshotViewTime,
+                  s_dlightShadowSnapshotViewOrigin[0], s_dlightShadowSnapshotViewOrigin[1], s_dlightShadowSnapshotViewOrigin[2],
+                  tr.refdef.num_dlights, persistentBudget, tr.refdef.dlightShadowMask);
+
+              for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i)
+              {
+                  dlight_t *dl = &tr.refdef.dlights[i];
+                  int slot = (int)tr.refdef.dlightShadowSlot[i];
+                  int selected = (slot >= 0) ? 1 : 0;
+                  int computedGroupId = -1;
+                  int storedGroupId = tr.refdef.dlightShadowGroupId[i];
+                  int synthetic = (dl->staticPromoteFixtureId >= 1000000) ? 1 : 0;
+                  int syntheticId = synthetic ? dl->staticPromoteFixtureId - 1000000 : -1;
+                  int residentCandidate = -1;
+                  float residencyDistance = -1.0f;
+                  float residencyLimit = -1.0f;
+                  float score = R_DlightShadowSnapshotScore(dl);
+                  float groupScore = score;
+                  vec3_t delta;
+                  float cameraDistance;
+
+                  R_DlightShadowSnapshotGroupStats(i, &computedGroupId, &groupScore);
+                  if (computedGroupId >= 0)
+                      residentCandidate = R_DarkWolfPersistentPhysicalShadowResidentCandidate(
+                          computedGroupId, s_dlightShadowSnapshotViewOrigin, allMask,
+                          &residencyDistance, &residencyLimit);
+                  VectorSubtract(dl->origin, s_dlightShadowSnapshotViewOrigin, delta);
+                  cameraDistance = sqrtf(DotProduct(delta, delta));
+
+                  ri.Printf(PRINT_ALL,
+                      "TABLE_SHADOW_LIGHT label=%s index=%d selected=%d slot=%d source=%s sourceId=%d fixture=%d computedGroup=%d storedGroup=%d native=%d localVolLamp=%d synthetic=%d syntheticId=%d tier=%d noShadow=%d origin=%.3f,%.3f,%.3f radius=%.3f color=%.4f,%.4f,%.4f score=%.7f groupScore=%.7f cameraDistance=%.3f residencyInside=%d residencyDistance=%.3f residencyLimit=%.3f captureOrigin=%.3f,%.3f,%.3f captureRadius=%.3f\\n",
+                      label, i, selected, slot, R_DlightShadowSnapshotSourceName(dl->shadowSourceClass), dl->shadowSourceClass,
+                      dl->staticPromoteFixtureId, computedGroupId, storedGroupId,
+                      dl->nativeAuthoredDlight ? 1 : 0, dl->localVolumetricLamp ? 1 : 0,
+                      synthetic, syntheticId, dl->staticPromoteVisibilityTier, dl->noDlightShadow ? 1 : 0,
+                      dl->origin[0], dl->origin[1], dl->origin[2], dl->radius,
+                      dl->color[0], dl->color[1], dl->color[2], score, groupScore, cameraDistance,
+                      residentCandidate >= 0 ? 1 : 0, residencyDistance, residencyLimit,
+                      tr.refdef.dlightShadowCaptureOrigin[i][0], tr.refdef.dlightShadowCaptureOrigin[i][1], tr.refdef.dlightShadowCaptureOrigin[i][2],
+                      tr.refdef.dlightShadowCaptureRadius[i]);
+              }
+
+              ri.Printf(PRINT_ALL, "TABLE_SHADOW_SNAPSHOT_END label=%s map=%s\\n", label, mapName);
+          }
+
+          '''
+          main_text = replace_once(
+              main_text,
+              '\n\nvoid R_RenderPshadowMaps(const refdef_t *fd)\n{',
+              '\n\n' + command_code + 'void R_RenderPshadowMaps(const refdef_t *fd)\n{',
+              'tr_main command anchor')
+
+          init_text = replace_once(
+              init_text,
+              '\tri.Cmd_AddCommand( "r_staticPromoteInspect", R_StaticPromoteInspect_f );\n',
+              '\tri.Cmd_AddCommand( "r_staticPromoteInspect", R_StaticPromoteInspect_f );\n'
+              '\t// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2\n'
+              '\tri.Cmd_AddCommand( "r_dlightShadowSnapshot", R_DlightShadowSnapshot_f );\n',
+              'tr_init add command anchor')
+          init_text = replace_once(
+              init_text,
+              '\tri.Cmd_RemoveCommand( "r_staticPromoteInspect" );\n',
+              '\tri.Cmd_RemoveCommand( "r_staticPromoteInspect" );\n'
+              '\t// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2\n'
+              '\tri.Cmd_RemoveCommand( "r_dlightShadowSnapshot" );\n',
+              'tr_init remove command anchor')
+
+          local_text = replace_once(
+              local_text,
+              'void R_RenderDlightCubemaps(const refdef_t *fd);\n',
+              'void R_RenderDlightCubemaps(const refdef_t *fd);\n'
+              '// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2\n'
+              'void R_DlightShadowSnapshot_f(void);\n',
+              'tr_local prototype anchor')
+
+          main.write_text(main_text)
+          init.write_text(init_text)
+          local.write_text(local_text)
+          print('Applied DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2')
+          PY_PATCHER
+
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" source
+
+          clean_commit="$(cat .clean_source_commit)"
+          mapfile -t changed < <(git -C source diff --name-only "$clean_commit" -- | LC_ALL=C sort)
+          expected=(SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h SP/code/rend2/tr_main.c)
+          test "${#changed[@]}" -eq 3 || { printf 'ERROR: changed count=%s\n' "${#changed[@]}" >&2; printf '%s\n' "${changed[@]}" >&2; exit 1; }
+          test "$(printf '%s\n' "${changed[@]}")" = "$(printf '%s\n' "${expected[@]}")" || { echo "ERROR: changed-file allowlist drift" >&2; exit 1; }
+          grep -Fq 'DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_DarkWolfPersistentPhysicalShadowResidentCandidate' source/SP/code/rend2/tr_main.c
+          grep -Fq 'residentGroupBySlot' source/SP/code/rend2/tr_main.c
+          grep -Fq 'ri.Cmd_AddCommand( "r_dlightShadowSnapshot", R_DlightShadowSnapshot_f );' source/SP/code/rend2/tr_init.c
+          grep -Fq 'void R_DlightShadowSnapshot_f(void);' source/SP/code/rend2/tr_local.h
+          test "$(git -C source diff "$clean_commit" -- SP/code/rend2/tr_main.c | grep -c '^+.*fixture=741\|^+.*fixture=742\|^+.*fixture=743\|^+.*fixture=744')" -eq 0
+          test "$(git -C source diff "$clean_commit" -- SP/code/rend2/tr_main.c | grep -c '^+.*R_DlightShadowSelectionScore')" -eq 0
+          echo "RC v0.2 generic residency source allowlist/policy PASS"
+
+      - name: Generate residency fix delta and cumulative replay proofs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          clean_commit="$(cat .clean_source_commit)"
+          git -C source diff --binary --full-index "$clean_commit" -- \
+            SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h SP/code/rend2/tr_main.c > "$DELTA_NAME"
+          git -C source diff --binary --full-index "$UPSTREAM_SHA" -- > "$CUMULATIVE_NAME"
+          test -s "$DELTA_NAME" && test -s "$CUMULATIVE_NAME"
+          git -C source apply --reverse --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          rm -rf replay-delta
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$clean_commit"
+          git -C replay-delta apply --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --binary --whitespace=nowarn "../$DELTA_NAME"
+          for rel in SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h SP/code/rend2/tr_main.c; do cmp "source/$rel" "replay-delta/$rel"; done
+          sha256sum "$DELTA_NAME" > .delta_sha256
+          sha256sum "$CUMULATIVE_NAME" > .cumulative_sha256
+          echo "Residency fix exact delta/reverse/replay PASS"
+
+      - name: Build canonical Windows x64 SP residency-fix renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -x source/SP/cross-make-mingw64.sh
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh -j"$jobs" \
+              BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          )
+          mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | LC_ALL=C sort)
+          test "${#renderers[@]}" -eq 1
+          renderer="${renderers[0]}"
+          file "$renderer" | tee .renderer_file.txt
+          grep -Fq 'PE32+' .renderer_file.txt
+          printf '%s\n' "$renderer" > .renderer_path
+          sha256sum "$renderer" > .renderer_sha256
+          echo "Canonical Windows x64 SP residency-fix compile/output PASS"
+
+      - name: Stage exact Clean Production runtime and replace Rend2 renderer only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          renderer="$(cat .renderer_path)"
+          rm -rf runtime
+          mkdir -p runtime
+          stage="runtime/$RELEASE_BASENAME"
+          cp -a "$base" "$stage"
+          cp -f "$renderer" "$stage/renderer_sp_rend2_x64.dll"
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          cmp "$base/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$base/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$base/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$base/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$base/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          printf '%s\n' "$stage" > .stage_path
+          echo "Runtime staging PASS: exact Clean Production donor + residency-fix Rend2 renderer only"
+
+      - name: Add RC v0.2 runtime test surface and provenance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          delta_sha="$(awk '{print $1}' .delta_sha256)"
+          cumulative_sha="$(awk '{print $1}' .cumulative_sha256)"
+          renderer_sha="$(awk '{print $1}' .renderer_sha256)"
+
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+
+          cat > "$stage/Main/$CFG_NAME" <<'EOF_CFG'
+          // DARKWOLF ESCAPE1 TABLE SHADOW RC v0.2 - Persistent Physical Set Residency
+          seta r_staticPromoteMaxLights "32"
+          seta r_volumetricLocal "1"
+          seta r_dlightShadowMaxLights "3"
+          seta r_dlightShadowStrength "0.88"
+          seta r_dlightShadowMapSize "2048"
+          seta r_dlightShadowHysteresis "0.25"
+          seta r_dlightShadowHoldFrames "12"
+          set logfile "2"
+          echo "ESCAPE1 TABLE SHADOW RC v0.2 residency loaded. Use: r_dlightShadowSnapshot A / B / C"
+          EOF_CFG
+
+          cat > "$stage/$README_NAME" <<'EOF_README'
+          DARKWOLF / ioRTCW Rend2 Single Player
+          ESCAPE1 TABLE DOUBLE-SHADOW - RC v0.2
+          PERSISTENT PHYSICAL SHADOW SET RESIDENCY
+
+          PURPOSE
+          -------
+          RC v0.1 runtime evidence proved that both table shadows are dynamic point
+          shadows and that the darker second shadow appears exactly when fixture 744
+          enters the persistent cubemap set while fixture 742 is evicted after a
+          camera-distance score crossing.  This build fixes the selector generically.
+
+          EXACT BASE
+          ----------
+          Clean Production Run 35361762179
+          HEAD 79642f3242ce270e946ef0a13d2863f421b228b5
+          Upstream 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+          FIX CONTRACT
+          ------------
+          1. Persistent StaticPromote physical shadow owners are treated as a SET.
+          2. A previous physical owner remains resident while it still exists and the
+             main camera is inside its physical capture radius plus the existing
+             r_dlightShadowHysteresis margin.
+          3. All resident identities are consumed before any fresh score challenger
+             can enter the persistent shadow budget.
+          4. Historical compact-slot affinity is preserved when possible; vacancies
+             compact another still-resident identity forward before admitting a new
+             owner.
+          5. Once an old owner leaves its residency envelope, normal score selection
+             is allowed to refill that vacancy. The selector is therefore stable but
+             not permanently frozen.
+
+          NO MAP-SPECIFIC HACKS
+          ---------------------
+          The renderer contains no escape1 name, no table coordinates, and no
+          fixture 741/742/743/744 special cases.  The fix uses only existing physical
+          group identity, capture radius, camera position and the existing shadow
+          hysteresis value.
+
+          UNCHANGED
+          ---------
+          r_dlightShadowMaxLights remains 3.
+          Dynamic reserve remains 2.
+          Direct light delivery/radius/color/falloff are unchanged.
+          Physical grouping thresholds are unchanged.
+          Shadow strength/map size/filter/bias are unchanged.
+          Tesla, muzzle, explosion and fire source policies are unchanged.
+          Materials, SSGI, SunVol, FireVol, LocalVol are unchanged.
+          Bloom, ToneMap and Exposure are unchanged.
+
+          ON-DEMAND VALIDATION COMMAND
+          ----------------------------
+            r_dlightShadowSnapshot <label>
+
+          Snapshot lines now also contain:
+            residencyInside
+            residencyDistance
+            residencyLimit
+
+          TEST
+          ----
+          1. Launch RUN_DARKWOLF_PRODUCTION.cmd and load escape1.
+          2. At the problematic table execute:
+               exec ESCAPE1_TABLE_SHADOW_RC_V0_2.cfg
+          3. Stand at the old A position where the normal first shadow was present:
+               r_dlightShadowSnapshot A
+          4. Move through the same path to the old B position where the darker second
+             shadow used to appear:
+               r_dlightShadowSnapshot B
+             EXPECTED: no second/double darkening.  The persistent physical owner set
+             should remain stable while those owners are inside their residency area.
+          5. Continue moving clearly away from that local lamp group and take:
+               r_dlightShadowSnapshot C
+             EXPECTED: owners are allowed to change after leaving residency; there
+             must be no permanently frozen cubemap owner.
+          6. Regression-check normal weapon muzzle shadows, Tesla/static Tesla,
+             explosions, fire, doors/grates/rails and several other lamps.
+          7. Exit normally and send rtcwconsole/qconsole.log plus a short visual result.
+
+          IMPORTANT
+          ---------
+          Do not raise r_dlightShadowMaxLights to 5 or 6 in this test. Production
+          target remains 3.  No r_dlightShadowMaxLights 0 discriminator is required
+          anymore; RC v0.1 already proved both table shadows use the point-shadow path.
+          EOF_README
+          cp "$stage/$README_NAME" "$stage/docs/$README_NAME"
+
+          cat > "$stage/docs/$VALIDATION_NAME" <<EOF_VALIDATION
+          DARKWOLF ESCAPE1 TABLE SHADOW RC V0.2 - CI VALIDATION RECORD
+          status=RUNTIME_CANDIDATE_PERSISTENT_PHYSICAL_SET_RESIDENCY
+          base_run=$BASE_RUN_ID
+          base_head=$BASE_RUN_HEAD_SHA
+          base_artifact_id=$BASE_ARTIFACT_ID
+          base_artifact_digest=$BASE_ARTIFACT_DIGEST
+          base_inner_sha256=$BASE_INNER_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          base_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          source_change_allowlist=SP/code/rend2/tr_init.c,SP/code/rend2/tr_local.h,SP/code/rend2/tr_main.c
+          selector_change=PERSISTENT_PHYSICAL_OWNER_SET_RESIDENCY_ONLY
+          residency_identity=STATIC_PROMOTE_PHYSICAL_GROUP_ID
+          residency_spatial_basis=PHYSICAL_GROUP_CAPTURE_RADIUS
+          residency_margin=EXISTING_R_DLIGHTSHADOWHYSTERESIS_CLAMP_0_TO_0_5
+          residency_set_before_challengers=YES
+          compact_slot_affinity=PRESERVE_WHEN_POSSIBLE
+          new_residency_cvar=NONE
+          map_specific_logic=NONE
+          fixture_specific_logic=NONE
+          continuous_telemetry=NONE
+          diagnostic_command=r_dlightShadowSnapshot
+          budget_change=NONE
+          direct_light_change=NONE
+          shadow_strength_change=NONE
+          grouping_threshold_change=NONE
+          dynamic_tesla_blast_policy_change=NONE
+          bloom_tonemap_exposure_change=NONE
+          material_gi_sunvol_firevol_change=NONE
+          delta_sha256=$delta_sha
+          cumulative_sha256=$cumulative_sha
+          renderer_sha256=$renderer_sha
+          mingw_sp_compile=PASS_THIS_RUN
+          EOF_VALIDATION
+
+          echo "RC v0.2 runtime test surface/provenance PASS"
+
+      - name: Final package audit and SHA manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          base="$(cat .base_stage_path)"
+          required=(
+            ioWolfSP.x64.exe renderer_sp_rend2_x64.dll renderer_sp_opengl1_x64.dll
+            Main/cgame_sp_x64.dll Main/qagame_sp_x64.dll Main/ui_sp_x64.dll
+            RUN_DARKWOLF_PRODUCTION.cmd "Main/$CFG_NAME" "$README_NAME"
+            "docs/$README_NAME" "docs/$VALIDATION_NAME" "docs/$PATCHER_NAME"
+            "docs/$DELTA_NAME" "docs/$CUMULATIVE_NAME"
+          )
+          for rel in "${required[@]}"; do test -s "$stage/$rel" || { echo "ERROR: required file missing: $rel" >&2; exit 1; }; done
+          cmp "$base/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$base/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$base/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$base/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$base/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          grep -Fq 'r_dlightShadowMaxLights "3"' "$stage/Main/$CFG_NAME"
+          grep -Fq 'r_dlightShadowStrength "0.88"' "$stage/Main/$CFG_NAME"
+          if find "$stage" -type f -iname 'pak*.pk3' -print -quit | grep -q .; then echo "ERROR: commercial pak*.pk3 found" >&2; exit 1; fi
+          if find "$stage" -type f \( -iname '*.sav' -o -iname 'wolfconfig.cfg' \) -print -quit | grep -q .; then echo "ERROR: user save/config found" >&2; exit 1; fi
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt && sha256sum -c docs/SHA256SUMS.txt)
+          echo "Final RC v0.2 package audit PASS"
+
+      - name: Package full SP RC v0.2 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          rm -rf out
+          mkdir -p out
+          archive="out/${RELEASE_BASENAME}.zip"
+          (cd runtime && find "$RELEASE_BASENAME" -type f -print | LC_ALL=C sort | zip -X -9 "$GITHUB_WORKSPACE/$archive" -@)
+          test -s "$archive"
+          unzip -tq "$archive"
+          sha256sum "$archive" | sed "s#  out/#  #" > "out/${RELEASE_BASENAME}.zip.sha256"
+          cat "out/${RELEASE_BASENAME}.zip.sha256"
+
+      - name: Upload full SP RC v0.2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            out/${{ env.RELEASE_BASENAME }}.zip
+            out/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
