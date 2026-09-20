@@ -1,0 +1,550 @@
+name: Build DarkWolf Rend2 Run 35361762179 Table Shadow Only Recovery v1 SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-run35361762179-table-shadow-only-recovery-v1-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: DarkWolf Rend2 Run 35361762179 Table Shadow Only Recovery v1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "35361762179"
+      BASE_RUN_HEAD_SHA: 79642f3242ce270e946ef0a13d2863f421b228b5
+      BASE_WORKFLOW_PATH: '.github/workflows/DARKWOLF_IORTCW_REND2_CLEAN_PRODUCTION_RELEASE_V1.yml'
+      BASE_WORKFLOW_BLOB_SHA: 3b32afd3940d7b4c2c772d06478efdfeeb8960c2
+      BASE_ARTIFACT_ID: "10555091293"
+      BASE_ARTIFACT_NAME: iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:6cd0e66d9e8e68ac4499a2e41b9ab0286b40942e14106b4b6ddc92ba38e3abb1
+      BASE_INNER_SHA256: 9b24185302c468b47b9c0125a31eb9b1edd9518e7cbd0084a80710c52d395a4b
+      BASE_RELEASE_BASENAME: iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch
+      BASE_CUMULATIVE_SHA256: 7041376f9dccc1be3a2172ef5834c73bb270cc76d768ad1ad115b0567c1077a0
+      BASE_RENDERER_SHA256: 84053287054333b89ffdc0d733e7231371098674fa75932f044598fa67df1701
+
+      PATCHER_NAME: apply_table_shadow_only_recovery_v1.py
+      PATCHER_SHA256: 7933a42ceede137f52c99631e976b697dd28f745f5a6a8b811ae5d0c1e5f4f99
+      DELTA_NAME: darkwolf-table-shadow-only-recovery-v1-over-run-35361762179.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-table-shadow-only-recovery-v1-sp.patch
+      VALIDATION_NAME: STATIC_VALIDATION_TABLE_SHADOW_ONLY_RECOVERY_V1.txt
+      README_NAME: README_TABLE_SHADOW_ONLY_RECOVERY_V1_RU.txt
+      CFG_NAME: TABLE_SHADOW_ONLY_RECOVERY_V1.cfg
+      RELEASE_BASENAME: iortcw-rend2-run35361762179-table-shadow-only-recovery-v1-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Verify exact Clean Production Run 35361762179 provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: base HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: base run not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: base workflow path drift" >&2; exit 1; }
+          workflow_blob="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${BASE_WORKFLOW_PATH}?ref=${BASE_RUN_HEAD_SHA}" --jq '.sha')"
+          test "$workflow_blob" = "$BASE_WORKFLOW_BLOB_SHA" || { echo "ERROR: base workflow blob drift: $workflow_blob" >&2; exit 1; }
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: exact base artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: artifact name drift" >&2; exit 1; }
+          test "$expired" = false || { echo "ERROR: artifact expired" >&2; exit 1; }
+          test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: artifact digest drift: $adigest" >&2; exit 1; }
+          echo "Exact Clean Production provenance PASS"
+
+      - name: Download and verify exact Clean Production package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+          sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"
+          sidecar_sha="$(awk '{print $1}' "$sidecar")"
+          test "$inner_sha" = "$sidecar_sha" || { echo "ERROR: base ZIP/sidecar mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$BASE_INNER_SHA256" || { echo "ERROR: base inner SHA drift: $inner_sha" >&2; exit 1; }
+          unzip -tq "$z"
+          unzip -q "$z" -d base-release
+          mapfile -t roots < <(find base-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one release root" >&2; exit 1; }
+          base="${roots[0]}"
+          test "$(basename "$base")" = "$BASE_RELEASE_BASENAME"
+          printf '%s\n' "$base" > .base_stage_path
+          (cd "$base" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$base/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          echo "Exact Clean Production package/hash/manifest PASS"
+
+      - name: Reconstruct exact Clean Production source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" .base-cumulative.patch
+          test "$(sha256sum .base-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(grep -c '^diff --git ' .base-cumulative.patch)" -eq 67
+          git -C source apply --check --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.base-cumulative.patch
+          grep -Fq 'static float R_DlightShadowSelectionScore' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_DarkWolfStaticPromoteShadowGroupCanonicalId' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_DarkWolfStaticPromoteShadowExpandPending' source/SP/code/rend2/tr_main.c
+          grep -Fq 'r_dlightShadowMaxLights = ri.Cvar_Get( "r_dlightShadowMaxLights", "3", CVAR_ARCHIVE )' source/SP/code/rend2/tr_init.c
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -q -m 'Reconstructed exact Clean Production Run 35361762179 source postimage'
+          clean_commit="$(git -C source rev-parse HEAD)"
+          printf '%s\n' "$clean_commit" > .clean_source_commit
+          test "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA"
+          echo "Exact Clean Production source reconstruction PASS: $clean_commit"
+
+      - name: Apply table-shadow-only recovery fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME" <<'PY_PATCHER'
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('source')
+          main = root / 'SP/code/rend2/tr_main.c'
+
+          MARK = 'DARKWOLF_TABLE_SHADOW_ONLY_RECOVERY_V1'
+
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'ERROR: {label}: expected exactly one anchor, got {count}')
+              return text.replace(old, new, 1)
+
+
+          if not main.is_file():
+              raise SystemExit(f'ERROR: missing {main}')
+          main_text = main.read_text(encoding='utf-8')
+          if MARK in main_text:
+              raise SystemExit('ERROR: recovery patch already applied')
+
+          # Exact Clean Production Run 35361762179 source guards.
+          for token in [
+              'static float R_DlightShadowSelectionScore',
+              'R_DarkWolfStaticPromoteShadowGroupCanonicalId',
+              'R_DarkWolfStaticPromoteShadowExpandPending',
+              'R_DarkWolfStaticPromoteShadowGroupCaptureParams',
+              'historyStaticPromoteGroupId',
+          ]:
+              if token not in main_text:
+                  raise SystemExit(f'ERROR: Clean Production source contract missing {token}')
+
+          helper = r'''
+          // DARKWOLF_TABLE_SHADOW_ONLY_RECOVERY_V1
+          // Minimal production fix for the accepted table double-shadow defect.
+          // Only the persistent PHYSICAL SHADOW OWNER SET is stabilized.  Direct-light
+          // delivery, StaticPromote admission/max-light policy, light radius/color/gain,
+          // Tesla/electric lifetime, dynamic reserve, materials and post-processing are
+          // intentionally untouched and therefore remain Clean Production Run 35361762179.
+          static int R_DarkWolfPersistentPhysicalShadowResidentCandidate(
+              int stableGroupId, const vec3_t viewOrigin, unsigned int pendingLightsMask)
+          {
+              int i;
+              int canonicalIndex = -1;
+              vec3_t captureOrigin, delta;
+              float captureRadius = 0.0f;
+              float hysteresis = r_dlightShadowHysteresis
+                  ? Com_Clamp(0.0f, 0.5f, r_dlightShadowHysteresis->value) : 0.0f;
+              float residencyLimit;
+              float distance;
+
+              if (stableGroupId < 0)
+                  return -1;
+
+              for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i)
+              {
+                  dlight_t *candidate = &tr.refdef.dlights[i];
+                  if (!(pendingLightsMask & (1u << i)))
+                      continue;
+                  if (!R_DarkWolfStaticPromoteShadowGroupEligible(candidate))
+                      continue;
+                  if (R_DarkWolfStaticPromoteShadowGroupCanonicalIndex(i) != i)
+                      continue;
+                  if (R_DarkWolfStaticPromoteShadowGroupCanonicalId(i) != stableGroupId)
+                      continue;
+                  canonicalIndex = i;
+                  break;
+              }
+
+              if (canonicalIndex < 0)
+                  return -1;
+
+              R_DarkWolfStaticPromoteShadowGroupCaptureParams(
+                  canonicalIndex, captureOrigin, &captureRadius, NULL);
+              if (captureRadius <= 0.0f)
+                  return -1;
+
+              residencyLimit = captureRadius * (1.0f + hysteresis);
+              VectorSubtract(captureOrigin, viewOrigin, delta);
+              distance = sqrtf(DotProduct(delta, delta));
+
+              return distance <= residencyLimit ? canonicalIndex : -1;
+          }
+
+          '''
+          main_text = replace_once(
+              main_text,
+              'void R_RenderDlightCubemaps(const refdef_t *fd)\n{\n',
+              helper + 'void R_RenderDlightCubemaps(const refdef_t *fd)\n{\n',
+              'shadow residency helper anchor')
+
+          expand_anchor = '''\tpendingLightsMask = R_DarkWolfStaticPromoteShadowExpandPending(pendingLightsMask);\n\n\twhile (pendingLightsMask && renderedLights < maxShadowLights)\n'''
+          expand_insert = '''\tpendingLightsMask = R_DarkWolfStaticPromoteShadowExpandPending(pendingLightsMask);\n\n\t// DARKWOLF_TABLE_SHADOW_ONLY_RECOVERY_V1\n\t// Preserve the previous PHYSICAL OWNER SET before score challengers are\n\t// considered. This removes the false compact-slot vacancy that produced\n\t// the accepted table double-shadow regression.\n\t{\n\t\tint residentGroupBySlot[MAX_DLIGHT_SHADOWS];\n\t\tint residentIndexBySlot[MAX_DLIGHT_SHADOWS];\n\t\tint residencySlot;\n\n\t\tfor (residencySlot = 0; residencySlot < MAX_DLIGHT_SHADOWS; ++residencySlot)\n\t\t{\n\t\t\tresidentGroupBySlot[residencySlot] = -1;\n\t\t\tresidentIndexBySlot[residencySlot] = -1;\n\t\t}\n\n\t\tfor (residencySlot = 0; residencySlot < persistentShadowBudget; ++residencySlot)\n\t\t{\n\t\t\tint stableGroupId = historyStaticPromoteGroupId[residencySlot];\n\t\t\tint residentIndex;\n\t\t\tint earlierSlot;\n\t\t\tqboolean duplicateResident = qfalse;\n\n\t\t\tif (stableGroupId < 0)\n\t\t\t\tcontinue;\n\t\t\tfor (earlierSlot = 0; earlierSlot < residencySlot; ++earlierSlot)\n\t\t\t\tif (residentGroupBySlot[earlierSlot] == stableGroupId)\n\t\t\t\t\tduplicateResident = qtrue;\n\t\t\tif (duplicateResident)\n\t\t\t\tcontinue;\n\n\t\t\tresidentIndex = R_DarkWolfPersistentPhysicalShadowResidentCandidate(\n\t\t\t\tstableGroupId, fd->vieworg, pendingLightsMask);\n\t\t\tif (residentIndex < 0)\n\t\t\t\tcontinue;\n\t\t\tresidentGroupBySlot[residencySlot] = stableGroupId;\n\t\t\tresidentIndexBySlot[residencySlot] = residentIndex;\n\t\t}\n\n\t\twhile (pendingLightsMask && renderedLights < maxShadowLights)\n'''
+          main_text = replace_once(main_text, expand_anchor, expand_insert, 'resident set precompute anchor')
+
+          loop_start_anchor = '''\t\tint i;\n\t\tint j;\n\n\t\tfor (i = 0; i < tr.refdef.num_dlights; i++)\n'''
+          loop_start_insert = '''\t\tint i;\n\t\tint j;\n\t\tqboolean selectedFromResidentSet = qfalse;\n\n\t\t// DARKWOLF_TABLE_SHADOW_ONLY_RECOVERY_V1\n\t\t// Consume still-valid historical physical owners first.  Only the shadow\n\t\t// owner set is affected; every Direct Light remains in the normal pipeline.\n\t\tif (renderedLights < persistentShadowBudget && !r_dlightDiagForceSelect->integer)\n\t\t{\n\t\t\tint residentSourceSlot = -1;\n\t\t\tif (shadowSlot >= 0 && shadowSlot < persistentShadowBudget &&\n\t\t\t\tresidentIndexBySlot[shadowSlot] >= 0 &&\n\t\t\t\t(pendingLightsMask & (1u << residentIndexBySlot[shadowSlot])))\n\t\t\t{\n\t\t\t\tresidentSourceSlot = shadowSlot;\n\t\t\t}\n\t\t\telse\n\t\t\t{\n\t\t\t\tint scanSlot;\n\t\t\t\tfor (scanSlot = 0; scanSlot < persistentShadowBudget; ++scanSlot)\n\t\t\t\t{\n\t\t\t\t\tint residentIndex = residentIndexBySlot[scanSlot];\n\t\t\t\t\tif (residentIndex >= 0 && (pendingLightsMask & (1u << residentIndex)))\n\t\t\t\t\t{\n\t\t\t\t\t\tresidentSourceSlot = scanSlot;\n\t\t\t\t\t\tbreak;\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\n\t\t\tif (residentSourceSlot >= 0)\n\t\t\t{\n\t\t\t\tbestLight = residentIndexBySlot[residentSourceSlot];\n\t\t\t\tbestScore = R_DarkWolfStaticPromoteShadowGroupSelectionScore(bestLight, fd);\n\t\t\t\tselectedFromResidentSet = qtrue;\n\t\t\t\tresidentIndexBySlot[residentSourceSlot] = -1;\n\t\t\t\tresidentGroupBySlot[residentSourceSlot] = -1;\n\t\t\t}\n\t\t}\n\n\t\tif (bestLight < 0)\n\t\t{\n\t\tfor (i = 0; i < tr.refdef.num_dlights; i++)\n'''
+          main_text = replace_once(main_text, loop_start_anchor, loop_start_insert, 'selector loop start anchor')
+
+          loop_end_anchor = '''\t\t\tif (score > bestScore)\n\t\t\t{\n\t\t\t\tbestScore = score;\n\t\t\t\tbestLight = i;\n\t\t\t}\n\t\t}\n\n\t\tif (bestLight < 0)\n'''
+          loop_end_insert = '''\t\t\tif (score > bestScore)\n\t\t\t{\n\t\t\t\tbestScore = score;\n\t\t\t\tbestLight = i;\n\t\t\t}\n\t\t}\n\t\t}\n\n\t\tif (bestLight < 0)\n'''
+          main_text = replace_once(main_text, loop_end_anchor, loop_end_insert, 'selector loop end anchor')
+
+          history_anchor = '''\t\tif (!tr.refdef.dlights[bestLight].transientBlast\n\t\t\t&& shadowSlot >= 0 && shadowSlot < MAX_DLIGHT_SHADOWS)\n'''
+          history_insert = '''\t\tif (!selectedFromResidentSet\n\t\t\t&& !tr.refdef.dlights[bestLight].transientBlast\n\t\t\t&& shadowSlot >= 0 && shadowSlot < MAX_DLIGHT_SHADOWS)\n'''
+          main_text = replace_once(main_text, history_anchor, history_insert, 'legacy per-slot hysteresis gate anchor')
+
+          close_anchor = '''\t\trenderedLights++;\n\t}\n\n\t// DARKWOLF_PHYSICAL_LIGHT_DELIVERY_RESIDENCY_DIAG_V0_1: delivery has reached Rend2; record actual cubemap selection after all six-face work.'''
+          close_insert = '''\t\trenderedLights++;\n\t}\n\t}\n\n\t// DARKWOLF_PHYSICAL_LIGHT_DELIVERY_RESIDENCY_DIAG_V0_1: delivery has reached Rend2; record actual cubemap selection after all six-face work.'''
+          main_text = replace_once(main_text, close_anchor, close_insert, 'resident set scope close anchor')
+
+          main.write_text(main_text, encoding='utf-8')
+          print('Applied ' + MARK)
+          PY_PATCHER
+          test "$(sha256sum "$PATCHER_NAME" | awk '{print $1}')" = "$PATCHER_SHA256" || { echo "ERROR: embedded patcher SHA drift" >&2; exit 1; }
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" source
+
+          clean_commit="$(cat .clean_source_commit)"
+          mapfile -t changed < <(git -C source diff --name-only "$clean_commit" -- | LC_ALL=C sort)
+          test "${#changed[@]}" -eq 1 || { printf 'ERROR: changed count=%s\n' "${#changed[@]}" >&2; printf '%s\n' "${changed[@]}" >&2; exit 1; }
+          test "${changed[0]}" = 'SP/code/rend2/tr_main.c' || { echo "ERROR: source allowlist drift" >&2; exit 1; }
+          grep -Fq 'DARKWOLF_TABLE_SHADOW_ONLY_RECOVERY_V1' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_DarkWolfPersistentPhysicalShadowResidentCandidate' source/SP/code/rend2/tr_main.c
+          grep -Fq 'residentGroupBySlot' source/SP/code/rend2/tr_main.c
+
+          git -C source diff "$clean_commit" -- SP/code/rend2/tr_main.c > .recovery-delta-text.patch
+          if grep -Ei '^\+.*(escape1|doctor|guard|entityNum[ =]*235|entityNum[ =]*240|fixture[ =]*(741|742|743|744))' .recovery-delta-text.patch; then
+            echo "ERROR: map/entity-specific source logic leaked into recovery" >&2; exit 1
+          fi
+          if grep -E '^\+.*(Cvar_Get|Cvar_Register|Cmd_AddCommand|Cmd_RemoveCommand|trap_Cvar_Register)' .recovery-delta-text.patch; then
+            echo "ERROR: recovery introduced cvar/command/telemetry surface" >&2; exit 1
+          fi
+          for forbidden in \
+            'ENV_TESLA_GRACE' 'TESLA_DROPOUT' 'CG_EFFECTLIGHT_ENVIRONMENTAL_TESLA' \
+            'r_staticPromoteMaxLights' 'r_staticPromoteDirectGain' 'r_staticPromoteMaxColor' \
+            'r_staticPromoteRadiusScale' 'r_dlightShadowStrength' 'r_dlightShadowMapSize' \
+            'r_dlightShadowMaxLights' 'r_volumetricLocal' 'bloom' 'tonemap' 'exposure'; do
+            if grep '^+' .recovery-delta-text.patch | grep -Fiq "$forbidden"; then
+              echo "ERROR: forbidden non-selector change: $forbidden" >&2; exit 1
+            fi
+          done
+          echo "Table-shadow-only one-file source policy PASS"
+
+      - name: Generate one-file delta and cumulative replay proofs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          clean_commit="$(cat .clean_source_commit)"
+          git -C source diff --binary --full-index "$clean_commit" -- SP/code/rend2/tr_main.c > "$DELTA_NAME"
+          git -C source diff --binary --full-index "$UPSTREAM_SHA" -- > "$CUMULATIVE_NAME"
+          test -s "$DELTA_NAME" && test -s "$CUMULATIVE_NAME"
+          test "$(grep -c '^diff --git ' "$DELTA_NAME")" -eq 1
+          grep -Fq 'diff --git a/SP/code/rend2/tr_main.c b/SP/code/rend2/tr_main.c' "$DELTA_NAME"
+          git -C source apply --reverse --check --binary --whitespace=nowarn "../$DELTA_NAME"
+
+          rm -rf replay-delta
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$clean_commit"
+          git -C replay-delta apply --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --binary --whitespace=nowarn "../$DELTA_NAME"
+          cmp source/SP/code/rend2/tr_main.c replay-delta/SP/code/rend2/tr_main.c
+
+          sha256sum "$DELTA_NAME" > .delta_sha256
+          sha256sum "$CUMULATIVE_NAME" > .cumulative_sha256
+          echo "One-file delta/reverse/replay PASS"
+
+      - name: Build canonical Windows x64 SP table-shadow-only renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -x source/SP/cross-make-mingw64.sh
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh -j"$jobs" \
+              BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          )
+          mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | LC_ALL=C sort)
+          test "${#renderers[@]}" -eq 1
+          renderer="${renderers[0]}"
+          file "$renderer" | tee .renderer_file.txt
+          grep -Fq 'PE32+' .renderer_file.txt
+          printf '%s\n' "$renderer" > .renderer_path
+          sha256sum "$renderer" > .renderer_sha256
+          echo "Canonical Windows x64 SP table-shadow-only compile/output PASS"
+
+      - name: Stage exact Clean Production runtime and replace Rend2 renderer only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          renderer="$(cat .renderer_path)"
+          rm -rf runtime
+          mkdir -p runtime
+          stage="runtime/$RELEASE_BASENAME"
+          cp -a "$base" "$stage"
+          cp -f "$renderer" "$stage/renderer_sp_rend2_x64.dll"
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          cmp "$base/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$base/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$base/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$base/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$base/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cmp "$base/Main/autoexec.cfg" "$stage/Main/autoexec.cfg"
+          printf '%s\n' "$stage" > .stage_path
+          echo "Runtime staging PASS: exact Run 35361762179 donor + table-shadow-only Rend2 renderer"
+
+      - name: Add focused recovery cfg and provenance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          delta_sha="$(awk '{print $1}' .delta_sha256)"
+          cumulative_sha="$(awk '{print $1}' .cumulative_sha256)"
+          renderer_sha="$(awk '{print $1}' .renderer_sha256)"
+
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+
+          cat > "$stage/Main/$CFG_NAME" <<'EOF_CFG'
+          // DarkWolf table-shadow-only recovery over exact Clean Production Run 35361762179.
+          // These are the two requested runtime limits only. No Tesla/light tuning.
+          seta r_staticPromoteMaxLights "32"
+          seta r_dlightShadowMaxLights "3"
+          set logfile "2"
+          echo "TABLE SHADOW ONLY RECOVERY V1: staticPromote Direct Light budget=32; point-shadow budget=3."
+          EOF_CFG
+
+          cat > "$stage/$README_NAME" <<'EOF_README'
+          DARKWOLF / ioRTCW Rend2 Single Player
+          RUN 35361762179 RESTORE + TABLE SHADOW ONLY RECOVERY V1
+
+          GOAL
+          ----
+          Return runtime behavior to the exact Clean Production Run 35361762179 and
+          retain only the already accepted correction for the table double-shadow.
+
+          EXACT BASE
+          ----------
+          Run 35361762179
+          HEAD 79642f3242ce270e946ef0a13d2863f421b228b5
+          Upstream 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+          RUNTIME FREEZE
+          --------------
+          ioWolfSP.x64.exe: exact base bytes
+          renderer_sp_opengl1_x64.dll: exact base bytes
+          Main/cgame_sp_x64.dll: exact base bytes
+          Main/qagame_sp_x64.dll: exact base bytes
+          Main/ui_sp_x64.dll: exact base bytes
+          Main/autoexec.cfg: exact base bytes
+          Only renderer_sp_rend2_x64.dll is rebuilt.
+
+          ONLY SOURCE CHANGE
+          ------------------
+          SP/code/rend2/tr_main.c
+
+          The change stabilizes only the existing three persistent physical SHADOW
+          owners as a set while they remain in their existing residency envelope.
+          This prevents the compact-slot cascade that created the unwanted second
+          dark table shadow.
+
+          INTENTIONALLY UNCHANGED
+          -----------------------
+          - StaticPromote Direct Light admission/delivery
+          - lamp radius, color, gain and falloff
+          - environmental Tesla / Tesla bolt lifetime
+          - cgame and server entity behavior
+          - point-shadow budget implementation and dynamic reserve
+          - shadow strength, map size, filter and bias
+          - StaticPromote grouping/classification thresholds
+          - LocalVol/FireVol/SunVol
+          - materials/SSGI
+          - Bloom/ToneMap/Exposure
+          - no new cvar, command or continuous telemetry
+
+          REQUESTED RUNTIME CONTRACT
+          --------------------------
+          Direct-light ceiling: r_staticPromoteMaxLights = 32
+          Shadow budget:        r_dlightShadowMaxLights = 3
+
+          The cfg does not change shadow strength or any lighting quality value.
+
+          TEST
+          ----
+          1. Install this artifact into a separate clean RTCW folder.
+          2. Launch RUN_DARKWOLF_PRODUCTION.cmd.
+          3. Execute: exec TABLE_SHADOW_ONLY_RECOVERY_V1.cfg
+          4. Escape1 table: normal first shadow must remain; unwanted second dark
+             shadow must remain absent.
+          5. Doctor room and guard room: ceiling lamps should behave like the Clean
+             Production base. Do not use any Tesla diagnostic/grace cfg.
+          6. Leave r_dlightShadowMaxLights at 3.
+          EOF_README
+          cp "$stage/$README_NAME" "$stage/docs/$README_NAME"
+
+          cat > "$stage/docs/$VALIDATION_NAME" <<EOF_VALIDATION
+          DARKWOLF TABLE SHADOW ONLY RECOVERY V1 - CI RECORD
+          status=RUNTIME_ACCEPTANCE_REQUIRED
+          base_run=$BASE_RUN_ID
+          base_head=$BASE_RUN_HEAD_SHA
+          base_artifact_id=$BASE_ARTIFACT_ID
+          base_artifact_digest=$BASE_ARTIFACT_DIGEST
+          base_inner_sha256=$BASE_INNER_SHA256
+          upstream_sha=$UPSTREAM_SHA
+          base_cumulative_sha256=$BASE_CUMULATIVE_SHA256
+          source_change_allowlist=SP/code/rend2/tr_main.c_ONLY
+          runtime_binary_replacement=renderer_sp_rend2_x64.dll_ONLY
+          frozen_cgame=EXACT_RUN_35361762179
+          frozen_qagame=EXACT_RUN_35361762179
+          frozen_exe=EXACT_RUN_35361762179
+          frozen_ui=EXACT_RUN_35361762179
+          frozen_opengl1=EXACT_RUN_35361762179
+          frozen_autoexec=EXACT_RUN_35361762179
+          table_fix=PERSISTENT_PHYSICAL_SHADOW_OWNER_SET_ONLY
+          direct_light_code_change=NONE
+          staticpromote_admission_change=NONE
+          tesla_change=NONE
+          cgame_change=NONE
+          server_change=NONE
+          new_cvar=NONE
+          new_command=NONE
+          continuous_telemetry=NONE
+          requested_test_staticpromote_maxlights=32
+          requested_test_shadow_maxlights=3
+          shadow_strength_change=NONE
+          bloom_tonemap_exposure_change=NONE
+          material_volumetric_algorithm_change=NONE
+          patcher_sha256=$PATCHER_SHA256
+          delta_sha256=$delta_sha
+          cumulative_sha256=$cumulative_sha
+          renderer_sha256=$renderer_sha
+          mingw_sp_compile=PASS_THIS_RUN
+          EOF_VALIDATION
+          echo "Focused recovery cfg/provenance PASS"
+
+      - name: Final recovery package audit and SHA manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          base="$(cat .base_stage_path)"
+          required=(
+            ioWolfSP.x64.exe renderer_sp_rend2_x64.dll renderer_sp_opengl1_x64.dll
+            Main/cgame_sp_x64.dll Main/qagame_sp_x64.dll Main/ui_sp_x64.dll Main/autoexec.cfg
+            RUN_DARKWOLF_PRODUCTION.cmd "Main/$CFG_NAME" "$README_NAME"
+            "docs/$README_NAME" "docs/$VALIDATION_NAME" "docs/$PATCHER_NAME"
+            "docs/$DELTA_NAME" "docs/$CUMULATIVE_NAME"
+          )
+          for rel in "${required[@]}"; do test -s "$stage/$rel" || { echo "ERROR: required file missing: $rel" >&2; exit 1; }; done
+
+          cmp "$base/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$base/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$base/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$base/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$base/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cmp "$base/Main/autoexec.cfg" "$stage/Main/autoexec.cfg"
+          cmp "$base/RUN_DARKWOLF_PRODUCTION.cmd" "$stage/RUN_DARKWOLF_PRODUCTION.cmd"
+          if cmp -s "$base/renderer_sp_rend2_x64.dll" "$stage/renderer_sp_rend2_x64.dll"; then
+            echo "ERROR: recovery Rend2 renderer unexpectedly identical to base" >&2; exit 1
+          fi
+
+          python3 - "$stage/Main/$CFG_NAME" <<'PY_CFG'
+          from pathlib import Path
+          import sys
+          lines=[x.strip() for x in Path(sys.argv[1]).read_text(encoding='utf-8').splitlines()
+                 if x.strip() and not x.lstrip().startswith('//')]
+          expected=[
+              'seta r_staticPromoteMaxLights "32"',
+              'seta r_dlightShadowMaxLights "3"',
+              'set logfile "2"',
+          ]
+          if lines[:3] != expected or len(lines) != 4 or not lines[3].startswith('echo '):
+              raise SystemExit('ERROR: recovery cfg contains unexpected tuning')
+          print('Recovery cfg sterile PASS')
+          PY_CFG
+
+          if find "$stage" -type f -iname 'pak*.pk3' -print -quit | grep -q .; then echo "ERROR: commercial pak*.pk3 found" >&2; exit 1; fi
+          if find "$stage" -type f \( -iname '*.sav' -o -iname 'wolfconfig.cfg' \) -print -quit | grep -q .; then echo "ERROR: user save/config found" >&2; exit 1; fi
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt && sha256sum -c docs/SHA256SUMS.txt)
+          echo "Final recovery package/runtime policy PASS"
+
+      - name: Package full SP recovery release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          rm -rf out
+          mkdir -p out
+          archive="out/${RELEASE_BASENAME}.zip"
+          (cd runtime && find "$RELEASE_BASENAME" -type f -print | LC_ALL=C sort | zip -X -9 "$GITHUB_WORKSPACE/$archive" -@)
+          test -s "$archive"
+          unzip -tq "$archive"
+          sha256sum "$archive" | sed "s#  out/#  #" > "out/${RELEASE_BASENAME}.zip.sha256"
+          cat "out/${RELEASE_BASENAME}.zip.sha256"
+
+      - name: Upload table-shadow-only recovery artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            out/${{ env.RELEASE_BASENAME }}.zip
+            out/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
