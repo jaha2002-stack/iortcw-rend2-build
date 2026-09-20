@@ -1,0 +1,678 @@
+name: Build DarkWolf Rend2 Clean Production Release v2 Persistent Shadow Set Residency SP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-clean-production-release-v2-persistent-shadow-residency-sp
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: DarkWolf Rend2 Clean Production Release v2 - Persistent Shadow Set Residency
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "35361762179"
+      BASE_RUN_HEAD_SHA: 79642f3242ce270e946ef0a13d2863f421b228b5
+      BASE_WORKFLOW_PATH: '.github/workflows/DARKWOLF_IORTCW_REND2_CLEAN_PRODUCTION_RELEASE_V1.yml'
+      BASE_WORKFLOW_BLOB_SHA: 3b32afd3940d7b4c2c772d06478efdfeeb8960c2
+      BASE_ARTIFACT_ID: "10555091293"
+      BASE_ARTIFACT_NAME: iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1
+      BASE_ARTIFACT_DIGEST: sha256:6cd0e66d9e8e68ac4499a2e41b9ab0286b40942e14106b4b6ddc92ba38e3abb1
+      BASE_INNER_SHA256: 9b24185302c468b47b9c0125a31eb9b1edd9518e7cbd0084a80710c52d395a4b
+      BASE_RELEASE_BASENAME: iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch
+      BASE_CUMULATIVE_SHA256: 7041376f9dccc1be3a2172ef5834c73bb270cc76d768ad1ad115b0567c1077a0
+      BASE_RENDERER_SHA256: 84053287054333b89ffdc0d733e7231371098674fa75932f044598fa67df1701
+
+      RC_RUN_ID: "35503262322"
+      RC_RUN_HEAD_SHA: 80fde84b6e91febd5ab5a8c10e37ed0d6dd01476
+      RC_WORKFLOW_PATH: '.github/workflows/DARKWOLF_IORTCW_REND2_ESCAPE1_TABLE_SHADOW_RC_V0_2_PERSISTENT_PHYSICAL_SET_RESIDENCY.yml'
+      RC_WORKFLOW_BLOB_SHA: 4562dd060604bb81cefdfd18ac056fc64cd4c1a5
+      RC_ARTIFACT_ID: "10603017159"
+      RC_ARTIFACT_NAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+      RC_ARTIFACT_DIGEST: sha256:51ef9cb590b5e9c2ae96d8305eb4e63bae005b993acdca48af7b6ff51e0d0409
+      RC_INNER_SHA256: efe9a4f3b33e5dd4b621ed3fa0d87abe677c85d09ca29088a380d813b5c082bb
+      RC_RENDERER_SHA256: d7efccd6923e0b0b8ea8c87355f9e014699543682cca75367e8b4cef99eca78c
+      RC_DELTA_SHA256: b17a64fd5e391a9433d71f0514106b6b7c7c9e2b4fb33796485ed6088a63bb64
+      RC_DELTA_NAME: darkwolf-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-over-clean-production.patch
+
+      PATCHER_NAME: apply_persistent_physical_shadow_set_residency_production_v1.py
+      DELTA_NAME: darkwolf-persistent-physical-shadow-set-residency-production-v1-over-clean-production-v1.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-clean-production-v2-persistent-shadow-set-residency-sp.patch
+      CONTRACT_NAME: DARKWOLF_REND2_CLEAN_PRODUCTION_RELEASE_V2_CONTRACT.txt
+      VALIDATION_NAME: STATIC_VALIDATION_DARKWOLF_REND2_CLEAN_PRODUCTION_RELEASE_V2.txt
+      README_NAME: README_DARKWOLF_REND2_CLEAN_PRODUCTION_RELEASE_V2_RU.txt
+      RELEASE_BASENAME: iortcw-rend2-darkwolf-clean-production-release-v2-persistent-shadow-residency-full-sp-windows-x64-1
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v5
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri make mingw-w64 jq \
+            python3 python3-yaml unzip zip file
+
+      - name: Preflight workflow YAML Bash and embedded Python
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel" || { echo "ERROR: workflow cannot be resolved: $workflow_rel" >&2; exit 1; }
+          python3 - "$workflow_rel" <<'PY_PREFLIGHT'
+          from pathlib import Path
+          import re, subprocess, sys, yaml
+          p = Path(sys.argv[1])
+          raw = p.read_bytes()
+          text = raw.decode('utf-8')
+          if b'\r' in raw:
+              raise SystemExit('ERROR: CR byte in workflow; LF-only required')
+          doc = yaml.safe_load(text)
+          expected = 'Build DarkWolf Rend2 Clean Production Release v2 Persistent Shadow Set Residency SP'
+          if doc.get('name') != expected:
+              raise SystemExit(f'ERROR: workflow identity drift: {doc.get("name")!r}')
+          checked = 0
+          py_checked = 0
+          for job_name, job in (doc.get('jobs') or {}).items():
+              for index, step in enumerate(job.get('steps') or [], 1):
+                  script = step.get('run')
+                  if not script:
+                      continue
+                  proc = subprocess.run(['bash', '-n'], input=script, text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  if proc.returncode:
+                      print(f'ERROR: bash -n failed job={job_name} step={index} name={step.get("name")}', file=sys.stderr)
+                      print(proc.stderr, file=sys.stderr)
+                      raise SystemExit(proc.returncode)
+                  checked += 1
+                  lines = script.splitlines()
+                  pos = 0
+                  while pos < len(lines):
+                      match = re.search(r"\bpython3\b.*<<'([^']+)'", lines[pos])
+                      if not match:
+                          pos += 1
+                          continue
+                      tag = match.group(1)
+                      body = []
+                      pos += 1
+                      while pos < len(lines) and lines[pos].strip() != tag:
+                          body.append(lines[pos])
+                          pos += 1
+                      if pos >= len(lines):
+                          raise SystemExit(f'ERROR: unclosed Python heredoc {tag}')
+                      compile('\n'.join(body) + '\n', f'<workflow:{job_name}:{index}:{tag}>', 'exec')
+                      py_checked += 1
+                      pos += 1
+          if checked < 10:
+              raise SystemExit(f'ERROR: unexpectedly small Bash contract: {checked}')
+          if py_checked < 2:
+              raise SystemExit(f'ERROR: unexpectedly small Python contract: {py_checked}')
+          print(f'Workflow preflight PASS: {checked} Bash blocks, {py_checked} Python blocks')
+          PY_PREFLIGHT
+
+      - name: Verify exact Clean Production v1 base provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: base HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: base run not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: base workflow path drift" >&2; exit 1; }
+          workflow_blob="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${BASE_WORKFLOW_PATH}?ref=${BASE_RUN_HEAD_SHA}" --jq '.sha')"
+          test "$workflow_blob" = "$BASE_WORKFLOW_BLOB_SHA" || { echo "ERROR: base workflow blob drift: $workflow_blob" >&2; exit 1; }
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: exact base artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$BASE_ARTIFACT_NAME" || { echo "ERROR: base artifact name drift" >&2; exit 1; }
+          test "$expired" = false || { echo "ERROR: base artifact expired" >&2; exit 1; }
+          test "$adigest" = "$BASE_ARTIFACT_DIGEST" || { echo "ERROR: base artifact digest drift: $adigest" >&2; exit 1; }
+          echo "Exact Clean Production v1 base provenance PASS"
+
+      - name: Verify runtime-accepted RC v0.2 provenance without using it as build base
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${RC_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$RC_RUN_HEAD_SHA" || { echo "ERROR: accepted RC HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: accepted RC run not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$RC_WORKFLOW_PATH" || { echo "ERROR: accepted RC workflow path drift" >&2; exit 1; }
+          workflow_blob="$(gh api "/repos/${GITHUB_REPOSITORY}/contents/${RC_WORKFLOW_PATH}?ref=${RC_RUN_HEAD_SHA}" --jq '.sha')"
+          test "$workflow_blob" = "$RC_WORKFLOW_BLOB_SHA" || { echo "ERROR: accepted RC workflow blob drift: $workflow_blob" >&2; exit 1; }
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${RC_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${RC_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: accepted RC artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$RC_ARTIFACT_NAME" || { echo "ERROR: accepted RC artifact name drift" >&2; exit 1; }
+          test "$expired" = false || { echo "ERROR: accepted RC artifact expired" >&2; exit 1; }
+          test "$adigest" = "$RC_ARTIFACT_DIGEST" || { echo "ERROR: accepted RC artifact digest drift: $adigest" >&2; exit 1; }
+
+          rm -rf rc-acceptance rc-unpack
+          mkdir -p rc-acceptance rc-unpack
+          gh run download "$RC_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$RC_ARTIFACT_NAME" --dir rc-acceptance
+          z="rc-acceptance/${RC_ARTIFACT_NAME}.zip"
+          sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"
+          test "$inner_sha" = "$(awk '{print $1}' "$sidecar")" || { echo "ERROR: accepted RC ZIP/sidecar mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$RC_INNER_SHA256" || { echo "ERROR: accepted RC inner SHA drift: $inner_sha" >&2; exit 1; }
+          unzip -q "$z" -d rc-unpack
+          mapfile -t roots < <(find rc-unpack -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: accepted RC expected one release root" >&2; exit 1; }
+          rcroot="${roots[0]}"
+          test "$(sha256sum "$rcroot/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$RC_RENDERER_SHA256"
+          test "$(sha256sum "$rcroot/docs/$RC_DELTA_NAME" | awk '{print $1}')" = "$RC_DELTA_SHA256"
+          rm -rf rc-acceptance rc-unpack
+          echo "Runtime-accepted RC v0.2 provenance PASS; artifact used for verification only"
+
+      - name: Download and verify exact Clean Production v1 base package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/${BASE_RELEASE_BASENAME}.zip"
+          sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"
+          sidecar_sha="$(awk '{print $1}' "$sidecar")"
+          test "$inner_sha" = "$sidecar_sha" || { echo "ERROR: base ZIP/sidecar mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$BASE_INNER_SHA256" || { echo "ERROR: base inner SHA drift: $inner_sha" >&2; exit 1; }
+          unzip -tq "$z"
+          unzip -q "$z" -d base-release
+          mapfile -t roots < <(find base-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1 || { echo "ERROR: expected one base release root" >&2; exit 1; }
+          base="${roots[0]}"
+          test "$(basename "$base")" = "$BASE_RELEASE_BASENAME"
+          printf '%s\n' "$base" > .base_stage_path
+          (cd "$base" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$base/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          echo "Exact Clean Production v1 package/hash/manifest PASS"
+
+      - name: Reconstruct exact Clean Production v1 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" .base-cumulative.patch
+          test "$(sha256sum .base-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(grep -c '^diff --git ' .base-cumulative.patch)" -eq 67
+          git -C source apply --check --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.base-cumulative.patch
+          grep -Fq 'static float R_DlightShadowSelectionScore' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_DarkWolfStaticPromoteShadowGroupCanonicalId' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_DarkWolfStaticPromoteShadowExpandPending' source/SP/code/rend2/tr_main.c
+          grep -Fq 'r_dlightShadowMaxLights = ri.Cvar_Get( "r_dlightShadowMaxLights", "3", CVAR_ARCHIVE )' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_dlightDiagForceSelect = &s_darkwolfProductionDiagOffCvar;' source/SP/code/rend2/tr_init.c
+          if grep -R -Fq 'DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1' source/SP/code/rend2; then
+            echo "ERROR: production residency marker unexpectedly already exists in base" >&2; exit 1
+          fi
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' commit -q -m 'Reconstructed exact Clean Production Run 35361762179 source postimage'
+          clean_commit="$(git -C source rev-parse HEAD)"
+          printf '%s\n' "$clean_commit" > .clean_source_commit
+          test "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA"
+          echo "Exact Clean Production v1 source reconstruction PASS: $clean_commit"
+
+      - name: Apply production-only Persistent Physical Shadow Set Residency
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME" <<'PY_PATCHER'
+          from pathlib import Path
+          import sys
+          
+          root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('source')
+          main = root / 'SP/code/rend2/tr_main.c'
+          
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'ERROR: {label}: expected exactly one anchor, got {count}')
+              return text.replace(old, new, 1)
+          
+          main_text = main.read_text()
+          marker = 'DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1'
+          if marker in main_text:
+              raise SystemExit('ERROR: production residency patch already applied')
+          
+          residency_helper = r'''
+          // DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1
+          // Production form of the runtime-accepted RC v0.2 selector fix.
+          // Persistent StaticPromote physical shadow owners are preserved as an identity SET
+          // before compact shadow slots are assigned.  An owner remains resident while the
+          // main camera stays inside its physical capture radius plus the existing
+          // r_dlightShadowHysteresis margin.  Only after a resident owner leaves that envelope
+          // may a fresh score challenger enter the persistent shadow budget.
+          //
+          // This is map/fixture agnostic.  Direct Light delivery, physical grouping,
+          // shadow budget, strength, radius/color/falloff, Tesla/transient policy,
+          // materials, volumetrics and post-processing are unchanged.
+          static int R_DarkWolfPersistentPhysicalShadowResidentCandidate(
+              int stableGroupId, const vec3_t viewOrigin, unsigned int pendingLightsMask,
+              float *distanceOut, float *limitOut)
+          {
+              int i;
+              int canonicalIndex = -1;
+              vec3_t captureOrigin, delta;
+              float captureRadius = 0.0f;
+              float hysteresis = r_dlightShadowHysteresis
+                  ? Com_Clamp(0.0f, 0.5f, r_dlightShadowHysteresis->value) : 0.0f;
+              float residencyLimit;
+              float distance;
+          
+              if (distanceOut) *distanceOut = -1.0f;
+              if (limitOut) *limitOut = -1.0f;
+              if (stableGroupId < 0)
+                  return -1;
+          
+              for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i)
+              {
+                  dlight_t *candidate = &tr.refdef.dlights[i];
+                  if (!(pendingLightsMask & (1u << i)))
+                      continue;
+                  if (!R_DarkWolfStaticPromoteShadowGroupEligible(candidate))
+                      continue;
+                  if (R_DarkWolfStaticPromoteShadowGroupCanonicalIndex(i) != i)
+                      continue;
+                  if (R_DarkWolfStaticPromoteShadowGroupCanonicalId(i) != stableGroupId)
+                      continue;
+                  canonicalIndex = i;
+                  break;
+              }
+          
+              if (canonicalIndex < 0)
+                  return -1;
+          
+              R_DarkWolfStaticPromoteShadowGroupCaptureParams(
+                  canonicalIndex, captureOrigin, &captureRadius, NULL);
+              if (captureRadius <= 0.0f)
+                  return -1;
+          
+              residencyLimit = captureRadius * (1.0f + hysteresis);
+              VectorSubtract(captureOrigin, viewOrigin, delta);
+              distance = sqrtf(DotProduct(delta, delta));
+              if (distanceOut) *distanceOut = distance;
+              if (limitOut) *limitOut = residencyLimit;
+          
+              return distance <= residencyLimit ? canonicalIndex : -1;
+          }
+          
+          '''
+          main_text = replace_once(
+              main_text,
+              'void R_RenderDlightCubemaps(const refdef_t *fd)\n{\n',
+              residency_helper + 'void R_RenderDlightCubemaps(const refdef_t *fd)\n{\n',
+              'production residency helper anchor')
+          
+          expand_anchor = '''\tpendingLightsMask = R_DarkWolfStaticPromoteShadowExpandPending(pendingLightsMask);\n\n\twhile (pendingLightsMask && renderedLights < maxShadowLights)\n'''
+          expand_insert = '''\tpendingLightsMask = R_DarkWolfStaticPromoteShadowExpandPending(pendingLightsMask);\n\n\t// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1\n\t// Build the previous persistent physical OWNER SET before assigning compact\n\t// slots.  Slot ranking is therefore no longer allowed to manufacture a vacancy.\n\t{\n\t\tint residentGroupBySlot[MAX_DLIGHT_SHADOWS];\n\t\tint residentIndexBySlot[MAX_DLIGHT_SHADOWS];\n\t\tint residencySlot;\n\n\t\tfor (residencySlot = 0; residencySlot < MAX_DLIGHT_SHADOWS; ++residencySlot)\n\t\t{\n\t\t\tresidentGroupBySlot[residencySlot] = -1;\n\t\t\tresidentIndexBySlot[residencySlot] = -1;\n\t\t}\n\n\t\tfor (residencySlot = 0; residencySlot < persistentShadowBudget; ++residencySlot)\n\t\t{\n\t\t\tint stableGroupId = historyStaticPromoteGroupId[residencySlot];\n\t\t\tint residentIndex;\n\t\t\tint earlierSlot;\n\t\t\tqboolean duplicateResident = qfalse;\n\n\t\t\tif (stableGroupId < 0)\n\t\t\t\tcontinue;\n\t\t\tfor (earlierSlot = 0; earlierSlot < residencySlot; ++earlierSlot)\n\t\t\t\tif (residentGroupBySlot[earlierSlot] == stableGroupId)\n\t\t\t\t\tduplicateResident = qtrue;\n\t\t\tif (duplicateResident)\n\t\t\t\tcontinue;\n\n\t\t\tresidentIndex = R_DarkWolfPersistentPhysicalShadowResidentCandidate(\n\t\t\t\tstableGroupId, fd->vieworg, pendingLightsMask, NULL, NULL);\n\t\t\tif (residentIndex < 0)\n\t\t\t\tcontinue;\n\t\t\tresidentGroupBySlot[residencySlot] = stableGroupId;\n\t\t\tresidentIndexBySlot[residencySlot] = residentIndex;\n\t\t}\n\n\t\twhile (pendingLightsMask && renderedLights < maxShadowLights)\n'''
+          main_text = replace_once(main_text, expand_anchor, expand_insert, 'resident set precompute anchor')
+          
+          loop_start_anchor = '''\t\tint i;\n\t\tint j;\n\n\t\tfor (i = 0; i < tr.refdef.num_dlights; i++)\n'''
+          loop_start_insert = '''\t\tint i;\n\t\tint j;\n\t\tqboolean selectedFromResidentSet = qfalse;\n\n\t\t// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1\n\t\t// Consume resident identities first.  Prefer historical slot affinity; if a\n\t\t// historical slot is empty, compact another resident forward before admitting\n\t\t// any new score challenger.\n\t\tif (renderedLights < persistentShadowBudget)\n\t\t{\n\t\t\tint residentSourceSlot = -1;\n\t\t\tif (shadowSlot >= 0 && shadowSlot < persistentShadowBudget &&\n\t\t\t\tresidentIndexBySlot[shadowSlot] >= 0 &&\n\t\t\t\t(pendingLightsMask & (1u << residentIndexBySlot[shadowSlot])))\n\t\t\t{\n\t\t\t\tresidentSourceSlot = shadowSlot;\n\t\t\t}\n\t\t\telse\n\t\t\t{\n\t\t\t\tint scanSlot;\n\t\t\t\tfor (scanSlot = 0; scanSlot < persistentShadowBudget; ++scanSlot)\n\t\t\t\t{\n\t\t\t\t\tint residentIndex = residentIndexBySlot[scanSlot];\n\t\t\t\t\tif (residentIndex >= 0 && (pendingLightsMask & (1u << residentIndex)))\n\t\t\t\t\t{\n\t\t\t\t\t\tresidentSourceSlot = scanSlot;\n\t\t\t\t\t\tbreak;\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\n\t\t\tif (residentSourceSlot >= 0)\n\t\t\t{\n\t\t\t\tbestLight = residentIndexBySlot[residentSourceSlot];\n\t\t\t\tbestScore = R_DarkWolfStaticPromoteShadowGroupSelectionScore(bestLight, fd);\n\t\t\t\tselectedFromResidentSet = qtrue;\n\t\t\t\tresidentIndexBySlot[residentSourceSlot] = -1;\n\t\t\t\tresidentGroupBySlot[residentSourceSlot] = -1;\n\t\t\t}\n\t\t}\n\n\t\tif (bestLight < 0)\n\t\t{\n\t\tfor (i = 0; i < tr.refdef.num_dlights; i++)\n'''
+          main_text = replace_once(main_text, loop_start_anchor, loop_start_insert, 'selector loop start anchor')
+          
+          loop_end_anchor = '''\t\t\tif (score > bestScore)\n\t\t\t{\n\t\t\t\tbestScore = score;\n\t\t\t\tbestLight = i;\n\t\t\t}\n\t\t}\n\n\t\tif (bestLight < 0)\n'''
+          loop_end_insert = '''\t\t\tif (score > bestScore)\n\t\t\t{\n\t\t\t\tbestScore = score;\n\t\t\t\tbestLight = i;\n\t\t\t}\n\t\t}\n\t\t}\n\n\t\tif (bestLight < 0)\n'''
+          main_text = replace_once(main_text, loop_end_anchor, loop_end_insert, 'selector loop end anchor')
+          
+          history_anchor = '''\t\tif (!tr.refdef.dlights[bestLight].transientBlast\n\t\t\t&& shadowSlot >= 0 && shadowSlot < MAX_DLIGHT_SHADOWS)\n'''
+          history_insert = '''\t\tif (!selectedFromResidentSet\n\t\t\t&& !tr.refdef.dlights[bestLight].transientBlast\n\t\t\t&& shadowSlot >= 0 && shadowSlot < MAX_DLIGHT_SHADOWS)\n'''
+          main_text = replace_once(main_text, history_anchor, history_insert, 'legacy per-slot hysteresis gate anchor')
+          
+          close_anchor = '''\t\trenderedLights++;\n\t}\n\n\t// DARKWOLF_PHYSICAL_LIGHT_DELIVERY_RESIDENCY_DIAG_V0_1: delivery has reached Rend2; record actual cubemap selection after all six-face work.'''
+          close_insert = '''\t\trenderedLights++;\n\t}\n\t}\n\n\t// DARKWOLF_PHYSICAL_LIGHT_DELIVERY_RESIDENCY_DIAG_V0_1: delivery has reached Rend2; record actual cubemap selection after all six-face work.'''
+          main_text = replace_once(main_text, close_anchor, close_insert, 'resident set scope close anchor')
+          
+          main.write_text(main_text)
+          print('Applied DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1')
+          PY_PATCHER
+          python3 -m py_compile "$PATCHER_NAME"
+          python3 "$PATCHER_NAME" source
+
+          clean_commit="$(cat .clean_source_commit)"
+          mapfile -t changed < <(git -C source diff --name-only "$clean_commit" -- | LC_ALL=C sort)
+          expected=(SP/code/rend2/tr_main.c)
+          test "${#changed[@]}" -eq 1 || { printf 'ERROR: changed count=%s\n' "${#changed[@]}" >&2; printf '%s\n' "${changed[@]}" >&2; exit 1; }
+          test "$(printf '%s\n' "${changed[@]}")" = "$(printf '%s\n' "${expected[@]}")"
+
+          grep -Fq 'DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_DarkWolfPersistentPhysicalShadowResidentCandidate' source/SP/code/rend2/tr_main.c
+          grep -Fq 'residentGroupBySlot' source/SP/code/rend2/tr_main.c
+          grep -Fq 'selectedFromResidentSet' source/SP/code/rend2/tr_main.c
+
+          delta="$(git -C source diff "$clean_commit" -- SP/code/rend2/tr_main.c)"
+          if grep -Eq '^\+.*(r_dlightShadowSnapshot|TABLE_SHADOW_|SNAPSHOT_|ESCAPE1_TABLE|RC_V0_2)' <<<"$delta"; then
+            echo "ERROR: RC diagnostic/snapshot surface introduced into production source" >&2; exit 1
+          fi
+          if grep -Eq '^\+.*(fixture.?741|fixture.?742|fixture.?743|fixture.?744|escape1)' <<<"$delta"; then
+            echo "ERROR: map/fixture-specific production logic introduced" >&2; exit 1
+          fi
+          if grep -Eq '^\+.*(Cvar_Get|Cmd_AddCommand|Cmd_RemoveCommand|ri\.Printf)' <<<"$delta"; then
+            echo "ERROR: new cvar/command/telemetry registration introduced" >&2; exit 1
+          fi
+          if grep -Eq '^\+.*(r_dlightShadowStrength|r_dlightShadowMapSize|r_staticPromoteMaxLights)' <<<"$delta"; then
+            echo "ERROR: unrelated shadow/direct-light tuning introduced" >&2; exit 1
+          fi
+
+          # The runtime-tested RC had a diagnostic force-select escape hatch.  The
+          # Clean Production base hardwires that old diagnostic pointer OFF, so the
+          # production form removes the dependency entirely and keeps only the
+          # accepted resident-set selection behavior.
+          if grep -Fq 'r_dlightDiagForceSelect' <<<"$(grep -A120 -B5 'DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1' source/SP/code/rend2/tr_main.c)"; then
+            echo "ERROR: production residency fix still depends on diagnostic force-select" >&2; exit 1
+          fi
+          echo "Production-only residency source allowlist/hygiene PASS"
+
+      - name: Generate production delta cumulative and replay proofs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          clean_commit="$(cat .clean_source_commit)"
+          git -C source diff --binary --full-index "$clean_commit" -- SP/code/rend2/tr_main.c > "$DELTA_NAME"
+          git -C source diff --binary --full-index "$UPSTREAM_SHA" -- > "$CUMULATIVE_NAME"
+          test -s "$DELTA_NAME" && test -s "$CUMULATIVE_NAME"
+          test "$(grep -c '^diff --git ' "$DELTA_NAME")" -eq 1
+          git -C source apply --reverse --check --binary --whitespace=nowarn "../$DELTA_NAME"
+
+          rm -rf replay-delta replay-cumulative
+          git clone -q source replay-delta
+          git -C replay-delta checkout -q --detach "$clean_commit"
+          git -C replay-delta apply --check --binary --whitespace=nowarn "../$DELTA_NAME"
+          git -C replay-delta apply --binary --whitespace=nowarn "../$DELTA_NAME"
+          cmp source/SP/code/rend2/tr_main.c replay-delta/SP/code/rend2/tr_main.c
+
+          git clone -q source replay-cumulative
+          git -C replay-cumulative checkout -q --detach "$UPSTREAM_SHA"
+          git -C replay-cumulative apply --check --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          git -C replay-cumulative apply --binary --whitespace=nowarn "../$CUMULATIVE_NAME"
+          mapfile -t all_paths < <(git -C source diff --name-only "$UPSTREAM_SHA" -- | LC_ALL=C sort)
+          for rel in "${all_paths[@]}"; do cmp "source/$rel" "replay-cumulative/$rel"; done
+
+          sha256sum "$DELTA_NAME" > .delta_sha256
+          sha256sum "$CUMULATIVE_NAME" > .cumulative_sha256
+          echo "Production residency exact delta/reverse/replay + cumulative replay PASS"
+
+      - name: Build canonical Windows x64 SP Clean Production v2 renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -x source/SP/cross-make-mingw64.sh
+          jobs="$(nproc)"; if [ "$jobs" -gt 4 ]; then jobs=4; fi
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh -j"$jobs" \
+              BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          )
+          mapfile -t renderers < <(find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print | LC_ALL=C sort)
+          test "${#renderers[@]}" -eq 1
+          renderer="${renderers[0]}"
+          file "$renderer" | tee .renderer_file.txt
+          grep -Fq 'PE32+' .renderer_file.txt
+          printf '%s\n' "$renderer" > .renderer_path
+          sha256sum "$renderer" > .renderer_sha256
+          echo "Canonical Windows x64 SP Clean Production v2 compile/output PASS"
+
+      - name: Stage exact Clean Production v1 runtime and replace Rend2 renderer only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          renderer="$(cat .renderer_path)"
+          rm -rf runtime
+          mkdir -p runtime
+          stage="runtime/$RELEASE_BASENAME"
+          cp -a "$base" "$stage"
+          cp -f "$renderer" "$stage/renderer_sp_rend2_x64.dll"
+          rm -f "$stage/docs/SHA256SUMS.txt"
+
+          cmp "$base/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$base/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$base/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$base/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$base/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cmp "$base/Main/autoexec.cfg" "$stage/Main/autoexec.cfg"
+          cmp "$base/RUN_DARKWOLF_PRODUCTION.cmd" "$stage/RUN_DARKWOLF_PRODUCTION.cmd"
+          cmp "$base/RUN_DARKWOLF_PRODUCTION_CINEMATIC.cmd" "$stage/RUN_DARKWOLF_PRODUCTION_CINEMATIC.cmd"
+          cmp "$base/RUN_DARKWOLF_PRODUCTION_PERFORMANCE.cmd" "$stage/RUN_DARKWOLF_PRODUCTION_PERFORMANCE.cmd"
+          printf '%s\n' "$stage" > .stage_path
+          echo "Runtime staging PASS: exact Clean Production v1 donor + new Rend2 renderer only"
+
+      - name: Add Clean Production v2 provenance without RC test surface
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          delta_sha="$(awk '{print $1}' .delta_sha256)"
+          cumulative_sha="$(awk '{print $1}' .cumulative_sha256)"
+          renderer_sha="$(awk '{print $1}' .renderer_sha256)"
+
+          mkdir -p "$stage/docs"
+          cp "$PATCHER_NAME" "$stage/docs/$PATCHER_NAME"
+          cp "$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+
+          cat > "$stage/docs/$CONTRACT_NAME" <<EOF_CONTRACT
+          DARKWOLF / IORTCW REND2 SP - CLEAN PRODUCTION RELEASE V2
+          feature=PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1
+          status=CLEAN_PRODUCTION_RUNTIME_ACCEPTED_FIX
+          base_run=$BASE_RUN_ID
+          base_head=$BASE_RUN_HEAD_SHA
+          base_artifact_id=$BASE_ARTIFACT_ID
+          base_artifact_digest=$BASE_ARTIFACT_DIGEST
+          base_inner_sha256=$BASE_INNER_SHA256
+          runtime_accepted_rc_run=$RC_RUN_ID
+          runtime_accepted_rc_head=$RC_RUN_HEAD_SHA
+          runtime_accepted_rc_artifact_id=$RC_ARTIFACT_ID
+          runtime_accepted_rc_artifact_digest=$RC_ARTIFACT_DIGEST
+          runtime_acceptance_result=NORMAL_FIRST_SHADOW_PRESERVED_SECOND_DARK_SHADOW_REMOVED
+          incidental_short_scene_darkening=NOT_REPRODUCIBLE_IN_FOLLOWUP_NO_PRODUCTION_CHANGE
+          upstream_sha=$UPSTREAM_SHA
+          source_change_allowlist=SP/code/rend2/tr_main.c_ONLY
+          selector_architecture=PERSISTENT_PHYSICAL_OWNER_SET_BEFORE_COMPACT_SLOT_ASSIGNMENT
+          owner_identity=STATIC_PROMOTE_PHYSICAL_GROUP_ID
+          residency_basis=PHYSICAL_GROUP_CAPTURE_RADIUS
+          residency_margin=EXISTING_R_DLIGHTSHADOWHYSTERESIS
+          new_runtime_cvars=NONE
+          new_console_commands=NONE
+          new_periodic_telemetry=NONE
+          rc_snapshot_surface=REMOVED
+          rc_test_cfg=NOT_PACKAGED
+          map_specific_logic=NONE
+          fixture_specific_logic=NONE
+          direct_light_delivery_change=NONE
+          persistent_shadow_budget_change=NONE_DEFAULT_3
+          dynamic_shadow_reserve_change=NONE_FIXED_2
+          shadow_strength_radius_color_falloff_change=NONE
+          shadow_map_size_filter_bias_change=NONE
+          staticpromote_grouping_change=NONE
+          tesla_muzzle_explosion_fire_policy_change=NONE
+          bloom_tonemap_exposure_change=NONE
+          materials_ssgi_sunvol_firevol_localvol_change=NONE
+          runtime_binary_replacements=renderer_sp_rend2_x64.dll_ONLY
+          delta_sha256=$delta_sha
+          cumulative_sha256=$cumulative_sha
+          renderer_sha256=$renderer_sha
+          EOF_CONTRACT
+
+          cat > "$stage/$README_NAME" <<'EOF_README'
+          DARKWOLF / ioRTCW Rend2 Single Player
+          CLEAN PRODUCTION RELEASE V2 - PERSISTENT PHYSICAL SHADOW SET RESIDENCY
+
+          Основа релиза
+          --------------
+          Exact Clean Production v1: GitHub Actions Run 35361762179.
+          Runtime-подтверждение исправления: RC v0.2 Run 35503262322.
+
+          Пользователь подтвердил в Escape1:
+          - нормальная первая тень под столом сохраняется;
+          - дополнительная вторая темная тень больше не появляется;
+          - наблюдавшееся один раз краткое затемнение сцены в повторных тестах не
+            воспроизвелось ни при shadow budget 0, ни при production budget 3.
+            Поэтому отдельное неподтвержденное изменение освещения в этот релиз не
+            добавлялось.
+
+          Что перенесено в Production
+          ---------------------------
+          Только Persistent Physical Shadow Set Residency:
+          1. Selector сначала восстанавливает предыдущий набор физических shadow owners.
+          2. Пока owner существует и камера остается внутри его physical capture radius
+             с существующим hysteresis-margin, identity сохраняет residency.
+          3. Resident owners выбираются до новых score challengers.
+          4. Compact slots назначаются уже после решения о составе owner-set.
+          5. После выхода owner из residency envelope normal score selection снова может
+             заполнить освободившееся место.
+
+          Production hygiene
+          ------------------
+          - никаких Escape1/table coordinates или fixture 741/742/743/744 special cases;
+          - никаких новых CVar;
+          - никаких новых console commands;
+          - RC snapshot/diagnostic command отсутствует;
+          - RC test cfg отсутствует;
+          - никакой новой периодической telemetry;
+          - Direct Light не изменен;
+          - r_dlightShadowMaxLights остается production default 3;
+          - dynamic/transient reserve остается 2;
+          - shadow strength, radius, color, falloff, resolution, bias/filter не изменены;
+          - Bloom, ToneMap, Exposure не изменены;
+          - Materials/SSGI/SunVol/FireVol/LocalVol не изменены.
+
+          Запуск
+          ------
+          Используйте обычный RUN_DARKWOLF_PRODUCTION.cmd. Специальный RC cfg больше не нужен.
+          EOF_README
+          cp "$stage/$README_NAME" "$stage/docs/$README_NAME"
+
+          cat > "$stage/docs/$VALIDATION_NAME" <<EOF_VALIDATION
+          DARKWOLF CLEAN PRODUCTION RELEASE V2 - CI VALIDATION RECORD
+          base_provenance=PASS_RUN_$BASE_RUN_ID
+          accepted_rc_provenance=PASS_RUN_$RC_RUN_ID_VERIFICATION_ONLY
+          base_package_manifest=PASS
+          base_source_reconstruction=PASS_67_FILES
+          production_source_allowlist=PASS_TR_MAIN_ONLY
+          new_cvar_registration_guard=PASS_NONE
+          new_command_registration_guard=PASS_NONE
+          new_telemetry_guard=PASS_NONE
+          map_fixture_specific_guard=PASS_NONE
+          delta_reverse_check=PASS
+          delta_clean_replay=PASS
+          cumulative_clean_replay=PASS
+          mingw_sp_compile=PASS_THIS_RUN
+          pe32_renderer=PASS
+          runtime_donor=EXACT_CLEAN_PRODUCTION_V1
+          runtime_binary_replacement=REND2_RENDERER_ONLY
+          runtime_test_surface=NONE
+          production_status=BROAD_GAME_REGRESSION_TEST_RECOMMENDED
+          EOF_VALIDATION
+
+          echo "Clean Production v2 provenance/docs PASS"
+
+      - name: Final Clean Production v2 package policy audit and SHA manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          base="$(cat .base_stage_path)"
+          required=(
+            ioWolfSP.x64.exe renderer_sp_rend2_x64.dll renderer_sp_opengl1_x64.dll
+            Main/cgame_sp_x64.dll Main/qagame_sp_x64.dll Main/ui_sp_x64.dll
+            Main/autoexec.cfg RUN_DARKWOLF_PRODUCTION.cmd RUN_DARKWOLF_PRODUCTION_CINEMATIC.cmd RUN_DARKWOLF_PRODUCTION_PERFORMANCE.cmd
+            "$README_NAME" "docs/$README_NAME" "docs/$CONTRACT_NAME" "docs/$VALIDATION_NAME"
+            "docs/$PATCHER_NAME" "docs/$DELTA_NAME" "docs/$CUMULATIVE_NAME"
+          )
+          for rel in "${required[@]}"; do test -s "$stage/$rel" || { echo "ERROR: required file missing: $rel" >&2; exit 1; }; done
+
+          if find "$stage/Main" -maxdepth 1 -type f -name 'ESCAPE1_TABLE_SHADOW_RC_*' -print -quit | grep -q .; then
+            echo "ERROR: RC table-shadow cfg survived in Clean Production package" >&2; exit 1
+          fi
+          if find "$stage" -maxdepth 2 -type f -name 'README_ESCAPE1_TABLE_SHADOW_RC_*' -print -quit | grep -q .; then
+            echo "ERROR: RC table-shadow README survived in Clean Production package" >&2; exit 1
+          fi
+
+          # Source delta must contain the fix but no current-workstream diagnostic surface.
+          grep -Fq 'DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1' "$stage/docs/$DELTA_NAME"
+          if grep -Eq '^\+.*(r_dlightShadowSnapshot|TABLE_SHADOW_|SNAPSHOT_|ESCAPE1_TABLE|RC_V0_2)' "$stage/docs/$DELTA_NAME"; then
+            echo "ERROR: RC diagnostics survived in production delta" >&2; exit 1
+          fi
+          if grep -Eq '^\+.*(Cvar_Get|Cmd_AddCommand|Cmd_RemoveCommand|ri\.Printf)' "$stage/docs/$DELTA_NAME"; then
+            echo "ERROR: production delta added cvar/command/telemetry" >&2; exit 1
+          fi
+
+          cmp "$base/ioWolfSP.x64.exe" "$stage/ioWolfSP.x64.exe"
+          cmp "$base/renderer_sp_opengl1_x64.dll" "$stage/renderer_sp_opengl1_x64.dll"
+          cmp "$base/Main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
+          cmp "$base/Main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cmp "$base/Main/ui_sp_x64.dll" "$stage/Main/ui_sp_x64.dll"
+          cmp "$base/Main/autoexec.cfg" "$stage/Main/autoexec.cfg"
+          cmp "$base/RUN_DARKWOLF_PRODUCTION.cmd" "$stage/RUN_DARKWOLF_PRODUCTION.cmd"
+          cmp "$base/RUN_DARKWOLF_PRODUCTION_CINEMATIC.cmd" "$stage/RUN_DARKWOLF_PRODUCTION_CINEMATIC.cmd"
+          cmp "$base/RUN_DARKWOLF_PRODUCTION_PERFORMANCE.cmd" "$stage/RUN_DARKWOLF_PRODUCTION_PERFORMANCE.cmd"
+
+          grep -Fq 'new_runtime_cvars=NONE' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'new_console_commands=NONE' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'new_periodic_telemetry=NONE' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'runtime_acceptance_result=NORMAL_FIRST_SHADOW_PRESERVED_SECOND_DARK_SHADOW_REMOVED' "$stage/docs/$CONTRACT_NAME"
+          grep -Fq 'incidental_short_scene_darkening=NOT_REPRODUCIBLE_IN_FOLLOWUP_NO_PRODUCTION_CHANGE' "$stage/docs/$CONTRACT_NAME"
+
+          if find "$stage" -type f -iname 'pak*.pk3' -print -quit | grep -q .; then echo "ERROR: commercial pak*.pk3 found" >&2; exit 1; fi
+          if find "$stage" -type f \( -iname '*.sav' -o -iname 'wolfconfig.cfg' \) -print -quit | grep -q .; then echo "ERROR: user save/config found" >&2; exit 1; fi
+
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt && sha256sum -c docs/SHA256SUMS.txt)
+          echo "Final Clean Production v2 package/runtime/hygiene audit PASS"
+
+      - name: Package full SP Clean Production v2 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$(cat .stage_path)"
+          rm -rf out
+          mkdir -p out
+          archive="out/${RELEASE_BASENAME}.zip"
+          (cd runtime && find "$RELEASE_BASENAME" -type f -print | LC_ALL=C sort | zip -X -9 "$GITHUB_WORKSPACE/$archive" -@)
+          test -s "$archive"
+          unzip -tq "$archive"
+          sha256sum "$archive" | sed "s#  out/#  #" > "out/${RELEASE_BASENAME}.zip.sha256"
+          cat "out/${RELEASE_BASENAME}.zip.sha256"
+
+      - name: Upload full SP Clean Production v2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            out/${{ env.RELEASE_BASENAME }}.zip
+            out/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
