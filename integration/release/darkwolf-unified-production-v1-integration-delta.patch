@@ -1,0 +1,419 @@
+diff --git a/SP/code/cgame/cg_ents.c b/SP/code/cgame/cg_ents.c
+index 14710760e155bbf5ef2d735df42c5d9038caacfb..69f8a61703f74867e120b3b09524ea1201e946df 100644
+--- a/SP/code/cgame/cg_ents.c
++++ b/SP/code/cgame/cg_ents.c
+@@ -2753,10 +2753,11 @@ static void CG_Efx( centity_t *cent ) {
+ 			g = ( dli >> 8 ) & 255;
+ 			b = ( dli >> 16 ) & 255;
+ 
+-			if ( cent->currentState.eType == ET_TESLA_EF && cg_dlightEffectEnhance.integer ) {
+-				// REND2_EFFECT_LIGHTING_V8: the original Tesla dlight blinked on only
+-				// selected 50 ms slots. Keep the bolts animated but make their room light
+-				// continuous with a controlled pulse so moving shadows remain readable.
++			if ( cent->currentState.eType == ET_TESLA_EF && cg_dlightEffectEnhance.integer &&
++				( cg.time / 50 ) % ( randomness + ( cg.time % randomness ) ) == 0 ) {
++				// DARKWOLF_UNIFIED_PRODUCTION_TESLA_TIMING_V1: the original attached-light
++				// predicate remains the temporal authority.  While it is active, retain the
++				// enhanced endpoint-aware origin, radius, color and semantic source class.
+ 				// REND2_EFFECT_QUALITY_POLISH_V8_1: move only the room-light a small distance
+ 				// toward origin2 (the Tesla target) and reduce pulse depth. Bolt geometry is untouched.
+ 				vec3_t electricLightOrigin;
+diff --git a/SP/code/rend2/tr_init.c b/SP/code/rend2/tr_init.c
+index 4f6fa05473b85e6a65f2eb4bda863896f80f99c1..2803b26ecb8a8b3b9f47b4a17b7b07d98be9112f 100644
+--- a/SP/code/rend2/tr_init.c
++++ b/SP/code/rend2/tr_init.c
+@@ -1693,7 +1693,7 @@ void R_Register( void ) {
+ 	r_cubeMapping = ri.Cvar_Get( "r_cubeMapping", "1", CVAR_ARCHIVE | CVAR_LATCH );
+ 	r_cubemapSize = ri.Cvar_Get( "r_cubemapSize", "128", CVAR_ARCHIVE | CVAR_LATCH );
+ 	r_deluxeSpecular = ri.Cvar_Get( "r_deluxeSpecular", "0.1", CVAR_ARCHIVE | CVAR_LATCH );
+-	r_pbr = ri.Cvar_Get("r_pbr", "1", CVAR_ARCHIVE | CVAR_LATCH);
++	r_pbr = ri.Cvar_Get("r_pbr", "0", CVAR_ARCHIVE | CVAR_LATCH); // DARKWOLF_UNIFIED_PRODUCTION_V1: preserve RTCW visual character.
+ 	r_baseNormalX = ri.Cvar_Get( "r_baseNormalX", "1.0", CVAR_ARCHIVE | CVAR_LATCH );
+ 	r_baseNormalY = ri.Cvar_Get( "r_baseNormalY", "1.0", CVAR_ARCHIVE | CVAR_LATCH );
+ 	r_baseParallax = ri.Cvar_Get( "r_baseParallax", "0.05", CVAR_ARCHIVE | CVAR_LATCH );
+@@ -2171,8 +2171,6 @@ void R_Register( void ) {
+ 	ri.Cmd_AddCommand( "r_staticPromoteBlock", R_StaticPromoteBlock_f );
+ 	ri.Cmd_AddCommand( "r_staticPromoteAuto", R_StaticPromoteAuto_f );
+ 	ri.Cmd_AddCommand( "r_staticPromoteInspect", R_StaticPromoteInspect_f );
+-	// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2
+-	ri.Cmd_AddCommand( "r_dlightShadowSnapshot", R_DlightShadowSnapshot_f );
+ 	ri.Cmd_AddCommand( "r_staticPromoteClearMap", R_StaticPromoteClearMap_f );
+ 	// REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V5_1_V12_0: wide search + synthetic learned lights.
+ 	ri.Cmd_AddCommand( "r_staticPromoteWideInspect", R_StaticPromoteWideInspect_f );
+@@ -2363,8 +2361,6 @@ void RE_Shutdown( qboolean destroyWindow ) {
+ 	ri.Cmd_RemoveCommand( "r_staticPromoteBlock" );
+ 	ri.Cmd_RemoveCommand( "r_staticPromoteAuto" );
+ 	ri.Cmd_RemoveCommand( "r_staticPromoteInspect" );
+-	// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2
+-	ri.Cmd_RemoveCommand( "r_dlightShadowSnapshot" );
+ 	ri.Cmd_RemoveCommand( "r_staticPromoteClearMap" );
+ 	ri.Cmd_RemoveCommand( "r_staticPromoteWideInspect" );
+ 	ri.Cmd_RemoveCommand( "r_staticPromoteLearnCandidate" );
+diff --git a/SP/code/rend2/tr_local.h b/SP/code/rend2/tr_local.h
+index 7872971372efe75fc0a07d49136761c5580bc8f4..325f187556fb63a9ae599831f49cd4a723affb92 100644
+--- a/SP/code/rend2/tr_local.h
++++ b/SP/code/rend2/tr_local.h
+@@ -2581,8 +2581,6 @@ void R_SwapBuffers( int );
+ 
+ void R_RenderView( viewParms_t *parms );
+ void R_RenderDlightCubemaps(const refdef_t *fd);
+-// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2
+-void R_DlightShadowSnapshot_f(void);
+ void R_RenderFireVolumetricSyntheticShadows(const refdef_t *fd); // DARKWOLF_FIREVOL_OCCLUSION_PRODUCTION_V1
+ void R_RenderPshadowMaps(const refdef_t *fd);
+ void R_RenderSunShadowMaps(const refdef_t *fd, int level);
+diff --git a/SP/code/rend2/tr_main.c b/SP/code/rend2/tr_main.c
+index 53ace628c6869a1f7a01d0cb130676ce75456c65..085931095ce71276493e38698f0a5087814d188a 100644
+--- a/SP/code/rend2/tr_main.c
++++ b/SP/code/rend2/tr_main.c
+@@ -3147,7 +3147,7 @@ static unsigned int R_DarkWolfStaticPromoteShadowClearGroup(unsigned int mask, i
+ }
+ 
+ 
+-// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2
++// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1
+ // Generic persistent-physical shadow residency.  This is deliberately
+ // map/fixture agnostic: an already selected StaticPromote physical group
+ // remains a resident shadow owner while the main camera is still inside
+@@ -3208,12 +3208,6 @@ static int R_DarkWolfPersistentPhysicalShadowResidentCandidate(
+     return distance <= residencyLimit ? canonicalIndex : -1;
+ }
+ 
+-// On-demand validation snapshot inherited from RC v0.1.  No continuous
+-// telemetry is enabled; this only records state when the command is used.
+-static qboolean s_dlightShadowSnapshotViewValid = qfalse;
+-static vec3_t s_dlightShadowSnapshotViewOrigin;
+-static int s_dlightShadowSnapshotViewTime = 0;
+-
+ void R_RenderDlightCubemaps(const refdef_t *fd)
+ {
+ 	static qboolean historyInitialized = qfalse;
+@@ -3244,15 +3238,6 @@ void R_RenderDlightCubemaps(const refdef_t *fd)
+ 	int persistentShadowBudget = 0;
+ 	int dynamicShadowBudget = 0; // DARKWOLF_STAGE11_UNIFIED_ASSET_SHADOW_COVERAGE_CLEAN_PRODUCTION_V1: fixed accepted transient reserve = 2.
+ 
+-	// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2
+-	// Cache the exact selector camera for the on-demand snapshot only.
+-	if (fd)
+-	{
+-		VectorCopy(fd->vieworg, s_dlightShadowSnapshotViewOrigin);
+-		s_dlightShadowSnapshotViewTime = fd->time;
+-		s_dlightShadowSnapshotViewValid = qtrue;
+-	}
+-
+ 	{
+ 		const char *historyMapName = tr.world ? tr.world->baseName : "<none>";
+ 		if (!historyInitialized || Q_stricmp(historyMap, historyMapName))
+@@ -3352,7 +3337,7 @@ void R_RenderDlightCubemaps(const refdef_t *fd)
+ 
+ 	pendingLightsMask = R_DarkWolfStaticPromoteShadowExpandPending(pendingLightsMask);
+ 
+-	// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2
++	// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1
+ 	// Build the resident physical OWNER SET once for this frame from the previous
+ 	// compact persistent slots.  A previous group is resident only while it still
+ 	// exists/qualifies and the camera remains within its capture sphere enlarged
+@@ -3405,7 +3390,7 @@ void R_RenderDlightCubemaps(const refdef_t *fd)
+ 		int j;
+ 		qboolean selectedFromResidentSet = qfalse;
+ 
+-		// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2
++		// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_PRODUCTION_V1
+ 		// Persistent physical residents are consumed before score challengers.
+ 		// Prefer the historical compact slot; if that slot became vacant, compact
+ 		// another still-resident identity forward.  Only after the resident set is
+@@ -3897,127 +3882,6 @@ void R_RenderDlightCubemaps(const refdef_t *fd)
+ 
+ 
+ 
+-// DARKWOLF_PERSISTENT_PHYSICAL_SHADOW_SET_RESIDENCY_RC_V0_2
+-static const char *R_DlightShadowSnapshotSourceName(int sourceClass)
+-{
+-    switch (sourceClass)
+-    {
+-    case DWSHADOW_SOURCE_PERSISTENT_PHYSICAL: return "PERSISTENT_PHYSICAL";
+-    case DWSHADOW_SOURCE_PERSISTENT_FIRE: return "PERSISTENT_FIRE";
+-    case DWSHADOW_SOURCE_ORDINARY_MUZZLE: return "ORDINARY_MUZZLE";
+-    case DWSHADOW_SOURCE_TESLA_ENDPOINT: return "TESLA_ENDPOINT";
+-    case DWSHADOW_SOURCE_TESLA_MUZZLE: return "TESLA_MUZZLE";
+-    case DWSHADOW_SOURCE_TRANSIENT_EXPLOSION: return "TRANSIENT_EXPLOSION";
+-    case DWSHADOW_SOURCE_OTHER_DYNAMIC: return "OTHER_DYNAMIC";
+-    default: return "UNCLASSIFIED";
+-    }
+-}
+-
+-static float R_DlightShadowSnapshotScore(const dlight_t *dl)
+-{
+-    vec3_t delta;
+-    float distanceSquared;
+-    float radiusSquared;
+-    float luminance;
+-
+-    if (!dl || !s_dlightShadowSnapshotViewValid)
+-        return -1.0f;
+-    VectorSubtract(dl->origin, s_dlightShadowSnapshotViewOrigin, delta);
+-    distanceSquared = DotProduct(delta, delta);
+-    radiusSquared = dl->radius * dl->radius;
+-    luminance = 0.2126f * dl->color[0] + 0.7152f * dl->color[1] + 0.0722f * dl->color[2];
+-    return radiusSquared * (0.25f + luminance) /
+-        (distanceSquared + radiusSquared * 0.25f + 1.0f);
+-}
+-
+-static void R_DlightShadowSnapshotGroupStats(int index, int *groupIdOut, float *groupScoreOut)
+-{
+-    int groupId = -1;
+-    float groupScore = R_DlightShadowSnapshotScore(&tr.refdef.dlights[index]);
+-    int i;
+-
+-    if (R_DarkWolfStaticPromoteShadowGroupEligible(&tr.refdef.dlights[index]))
+-    {
+-        groupId = R_DarkWolfStaticPromoteShadowGroupCanonicalId(index);
+-        groupScore = -1.0f;
+-        for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i)
+-        {
+-            float score;
+-            if (!R_DarkWolfStaticPromoteShadowGroupEligible(&tr.refdef.dlights[i]))
+-                continue;
+-            if (R_DarkWolfStaticPromoteShadowGroupCanonicalId(i) != groupId)
+-                continue;
+-            score = R_DlightShadowSnapshotScore(&tr.refdef.dlights[i]);
+-            if (score > groupScore)
+-                groupScore = score;
+-        }
+-    }
+-
+-    *groupIdOut = groupId;
+-    *groupScoreOut = groupScore;
+-}
+-
+-void R_DlightShadowSnapshot_f(void)
+-{
+-    const char *label = (ri.Cmd_Argc() >= 2) ? ri.Cmd_Argv(1) : "SNAP";
+-    const char *mapName = tr.world ? tr.world->baseName : "<none>";
+-    int persistentBudget = r_dlightShadowMaxLights ? r_dlightShadowMaxLights->integer : -1;
+-    unsigned int allMask = tr.refdef.num_dlights >= 32 ? 0xFFFFFFFFu : ((1u << tr.refdef.num_dlights) - 1u);
+-    int i;
+-
+-    if (!s_dlightShadowSnapshotViewValid)
+-    {
+-        ri.Printf(PRINT_WARNING, "TABLE_SHADOW_SNAPSHOT_ERROR label=%s reason=no_selector_view_yet\\n", label);
+-        return;
+-    }
+-
+-    ri.Printf(PRINT_ALL,
+-        "TABLE_SHADOW_SNAPSHOT_BEGIN label=%s map=%s frame=%d time=%d selectorTime=%d cam=%.3f,%.3f,%.3f numDlights=%d persistentBudget=%d dynamicReserve=2 shadowMask=0x%08x policy=PERSISTENT_PHYSICAL_SET_RESIDENCY_V02\\n",
+-        label, mapName, tr.frameCount, tr.refdef.time, s_dlightShadowSnapshotViewTime,
+-        s_dlightShadowSnapshotViewOrigin[0], s_dlightShadowSnapshotViewOrigin[1], s_dlightShadowSnapshotViewOrigin[2],
+-        tr.refdef.num_dlights, persistentBudget, tr.refdef.dlightShadowMask);
+-
+-    for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i)
+-    {
+-        dlight_t *dl = &tr.refdef.dlights[i];
+-        int slot = (int)tr.refdef.dlightShadowSlot[i];
+-        int selected = (slot >= 0) ? 1 : 0;
+-        int computedGroupId = -1;
+-        int storedGroupId = tr.refdef.dlightShadowGroupId[i];
+-        int synthetic = (dl->staticPromoteFixtureId >= 1000000) ? 1 : 0;
+-        int syntheticId = synthetic ? dl->staticPromoteFixtureId - 1000000 : -1;
+-        int residentCandidate = -1;
+-        float residencyDistance = -1.0f;
+-        float residencyLimit = -1.0f;
+-        float score = R_DlightShadowSnapshotScore(dl);
+-        float groupScore = score;
+-        vec3_t delta;
+-        float cameraDistance;
+-
+-        R_DlightShadowSnapshotGroupStats(i, &computedGroupId, &groupScore);
+-        if (computedGroupId >= 0)
+-            residentCandidate = R_DarkWolfPersistentPhysicalShadowResidentCandidate(
+-                computedGroupId, s_dlightShadowSnapshotViewOrigin, allMask,
+-                &residencyDistance, &residencyLimit);
+-        VectorSubtract(dl->origin, s_dlightShadowSnapshotViewOrigin, delta);
+-        cameraDistance = sqrtf(DotProduct(delta, delta));
+-
+-        ri.Printf(PRINT_ALL,
+-            "TABLE_SHADOW_LIGHT label=%s index=%d selected=%d slot=%d source=%s sourceId=%d fixture=%d computedGroup=%d storedGroup=%d native=%d localVolLamp=%d synthetic=%d syntheticId=%d tier=%d noShadow=%d origin=%.3f,%.3f,%.3f radius=%.3f color=%.4f,%.4f,%.4f score=%.7f groupScore=%.7f cameraDistance=%.3f residencyInside=%d residencyDistance=%.3f residencyLimit=%.3f captureOrigin=%.3f,%.3f,%.3f captureRadius=%.3f\\n",
+-            label, i, selected, slot, R_DlightShadowSnapshotSourceName(dl->shadowSourceClass), dl->shadowSourceClass,
+-            dl->staticPromoteFixtureId, computedGroupId, storedGroupId,
+-            dl->nativeAuthoredDlight ? 1 : 0, dl->localVolumetricLamp ? 1 : 0,
+-            synthetic, syntheticId, dl->staticPromoteVisibilityTier, dl->noDlightShadow ? 1 : 0,
+-            dl->origin[0], dl->origin[1], dl->origin[2], dl->radius,
+-            dl->color[0], dl->color[1], dl->color[2], score, groupScore, cameraDistance,
+-            residentCandidate >= 0 ? 1 : 0, residencyDistance, residencyLimit,
+-            tr.refdef.dlightShadowCaptureOrigin[i][0], tr.refdef.dlightShadowCaptureOrigin[i][1], tr.refdef.dlightShadowCaptureOrigin[i][2],
+-            tr.refdef.dlightShadowCaptureRadius[i]);
+-    }
+-
+-    ri.Printf(PRINT_ALL, "TABLE_SHADOW_SNAPSHOT_END label=%s map=%s\\n", label, mapName);
+-}
+-
+ void R_RenderPshadowMaps(const refdef_t *fd)
+ {
+ 	viewParms_t		shadowParms;
+diff --git a/SP/code/rend2/tr_scene.c b/SP/code/rend2/tr_scene.c
+index d44e7674d89f9501ac45d478cc102c4e8a6c13d1..f43b02edb43d655e459c4ff403204d1a8f9fcb24 100644
+--- a/SP/code/rend2/tr_scene.c
++++ b/SP/code/rend2/tr_scene.c
+@@ -2591,6 +2591,8 @@ static void R_StaticPromoteExact8PhysicalFixtureExtension(void)
+ 		tr.world->baseName, authoredAccepted, c02Derived, xlight2500Derived, s_staticPromotePersistentCount);
+ }
+ 
++static int R_StaticPromotePhysicalOverrideState(const staticPromotePersistentLight_t *light);
++
+ static int R_StaticPromoteClassifyFixture(const staticPromotePersistentLight_t *light)
+ {
+ 	float minIntensity;
+@@ -2602,7 +2604,7 @@ static int R_StaticPromoteClassifyFixture(const staticPromotePersistentLight_t *
+ 
+ 	if (!light)
+ 		return STATIC_PROMOTE_CLASS_INTENSITY;
+-	userOverride = R_StaticPromoteUserOverrideState(tr.world ? tr.world->baseName : "", light->candidate.entityOrdinal);
++	userOverride = R_StaticPromotePhysicalOverrideState(light);
+ 	if (userOverride < 0)
+ 		return STATIC_PROMOTE_CLASS_USER_BLOCKED;
+ 	if (userOverride > 0)
+@@ -4076,6 +4078,71 @@ static qboolean R_StaticPromoteUSLRDInfluenceVisible(const refdef_t *fd, const b
+ 	return qfalse;
+ }
+ 
++// DARKWOLF_UNIFIED_PHYSICAL_BLOCK_V1
++// Overrides remain backward-compatible on disk, but their effective ownership is
++// the map-lifetime PLR association.  Any blocked alias vetoes the complete physical
++// promoted lamp before Direct Light, LocalVol and point-shadow consumers.
++static int R_StaticPromotePhysicalOverrideState(const staticPromotePersistentLight_t *light)
++{
++	const char *mapName = tr.world ? tr.world->baseName : "";
++	int aliases[5];
++	int i;
++	int state = 0;
++	if (!light)
++		return 0;
++	aliases[0] = light->candidate.entityOrdinal;
++	aliases[1] = light->physicalLightJuniorOrdinal;
++	aliases[2] = light->physicalCoronaOrdinal;
++	aliases[3] = light->physicalNativeDlightOrdinal;
++	aliases[4] = light->physicalFireSpeakerOrdinal;
++	for (i = 0; i < 5; ++i)
++	{
++		int aliasState;
++		int j;
++		if (aliases[i] < 0)
++			continue;
++		for (j = 0; j < i; ++j)
++			if (aliases[j] == aliases[i])
++				break;
++		if (j < i)
++			continue;
++		aliasState = R_StaticPromoteUserOverrideState(mapName, aliases[i]);
++		if (aliasState < 0)
++			return -1;
++		if (aliasState > 0)
++			state = 1;
++	}
++	return state;
++}
++
++static qboolean R_StaticPromotePhysicalOverrideSet(const staticPromotePersistentLight_t *light, int state)
++{
++	const char *mapName = tr.world ? tr.world->baseName : "";
++	int aliases[5];
++	int i;
++	if (!light)
++		return qfalse;
++	aliases[0] = light->candidate.entityOrdinal;
++	aliases[1] = light->physicalLightJuniorOrdinal;
++	aliases[2] = light->physicalCoronaOrdinal;
++	aliases[3] = light->physicalNativeDlightOrdinal;
++	aliases[4] = light->physicalFireSpeakerOrdinal;
++	for (i = 0; i < 5; ++i)
++	{
++		int j;
++		if (aliases[i] < 0)
++			continue;
++		for (j = 0; j < i; ++j)
++			if (aliases[j] == aliases[i])
++				break;
++		if (j < i)
++			continue;
++		if (!R_StaticPromoteUserOverrideSet(mapName, aliases[i], state))
++			return qfalse;
++	}
++	return qtrue;
++}
++
+ static int R_StaticPromoteUSLRDPriority(const staticPromotePersistentLight_t *light)
+ {
+ 	int userOverride;
+@@ -4102,17 +4169,25 @@ static qboolean R_StaticPromoteUSLRDAllowed(const staticPromotePersistentLight_t
+ 		return qfalse;
+ 	if (!autoMapLights)
+ 	{
+-		int userOverride = R_StaticPromoteUserOverrideState(tr.world ? tr.world->baseName : "", light->candidate.entityOrdinal);
++		int userOverride = R_StaticPromotePhysicalOverrideState(light);
+ 		allowed = userOverride < 0 ? qfalse : (userOverride > 0 || light->approvedFallback);
+ 		classReason = allowed ? STATIC_PROMOTE_CLASS_ACCEPT : STATIC_PROMOTE_CLASS_USER_BLOCKED;
+ 	}
+ 	else
+ 	{
+-		classReason = R_StaticPromoteClassifyFixture(light);
+-		allowed = (classReason == STATIC_PROMOTE_CLASS_ACCEPT) ? qtrue : qfalse;
++		if (R_StaticPromotePhysicalOverrideState(light) < 0)
++		{
++			classReason = STATIC_PROMOTE_CLASS_USER_BLOCKED;
++			allowed = qfalse;
++		}
++		else
++		{
++			classReason = R_StaticPromoteClassifyFixture(light);
++			allowed = (classReason == STATIC_PROMOTE_CLASS_ACCEPT) ? qtrue : qfalse;
+ 		// Native authored association is a route preference, not a permanent suppression in USLRD.
+-		if (!allowed && classReason == STATIC_PROMOTE_CLASS_NATIVE_SOURCE && light->physicalRecognitionAccepted)
+-			allowed = qtrue;
++			if (!allowed && classReason == STATIC_PROMOTE_CLASS_NATIVE_SOURCE && light->physicalRecognitionAccepted)
++				allowed = qtrue;
++		}
+ 	}
+ 	if (classReasonOut) *classReasonOut = classReason;
+ 	return allowed;
+@@ -4195,6 +4270,23 @@ static int R_StaticPromoteSelectPersistentInfluenceUnified(const refdef_t *fd,
+ 		allowed = R_StaticPromoteUSLRDAllowed(light, autoMapLights, &classReason);
+ 		if (!allowed)
+ 		{
++			// A native/authored alias may already have been submitted by cgame.  Keep
++			// array ordering intact, but make a physically blocked association inert
++			// before Direct, LocalVol and shadow selection consume the scene list.
++			if (classReason == STATIC_PROMOTE_CLASS_USER_BLOCKED &&
++				(light->physicalNativeDlightOrdinal >= 0 || light->nativeDuplicateSuppressed))
++			{
++				int blockedNative = R_StaticPromoteUSLRDFindNativeRuntimeDlight(light);
++				if (blockedNative >= 0)
++				{
++					dlight_t *blocked = &backEndData->dlights[r_firstSceneDlight + blockedNative];
++					blocked->radius = 0.0f;
++					VectorClear(blocked->color);
++					blocked->noDlightShadow = qtrue;
++					blocked->localVolumetricLamp = qfalse;
++					blocked->staticPromoteFixtureId = -1;
++				}
++			}
+ 			classifierRejected++;
+ 			continue;
+ 		}
+@@ -4774,7 +4866,7 @@ static void R_StaticPromoteWideCandidateAction(int desiredState, const char *act
+ 	idx = s_staticPromoteWideCandidates[slot];
+ 	if (idx < 0 || idx >= s_staticPromotePersistentCount) return;
+ 	light = &s_staticPromotePersistentLights[idx];
+-	if (!R_StaticPromoteUserOverrideSet(tr.world->baseName, light->candidate.entityOrdinal, desiredState))
++	if (!R_StaticPromotePhysicalOverrideSet(light, desiredState))
+ 	{
+ 		ri.Printf(PRINT_WARNING, "STATIC_PROMOTE %s FAILED: could not save %s\n", actionName, STATIC_PROMOTE_USER_OVERRIDE_FILE);
+ 		return;
+@@ -4897,7 +4989,7 @@ static void R_StaticPromoteLearnTargetAction(int desiredState, const char *actio
+ 		currentOverride, forwardDistance, lateralDistance);
+ 	if (desiredState == 99)
+ 		return;
+-	if (!R_StaticPromoteUserOverrideSet(tr.world->baseName, light->candidate.entityOrdinal, desiredState))
++	if (!R_StaticPromotePhysicalOverrideSet(light, desiredState))
+ 	{
+ 		ri.Printf(PRINT_WARNING, "STATIC_PROMOTE %s FAILED: could not save %s\n", actionName, STATIC_PROMOTE_USER_OVERRIDE_FILE);
+ 		return;
