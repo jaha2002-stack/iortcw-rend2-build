@@ -1,0 +1,127 @@
+name: Bootstrap Table RC v0.2 Source Base
+
+on:
+  push:
+    branches:
+      - rend2-production-unified-integration
+    paths:
+      - .github/workflows/BOOTSTRAP_TABLE_RC_V0_2_SOURCE_BASE.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  materialize-base:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout integration branch
+        uses: actions/checkout@v4
+        with:
+          ref: rend2-production-unified-integration
+          fetch-depth: 0
+
+      - name: Stop if verified base already exists
+        id: existing
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCH="integration/base/darkwolf-rend2-cumulative-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-sp.patch"
+          EXPECTED="1b766221df31b483877cee2378e3696c7a992abc9cd61628e945b16c145bebe2"
+          if [[ -f "$PATCH" ]]; then
+            ACTUAL="$(sha256sum "$PATCH" | awk '{print $1}')"
+            if [[ "$ACTUAL" == "$EXPECTED" ]]; then
+              echo "ready=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Existing base patch has wrong SHA-256: $ACTUAL" >&2
+            exit 1
+          fi
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+
+      - name: Download exact historical artifact
+        if: steps.existing.outputs.ready != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          repository: jaha2002-stack/iortcw-rend2-build
+          run-id: 35503262322
+          artifact-ids: 10603017159
+          github-token: ${{ github.token }}
+          path: /tmp/table-rc-artifact
+
+      - name: Verify release archive and extract exact cumulative patch
+        if: steps.existing.outputs.ready != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EXPECTED_PATCH_SHA="1b766221df31b483877cee2378e3696c7a992abc9cd61628e945b16c145bebe2"
+          EXPECTED_UPSTREAM="438e7d413b5f7277187c35b032eb0ef9093ae778"
+
+          RELEASE_ZIP="$(find /tmp/table-rc-artifact -maxdepth 2 -type f -name '*.zip' | head -n 1)"
+          SIDECAR="${RELEASE_ZIP}.sha256"
+
+          test -n "$RELEASE_ZIP"
+          test -f "$RELEASE_ZIP"
+          test -f "$SIDECAR"
+
+          echo "Verifying packaged release ZIP..."
+          (
+            cd "$(dirname "$RELEASE_ZIP")"
+            sha256sum -c "$(basename "$SIDECAR")"
+          )
+
+          rm -rf /tmp/table-rc-release
+          mkdir -p /tmp/table-rc-release
+          unzip -q "$RELEASE_ZIP" -d /tmp/table-rc-release
+
+          SOURCE_PATCH="$(find /tmp/table-rc-release -type f -name 'darkwolf-rend2-cumulative-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-sp.patch' -print -quit)"
+          test -n "$SOURCE_PATCH"
+          test -f "$SOURCE_PATCH"
+
+          ACTUAL_PATCH_SHA="$(sha256sum "$SOURCE_PATCH" | awk '{print $1}')"
+          if [[ "$ACTUAL_PATCH_SHA" != "$EXPECTED_PATCH_SHA" ]]; then
+            echo "Cumulative patch SHA mismatch." >&2
+            echo "Expected: $EXPECTED_PATCH_SHA" >&2
+            echo "Actual:   $ACTUAL_PATCH_SHA" >&2
+            exit 1
+          fi
+
+          mkdir -p integration/base
+          cp "$SOURCE_PATCH" integration/base/
+
+          cat > integration/base/TABLE_RC_V0_2_SOURCE_BASE.txt <<EOF
+          DARKWOLF REND2 UNIFIED INTEGRATION SOURCE BASE
+          pinned_upstream_sha=$EXPECTED_UPSTREAM
+          base_run_id=35503262322
+          base_artifact_id=10603017159
+          base_recipe_sha=80fde84b6e91febd5ab5a8c10e37ed0d6dd01476
+          cumulative_patch_sha256=$EXPECTED_PATCH_SHA
+          cumulative_patch_file=darkwolf-rend2-cumulative-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-sp.patch
+          source_status=VERIFIED_FROM_AUTHENTICATED_GITHUB_ACTIONS_ARTIFACT
+          EOF
+
+          sha256sum integration/base/darkwolf-rend2-cumulative-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-sp.patch
+
+      - name: Verify patch replays cleanly on pinned upstream
+        if: steps.existing.outputs.ready != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet https://github.com/iortcw/iortcw.git /tmp/iortcw-source-freeze
+          git -C /tmp/iortcw-source-freeze checkout --quiet 438e7d413b5f7277187c35b032eb0ef9093ae778
+          git -C /tmp/iortcw-source-freeze apply --check "$GITHUB_WORKSPACE/integration/base/darkwolf-rend2-cumulative-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-sp.patch"
+          git -C /tmp/iortcw-source-freeze apply "$GITHUB_WORKSPACE/integration/base/darkwolf-rend2-cumulative-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-sp.patch"
+          test -n "$(git -C /tmp/iortcw-source-freeze status --short)"
+          echo "Exact Table RC v0.2 cumulative patch replay: PASS"
+
+      - name: Commit verified source base
+        if: steps.existing.outputs.ready != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add integration/base/
+          git commit -m "Bootstrap verified Table RC v0.2 integration source base"
+          git push origin HEAD:rend2-production-unified-integration

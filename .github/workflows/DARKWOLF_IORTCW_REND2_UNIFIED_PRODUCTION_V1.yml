@@ -1,0 +1,46 @@
+name: DarkWolf ioRTCW Rend2 Unified Production V1
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-production-unified-integration]
+permissions:
+  contents: read
+concurrency:
+  group: darkwolf-rend2-unified-production-v1
+  cancel-in-progress: false
+jobs:
+  build-windows-x64-sp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install canonical MinGW toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64 g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 git make mingw-w64 zip
+      - name: Verify authenticated local source base
+        run: |
+          test "$(sha256sum integration/base/darkwolf-rend2-cumulative-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-sp.patch | awk '{print $1}')" = 1b766221df31b483877cee2378e3696c7a992abc9cd61628e945b16c145bebe2
+          grep -Fqx source_status=VERIFIED_FROM_AUTHENTICATED_GITHUB_ACTIONS_ARTIFACT integration/base/TABLE_RC_V0_2_SOURCE_BASE.txt
+      - name: Static production acceptance
+        run: |
+          ! rg -n 'DARKWOLF_ENV_TESLA_LIGHT_GRACE|TeslaResidual|TeslaFarFill|TABLE_SHADOW_ONLY_RECOVERY|TABLE_SHADOW_SNAPSHOT|r_dlightShadowSnapshot' integration/release/darkwolf-unified-production-v1-integration-delta.patch
+          rg -n 'DARKWOLF_UNIFIED_PRODUCTION_TESLA_TIMING_V1' integration/release/darkwolf-unified-production-v1-integration-delta.patch
+          rg -n 'DARKWOLF_UNIFIED_PHYSICAL_BLOCK_V1' integration/release/darkwolf-unified-production-v1-integration-delta.patch
+      - name: Reconstruct, compile, and package one production release
+        run: scripts/build_unified_production.sh
+      - name: Upload the single user-facing artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-ioRTCW-Rend2-Unified-Production-V1-Win64
+          path: dist/upload/
+          if-no-files-found: error
+          compression-level: 0
+      - name: Record final identifiers
+        run: |
+          echo "workflow_run_id=${GITHUB_RUN_ID}" >> "$GITHUB_STEP_SUMMARY"
+          echo "artifact_id=${{ steps.upload.outputs.artifact-id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "artifact_digest=${{ steps.upload.outputs.artifact-digest }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "renderer_sha256=$(cat dist/renderer.sha256)" >> "$GITHUB_STEP_SUMMARY"
+          echo "cgame_sha256=$(cat dist/cgame.sha256)" >> "$GITHUB_STEP_SUMMARY"
