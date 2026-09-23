@@ -1400,6 +1400,9 @@ jobs:
           set -Eeuo pipefail
           base_commit="$(cat .base_source_commit)"
           cat > expected_changed.txt <<'EOF_EXPECTED'
+          SP/code/cgame/cg_ents.c
+          SP/code/cgame/cg_flamethrower.c
+          SP/code/game/g_cmds.c
           SP/code/game/g_func_decs.h
           SP/code/game/g_funcs.h
           SP/code/game/g_local.h
@@ -1413,31 +1416,26 @@ jobs:
           diff -u expected_changed.txt actual_changed.txt
 
           grep -Fq 'DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5' source/SP/code/game/g_props.c
-          grep -Fq 'DarkWolf_RetailTree_Die' source/SP/code/game/g_props.c
-          grep -Fq 'TR_ACCELERATE' source/SP/code/game/g_props.c
-          grep -Fq 'DarkWolf_RetailVehicle_Pain' source/SP/code/game/g_props.c
-          grep -Fq 'DarkWolf_RetailVehicleSmoke_Think' source/SP/code/game/g_props.c
-          grep -Fq 'EV_SPARKS' source/SP/code/game/g_props.c
-          grep -Fq 'EV_SMOKE' source/SP/code/game/g_props.c
-          grep -Fq 'g_darkwolfTreeFall' source/SP/code/game/g_main.c
-          grep -Fq 'g_darkwolfVehicleDamage' source/SP/code/game/g_main.c
+          grep -Fq 'DARKWOLF_IGNITABLE_PROPS_RC_V0_6' source/SP/code/game/g_props.c
+          grep -Fq 'DarkWolf_TryIgniteProp' source/SP/code/game/g_cmds.c
+          grep -Fq 'DarkWolf_RunIgnitableProps' source/SP/code/game/g_main.c
+          grep -Fq 'dead_tree5.md3' source/SP/code/game/g_props.c
+          grep -Fq 'ET_FIRE_COLUMN_SMOKE' source/SP/code/game/g_props.c
+          grep -Fq 'DarkWolf_AddCharredOverlay' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'dwEntNum>=cgs.maxclients' source/SP/code/cgame/cg_flamethrower.c
           grep -Fq '{ "escape2", "*205" }' source/SP/code/game/g_props.c
           grep -Fq '{ "norway", "*2" }' source/SP/code/game/g_props.c
-          grep -Fq 'DarkWolf_RetailVehicleSmoke_Think' source/SP/code/game/g_funcs.h
-          grep -Fq 'DarkWolf_ApplyRetailDestructiblePolicy( ent )' source/SP/code/game/g_mover.c
-          grep -Fq 'DarkWolf_ApplyRetailDestructiblePolicy( ent )' source/SP/code/game/g_misc.c
-          grep -Fq 'DarkWolf_ApplyRetailDestructiblePolicy( ent )' source/SP/code/game/g_save.c
 
           test "$(grep -c '{ "models/mapobjects/' source/SP/code/game/g_props.c)" -ge 27 || {
             echo "ERROR: retail model/decor profile count unexpectedly below 27" >&2
             exit 1
           }
 
-          if git -C source diff --name-only "$base_commit" -- | grep -E '^SP/code/(rend2|renderer|cgame)/'; then
-            echo "ERROR: renderer/cgame drift detected" >&2
+          if git -C source diff --name-only "$base_commit" -- | grep -E '^SP/code/(rend2|renderer)/'; then
+            echo "ERROR: renderer drift detected" >&2
             exit 1
           fi
-          echo "Retail BSP destructibles RC v0.5 static validation PASS"
+          echo "Ignitable Props RC v0.6 static validation PASS"
 
       - name: Generate delta and cumulative patches with replay validation
         shell: bash
@@ -1457,6 +1455,9 @@ jobs:
           git -C replay apply --binary --whitespace=nowarn "../release-docs/$CUMULATIVE_NAME"
 
           for rel in \
+            SP/code/cgame/cg_ents.c \
+            SP/code/cgame/cg_flamethrower.c \
+            SP/code/game/g_cmds.c \
             SP/code/game/g_func_decs.h \
             SP/code/game/g_funcs.h \
             SP/code/game/g_local.h \
@@ -1469,7 +1470,7 @@ jobs:
           done
           echo "Cumulative replay validation PASS"
 
-      - name: Build Windows x64 SP game DLL for retail BSP destructibles RC v0.5
+      - name: Build Windows x64 SP cgame/qagame for ignitable props RC v0.6
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -1487,11 +1488,17 @@ jobs:
 
           build="source/SP/build/release-mingw32-x86_64"
           test -s "$build/main/qagame_sp_x64.dll"
+          test -s "$build/main/cgame_sp_x64.dll"
           file "$build/main/qagame_sp_x64.dll" | grep -Eiq 'PE32\+|x86-64'
+          file "$build/main/cgame_sp_x64.dll" | grep -Eiq 'PE32\+|x86-64'
           new_qagame_sha="$(sha256sum "$build/main/qagame_sp_x64.dll" | awk '{print $1}')"
+          new_cgame_sha="$(sha256sum "$build/main/cgame_sp_x64.dll" | awk '{print $1}')"
           test "$new_qagame_sha" != "$BASE_QAGAME_SHA256" || { echo "ERROR: qagame did not change" >&2; exit 1; }
+          test "$new_cgame_sha" != "$BASE_CGAME_SHA256" || { echo "ERROR: cgame did not change" >&2; exit 1; }
           printf '%s\n' "$new_qagame_sha" > .new_qagame_sha
-          echo "Build PASS: qagame=$new_qagame_sha"
+          printf '%s\n' "$new_cgame_sha" > .new_cgame_sha
+          echo "Build PASS: qagame=$new_qagame_sha cgame=$new_cgame_sha"
+
 
       - name: Package over exact Unified Production V1 without renderer drift
         shell: bash
@@ -1505,6 +1512,7 @@ jobs:
 
           cp -a "$base/." "$stage/"
           cp "$build/main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cp "$build/main/cgame_sp_x64.dll" "$stage/Main/cgame_sp_x64.dll"
           cp "release-docs/$DELTA_NAME" "$stage/docs/$DELTA_NAME"
           cp "release-docs/$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
 
