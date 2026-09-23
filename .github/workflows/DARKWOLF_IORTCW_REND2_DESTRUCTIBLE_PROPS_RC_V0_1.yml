@@ -1,0 +1,820 @@
+name: DarkWolf ioRTCW Rend2 Destructible Props RC v0.1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-destructible-props-rc-v0-1
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64-sp:
+    name: Destructible Props RC v0.1 over Unified Production V1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "35696866857"
+      BASE_RUN_HEAD_SHA: 100c42b8d95b543cdfd911c26d2cfb82026fd751
+      BASE_WORKFLOW_PATH: .github/workflows/DARKWOLF_IORTCW_REND2_UNIFIED_PRODUCTION_V1.yml
+      BASE_ARTIFACT_ID: "10681175784"
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Unified-Production-V1-Win64
+      BASE_ARTIFACT_DIGEST: sha256:11d73eb895d4c5cdb97521264f00bfac20226a796fbe07d5cb711a234a36ca31
+      BASE_INNER_SHA256: a6b3bd238d700741cf31767904936ae4c798682685cc5ac497217fd79d8353fa
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-unified-production-v1-cumulative.patch
+      BASE_CUMULATIVE_SHA256: 0c00197d7573d0d8f4fcc158e92036279400f7af0ccb7c1691dc5d6a3cc0d8cd
+      BASE_RENDERER_SHA256: 92b1db33486ea2dd7d04ccda8f3030692578a13569440f100b677b63b7a6e6d2
+      BASE_CGAME_SHA256: 31847761ed2665028f166d8ef69e53b84756e8f195dd21e32efc2131e7bccafd
+      BASE_QAGAME_SHA256: 1bf44aa8faa9f4d69042898f9ffcb911b46c15cdf45bf328dae9389f21bbbbee
+
+      PATCHER_NAME: apply_darkwolf_destructible_props_rc_v0_1.py
+      DELTA_NAME: darkwolf-destructible-props-rc-v0-1-over-unified-production-v1.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-destructible-props-rc-v0-1.patch
+      AUDIT_NAME: DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1_AUDIT.txt
+      RELEASE_BASENAME: DarkWolf-ioRTCW-Rend2-Destructible-Props-RC-v0.1-Win64
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v4
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            make mingw-w64 python3 python3-yaml unzip zip jq file
+
+      - name: Preflight workflow YAML
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel"
+          python3 - "$workflow_rel" <<'PY_PREFLIGHT'
+          from pathlib import Path
+          import sys, yaml
+          p = Path(sys.argv[1])
+          raw = p.read_bytes()
+          if b'\r' in raw:
+              raise SystemExit('ERROR: CR byte found; workflow must be LF-only')
+          doc = yaml.safe_load(raw.decode('utf-8'))
+          if doc.get('name') != 'DarkWolf ioRTCW Rend2 Destructible Props RC v0.1':
+              raise SystemExit('ERROR: workflow identity drift')
+          if 'build-windows-x64-sp' not in (doc.get('jobs') or {}):
+              raise SystemExit('ERROR: expected build job missing')
+          print('Workflow YAML preflight PASS')
+          PY_PREFLIGHT
+
+      - name: Verify exact Unified Production V1 provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: base HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: base run is not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: base workflow path drift" >&2; exit 1; }
+
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: exact Unified Production artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$BASE_ARTIFACT_NAME"
+          test "$expired" = false
+          test "$adigest" = "$BASE_ARTIFACT_DIGEST"
+          echo "Unified Production V1 provenance PASS"
+
+      - name: Download and verify exact Unified Production V1 package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+
+          z="base-artifact/${BASE_ARTIFACT_NAME}.zip"
+          sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"
+          test "$inner_sha" = "$(awk '{print $1}' "$sidecar")" || { echo "ERROR: base ZIP/sidecar mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$BASE_INNER_SHA256" || { echo "ERROR: base inner ZIP drift: $inner_sha" >&2; exit 1; }
+          unzip -tq "$z"
+          unzip -q "$z" -d base-release
+
+          mapfile -t roots < <(find base-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1
+          base="${roots[0]}"
+          printf '%s\n' "$base" > .base_stage_path
+
+          (cd "$base" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$base/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$base/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$base/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          echo "Exact Unified Production V1 package PASS"
+
+      - name: Reconstruct exact Unified Production V1 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" .base-cumulative.patch
+          test "$(sha256sum .base-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          git -C source apply --check --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.base-cumulative.patch
+
+          grep -Fq 'DARKWOLF_UNIFIED_PRODUCTION_TESLA_TIMING_V1' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'DARKWOLF_EXPLOSIVE_PROPS_RADAR_TRANSIENT_DLIGHT_SHADOW_CLEAN_PRODUCTION_V1' source/SP/code/game/g_props.c
+          grep -Fq 'DARKWOLF_NATIVE_DLIGHT_PVS_PERSISTENCE_FINAL_V5_3_V12_0' source/SP/code/game/g_misc.c
+          if grep -R -Fq 'DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1' source/SP/code/game; then
+            echo "ERROR: destructible-props marker unexpectedly already exists in base" >&2
+            exit 1
+          fi
+
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' \
+            commit -q -m 'Reconstructed exact Unified Production V1 source postimage'
+          git -C source rev-parse HEAD > .base_source_commit
+          test "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA"
+          echo "Unified Production V1 source reconstruction PASS"
+
+      - name: Apply Destructible Props RC v0.1
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME" <<'PY_PATCHER'
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('source')
+          p_local = root / 'SP/code/game/g_local.h'
+          p_main = root / 'SP/code/game/g_main.c'
+          p_props = root / 'SP/code/game/g_props.c'
+          p_misc = root / 'SP/code/game/g_misc.c'
+          p_save = root / 'SP/code/game/g_save.c'
+          p_funcs = root / 'SP/code/game/g_funcs.h'
+          p_decs = root / 'SP/code/game/g_func_decs.h'
+
+          MARK = 'DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1'
+
+          def read(p):
+              return p.read_text(encoding='utf-8')
+
+          def write(p, s):
+              p.write_text(s, encoding='utf-8', newline='\n')
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'ERROR: {label}: expected exactly one anchor, got {count}')
+              return text.replace(old, new, 1)
+
+          def replace_in_window(text, start_token, end_token, old, new, label):
+              start = text.find(start_token)
+              if start < 0:
+                  raise SystemExit(f'ERROR: {label}: start token missing')
+              end = text.find(end_token, start)
+              if end < 0:
+                  raise SystemExit(f'ERROR: {label}: end token missing')
+              window = text[start:end]
+              count = window.count(old)
+              if count != 1:
+                  raise SystemExit(f'ERROR: {label}: expected one window anchor, got {count}')
+              window = window.replace(old, new, 1)
+              return text[:start] + window + text[end:]
+
+          for p in (p_local, p_main, p_props, p_misc, p_save, p_funcs, p_decs):
+              if MARK in read(p):
+                  raise SystemExit(f'ERROR: patch already applied to {p}')
+
+          # ------------------------------------------------------------------
+          # 1. Three independent runtime switches. They are intentionally game
+          #    cvars because this feature belongs to SP entity damage, not Rend2.
+          # ------------------------------------------------------------------
+          s = read(p_local)
+          s = replace_once(
+              s,
+              'extern vmCvar_t g_dlightPVSFix;\nextern vmCvar_t g_dlightPVSRadius;\nextern vmCvar_t g_knockback;\n',
+              'extern vmCvar_t g_dlightPVSFix;\nextern vmCvar_t g_dlightPVSRadius;\n'
+              '// DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1\n'
+              'extern vmCvar_t g_darkwolfDestructibleBoxes;\n'
+              'extern vmCvar_t g_darkwolfDestructibleFlippyTable;\n'
+              'extern vmCvar_t g_darkwolfDestructibleGameModels;\n'
+              'extern vmCvar_t g_knockback;\n',
+              'g_local cvar externs')
+          s = replace_once(
+              s,
+              'void Prop_Break_Sound( gentity_t *ent );\nvoid Spawn_Shard( gentity_t *ent, gentity_t *inflictor, int quantity, int type );\n',
+              'void Prop_Break_Sound( gentity_t *ent );\n'
+              'void Spawn_Shard( gentity_t *ent, gentity_t *inflictor, int quantity, int type );\n'
+              '// DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1\n'
+              'void DarkWolf_ApplyDestructiblePropPolicy( gentity_t *ent );\n',
+              'g_local policy prototype')
+          write(p_local, s)
+
+          s = read(p_main)
+          s = replace_once(
+              s,
+              'vmCvar_t g_dlightPVSFix;\nvmCvar_t g_dlightPVSRadius;\n\nvmCvar_t g_cheats;\n',
+              'vmCvar_t g_dlightPVSFix;\nvmCvar_t g_dlightPVSRadius;\n\n'
+              '// DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1\n'
+              'vmCvar_t g_darkwolfDestructibleBoxes;\n'
+              'vmCvar_t g_darkwolfDestructibleFlippyTable;\n'
+              'vmCvar_t g_darkwolfDestructibleGameModels;\n\n'
+              'vmCvar_t g_cheats;\n',
+              'g_main cvar declarations')
+          s = replace_once(
+              s,
+              '\t{ &g_dlightPVSFix, "g_dlightPVSFix", "1", CVAR_ARCHIVE | CVAR_LATCH, 0, qfalse },\n'
+              '\t{ &g_dlightPVSRadius, "g_dlightPVSRadius", "256", CVAR_ARCHIVE | CVAR_LATCH, 0, qfalse },\n\n'
+              '\t{ &g_knockback, "g_knockback", "1000", 0, 0, qtrue  },\n',
+              '\t{ &g_dlightPVSFix, "g_dlightPVSFix", "1", CVAR_ARCHIVE | CVAR_LATCH, 0, qfalse },\n'
+              '\t{ &g_dlightPVSRadius, "g_dlightPVSRadius", "256", CVAR_ARCHIVE | CVAR_LATCH, 0, qfalse },\n\n'
+              '\t// DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1\n'
+              '\t{ &g_darkwolfDestructibleBoxes, "g_darkwolfDestructibleBoxes", "1", CVAR_ARCHIVE, 0, qfalse },\n'
+              '\t{ &g_darkwolfDestructibleFlippyTable, "g_darkwolfDestructibleFlippyTable", "1", CVAR_ARCHIVE, 0, qfalse },\n'
+              '\t{ &g_darkwolfDestructibleGameModels, "g_darkwolfDestructibleGameModels", "1", CVAR_ARCHIVE, 0, qfalse },\n\n'
+              '\t{ &g_knockback, "g_knockback", "1000", 0, 0, qtrue  },\n',
+              'g_main cvar table')
+          write(p_main, s)
+
+          # ------------------------------------------------------------------
+          # 2. props_box_32/48/64: preserve the original pushable-solid logic,
+          #    only add damage/death policy after their canonical bounds exist.
+          # ------------------------------------------------------------------
+          s = read(p_props)
+          for size, next_token in (
+              ('32', 'void touch_props_box_48'),
+              ('48', 'void touch_props_box_64'),
+              ('64', '// END JOSEPH'),
+          ):
+              s = replace_in_window(
+                  s,
+                  f'void SP_props_box_{size}',
+                  next_token,
+                  f'\tself->touch = touch_props_box_{size};\n\n\ttrap_LinkEntity( self );',
+                  f'\tself->touch = touch_props_box_{size};\n\n'
+                  f'\t// {MARK}: add damage only; retain stock push/collision behavior.\n'
+                  f'\tDarkWolf_ApplyDestructiblePropPolicy( self );\n\n'
+                  f'\ttrap_LinkEntity( self );',
+                  f'props_box_{size} policy hook')
+
+          # Replace the dormant flippy-table death path with a complete team-aware
+          # destruction path, then add the shared policy and misc_gamemodel profiles.
+          start = s.find('void props_flippy_table_die( gentity_t *ent, gentity_t *inflictor, gentity_t *attacker, int damage, int mod ) {')
+          end = s.find('void props_flippy_blocked( gentity_t *ent, gentity_t *other ) {', start)
+          if start < 0 or end < 0:
+              raise SystemExit('ERROR: flippy-table death window not found')
+
+          new_block = r'''void props_flippy_table_die( gentity_t *ent, gentity_t *inflictor, gentity_t *attacker, int damage, int mod ) {
+          	gentity_t *master;
+          	gentity_t *part;
+          	gentity_t *next;
+          
+          	// DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1
+          	// The stock code had takedamage/die disabled and an empty animation think.
+          	// Destroy the complete mover team so a flipped table cannot leave an invisible
+          	// or surviving slave brush behind.
+          	master = ent->teammaster ? ent->teammaster : ent;
+          
+          	Spawn_Shard( ent, inflictor, 14, shard_wood );
+          	G_Sound( ent, G_SoundIndex( "sound/world/boardbreak.wav" ) );
+          	G_UseTargets( master, NULL );
+          
+          	for ( part = master; part; part = part->teamchain ) {
+          		part->takedamage = qfalse;
+          		part->use = NULL;
+          		part->blocked = NULL;
+          		part->clipmask = 0;
+          		part->r.contents = 0;
+          		trap_UnlinkEntity( part );
+          	}
+          
+          	part = master;
+          	while ( part ) {
+          		next = part->teamchain;
+          		G_FreeEntity( part );
+          		part = next;
+          	}
+          }
+          
+          // DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1
+          // Shared destruction callback for the newly promoted non-mover props.
+          // Kept as normal game code and registered in the savegame function table below.
+          void DarkWolf_BreakableProp_Die( gentity_t *ent, gentity_t *inflictor, gentity_t *attacker, int damage, int mod ) {
+          	int quantity;
+          	int type;
+          	int soundIndex = 0;
+          
+          	if ( !ent || !ent->inuse ) {
+          		return;
+          	}
+          
+          	ent->takedamage = qfalse;
+          	ent->touch = NULL;
+          
+          	quantity = (int)ent->wait;
+          	if ( quantity < 1 ) {
+          		quantity = 6;
+          	} else if ( quantity > 20 ) {
+          		quantity = 20;
+          	}
+          
+          	type = ent->count;
+          	if ( type < shard_glass || type > shard_rubble ) {
+          		type = shard_wood;
+          	}
+          
+          	Spawn_Shard( ent, inflictor, quantity, type );
+          
+          	switch ( type ) {
+          	case shard_glass:
+          		soundIndex = G_SoundIndex( "sound/world/glassbreak.wav" );
+          		break;
+          	case shard_metal:
+          		soundIndex = G_SoundIndex( "sound/world/metalbreak.wav" );
+          		break;
+          	case shard_ceramic:
+          		soundIndex = G_SoundIndex( "sound/world/ceramicbreak.wav" );
+          		break;
+          	case shard_wood:
+          	default:
+          		soundIndex = G_SoundIndex( "sound/world/boardbreak.wav" );
+          		break;
+          	}
+          
+          	if ( soundIndex ) {
+          		G_Sound( ent, soundIndex );
+          	}
+          
+          	G_UseTargets( ent, NULL );
+          	trap_UnlinkEntity( ent );
+          	ent->clipmask = 0;
+          	ent->r.contents = 0;
+          	G_FreeEntity( ent );
+          }
+          
+          typedef struct {
+          	const char *model;
+          	int health;
+          	int shardType;
+          	int shardCount;
+          	vec3_t mins;
+          	vec3_t maxs;
+          } darkwolfBreakableGameModelProfile_t;
+          
+          // Conservative whitelist: small/medium RTCW decorative assets only.
+          // Both MD3 and MDC spellings are accepted because stock content and map data
+          // use both forms depending on the asset/export path.
+          static const darkwolfBreakableGameModelProfile_t s_darkwolfBreakableGameModels[] = {
+          	{ "models/mapobjects/electronics/alarmbox.mdc",       20, shard_metal,   6, { -12, -8, -16 }, { 12, 8, 16 } },
+          	{ "models/mapobjects/electronics/alarmbox.md3",       20, shard_metal,   6, { -12, -8, -16 }, { 12, 8, 16 } },
+          	{ "models/mapobjects/electronics/phone.mdc",          12, shard_ceramic, 5, { -10, -8,  -5 }, { 10, 8,  7 } },
+          	{ "models/mapobjects/electronics/phone.md3",          12, shard_ceramic, 5, { -10, -8,  -5 }, { 10, 8,  7 } },
+          	{ "models/mapobjects/electronics/gramophone_anim.mdc",18, shard_wood,    7, { -18,-18,   0 }, { 18,18, 26 } },
+          	{ "models/mapobjects/electronics/gramophone_anim.md3",18, shard_wood,    7, { -18,-18,   0 }, { 18,18, 26 } },
+          	{ "models/mapobjects/electronics/loudspeaker2.mdc",   18, shard_metal,   6, { -12,-10, -12 }, { 12,10, 12 } },
+          	{ "models/mapobjects/electronics/loudspeaker2.md3",   18, shard_metal,   6, { -12,-10, -12 }, { 12,10, 12 } },
+          	{ "models/mapobjects/furniture/type.mdc",             20, shard_metal,   7, { -16,-12,   0 }, { 16,12, 12 } },
+          	{ "models/mapobjects/furniture/type.md3",             20, shard_metal,   7, { -16,-12,   0 }, { 16,12, 12 } },
+          	{ "models/mapobjects/furniture/grandclock.mdc",       30, shard_wood,   10, { -14,-10,   0 }, { 14,10, 64 } },
+          	{ "models/mapobjects/furniture/grandclock.md3",       30, shard_wood,   10, { -14,-10,   0 }, { 14,10, 64 } }
+          };
+          
+          static const darkwolfBreakableGameModelProfile_t *DarkWolf_FindBreakableGameModelProfile( const char *model ) {
+          	int i;
+          
+          	if ( !model || !model[0] ) {
+          		return NULL;
+          	}
+          
+          	for ( i = 0; i < (int)( sizeof( s_darkwolfBreakableGameModels ) / sizeof( s_darkwolfBreakableGameModels[0] ) ); ++i ) {
+          		if ( !Q_stricmp( model, s_darkwolfBreakableGameModels[i].model ) ) {
+          			return &s_darkwolfBreakableGameModels[i];
+          		}
+          	}
+          
+          	return NULL;
+          }
+          
+          static qboolean DarkWolf_GameModelHasGameplayDependency( const gentity_t *ent ) {
+          	// Fail closed: do not auto-promote anything that map scripts/targets may own.
+          	if ( ( ent->scriptName && ent->scriptName[0] ) ||
+          		 ( ent->targetname && ent->targetname[0] ) ||
+          		 ( ent->target && ent->target[0] ) ||
+          		 ( ent->team && ent->team[0] ) || ent->use ) {
+          		return qtrue;
+          	}
+          	return qfalse;
+          }
+          
+          void DarkWolf_ApplyDestructiblePropPolicy( gentity_t *ent ) {
+          	const darkwolfBreakableGameModelProfile_t *profile;
+          
+          	if ( !ent || !ent->inuse || !ent->classname ) {
+          		return;
+          	}
+          
+          	if ( !Q_stricmp( ent->classname, "props_box_32" ) ||
+          		 !Q_stricmp( ent->classname, "props_box_48" ) ||
+          		 !Q_stricmp( ent->classname, "props_box_64" ) ) {
+          		int defaultHealth = 20;
+          		int defaultShards = 6;
+          
+          		if ( !g_darkwolfDestructibleBoxes.integer ) {
+          			if ( ent->die == DarkWolf_BreakableProp_Die ) {
+          				ent->die = NULL;
+          				ent->takedamage = qfalse;
+          				ent->isProp = qfalse;
+          			}
+          			return;
+          		}
+          
+          		if ( !Q_stricmp( ent->classname, "props_box_48" ) ) {
+          			defaultHealth = 30;
+          			defaultShards = 8;
+          		} else if ( !Q_stricmp( ent->classname, "props_box_64" ) ) {
+          			defaultHealth = 40;
+          			defaultShards = 10;
+          		}
+          
+          		if ( ent->health <= 0 ) {
+          			ent->health = defaultHealth;
+          		}
+          		if ( ent->wait <= 0 ) {
+          			ent->wait = defaultShards;
+          		}
+          		ent->count = shard_wood;
+          		ent->isProp = qtrue;
+          		ent->die = DarkWolf_BreakableProp_Die;
+          		ent->takedamage = qtrue;
+          		return;
+          	}
+          
+          	if ( !Q_stricmp( ent->classname, "props_flippy_table" ) ) {
+          		if ( !g_darkwolfDestructibleFlippyTable.integer ) {
+          			if ( ent->die == props_flippy_table_die ) {
+          				ent->die = NULL;
+          				ent->takedamage = qfalse;
+          				ent->isProp = qfalse;
+          			}
+          			return;
+          		}
+          		if ( ent->health <= 0 ) {
+          			ent->health = 100;
+          		}
+          		// Required to bypass G_Damage's stock generic ET_MOVER early-return path.
+          		ent->isProp = qtrue;
+          		ent->die = props_flippy_table_die;
+          		ent->takedamage = qtrue;
+          		return;
+          	}
+          
+          	if ( Q_stricmp( ent->classname, "misc_gamemodel" ) ) {
+          		return;
+          	}
+          
+          	profile = DarkWolf_FindBreakableGameModelProfile( ent->model );
+          	if ( !profile ) {
+          		return;
+          	}
+          
+          	if ( !g_darkwolfDestructibleGameModels.integer || DarkWolf_GameModelHasGameplayDependency( ent ) ) {
+          		if ( ent->die == DarkWolf_BreakableProp_Die ) {
+          			ent->die = NULL;
+          			ent->takedamage = qfalse;
+          		}
+          		if ( ent->r.contents == CONTENTS_CLIPSHOT ) {
+          			ent->r.contents = 0;
+          			VectorClear( ent->r.mins );
+          			VectorClear( ent->r.maxs );
+          		}
+          		return;
+          	}
+          
+          	if ( ent->health <= 0 ) {
+          		ent->health = profile->health;
+          	}
+          	ent->wait = profile->shardCount;
+          	ent->count = profile->shardType;
+          	ent->die = DarkWolf_BreakableProp_Die;
+          	ent->takedamage = qtrue;
+          
+          	// A stock misc_gamemodel without "trunk" has no server collision and bullets
+          	// pass through it. CONTENTS_CLIPSHOT is deliberate: MASK_SHOT/MASK_MISSILESHOT
+          	// see the model, but MASK_PLAYERSOLID does not, so gameplay movement is unchanged.
+          	if ( ent->r.contents == 0 || ent->r.contents == CONTENTS_CLIPSHOT ) {
+          		float sx = (float)fabs( ent->s.angles2[0] );
+          		float sy = (float)fabs( ent->s.angles2[1] );
+          		float sz = (float)fabs( ent->s.angles2[2] );
+          
+          		if ( sx < 0.01f ) sx = 1.0f;
+          		if ( sy < 0.01f ) sy = 1.0f;
+          		if ( sz < 0.01f ) sz = 1.0f;
+          
+          		ent->r.contents = CONTENTS_CLIPSHOT;
+          		VectorSet( ent->r.mins,
+          			profile->mins[0] * sx, profile->mins[1] * sy, profile->mins[2] * sz );
+          		VectorSet( ent->r.maxs,
+          			profile->maxs[0] * sx, profile->maxs[1] * sy, profile->maxs[2] * sz );
+          	}
+          }
+          '''
+          s = s[:start] + new_block + s[end:]
+
+          s = replace_in_window(
+              s,
+              'void SP_Props_Flipping_Table( gentity_t *ent ) {',
+              'void props_58x112tablew_think',
+              '\tent->use = flippy_table_use;\n\n\ttrap_LinkEntity( ent );',
+              '\tent->use = flippy_table_use;\n\n'
+              '\t// DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1\n'
+              '\tDarkWolf_ApplyDestructiblePropPolicy( ent );\n\n'
+              '\ttrap_LinkEntity( ent );',
+              'flippy-table policy hook')
+          write(p_props, s)
+
+          # ------------------------------------------------------------------
+          # 3. misc_gamemodel: apply after scale/orientation setup but before the
+          #    canonical trap_LinkEntity, so abs bounds include our shot-only box.
+          # ------------------------------------------------------------------
+          s = read(p_misc)
+          s = replace_in_window(
+              s,
+              'void SP_misc_gamemodel( gentity_t *ent ) {',
+              '//----(SA)',
+              '\ttrap_LinkEntity( ent );\n',
+              '\t// DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1\n'
+              '\tDarkWolf_ApplyDestructiblePropPolicy( ent );\n'
+              '\ttrap_LinkEntity( ent );\n',
+              'misc_gamemodel policy hook')
+          write(p_misc, s)
+
+          # ------------------------------------------------------------------
+          # 4. Savegame rehydration. Old saves were written before these classes
+          #    had die/takedamage fields, so reapply policy before relinking.
+          # ------------------------------------------------------------------
+          s = read(p_save)
+          s = replace_once(
+              s,
+              '\n\t// notify server of changes in position/orientation\n',
+              '\n\t// DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1\n'
+              '\t// Rehydrate newly promoted props when loading pre-RC savegames.\n'
+              '\tDarkWolf_ApplyDestructiblePropPolicy( ent );\n\n'
+              '\t// notify server of changes in position/orientation\n',
+              'savegame rehydration hook')
+          write(p_save, s)
+
+          # ------------------------------------------------------------------
+          # 5. Savegame function pointer registry for the new generic die callback.
+          # ------------------------------------------------------------------
+          s = read(p_funcs)
+          s = replace_once(
+              s,
+              '{"Prop_Break_Sound", (byte *)Prop_Break_Sound},\n{"Spawn_Shard", (byte *)Spawn_Shard},\n',
+              '{"Prop_Break_Sound", (byte *)Prop_Break_Sound},\n'
+              '// DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1\n'
+              '{"DarkWolf_BreakableProp_Die", (byte *)DarkWolf_BreakableProp_Die},\n'
+              '{"Spawn_Shard", (byte *)Spawn_Shard},\n',
+              'save function registry')
+          write(p_funcs, s)
+
+          s = read(p_decs)
+          s = replace_once(
+              s,
+              'extern void Prop_Break_Sound ( gentity_t * ent ) ;\nextern void Spawn_Shard ( gentity_t * ent , gentity_t * inflictor , int quantity , int type ) ;\n',
+              'extern void Prop_Break_Sound ( gentity_t * ent ) ;\n'
+              '// DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1\n'
+              'extern void DarkWolf_BreakableProp_Die ( gentity_t * ent , gentity_t * inflictor , gentity_t * attacker , int damage , int mod ) ;\n'
+              'extern void Spawn_Shard ( gentity_t * ent , gentity_t * inflictor , int quantity , int type ) ;\n',
+              'save function declaration')
+          write(p_decs, s)
+
+          # Final fail-closed validation inside the patcher.
+          required = {
+              p_local: ['g_darkwolfDestructibleBoxes', 'DarkWolf_ApplyDestructiblePropPolicy'],
+              p_main: ['g_darkwolfDestructibleGameModels'],
+              p_props: ['DarkWolf_BreakableProp_Die', 'CONTENTS_CLIPSHOT', 'models/mapobjects/electronics/alarmbox.mdc'],
+              p_misc: ['DarkWolf_ApplyDestructiblePropPolicy( ent )'],
+              p_save: ['Rehydrate newly promoted props'],
+              p_funcs: ['DarkWolf_BreakableProp_Die'],
+              p_decs: ['DarkWolf_BreakableProp_Die'],
+          }
+          for p, needles in required.items():
+              text = read(p)
+              for needle in needles:
+                  if needle not in text:
+                      raise SystemExit(f'ERROR: final validation failed: {needle!r} missing from {p}')
+
+          print('Applied DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1')
+          PY_PATCHER
+
+          python3 "$PATCHER_NAME" source
+
+      - name: Static validate destructible-props delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          cat > expected_changed.txt <<'EOF_EXPECTED'
+          SP/code/game/g_func_decs.h
+          SP/code/game/g_funcs.h
+          SP/code/game/g_local.h
+          SP/code/game/g_main.c
+          SP/code/game/g_misc.c
+          SP/code/game/g_props.c
+          SP/code/game/g_save.c
+          EOF_EXPECTED
+          git -C source diff --name-only "$base_commit" -- | LC_ALL=C sort > actual_changed.txt
+          diff -u expected_changed.txt actual_changed.txt
+
+          grep -Fq 'DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1' source/SP/code/game/g_props.c
+          grep -Fq 'g_darkwolfDestructibleBoxes' source/SP/code/game/g_main.c
+          grep -Fq 'g_darkwolfDestructibleFlippyTable' source/SP/code/game/g_main.c
+          grep -Fq 'g_darkwolfDestructibleGameModels' source/SP/code/game/g_main.c
+          grep -Fq 'CONTENTS_CLIPSHOT' source/SP/code/game/g_props.c
+          grep -Fq 'DarkWolf_ApplyDestructiblePropPolicy( ent )' source/SP/code/game/g_save.c
+          grep -Fq 'DarkWolf_BreakableProp_Die' source/SP/code/game/g_funcs.h
+
+          # This RC is game-code only. It must not touch renderer, cgame, lighting,
+          # StaticPromote, materials, volumetrics or post-processing source.
+          if git -C source diff --name-only "$base_commit" -- | grep -E '^SP/code/(rend2|renderer|cgame)/'; then
+            echo "ERROR: renderer/cgame drift detected" >&2
+            exit 1
+          fi
+          echo "Static delta validation PASS"
+
+      - name: Generate delta and cumulative patches with replay validation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          rm -rf release-docs replay
+          mkdir -p release-docs
+
+          git -C source diff --binary "$base_commit" -- . > "release-docs/$DELTA_NAME"
+          git -C source diff --binary "$UPSTREAM_SHA" -- . > "release-docs/$CUMULATIVE_NAME"
+          test -s "release-docs/$DELTA_NAME"
+          test -s "release-docs/$CUMULATIVE_NAME"
+
+          git -C source worktree add -q --detach ../replay "$UPSTREAM_SHA"
+          git -C replay apply --check --binary --whitespace=nowarn "../release-docs/$CUMULATIVE_NAME"
+          git -C replay apply --binary --whitespace=nowarn "../release-docs/$CUMULATIVE_NAME"
+
+          for rel in \
+            SP/code/game/g_func_decs.h \
+            SP/code/game/g_funcs.h \
+            SP/code/game/g_local.h \
+            SP/code/game/g_main.c \
+            SP/code/game/g_misc.c \
+            SP/code/game/g_props.c \
+            SP/code/game/g_save.c; do
+            cmp "source/$rel" "replay/$rel"
+          done
+          echo "Cumulative replay validation PASS"
+
+      - name: Build Windows x64 SP from exact Unified V1 plus destructible delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh -j1 \
+              BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          )
+
+          build="source/SP/build/release-mingw32-x86_64"
+          test -s "$build/main/qagame_sp_x64.dll"
+          file "$build/main/qagame_sp_x64.dll" | grep -Eiq 'PE32\+|x86-64'
+          new_qagame_sha="$(sha256sum "$build/main/qagame_sp_x64.dll" | awk '{print $1}')"
+          test "$new_qagame_sha" != "$BASE_QAGAME_SHA256" || { echo "ERROR: qagame did not change" >&2; exit 1; }
+          printf '%s\n' "$new_qagame_sha" > .new_qagame_sha
+          echo "Build PASS: qagame=$new_qagame_sha"
+
+      - name: Package over exact Unified Production V1 without renderer drift
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          build="source/SP/build/release-mingw32-x86_64"
+          rm -rf dist
+          mkdir -p "dist/$RELEASE_BASENAME" dist/upload
+          stage="dist/$RELEASE_BASENAME"
+
+          cp -a "$base/." "$stage/"
+          cp "$build/main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cp "release-docs/$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "release-docs/$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+
+          cat > "$stage/docs/$AUDIT_NAME" <<'EOF_AUDIT'
+          DARKWOLF DESTRUCTIBLE PROPS RC V0.1
+          ===================================
+
+          Base:
+            DarkWolf ioRTCW Rend2 Unified Production V1
+            Run 35696866857 / Artifact 10681175784
+
+          Scope:
+            Game-code only. Renderer/Rend2 lighting, StaticPromote, shadows,
+            materials, volumetrics and post-processing are not modified.
+
+          Newly destructible stock classes:
+            props_box_32  - health 20, wood shards 6
+            props_box_48  - health 30, wood shards 8
+            props_box_64  - health 40, wood shards 10
+            props_flippy_table - existing health/default 100, team-aware destruction
+
+          misc_gamemodel whitelist (auto-promotion only when not script/target/team owned):
+            models/mapobjects/electronics/alarmbox.mdc       health 20 metal
+            models/mapobjects/electronics/phone.mdc          health 12 ceramic
+            models/mapobjects/electronics/gramophone_anim.mdc health 18 wood
+            models/mapobjects/electronics/loudspeaker2.mdc   health 18 metal
+            models/mapobjects/furniture/type.mdc             health 20 metal
+            models/mapobjects/furniture/grandclock.mdc       health 30 wood
+            MD3 spelling of the same six paths is also accepted.
+
+          Collision policy for misc_gamemodel:
+            Existing trunk collision is preserved.
+            Previously non-solid whitelisted models receive CONTENTS_CLIPSHOT only.
+            Bullets/missiles can hit them; MASK_PLAYERSOLID does not, so player
+            movement remains unchanged.
+
+          Safety:
+            misc_gamemodel with scriptName, targetname, target, team or use callback
+            is not auto-promoted. Old savegames are rehydrated on ReadEntity.
+
+          CVars (defaults = 1; reload map after changing for clean testing):
+            g_darkwolfDestructibleBoxes 0/1
+            g_darkwolfDestructibleFlippyTable 0/1
+            g_darkwolfDestructibleGameModels 0/1
+          EOF_AUDIT
+
+          cat > "$stage/docs/README_DESTRUCTIBLE_PROPS_RC_V0_1_RU.txt" <<'EOF_README'
+          DarkWolf ioRTCW Rend2 - Destructible Props RC v0.1
+
+          Это RC поверх точной Unified Production V1. Он меняет только qagame SP.
+          Renderer, текущие лампы, StaticPromote, тени, PBR/materials и volumetric не меняются.
+
+          Для чистого A/B теста перед загрузкой карты:
+            /g_darkwolfDestructibleBoxes 0 или 1
+            /g_darkwolfDestructibleFlippyTable 0 или 1
+            /g_darkwolfDestructibleGameModels 0 или 1
+
+          После изменения cvar лучше перезагрузить карту. Старые savegame также
+          получают rehydration-политику при загрузке.
+          EOF_README
+
+          # Renderer and cgame must remain byte-identical to the accepted base.
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$(cat .new_qagame_sha)"
+
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          (cd dist && zip -q -r -9 "upload/$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/upload/$RELEASE_BASENAME.zip" > "dist/upload/$RELEASE_BASENAME.zip.sha256"
+
+          echo "renderer_sha256=$BASE_RENDERER_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo "cgame_sha256=$BASE_CGAME_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo "qagame_sha256=$(cat .new_qagame_sha)" >> "$GITHUB_STEP_SUMMARY"
+          echo "delta_sha256=$(sha256sum "release-docs/$DELTA_NAME" | awk '{print $1}')" >> "$GITHUB_STEP_SUMMARY"
+          echo "cumulative_sha256=$(sha256sum "release-docs/$CUMULATIVE_NAME" | awk '{print $1}')" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Destructible Props RC v0.1 artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-ioRTCW-Rend2-Destructible-Props-RC-v0.1-Win64
+          path: dist/upload/
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Record artifact identifiers
+        shell: bash
+        run: |
+          echo "workflow_run_id=${GITHUB_RUN_ID}" >> "$GITHUB_STEP_SUMMARY"
+          echo "artifact_id=${{ steps.upload.outputs.artifact-id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "artifact_digest=${{ steps.upload.outputs.artifact-digest }}" >> "$GITHUB_STEP_SUMMARY"
