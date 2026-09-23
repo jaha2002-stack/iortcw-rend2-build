@@ -1011,7 +1011,390 @@ jobs:
 
           python3 "$PATCHER_NAME" source
 
-      - name: Static validate retail BSP destructibles RC v0.5
+      - name: Apply Ignitable Props RC v0.6
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$IGNITION_PATCHER_NAME" <<'PY_IGNITION'
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('source')
+          p_local = root / 'SP/code/game/g_local.h'
+          p_main = root / 'SP/code/game/g_main.c'
+          p_props = root / 'SP/code/game/g_props.c'
+          p_cmds = root / 'SP/code/game/g_cmds.c'
+          p_cgflame = root / 'SP/code/cgame/cg_flamethrower.c'
+          p_cgents = root / 'SP/code/cgame/cg_ents.c'
+          MARK = 'DARKWOLF_IGNITABLE_PROPS_RC_V0_6'
+
+          def read(p):
+              return p.read_text(encoding='utf-8')
+
+          def write(p, s):
+              p.write_text(s, encoding='utf-8', newline='\n')
+
+          def replace_once(text, old, new, label):
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f'ERROR: {label}: expected one anchor, got {n}')
+              return text.replace(old, new, 1)
+
+          def replace_window(text, start_token, end_token, old, new, label):
+              a = text.find(start_token)
+              b = text.find(end_token, a)
+              if a < 0 or b < 0:
+                  raise SystemExit(f'ERROR: {label}: window missing')
+              w = text[a:b]
+              if w.count(old) != 1:
+                  raise SystemExit(f'ERROR: {label}: inner anchor count={w.count(old)}')
+              return text[:a] + w.replace(old, new, 1) + text[b:]
+
+          for p in (p_local,p_main,p_props,p_cmds,p_cgflame,p_cgents):
+              if MARK in read(p):
+                  raise SystemExit(f'ERROR: ignition patch already applied: {p}')
+
+          s=read(p_local)
+          s=replace_once(s,
+              'extern vmCvar_t g_darkwolfVehicleDamage;\nextern vmCvar_t g_knockback;\n',
+              'extern vmCvar_t g_darkwolfVehicleDamage;\n'
+              '// DARKWOLF_IGNITABLE_PROPS_RC_V0_6\n'
+              'extern vmCvar_t g_darkwolfIgnitableProps;\n'
+              'extern vmCvar_t g_darkwolfTreeBurnTime;\n'
+              'extern vmCvar_t g_darkwolfWoodBurnTime;\n'
+              'extern vmCvar_t g_darkwolfFabricBurnTime;\n'
+              'extern vmCvar_t g_darkwolfOtherBurnTime;\n'
+              'extern vmCvar_t g_darkwolfBurnFxInterval;\n'
+              'extern vmCvar_t g_knockback;\n',
+              'g_local cvars')
+          s=replace_once(s,
+              'void DarkWolf_PushableWoodBreakable_Touch( gentity_t *self, gentity_t *other, trace_t *trace );\n',
+              'void DarkWolf_PushableWoodBreakable_Touch( gentity_t *self, gentity_t *other, trace_t *trace );\n'
+              '// DARKWOLF_IGNITABLE_PROPS_RC_V0_6\n'
+              'qboolean DarkWolf_TryIgniteProp( gentity_t *ent, gentity_t *attacker );\n'
+              'void DarkWolf_RunIgnitableProps( void );\n',
+              'g_local prototypes')
+          write(p_local,s)
+
+          s=read(p_main)
+          s=replace_once(s,
+              'vmCvar_t g_darkwolfVehicleDamage;\n\nvmCvar_t g_cheats;\n',
+              'vmCvar_t g_darkwolfVehicleDamage;\n'
+              '// DARKWOLF_IGNITABLE_PROPS_RC_V0_6\n'
+              'vmCvar_t g_darkwolfIgnitableProps;\n'
+              'vmCvar_t g_darkwolfTreeBurnTime;\n'
+              'vmCvar_t g_darkwolfWoodBurnTime;\n'
+              'vmCvar_t g_darkwolfFabricBurnTime;\n'
+              'vmCvar_t g_darkwolfOtherBurnTime;\n'
+              'vmCvar_t g_darkwolfBurnFxInterval;\n\n'
+              'vmCvar_t g_cheats;\n',
+              'g_main declarations')
+          s=replace_once(s,
+              '\t{ &g_darkwolfVehicleDamage, "g_darkwolfVehicleDamage", "1", CVAR_ARCHIVE, 0, qfalse },\n\n'
+              '\t{ &g_knockback, "g_knockback", "1000", 0, 0, qtrue  },\n',
+              '\t{ &g_darkwolfVehicleDamage, "g_darkwolfVehicleDamage", "1", CVAR_ARCHIVE, 0, qfalse },\n'
+              '\t// DARKWOLF_IGNITABLE_PROPS_RC_V0_6\n'
+              '\t{ &g_darkwolfIgnitableProps, "g_darkwolfIgnitableProps", "1", CVAR_ARCHIVE, 0, qfalse },\n'
+              '\t{ &g_darkwolfTreeBurnTime, "g_darkwolfTreeBurnTime", "240000", CVAR_ARCHIVE, 0, qfalse },\n'
+              '\t{ &g_darkwolfWoodBurnTime, "g_darkwolfWoodBurnTime", "180000", CVAR_ARCHIVE, 0, qfalse },\n'
+              '\t{ &g_darkwolfFabricBurnTime, "g_darkwolfFabricBurnTime", "90000", CVAR_ARCHIVE, 0, qfalse },\n'
+              '\t{ &g_darkwolfOtherBurnTime, "g_darkwolfOtherBurnTime", "120000", CVAR_ARCHIVE, 0, qfalse },\n'
+              '\t{ &g_darkwolfBurnFxInterval, "g_darkwolfBurnFxInterval", "400", CVAR_ARCHIVE, 0, qfalse },\n\n'
+              '\t{ &g_knockback, "g_knockback", "1000", 0, 0, qtrue  },\n',
+              'g_main cvar table')
+          s=replace_once(s,
+              '\tG_UpdateCvars();\n',
+              '\tG_UpdateCvars();\n\n'
+              '\t// DARKWOLF_IGNITABLE_PROPS_RC_V0_6\n'
+              '\tDarkWolf_RunIgnitableProps();\n',
+              'G_RunFrame hook')
+          write(p_main,s)
+
+          s=read(p_props)
+          code=r'''
+          // DARKWOLF_IGNITABLE_PROPS_RC_V0_6
+          typedef enum {
+          	DW_IGNITION_NONE = 0,
+          	DW_IGNITION_TREE,
+          	DW_IGNITION_WOOD,
+          	DW_IGNITION_FABRIC,
+          	DW_IGNITION_OTHER
+          } darkwolfIgnitionMaterial_t;
+
+          static qboolean DarkWolf_IgnitionClassIs( const gentity_t *ent, const char *name ) {
+          	return ent && ent->classname && !Q_stricmp( ent->classname, name );
+          }
+
+          static qboolean DarkWolf_IsBuiltinFireEntity( const gentity_t *ent ) {
+          	if ( !ent ) return qtrue;
+          	if ( ent->s.eType == ET_FIRE_COLUMN || ent->s.eType == ET_FIRE_COLUMN_SMOKE ||
+          		 ent->s.eType == ET_FLAMEBARREL || ent->s.eType == ET_FLAMETHROWER_PROP ) return qtrue;
+          	if ( DarkWolf_IgnitionClassIs(ent,"props_flamebarrel") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_FireColumn") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_flamethrower") ) return qtrue;
+          	return qfalse;
+          }
+
+          static darkwolfIgnitionMaterial_t DarkWolf_GetIgnitionMaterial( gentity_t *ent ) {
+          	const darkwolfRetailModelProfile_t *mp;
+          	const darkwolfRetailDecorationProfile_t *dp;
+          	float sx,sy,sz,maxdim;
+
+          	if ( !ent || !ent->inuse || ent->client || !ent->classname || DarkWolf_IsBuiltinFireEntity(ent) )
+          		return DW_IGNITION_NONE;
+
+          	if ( !Q_stricmp(ent->classname,"misc_gamemodel") ) {
+          		mp=DarkWolf_FindRetailGameModelProfile(ent->model);
+          		if ( !mp || DarkWolf_HasGameplayDependency(ent) ) return DW_IGNITION_NONE;
+          		if ( DarkWolf_IsRetailTreeModel(ent->model) ) return DW_IGNITION_TREE;
+          		if ( ent->model && strstr(ent->model,"models/mapobjects/plants/") ) return DW_IGNITION_FABRIC;
+          		if ( mp->shardType == shard_wood ) return DW_IGNITION_WOOD;
+          		return DW_IGNITION_OTHER;
+          	}
+
+          	if ( !Q_stricmp(ent->classname,"props_decoration") ) {
+          		dp=DarkWolf_FindRetailDecorationProfile(ent->model2);
+          		if ( !dp || DarkWolf_HasGameplayDependency(ent) ) return DW_IGNITION_NONE;
+          		if ( ent->model2 && (strstr(ent->model2,"/flag/") || strstr(ent->model2,"/curtain/") ||
+          			 strstr(ent->model2,"/parachute/")) ) return DW_IGNITION_FABRIC;
+          		return DW_IGNITION_OTHER;
+          	}
+
+          	if ( !Q_stricmp(ent->classname,"func_explosive") ) {
+          		if ( DarkWolf_HasGameplayDependency(ent) || ent->health <= 0 || (ent->spawnflags & (1|32|64)) )
+          			return DW_IGNITION_NONE;
+          		sx=ent->r.absmax[0]-ent->r.absmin[0];
+          		sy=ent->r.absmax[1]-ent->r.absmin[1];
+          		sz=ent->r.absmax[2]-ent->r.absmin[2];
+          		maxdim=sx; if(sy>maxdim)maxdim=sy; if(sz>maxdim)maxdim=sz;
+          		if ( maxdim <= 0.0f || maxdim > 256.0f ) return DW_IGNITION_NONE;
+          		if ( ent->key == 0 ) return DW_IGNITION_WOOD;
+          		if ( ent->key == 6 ) return DW_IGNITION_FABRIC;
+          		return DW_IGNITION_OTHER;
+          	}
+
+          	if ( DarkWolf_IgnitionClassIs(ent,"props_chair_chat") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_chair_chatarm") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_chair_side") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_chair_hiback") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_bench") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_58x112tablew") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_castlebed") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_flippy_table") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_box_32") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_box_48") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_box_64") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_crate_32") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_crate_64") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_crate_32x64") )
+          		return DW_IGNITION_WOOD;
+
+          	if ( DarkWolf_IgnitionClassIs(ent,"props_chair") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_locker_tall") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_radio") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_radioSEVEN") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_desklamp") ||
+          		 DarkWolf_IgnitionClassIs(ent,"props_statue") )
+          		return DW_IGNITION_OTHER;
+
+          	return DW_IGNITION_NONE;
+          }
+
+          static int DarkWolf_IgnitionDuration( darkwolfIgnitionMaterial_t mat ) {
+          	int d=0;
+          	if(mat==DW_IGNITION_TREE)d=g_darkwolfTreeBurnTime.integer;
+          	else if(mat==DW_IGNITION_WOOD)d=g_darkwolfWoodBurnTime.integer;
+          	else if(mat==DW_IGNITION_FABRIC)d=g_darkwolfFabricBurnTime.integer;
+          	else if(mat==DW_IGNITION_OTHER)d=g_darkwolfOtherBurnTime.integer;
+          	if(d<5000)d=5000; if(d>600000)d=600000;
+          	return d;
+          }
+
+          static const char *DarkWolf_DeadTreeModelFor( const char *m ) {
+          	if(!m)return NULL;
+          	if(!Q_stricmp(m,"models/mapobjects/tree/tree_m08.md3"))return "models/mapobjects/tree/dead_tree5.md3";
+          	if(!Q_stricmp(m,"models/mapobjects/tree/tree_mp01.md3"))return "models/mapobjects/tree/dead_tree5a.md3";
+          	if(!Q_stricmp(m,"models/mapobjects/tree/tree_m07.md3"))return "models/mapobjects/tree/dead_tree4.md3";
+          	if(!Q_stricmp(m,"models/mapobjects/tree/training_tree3.md3"))return "models/mapobjects/tree/dead_tree3.md3";
+          	if(!Q_stricmp(m,"models/mapobjects/tree/training_tree2.md3"))return "models/mapobjects/tree/dead_tree2.md3";
+          	if(!Q_stricmp(m,"models/mapobjects/tree/training_tree1.md3"))return "models/mapobjects/tree/dead_tree.md3";
+          	if(!Q_stricmp(m,"models/mapobjects/tree/tree_m09s.md3"))return "models/mapobjects/tree/dead_tree2.md3";
+          	return NULL;
+          }
+
+          static void DarkWolf_SpawnIgnitionFx( gentity_t *ent, darkwolfIgnitionMaterial_t mat, int salt ) {
+          	gentity_t *fx;
+          	vec3_t org;
+          	float sx=ent->r.absmax[0]-ent->r.absmin[0], sy=ent->r.absmax[1]-ent->r.absmin[1];
+          	float sz=ent->r.absmax[2]-ent->r.absmin[2], xs,ys,zs;
+          	if(sx>1&&sy>1&&sz>1){
+          		xs=sx*.34f;ys=sy*.34f;zs=sz*.70f;
+          		if(xs>42)xs=42;if(ys>42)ys=42;if(zs>120)zs=120;
+          		org[0]=ent->r.currentOrigin[0]+crandom()*xs;
+          		org[1]=ent->r.currentOrigin[1]+crandom()*ys;
+          		org[2]=ent->r.absmin[2]+4+random()*zs;
+          	}else{
+          		VectorCopy(ent->r.currentOrigin,org);org[0]+=crandom()*10;org[1]+=crandom()*10;org[2]+=10+(salt&7);
+          	}
+          	fx=G_Spawn();fx->classname="darkwolf_ignition_fx";fx->s.eType=ET_FIRE_COLUMN_SMOKE;
+          	fx->clipmask=0;fx->r.contents=0;fx->r.ownerNum=ENTITYNUM_NONE;
+          	VectorClear(fx->r.mins);VectorClear(fx->r.maxs);
+          	fx->s.pos.trType=TR_LINEAR;fx->s.pos.trTime=level.time;VectorCopy(org,fx->s.pos.trBase);
+          	VectorSet(fx->s.pos.trDelta,crandom()*5,crandom()*5,mat==DW_IGNITION_TREE?24:18);
+          	VectorCopy(org,fx->r.currentOrigin);VectorCopy(org,fx->s.origin);
+          	fx->s.apos.trType=TR_STATIONARY;VectorClear(fx->s.apos.trBase);VectorClear(fx->s.angles);
+          	fx->s.angles[0]=mat==DW_IGNITION_TREE?500:400;fx->s.angles[1]=mat==DW_IGNITION_TREE?8:6;
+          	fx->s.angles[2]=mat==DW_IGNITION_TREE?30:22;
+          	fx->think=G_FreeEntity;fx->nextthink=level.time+900;trap_LinkEntity(fx);
+          }
+
+          static void DarkWolf_FinalizeIgnition( gentity_t *ent, darkwolfIgnitionMaterial_t mat ) {
+          	const char *dead;
+          	ent->flameQuotaTime=0;ent->flameQuota=0;
+          	if(mat==DW_IGNITION_TREE){
+          		dead=DarkWolf_DeadTreeModelFor(ent->model);if(dead)ent->s.modelindex=G_ModelIndex(dead);
+          		ent->s.onFireStart=0;ent->s.onFireEnd=-1;trap_LinkEntity(ent);return;
+          	}
+          	if(mat==DW_IGNITION_WOOD){ent->s.onFireStart=0;ent->s.onFireEnd=-1;return;}
+          	ent->s.onFireStart=0;ent->s.onFireEnd=0;
+          }
+
+          qboolean DarkWolf_TryIgniteProp( gentity_t *ent, gentity_t *attacker ) {
+          	darkwolfIgnitionMaterial_t mat;int d;const char *dead;
+          	if(!g_darkwolfIgnitableProps.integer||!ent||!ent->inuse||ent->client)return qfalse;
+          	mat=DarkWolf_GetIgnitionMaterial(ent);if(mat==DW_IGNITION_NONE||ent->s.onFireEnd==-1)return qfalse;
+          	if(ent->s.onFireEnd<=level.time){
+          		d=DarkWolf_IgnitionDuration(mat);ent->s.onFireStart=level.time-1;ent->s.onFireEnd=level.time+d;
+          		ent->flameQuotaTime=level.time;ent->flameBurnEnt=attacker?attacker->s.number:ENTITYNUM_WORLD;
+          		if(mat==DW_IGNITION_TREE){dead=DarkWolf_DeadTreeModelFor(ent->model);if(dead)G_ModelIndex(dead);}
+          	}
+          	return qtrue;
+          }
+
+          void DarkWolf_RunIgnitableProps( void ) {
+          	gentity_t *ent;darkwolfIgnitionMaterial_t mat;int i,interval;
+          	if(!g_darkwolfIgnitableProps.integer||g_gametype.integer!=GT_SINGLE_PLAYER)return;
+          	interval=g_darkwolfBurnFxInterval.integer;if(interval<180)interval=180;if(interval>2000)interval=2000;
+          	for(i=MAX_CLIENTS;i<level.num_entities;i++){
+          		ent=&g_entities[i];
+          		if(!ent->inuse||ent->client||ent->s.onFireEnd==0||ent->s.onFireEnd==-1)continue;
+          		mat=DarkWolf_GetIgnitionMaterial(ent);
+          		if(mat==DW_IGNITION_NONE){ent->s.onFireStart=0;ent->s.onFireEnd=0;continue;}
+          		if(ent->s.onFireEnd<=level.time){DarkWolf_FinalizeIgnition(ent,mat);continue;}
+          		if(ent->flameQuotaTime<=level.time){
+          			DarkWolf_SpawnIgnitionFx(ent,mat,i+level.framenum);
+          			if(mat==DW_IGNITION_TREE)DarkWolf_SpawnIgnitionFx(ent,mat,i+level.framenum+17);
+          			ent->flameQuotaTime=level.time+interval+(i%5)*17;
+          		}
+          	}
+          }
+
+          '''
+          anchor='void SP_props_decoration( gentity_t *ent ) {\n'
+          if s.count(anchor)!=1: raise SystemExit('ERROR: g_props ignition anchor mismatch')
+          s=s.replace(anchor,code+anchor,1)
+          write(p_props,s)
+
+          s=read(p_cmds)
+          s=replace_once(s,
+              '\tcase CLDMG_FLAMETHROWER:\n\t\t// do some cheat protection\n',
+              '\tcase CLDMG_FLAMETHROWER:\n'
+              '\t\t// DARKWOLF_IGNITABLE_PROPS_RC_V0_6\n'
+              '\t\tif ( g_gametype.integer == GT_SINGLE_PLAYER && !ent->client ) {\n'
+              '\t\t\tDarkWolf_TryIgniteProp( ent, enemy );\n'
+              '\t\t\tbreak;\n'
+              '\t\t}\n\n'
+              '\t\t// do some cheat protection\n',
+              'ClientDamage ignition')
+          write(p_cmds,s)
+
+          s=read(p_cgflame)
+          s=replace_once(s,
+              '\tif ( cgs.localServer && cgs.gametype == GT_SINGLE_PLAYER ) {\n\n\t\t// flaming zombie\'s only hurt the player\n',
+              '\tif ( cgs.localServer && cgs.gametype == GT_SINGLE_PLAYER ) {\n\n'
+              '\t\t// DARKWOLF_IGNITABLE_PROPS_RC_V0_6\n'
+              '\t\t{\n'
+              '\t\t\tvec3_t dwMins, dwMaxs; float dwRadius = radius * 0.20f; int dwEntNum;\n'
+              '\t\t\tif(dwRadius<8.0f)dwRadius=8.0f;if(dwRadius>22.0f)dwRadius=22.0f;\n'
+              '\t\t\tVectorSet(dwMins,-dwRadius,-dwRadius,-dwRadius);VectorSet(dwMaxs,dwRadius,dwRadius,dwRadius);\n'
+              '\t\t\tCG_Trace(&tr,org,dwMins,dwMaxs,org,owner,MASK_SHOT);dwEntNum=tr.entityNum;\n'
+              '\t\t\tif(dwEntNum>=cgs.maxclients&&dwEntNum<MAX_GENTITIES&&cg_entities[dwEntNum].currentValid&&\n'
+              '\t\t\t\tcentFlameInfo[dwEntNum].lastDmgCheck<cg.time-100){\n'
+              '\t\t\t\tcentFlameInfo[dwEntNum].lastDmgCheck=cg.time;centFlameInfo[dwEntNum].lastDmgEnemy=owner;\n'
+              '\t\t\t}\n'
+              '\t\t}\n\n'
+              '\t\t// flaming zombie\'s only hurt the player\n',
+              'flame overlap')
+          marker='\t// send client damage updates if required\n'
+          a=s.find(marker)
+          b=s.find('\n}\n',a)
+          if a<0 or b<0: raise SystemExit('ERROR: flamethrower update function bounds missing')
+          insertion=(
+              '\n\t// DARKWOLF_IGNITABLE_PROPS_RC_V0_6\n'
+              '\tif ( cgs.localServer && cgs.gametype == GT_SINGLE_PLAYER ) {\n'
+              '\t\tfor ( i = cgs.maxclients; i < MAX_GENTITIES; ++i ) {\n'
+              '\t\t\tif ( centFlameInfo[i].lastDmgCheck > centFlameInfo[i].lastDmgUpdate &&\n'
+              '\t\t\t\t centFlameInfo[i].lastDmgUpdate < cg.time - 100 ) {\n'
+              '\t\t\t\tCG_ClientDamage( i, centFlameInfo[i].lastDmgEnemy, CLDMG_FLAMETHROWER );\n'
+              '\t\t\t\tcentFlameInfo[i].lastDmgUpdate = cg.time;\n'
+              '\t\t\t}\n'
+              '\t\t}\n'
+              '\t}\n'
+          )
+          s=s[:b]+insertion+s[b:]
+          write(p_cgflame,s)
+
+          s=read(p_cgents)
+          helper=r'''
+          // DARKWOLF_IGNITABLE_PROPS_RC_V0_6
+          static void DarkWolf_AddCharredOverlay( const refEntity_t *base, const entityState_t *state ) {
+          	static qhandle_t sh=0;refEntity_t o;
+          	if(!base||!state||state->onFireEnd!=-1||!base->hModel)return;
+          	if(!sh)sh=trap_R_RegisterShader("darkwolf/charred_overlay");if(!sh)return;
+          	o=*base;o.customSkin=0;o.customShader=sh;o.renderfx|=RF_NOSHADOW;
+          	o.shaderRGBA[0]=24;o.shaderRGBA[1]=18;o.shaderRGBA[2]=12;o.shaderRGBA[3]=178;
+          	trap_R_AddRefEntityToScene(&o);
+          }
+
+          '''
+          ga='static void CG_General( centity_t *cent ) {\n'
+          if s.count(ga)!=1: raise SystemExit('ERROR: CG_General anchor mismatch')
+          s=s.replace(ga,helper+ga,1)
+          s=replace_window(s,'static void CG_General( centity_t *cent ) {','static void CG_Speaker( centity_t *cent ) {',
+              '\ttrap_R_AddRefEntityToScene( &ent );\n\n\tmemcpy( &cent->refEnt, &ent, sizeof( refEntity_t ) );\n',
+              '\ttrap_R_AddRefEntityToScene( &ent );\n\tDarkWolf_AddCharredOverlay( &ent, s1 );\n\n'
+              '\tmemcpy( &cent->refEnt, &ent, sizeof( refEntity_t ) );\n','CG_General overlay')
+          s=replace_window(s,'static void CG_Mover( centity_t *cent ) {','void CG_Beam( centity_t *cent ) {',
+              '\t\ttrap_R_AddRefEntityToScene( &ent );\n\t\tmemcpy( &cent->refEnt, &ent, sizeof( refEntity_t ) );\n'
+              '\t} else {\n\t\ttrap_R_AddRefEntityToScene( &ent );\n\t}\n',
+              '\t\ttrap_R_AddRefEntityToScene( &ent );\n\t\tDarkWolf_AddCharredOverlay( &ent, s1 );\n'
+              '\t\tmemcpy( &cent->refEnt, &ent, sizeof( refEntity_t ) );\n'
+              '\t} else {\n\t\ttrap_R_AddRefEntityToScene( &ent );\n\t\tDarkWolf_AddCharredOverlay( &ent, s1 );\n\t}\n','CG_Mover overlay')
+          s=replace_window(s,'static void CG_Explosive( centity_t *cent ) {','static void CG_Mover( centity_t *cent ) {',
+              '\tif ( s1->modelindex2 ) {\n\t\tent.skinNum = 0;\n\t\tent.hModel = cgs.gameModels[s1->modelindex2];\n'
+              '\t\ttrap_R_AddRefEntityToScene( &ent );\n\t} else {\n\t\ttrap_R_AddRefEntityToScene( &ent );\n\t}\n',
+              '\tif ( s1->modelindex2 ) {\n\t\tent.skinNum = 0;\n\t\tent.hModel = cgs.gameModels[s1->modelindex2];\n'
+              '\t\ttrap_R_AddRefEntityToScene( &ent );\n\t} else {\n\t\ttrap_R_AddRefEntityToScene( &ent );\n\t}\n'
+              '\tDarkWolf_AddCharredOverlay( &ent, s1 );\n','CG_Explosive overlay')
+          write(p_cgents,s)
+
+          checks={
+           p_local:['g_darkwolfIgnitableProps','DarkWolf_RunIgnitableProps'],
+           p_main:['g_darkwolfTreeBurnTime','DarkWolf_RunIgnitableProps();'],
+           p_props:['DarkWolf_TryIgniteProp','dead_tree5.md3','ET_FIRE_COLUMN_SMOKE'],
+           p_cmds:['DarkWolf_TryIgniteProp'],
+           p_cgflame:['dwEntNum>=cgs.maxclients','for ( i = cgs.maxclients; i < MAX_GENTITIES; ++i )'],
+           p_cgents:['DarkWolf_AddCharredOverlay','darkwolf/charred_overlay']
+          }
+          for p,needles in checks.items():
+              t=read(p)
+              for n in needles:
+                  if n not in t: raise SystemExit(f'ERROR: missing {n!r} in {p}')
+          print('Applied DARKWOLF_IGNITABLE_PROPS_RC_V0_6')
+          PY_IGNITION
+          python3 "$IGNITION_PATCHER_NAME" source
+
+      - name: Static validate ignitable props RC v0.6
         shell: bash
         run: |
           set -Eeuo pipefail
