@@ -1500,14 +1500,14 @@ jobs:
           echo "Build PASS: qagame=$new_qagame_sha cgame=$new_cgame_sha"
 
 
-      - name: Package over exact Unified Production V1 without renderer drift
+      - name: Package exact RC v0.6 with renderer no-drift
         shell: bash
         run: |
           set -Eeuo pipefail
           base="$(cat .base_stage_path)"
           build="source/SP/build/release-mingw32-x86_64"
-          rm -rf dist
-          mkdir -p "dist/$RELEASE_BASENAME" dist/upload
+          rm -rf dist ignition-pk3
+          mkdir -p "dist/$RELEASE_BASENAME" dist/upload ignition-pk3/scripts
           stage="dist/$RELEASE_BASENAME"
 
           cp -a "$base/." "$stage/"
@@ -1516,88 +1516,105 @@ jobs:
           cp "release-docs/$DELTA_NAME" "$stage/docs/$DELTA_NAME"
           cp "release-docs/$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
 
+          cat > ignition-pk3/scripts/darkwolf_ignition.shader <<'EOF_SHADER'
+          darkwolf/charred_overlay
+          {
+              polygonOffset
+              sort decal
+              {
+                  map $whiteimage
+                  blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+                  rgbGen entity
+                  alphaGen entity
+              }
+          }
+          EOF_SHADER
+          (cd ignition-pk3 && zip -q -r -9 "../$stage/Main/darkwolf_ignition_rc_v0_6.pk3" scripts)
+
           cat > "$stage/docs/$AUDIT_NAME" <<'EOF_AUDIT'
-          DARKWOLF RETAIL BSP DESTRUCTIBLES RC V0.5
-          ==========================================
-
+          DARKWOLF IGNITABLE PROPS RC V0.6
+          =================================
           BASE
-          - DarkWolf ioRTCW Rend2 Unified Production V1.
-          - User-provided retail maps.zip audit: 32 BSP / 27,292 entities.
-          - Retains RC v0.4 broad 27-profile / 266-placement destructible coverage.
-          - Retains exact 26 pushable wooden func_explosive submodels.
+          - Exact DarkWolf Unified Production V1 reconstruction.
+          - Includes all RC v0.5 destructible/tree-fall/vehicle-wreck source changes.
+          - Retail audit source: 32 BSP / 27,292 entities.
 
-          TREE DESTRUCTION V0.5
-          - Seven audited tree models no longer disappear on death.
-          - Increased tree health so a tree requires sustained gunfire / heavier damage.
-          - Bullet damage emits small wood/bark shards with debounce.
-          - On death the fall direction is chosen away from attacker/inflictor.
-          - Angular trajectory uses TR_ACCELERATE for a slow-start / gravity-like fall.
-          - Final tilt is approximately 88 degrees.
-          - Upright trunk/shot collision is removed when the fall begins.
-          - The visual tree entity is NOT freed; it remains lying in the world.
-          - Save/load preserves is_dead and trajectory state.
+          STOCK FLAMETHROWER INTEGRATION
+          - Existing RTCW player/AI burning path is not replaced.
+          - Live client flame chunks now detect non-client MASK_SHOT entities.
+          - Hits reuse the stock SP cld / CLDMG_FLAMETHROWER channel.
+          - Server routes only non-client targets into the new prop ignition policy.
 
-          VEHICLE DAMAGE V0.5
-          Retail dependency-free vehicles:
-          - staff_car.md3 (4 placements: dam/end/village2)
-          - rocket_trans.md3 (2 placements: assault)
+          AUDITED MATERIAL COVERAGE
+          - 194 wood func_explosive
+          - 87 fabric func_explosive
+          - 187 brick, 185 glass, 145 metal, 92 rock, 2 stone func_explosive
+          - 167 stock chair entities
+          - audited RC v0.5 misc_gamemodel and props_decoration profiles
+          - structural/dependency-bearing func_explosive entities are excluded
+          - already-burning fire entities are explicitly excluded
 
-          Behavior:
-          damage
-            -> EV_SPARKS at impact point
-            -> health depletion
-            -> larger spark burst + metal debris + break sound
-            -> destroyed logical state (is_dead)
-            -> repeated EV_SMOKE for 30 seconds
-            -> original model remains permanently as wreck
-            -> no G_FreeEntity
-            -> wreck no longer takes damage
+          DEFAULT BURN DURATIONS
+          - tree: 240000 ms
+          - wood: 180000 ms
+          - fabric: 90000 ms
+          - other/stone/metal/glass: 120000 ms
+          - fire FX interval: 400 ms
 
-          The uploaded retail BSP entities for these six vehicles have no trunk key.
-          RC v0.5 therefore preserves their original no-player-blocking semantics rather
-          than inventing a new large collision volume after destruction.
+          TREE BURNOUT
+          - Tree burns persistently using stock RTCW ET_FIRE_COLUMN_SMOKE effects.
+          - At burnout the living audited tree model is replaced by an original
+            RTCW leafless dead_tree*.md3 asset.
+          - A persistent dark char overlay is added by cgame.
+          - The entity remains in the world and RC v0.5 tree destruction/fall
+            remains available.
+
+          WOOD BURNOUT
+          - Wood keeps its model/collision and receives a persistent char overlay.
+
+          OTHER MATERIALS
+          - Stone/metal/glass/fabric stop burning after their configured duration.
+          - They are not falsely converted to charred wood.
 
           CVARS
-          - g_darkwolfCampaignDestructibles 0/1 (default 1)
-          - g_darkwolfPushableWoodBreakables 0/1 (default 1)
-          - g_darkwolfTreeFall 0/1 (default 1)
-          - g_darkwolfVehicleDamage 0/1 (default 1)
+          g_darkwolfIgnitableProps 1
+          g_darkwolfTreeBurnTime 240000
+          g_darkwolfWoodBurnTime 180000
+          g_darkwolfFabricBurnTime 90000
+          g_darkwolfOtherBurnTime 120000
+          g_darkwolfBurnFxInterval 400
 
           SCOPE
-          - qagame_sp_x64.dll only.
-          - renderer_sp_rend2_x64.dll remains byte-identical to Unified Production V1.
-          - Main/cgame_sp_x64.dll remains byte-identical to Unified Production V1.
-          - No lighting / StaticPromote / shadow / volumetric / Bloom / ToneMap changes.
+          - rebuilt Main/qagame_sp_x64.dll
+          - rebuilt Main/cgame_sp_x64.dll
+          - renderer_sp_rend2_x64.dll byte-identical to Unified Production V1
+          - no StaticPromote / shadows / Bloom / ToneMap / Exposure changes
           EOF_AUDIT
 
-          cat > "$stage/docs/README_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5_RU.txt" <<'EOF_README'
-          DarkWolf ioRTCW Rend2 - Retail BSP Destructibles RC v0.5
+          cat > "$stage/docs/README_IGNITABLE_PROPS_RC_V0_6_RU.txt" <<'EOF_README'
+          DarkWolf ioRTCW Rend2 - Ignitable Props RC v0.6
 
-          Деревья:
-          - после попаданий видны небольшие деревянные щепки;
-          - после исчерпания health дерево НЕ исчезает;
-          - дерево плавно ускоряясь падает в сторону от источника урона;
-          - после падения визуальная модель остаётся лежать до конца уровня.
+          Огнемёт:
+          - штатное горение персонажей оставлено без изменений;
+          - подходящие предметы воспламеняются от фактического объёма пламени;
+          - деревья горят дольше и после выгорания становятся безлистными и обугленными;
+          - деревянные предметы после выгорания остаются обугленными;
+          - камень, металл, стекло и другие материалы горят ограниченное время и гаснут.
 
-          Машины:
-          - попадания вызывают искры;
-          - после исчерпания health: крупный burst искр + металлические обломки;
-          - машина переходит в destroyed/wreck state;
-          - около 30 секунд идёт дым;
-          - wreck остаётся на карте и больше не получает damage.
+          /g_darkwolfIgnitableProps 1
+          /g_darkwolfTreeBurnTime 240000
+          /g_darkwolfWoodBurnTime 180000
+          /g_darkwolfFabricBurnTime 90000
+          /g_darkwolfOtherBurnTime 120000
+          /g_darkwolfBurnFxInterval 400
 
-          Основные cvars:
-            /g_darkwolfCampaignDestructibles 1
-            /g_darkwolfPushableWoodBreakables 1
-            /g_darkwolfTreeFall 1
-            /g_darkwolfVehicleDamage 1
-
-          Рекомендуется начинать тест с map_restart.
+          Для чистого теста: map_restart
           EOF_README
 
           test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
-          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$(cat .new_cgame_sha)"
           test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$(cat .new_qagame_sha)"
+          test -s "$stage/Main/darkwolf_ignition_rc_v0_6.pk3"
 
           rm -f "$stage/docs/SHA256SUMS.txt"
           (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
@@ -1605,7 +1622,7 @@ jobs:
           sha256sum "dist/upload/$RELEASE_BASENAME.zip" > "dist/upload/$RELEASE_BASENAME.zip.sha256"
 
           echo "renderer_sha256=$BASE_RENDERER_SHA256" >> "$GITHUB_STEP_SUMMARY"
-          echo "cgame_sha256=$BASE_CGAME_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo "cgame_sha256=$(cat .new_cgame_sha)" >> "$GITHUB_STEP_SUMMARY"
           echo "qagame_sha256=$(cat .new_qagame_sha)" >> "$GITHUB_STEP_SUMMARY"
           echo "delta_sha256=$(sha256sum "release-docs/$DELTA_NAME" | awk '{print $1}')" >> "$GITHUB_STEP_SUMMARY"
           echo "cumulative_sha256=$(sha256sum "release-docs/$CUMULATIVE_NAME" | awk '{print $1}')" >> "$GITHUB_STEP_SUMMARY"
