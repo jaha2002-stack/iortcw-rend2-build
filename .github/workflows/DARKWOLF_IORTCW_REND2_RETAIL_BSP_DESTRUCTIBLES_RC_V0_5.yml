@@ -1,0 +1,1235 @@
+name: DarkWolf ioRTCW Rend2 Retail BSP Destructibles RC v0.5
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/DARKWOLF_IORTCW_REND2_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5.yml
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-retail-bsp-destructibles-rc-v0-5
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64-sp:
+    name: Retail BSP Destructibles RC v0.5 over Unified Production V1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "35696866857"
+      BASE_RUN_HEAD_SHA: 100c42b8d95b543cdfd911c26d2cfb82026fd751
+      BASE_WORKFLOW_PATH: .github/workflows/DARKWOLF_IORTCW_REND2_UNIFIED_PRODUCTION_V1.yml
+      BASE_ARTIFACT_ID: "10681175784"
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Unified-Production-V1-Win64
+      BASE_ARTIFACT_DIGEST: sha256:11d73eb895d4c5cdb97521264f00bfac20226a796fbe07d5cb711a234a36ca31
+      BASE_INNER_SHA256: a6b3bd238d700741cf31767904936ae4c798682685cc5ac497217fd79d8353fa
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-unified-production-v1-cumulative.patch
+      BASE_CUMULATIVE_SHA256: 0c00197d7573d0d8f4fcc158e92036279400f7af0ccb7c1691dc5d6a3cc0d8cd
+      BASE_RENDERER_SHA256: 92b1db33486ea2dd7d04ccda8f3030692578a13569440f100b677b63b7a6e6d2
+      BASE_CGAME_SHA256: 31847761ed2665028f166d8ef69e53b84756e8f195dd21e32efc2131e7bccafd
+      BASE_QAGAME_SHA256: 1bf44aa8faa9f4d69042898f9ffcb911b46c15cdf45bf328dae9389f21bbbbee
+
+      PATCHER_NAME: apply_darkwolf_retail_bsp_destructibles_rc_v0_5.py
+      DELTA_NAME: darkwolf-retail-bsp-destructibles-rc-v0-5-over-unified-production-v1.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-retail-bsp-destructibles-rc-v0-5.patch
+      AUDIT_NAME: DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5_AUDIT.txt
+      RELEASE_BASENAME: DarkWolf-ioRTCW-Rend2-Retail-BSP-Destructibles-RC-v0.5-Win64
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v4
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-mingw-w64-x86-64 build-essential ca-certificates \
+            g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git \
+            make mingw-w64 python3 python3-yaml unzip zip jq file
+
+      - name: Preflight workflow YAML
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -f "$workflow_rel"
+          python3 - "$workflow_rel" <<'PY_PREFLIGHT'
+          from pathlib import Path
+          import sys, yaml
+          p = Path(sys.argv[1])
+          raw = p.read_bytes()
+          if b'\r' in raw:
+              raise SystemExit('ERROR: CR byte found; workflow must be LF-only')
+          doc = yaml.safe_load(raw.decode('utf-8'))
+          if doc.get('name') != 'DarkWolf ioRTCW Rend2 Retail BSP Destructibles RC v0.5':
+              raise SystemExit('ERROR: workflow identity drift')
+          if 'build-windows-x64-sp' not in (doc.get('jobs') or {}):
+              raise SystemExit('ERROR: expected build job missing')
+          print('Workflow YAML preflight PASS')
+          PY_PREFLIGHT
+
+      - name: Verify exact Unified Production V1 provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$BASE_RUN_HEAD_SHA" || { echo "ERROR: base HEAD drift" >&2; exit 1; }
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success || { echo "ERROR: base run is not successful" >&2; exit 1; }
+          test "$(jq -r '.path' <<<"$run_json")" = "$BASE_WORKFLOW_PATH" || { echo "ERROR: base workflow path drift" >&2; exit 1; }
+
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row" || { echo "ERROR: exact Unified Production artifact missing" >&2; exit 1; }
+          IFS=$'\t' read -r aname expired adigest <<< "$row"
+          test "$aname" = "$BASE_ARTIFACT_NAME"
+          test "$expired" = false
+          test "$adigest" = "$BASE_ARTIFACT_DIGEST"
+          echo "Unified Production V1 provenance PASS"
+
+      - name: Download and verify exact Unified Production V1 package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+
+          z="base-artifact/${BASE_ARTIFACT_NAME}.zip"
+          sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          inner_sha="$(sha256sum "$z" | awk '{print $1}')"
+          test "$inner_sha" = "$(awk '{print $1}' "$sidecar")" || { echo "ERROR: base ZIP/sidecar mismatch" >&2; exit 1; }
+          test "$inner_sha" = "$BASE_INNER_SHA256" || { echo "ERROR: base inner ZIP drift: $inner_sha" >&2; exit 1; }
+          unzip -tq "$z"
+          unzip -q "$z" -d base-release
+
+          mapfile -t roots < <(find base-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1
+          base="${roots[0]}"
+          printf '%s\n' "$base" > .base_stage_path
+
+          (cd "$base" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$base/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$base/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$base/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          echo "Exact Unified Production V1 package PASS"
+
+      - name: Reconstruct exact Unified Production V1 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" .base-cumulative.patch
+          test "$(sha256sum .base-cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          git -C source apply --check --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.base-cumulative.patch
+
+          grep -Fq 'DARKWOLF_UNIFIED_PRODUCTION_TESLA_TIMING_V1' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'DARKWOLF_EXPLOSIVE_PROPS_RADAR_TRANSIENT_DLIGHT_SHADOW_CLEAN_PRODUCTION_V1' source/SP/code/game/g_props.c
+          grep -Fq 'DARKWOLF_NATIVE_DLIGHT_PVS_PERSISTENCE_FINAL_V5_3_V12_0' source/SP/code/game/g_misc.c
+          if grep -R -Fq 'DARKWOLF_DESTRUCTIBLE_PROPS_RC_V0_1' source/SP/code/game; then
+            echo "ERROR: destructible-props marker unexpectedly already exists in base" >&2
+            exit 1
+          fi
+
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid' \
+            commit -q -m 'Reconstructed exact Unified Production V1 source postimage'
+          git -C source rev-parse HEAD > .base_source_commit
+          test "$(git -C source rev-parse HEAD^)" = "$UPSTREAM_SHA"
+          echo "Unified Production V1 source reconstruction PASS"
+
+      - name: Apply Retail BSP Audited Destructibles RC v0.4
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat > "$PATCHER_NAME" <<'PY_PATCHER'
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('source')
+          p_local = root / 'SP/code/game/g_local.h'
+          p_main  = root / 'SP/code/game/g_main.c'
+          p_props = root / 'SP/code/game/g_props.c'
+          p_misc  = root / 'SP/code/game/g_misc.c'
+          p_mover = root / 'SP/code/game/g_mover.c'
+          p_save  = root / 'SP/code/game/g_save.c'
+          p_funcs = root / 'SP/code/game/g_funcs.h'
+          p_decs  = root / 'SP/code/game/g_func_decs.h'
+
+          MARK = 'DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5'
+
+          def read(p):
+              return p.read_text(encoding='utf-8')
+
+          def write(p, s):
+              p.write_text(s, encoding='utf-8', newline='\n')
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'ERROR: {label}: expected exactly one anchor, got {count}')
+              return text.replace(old, new, 1)
+
+          def replace_in_window(text, start_token, end_token, old, new, label):
+              start = text.find(start_token)
+              if start < 0:
+                  raise SystemExit(f'ERROR: {label}: start token missing')
+              end = text.find(end_token, start)
+              if end < 0:
+                  raise SystemExit(f'ERROR: {label}: end token missing')
+              window = text[start:end]
+              count = window.count(old)
+              if count != 1:
+                  raise SystemExit(f'ERROR: {label}: expected one window anchor, got {count}')
+              window = window.replace(old, new, 1)
+              return text[:start] + window + text[end:]
+
+          for p in (p_local, p_main, p_props, p_misc, p_mover, p_save, p_funcs, p_decs):
+              if MARK in read(p):
+                  raise SystemExit(f'ERROR: patch already applied to {p}')
+
+          # ------------------------------------------------------------------
+          # 1. Runtime controls.
+          # ------------------------------------------------------------------
+          s = read(p_local)
+          s = replace_once(
+              s,
+              'extern vmCvar_t g_dlightPVSFix;\nextern vmCvar_t g_dlightPVSRadius;\nextern vmCvar_t g_knockback;\n',
+              'extern vmCvar_t g_dlightPVSFix;\nextern vmCvar_t g_dlightPVSRadius;\n'
+              '// DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5\n'
+              'extern vmCvar_t g_darkwolfCampaignDestructibles;\n'
+              'extern vmCvar_t g_darkwolfPushableWoodBreakables;\n'
+              'extern vmCvar_t g_darkwolfTreeFall;\n'
+              'extern vmCvar_t g_darkwolfVehicleDamage;\n'
+              'extern vmCvar_t g_knockback;\n',
+              'g_local cvar externs')
+          s = replace_once(
+              s,
+              'void Prop_Break_Sound( gentity_t *ent );\nvoid Spawn_Shard( gentity_t *ent, gentity_t *inflictor, int quantity, int type );\n',
+              'void Prop_Break_Sound( gentity_t *ent );\n'
+              'void Spawn_Shard( gentity_t *ent, gentity_t *inflictor, int quantity, int type );\n'
+              '// DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5\n'
+              'void DarkWolf_ApplyRetailDestructiblePolicy( gentity_t *ent );\n'
+              'void DarkWolf_RetailBreakableModel_Die( gentity_t *ent, gentity_t *inflictor, gentity_t *attacker, int damage, int mod );\n'
+              'void DarkWolf_RetailTree_Pain( gentity_t *self, gentity_t *attacker, int damage, vec3_t point );\n'
+              'void DarkWolf_RetailTree_Die( gentity_t *ent, gentity_t *inflictor, gentity_t *attacker, int damage, int mod );\n'
+              'void DarkWolf_RetailVehicle_Pain( gentity_t *self, gentity_t *attacker, int damage, vec3_t point );\n'
+              'void DarkWolf_RetailVehicle_Die( gentity_t *ent, gentity_t *inflictor, gentity_t *attacker, int damage, int mod );\n'
+              'void DarkWolf_RetailVehicleSmoke_Think( gentity_t *ent );\n'
+              'void DarkWolf_PushableWoodBreakable_Touch( gentity_t *self, gentity_t *other, trace_t *trace );\n',
+              'g_local darkwolf prototypes')
+          write(p_local, s)
+
+          s = read(p_main)
+          s = replace_once(
+              s,
+              'vmCvar_t g_dlightPVSFix;\nvmCvar_t g_dlightPVSRadius;\n\nvmCvar_t g_cheats;\n',
+              'vmCvar_t g_dlightPVSFix;\nvmCvar_t g_dlightPVSRadius;\n\n'
+              '// DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5\n'
+              'vmCvar_t g_darkwolfCampaignDestructibles;\n'
+              'vmCvar_t g_darkwolfPushableWoodBreakables;\n'
+              'vmCvar_t g_darkwolfTreeFall;\n'
+              'vmCvar_t g_darkwolfVehicleDamage;\n\n'
+              'vmCvar_t g_cheats;\n',
+              'g_main cvar declarations')
+          s = replace_once(
+              s,
+              '\t{ &g_dlightPVSFix, "g_dlightPVSFix", "1", CVAR_ARCHIVE | CVAR_LATCH, 0, qfalse },\n'
+              '\t{ &g_dlightPVSRadius, "g_dlightPVSRadius", "256", CVAR_ARCHIVE | CVAR_LATCH, 0, qfalse },\n\n'
+              '\t{ &g_knockback, "g_knockback", "1000", 0, 0, qtrue  },\n',
+              '\t{ &g_dlightPVSFix, "g_dlightPVSFix", "1", CVAR_ARCHIVE | CVAR_LATCH, 0, qfalse },\n'
+              '\t{ &g_dlightPVSRadius, "g_dlightPVSRadius", "256", CVAR_ARCHIVE | CVAR_LATCH, 0, qfalse },\n\n'
+              '\t// DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5\n'
+              '\t{ &g_darkwolfCampaignDestructibles, "g_darkwolfCampaignDestructibles", "1", CVAR_ARCHIVE, 0, qfalse },\n'
+              '\t{ &g_darkwolfPushableWoodBreakables, "g_darkwolfPushableWoodBreakables", "1", CVAR_ARCHIVE, 0, qfalse },\n'
+              '\t{ &g_darkwolfTreeFall, "g_darkwolfTreeFall", "1", CVAR_ARCHIVE, 0, qfalse },\n'
+              '\t{ &g_darkwolfVehicleDamage, "g_darkwolfVehicleDamage", "1", CVAR_ARCHIVE, 0, qfalse },\n\n'
+              '\t{ &g_knockback, "g_knockback", "1000", 0, 0, qtrue  },\n',
+              'g_main cvar table')
+          write(p_main, s)
+
+          # ------------------------------------------------------------------
+          # 2. Real retail-BSP model profiles.
+          #
+          # The uploaded retail map archive was parsed directly:
+          # 32 BSPs / 27292 entities.
+          # These 27 model profiles correspond to 266 dependency-free, actually
+          # placed runtime entities. Light fixtures are intentionally excluded
+          # so destroying a housing cannot leave an orphaned light/corona.
+          # ------------------------------------------------------------------
+          s = read(p_props)
+          anchor = 'void SP_props_decoration( gentity_t *ent ) {\n'
+          if s.count(anchor) != 1:
+              raise SystemExit('ERROR: SP_props_decoration anchor mismatch')
+
+          policy = r'''
+          // DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5
+          typedef struct {
+          	const char *model;
+          	int health;
+          	int shardType;
+          	int shardCount;
+          	vec3_t mins;
+          	vec3_t maxs;
+          } darkwolfRetailModelProfile_t;
+
+          typedef struct {
+          	const char *model;
+          	int health;
+          	int shardType;
+          	int shardCount;
+          	vec3_t mins;
+          	vec3_t maxs;
+          } darkwolfRetailDecorationProfile_t;
+
+          typedef struct {
+          	const char *map;
+          	const char *bmodel;
+          } darkwolfPushableBModel_t;
+
+          static const darkwolfRetailModelProfile_t s_darkwolfRetailGameModels[] = {
+          	// Trees: higher health + dedicated fall death path.
+          	{ "models/mapobjects/tree/tree_m08.md3",           260, shard_wood,  8, { -24,-24,  0 }, { 24,24,180 } },
+          	{ "models/mapobjects/tree/tree_mp01.md3",          260, shard_wood,  8, { -24,-24,  0 }, { 24,24,180 } },
+          	{ "models/mapobjects/tree/tree_m07.md3",           220, shard_wood,  8, { -22,-22,  0 }, { 22,22,160 } },
+          	{ "models/mapobjects/tree/training_tree3.md3",     180, shard_wood,  7, { -20,-20,  0 }, { 20,20,130 } },
+          	{ "models/mapobjects/tree/training_tree1.md3",     150, shard_wood,  6, { -18,-18,  0 }, { 18,18,120 } },
+          	{ "models/mapobjects/tree/tree_m09s.md3",          160, shard_wood,  6, { -18,-18,  0 }, { 18,18,130 } },
+          	{ "models/mapobjects/tree/training_tree2.md3",     160, shard_wood,  6, { -18,-18,  0 }, { 18,18,125 } },
+
+          	// Small vegetation remains generic breakable.
+          	{ "models/mapobjects/plants/bush2.md3",             12, shard_wood,    0, { -28,-28, 0 }, { 28,28,44 } },
+          	{ "models/mapobjects/plants/flowers1_no_pot.md3",    5, shard_wood,    0, { -12,-12, 0 }, { 12,12,28 } },
+          	{ "models/mapobjects/plants/flowers1.md3",            7, shard_ceramic, 2, { -14,-14, 0 }, { 14,14,32 } },
+
+          	// Vehicles: dedicated pain/sparks + wreck/smoke death path.
+          	{ "models/mapobjects/vehicles/staff_car.md3",       240, shard_metal, 10, { -70,-36,0 }, { 70,36,48 } },
+          	{ "models/mapobjects/vehicles/rocket_trans.md3",    400, shard_metal, 14, { -120,-52,0 }, { 120,52,72 } },
+
+          	// Other real retail misc_gamemodel props.
+          	{ "models/mapobjects/shield/shield.md3",             30, shard_metal,    7, { -22,-10,-26 }, { 22,10,26 } },
+          	{ "models/mapobjects/book/book.md3",                   4, shard_wood,     2, { -10,-8,0 }, { 10,8,4 } },
+          	{ "models/mapobjects/skull/skull_tilt1.md3",           6, shard_ceramic,  4, { -8,-8,-6 }, { 8,8,8 } },
+          	{ "models/mapobjects/toolshed/shovel.md3",             18, shard_metal,    5, { -38,-38,-6 }, { 38,38,6 } }
+          };
+
+          static const darkwolfRetailDecorationProfile_t s_darkwolfRetailDecorations[] = {
+          	{ "models/mapobjects/flag/flag.md3",                 12, shard_wood, 0, { -30,-30,0 }, { 30,30,100 } },
+          	{ "models/mapobjects/parachute/bjchute.md3",         20, shard_wood, 0, { -52,-52,-16 }, { 52,52,52 } },
+          	{ "models/mapobjects/flag/american.md3",             12, shard_wood, 0, { -30,-30,0 }, { 30,30,100 } },
+          	{ "models/mapobjects/flag/flag1a.md3",               12, shard_wood, 0, { -30,-30,0 }, { 30,30,100 } },
+          	{ "models/mapobjects/flag/flag1b.md3",               12, shard_wood, 0, { -30,-30,0 }, { 30,30,100 } },
+          	{ "models/mapobjects/flag/flag_escape.md3",          12, shard_wood, 0, { -30,-30,0 }, { 30,30,100 } },
+          	{ "models/mapobjects/torture/cage1.md3",             40, shard_metal,12, { -23,-23,0 }, { 23,23,256 } },
+          	{ "models/mapobjects/torture/cage2.md3",             40, shard_metal,12, { -23,-23,0 }, { 23,23,220 } },
+          	{ "models/mapobjects/curtain/2curt_lghtwind.md3",     14, shard_wood, 0, { -52,-52,0 }, { 52,52,112 } },
+          	{ "models/mapobjects/curtain/2curt_lghtwindb.md3",    14, shard_wood, 0, { -52,-52,0 }, { 52,52,112 } },
+          	{ "models/mapobjects/flag/british.md3",              12, shard_wood, 0, { -30,-30,0 }, { 30,30,100 } }
+          };
+
+          static const darkwolfPushableBModel_t s_darkwolfPushableWoodBModels[] = {
+          	{ "chateau", "*21"  }, { "chateau", "*76"  }, { "chateau", "*191" },
+          	{ "chateau", "*56"  }, { "chateau", "*57"  }, { "chateau", "*58"  },
+          	{ "chateau", "*132" }, { "chateau", "*133" }, { "chateau", "*134" },
+          	{ "chateau", "*135" }, { "chateau", "*136" },
+          	{ "escape2", "*205" }, { "escape2", "*206" }, { "escape2", "*207" },
+          	{ "escape2", "*208" }, { "escape2", "*209" }, { "escape2", "*210" },
+          	{ "escape2", "*211" }, { "escape2", "*215" },
+          	{ "factory", "*21" },
+          	{ "forest", "*42" }, { "forest", "*86" }, { "forest", "*93" }, { "forest", "*95" },
+          	{ "norway", "*1" }, { "norway", "*2" }
+          };
+
+          static qboolean DarkWolf_HasGameplayDependency( const gentity_t *ent ) {
+          	if ( !ent ) {
+          		return qtrue;
+          	}
+          	if ( ( ent->scriptName && ent->scriptName[0] ) ||
+          		 ( ent->targetname && ent->targetname[0] ) ||
+          		 ( ent->target && ent->target[0] ) ||
+          		 ( ent->team && ent->team[0] ) ) {
+          		return qtrue;
+          	}
+          	return qfalse;
+          }
+
+          static const darkwolfRetailModelProfile_t *DarkWolf_FindRetailGameModelProfile( const char *model ) {
+          	int i;
+          	if ( !model || !model[0] ) {
+          		return NULL;
+          	}
+          	for ( i = 0; i < (int)( sizeof( s_darkwolfRetailGameModels ) / sizeof( s_darkwolfRetailGameModels[0] ) ); ++i ) {
+          		if ( !Q_stricmp( model, s_darkwolfRetailGameModels[i].model ) ) {
+          			return &s_darkwolfRetailGameModels[i];
+          		}
+          	}
+          	return NULL;
+          }
+
+          static const darkwolfRetailDecorationProfile_t *DarkWolf_FindRetailDecorationProfile( const char *model ) {
+          	int i;
+          	if ( !model || !model[0] ) {
+          		return NULL;
+          	}
+          	for ( i = 0; i < (int)( sizeof( s_darkwolfRetailDecorations ) / sizeof( s_darkwolfRetailDecorations[0] ) ); ++i ) {
+          		if ( !Q_stricmp( model, s_darkwolfRetailDecorations[i].model ) ) {
+          			return &s_darkwolfRetailDecorations[i];
+          		}
+          	}
+          	return NULL;
+          }
+
+          static qboolean DarkWolf_IsRetailTreeModel( const char *model ) {
+          	if ( !model ) {
+          		return qfalse;
+          	}
+          	return ( !Q_stricmp( model, "models/mapobjects/tree/tree_m08.md3" ) ||
+          			 !Q_stricmp( model, "models/mapobjects/tree/tree_mp01.md3" ) ||
+          			 !Q_stricmp( model, "models/mapobjects/tree/tree_m07.md3" ) ||
+          			 !Q_stricmp( model, "models/mapobjects/tree/training_tree3.md3" ) ||
+          			 !Q_stricmp( model, "models/mapobjects/tree/training_tree1.md3" ) ||
+          			 !Q_stricmp( model, "models/mapobjects/tree/tree_m09s.md3" ) ||
+          			 !Q_stricmp( model, "models/mapobjects/tree/training_tree2.md3" ) );
+          }
+
+          static qboolean DarkWolf_IsRetailVehicleModel( const char *model ) {
+          	if ( !model ) {
+          		return qfalse;
+          	}
+          	return ( !Q_stricmp( model, "models/mapobjects/vehicles/staff_car.md3" ) ||
+          			 !Q_stricmp( model, "models/mapobjects/vehicles/rocket_trans.md3" ) );
+          }
+
+          static qboolean DarkWolf_IsRetailPushableWoodBModel( const gentity_t *ent ) {
+          	char mapname[MAX_QPATH];
+          	int i;
+
+          	if ( !ent || !ent->model || !ent->model[0] ) {
+          		return qfalse;
+          	}
+          	if ( DarkWolf_HasGameplayDependency( ent ) || ent->model2 ) {
+          		return qfalse;
+          	}
+          	if ( ent->spawnflags & ( 1 | 2 | 32 | 64 ) ) {
+          		return qfalse;
+          	}
+          	if ( ent->key != 0 || ent->health <= 0 ) {
+          		return qfalse;
+          	}
+
+          	trap_Cvar_VariableStringBuffer( "mapname", mapname, sizeof( mapname ) );
+          	for ( i = 0; i < (int)( sizeof( s_darkwolfPushableWoodBModels ) / sizeof( s_darkwolfPushableWoodBModels[0] ) ); ++i ) {
+          		if ( !Q_stricmp( mapname, s_darkwolfPushableWoodBModels[i].map ) &&
+          			 !Q_stricmp( ent->model, s_darkwolfPushableWoodBModels[i].bmodel ) ) {
+          			return qtrue;
+          		}
+          	}
+          	return qfalse;
+          }
+
+          static void DarkWolf_PlayBreakSoundForShardType( gentity_t *ent, int shardType ) {
+          	const char *sound = NULL;
+          	switch ( shardType ) {
+          	case shard_glass:   sound = "sound/world/glassbreak.wav"; break;
+          	case shard_metal:   sound = "sound/world/metalbreak.wav"; break;
+          	case shard_ceramic: sound = "sound/world/ceramicbreak.wav"; break;
+          	case shard_wood:    sound = "sound/world/boardbreak.wav"; break;
+          	default: break;
+          	}
+          	if ( sound ) {
+          		G_Sound( ent, G_SoundIndex( sound ) );
+          	}
+          }
+
+          void DarkWolf_RetailBreakableModel_Die( gentity_t *ent, gentity_t *inflictor, gentity_t *attacker, int damage, int mod ) {
+          	int quantity;
+          	int type;
+
+          	if ( !ent || !ent->inuse ) {
+          		return;
+          	}
+
+          	ent->takedamage = qfalse;
+          	ent->pain = NULL;
+          	ent->touch = NULL;
+
+          	quantity = (int)ent->wait;
+          	if ( quantity < 0 ) quantity = 0;
+          	if ( quantity > 20 ) quantity = 20;
+
+          	type = ent->count;
+          	if ( type < shard_glass || type > shard_rubble ) {
+          		type = shard_wood;
+          	}
+
+          	if ( quantity > 0 ) {
+          		Spawn_Shard( ent, inflictor, quantity, type );
+          		DarkWolf_PlayBreakSoundForShardType( ent, type );
+          	}
+
+          	G_UseTargets( ent, attacker );
+          	trap_UnlinkEntity( ent );
+          	ent->clipmask = 0;
+          	ent->r.contents = 0;
+          	G_FreeEntity( ent );
+          }
+
+          void DarkWolf_RetailTree_Pain( gentity_t *self, gentity_t *attacker, int damage, vec3_t point ) {
+          	if ( !self || self->is_dead || level.time < self->pain_debounce_time ) {
+          		return;
+          	}
+          	self->pain_debounce_time = level.time + 180;
+          	Spawn_Shard( self, attacker, damage >= 30 ? 2 : 1, shard_wood );
+          }
+
+          void DarkWolf_RetailTree_Die( gentity_t *ent, gentity_t *inflictor, gentity_t *attacker, int damage, int mod ) {
+          	vec3_t away;
+          	vec3_t forward;
+          	vec3_t right;
+          	vec3_t currentAngles;
+          	gentity_t *source;
+          	float fdot;
+          	float rdot;
+          	float angularSpeed;
+          	const int fallDuration = 1650;
+
+          	if ( !ent || !ent->inuse || ent->is_dead ) {
+          		return;
+          	}
+
+          	source = ( attacker && attacker != ent ) ? attacker :
+          			 ( ( inflictor && inflictor != ent ) ? inflictor : NULL );
+
+          	if ( source ) {
+          		VectorSubtract( ent->r.currentOrigin, source->r.currentOrigin, away );
+          		away[2] = 0.0f;
+          		if ( VectorNormalize( away ) < 0.01f ) {
+          			VectorSet( away, 1.0f, 0.0f, 0.0f );
+          		}
+          	} else {
+          		float yaw = (float)( ent->s.number * 47 % 360 ) * ( M_PI * 2.0f / 360.0f );
+          		VectorSet( away, cos( yaw ), sin( yaw ), 0.0f );
+          	}
+
+          	BG_EvaluateTrajectory( &ent->s.apos, level.time, currentAngles );
+          	AngleVectors( currentAngles, forward, right, NULL );
+          	forward[2] = 0.0f;
+          	right[2] = 0.0f;
+          	VectorNormalize( forward );
+          	VectorNormalize( right );
+
+          	fdot = DotProduct( away, forward );
+          	rdot = DotProduct( away, right );
+
+          	// TR_ACCELERATE displacement at duration is 0.5 * speed * seconds.
+          	// Choose speed so the final tilt magnitude is approximately 88 degrees.
+          	angularSpeed = ( 2.0f * 88.0f ) / ( fallDuration * 0.001f );
+
+          	VectorCopy( currentAngles, ent->s.apos.trBase );
+          	VectorClear( ent->s.apos.trDelta );
+          	ent->s.apos.trDelta[PITCH] = -fdot * angularSpeed;
+          	ent->s.apos.trDelta[ROLL]  =  rdot * angularSpeed;
+          	ent->s.apos.trType = TR_ACCELERATE;
+          	ent->s.apos.trTime = level.time;
+          	ent->s.apos.trDuration = fallDuration;
+
+          	ent->health = 0;
+          	ent->is_dead = qtrue;
+          	ent->takedamage = qfalse;
+          	ent->pain = NULL;
+          	ent->die = NULL;
+          	ent->touch = NULL;
+
+          	// Remove the old upright trunk/shot box while the visual model falls.
+          	// The fallen tree remains rendered for the rest of the level.
+          	ent->clipmask = 0;
+          	ent->r.contents = 0;
+          	VectorClear( ent->r.mins );
+          	VectorClear( ent->r.maxs );
+
+          	Spawn_Shard( ent, inflictor, 6, shard_wood );
+          	DarkWolf_PlayBreakSoundForShardType( ent, shard_wood );
+          	G_UseTargets( ent, attacker );
+          	trap_LinkEntity( ent );
+          }
+
+          static void DarkWolf_EmitVehicleSparks( gentity_t *ent, gentity_t *attacker, vec3_t point, int burst ) {
+          	gentity_t *tent;
+          	vec3_t org;
+          	vec3_t dir;
+
+          	if ( point ) {
+          		VectorCopy( point, org );
+          	} else {
+          		VectorCopy( ent->r.currentOrigin, org );
+          	}
+
+          	if ( attacker && attacker != ent ) {
+          		VectorSubtract( org, attacker->r.currentOrigin, dir );
+          		if ( VectorNormalize( dir ) < 0.01f ) {
+          			VectorSet( dir, 0, 0, 1 );
+          		}
+          	} else {
+          		VectorSet( dir, 0, 0, 1 );
+          	}
+
+          	tent = G_TempEntity( org, EV_SPARKS );
+          	VectorCopy( org, tent->s.origin );
+          	VectorCopy( dir, tent->s.angles );
+          	tent->s.density = burst;
+          	tent->s.frame = 450;
+          	tent->s.angles2[0] = 14;
+          	tent->s.angles2[1] = 14;
+          	tent->s.angles2[2] = 3;
+          }
+
+          void DarkWolf_RetailVehicle_Pain( gentity_t *self, gentity_t *attacker, int damage, vec3_t point ) {
+          	if ( !self || self->is_dead || level.time < self->pain_debounce_time ) {
+          		return;
+          	}
+          	self->pain_debounce_time = level.time + 160;
+          	DarkWolf_EmitVehicleSparks( self, attacker, point, damage >= 30 ? 10 : 6 );
+          }
+
+          void DarkWolf_RetailVehicleSmoke_Think( gentity_t *ent ) {
+          	gentity_t *tent;
+          	vec3_t org;
+
+          	if ( !ent || !ent->inuse || !ent->is_dead ) {
+          		return;
+          	}
+
+          	if ( level.time >= ent->timestamp ) {
+          		ent->think = NULL;
+          		ent->nextthink = 0;
+          		return;
+          	}
+
+          	VectorCopy( ent->r.currentOrigin, org );
+          	org[0] += crandom() * 8.0f;
+          	org[1] += crandom() * 8.0f;
+          	org[2] += ent->r.maxs[2] > 0 ? ent->r.maxs[2] * 0.55f : 24.0f;
+
+          	tent = G_TempEntity( org, EV_SMOKE );
+          	VectorCopy( org, tent->s.origin );
+          	tent->s.time = 2600;
+          	tent->s.time2 = 450;
+          	tent->s.density = 0;
+          	tent->s.angles2[0] = 5;
+          	tent->s.angles2[1] = 30;
+          	tent->s.angles2[2] = 45;
+
+          	ent->nextthink = level.time + 450 + ( ent->s.number % 5 ) * 35;
+          }
+
+          void DarkWolf_RetailVehicle_Die( gentity_t *ent, gentity_t *inflictor, gentity_t *attacker, int damage, int mod ) {
+          	vec3_t center;
+
+          	if ( !ent || !ent->inuse || ent->is_dead ) {
+          		return;
+          	}
+
+          	VectorCopy( ent->r.currentOrigin, center );
+          	center[2] += ent->r.maxs[2] > 0 ? ent->r.maxs[2] * 0.45f : 20.0f;
+
+          	DarkWolf_EmitVehicleSparks( ent, attacker, center, 18 );
+          	Spawn_Shard( ent, inflictor, 10, shard_metal );
+          	DarkWolf_PlayBreakSoundForShardType( ent, shard_metal );
+
+          	// Destroyed state: keep the same audited retail model as a persistent
+          	// wreck. No G_FreeEntity, no disappearing vehicle.
+          	ent->health = 0;
+          	ent->is_dead = qtrue;
+          	ent->takedamage = qfalse;
+          	ent->pain = NULL;
+          	ent->die = NULL;
+          	ent->touch = NULL;
+
+          	// Keep the original shot/trunk collision semantics. The six audited
+          	// retail vehicles have no map-authored trunk key, so this does not
+          	// introduce new player blocking compared with stock gameplay.
+          	ent->timestamp = level.time + 30000;
+          	ent->think = DarkWolf_RetailVehicleSmoke_Think;
+          	ent->nextthink = level.time + FRAMETIME;
+          	G_UseTargets( ent, attacker );
+          	trap_LinkEntity( ent );
+          }
+
+          void DarkWolf_PushableWoodBreakable_Touch( gentity_t *self, gentity_t *other, trace_t *trace ) {
+          	vec3_t center;
+          	vec3_t v;
+          	float height;
+
+          	if ( !g_darkwolfPushableWoodBreakables.integer ||
+          		 !self || !other || !other->client || !self->takedamage ) {
+          		return;
+          	}
+          	if ( other->s.groundEntityNum == self->s.number ) {
+          		return;
+          	}
+
+          	VectorAdd( self->r.absmin, self->r.absmax, center );
+          	VectorScale( center, 0.5f, center );
+          	height = self->r.absmax[2] - self->r.absmin[2];
+
+          	if ( other->r.currentOrigin[2] > self->r.absmin[2] + ( height * 0.85f ) ) {
+          		return;
+          	}
+
+          	VectorSubtract( center, other->r.currentOrigin, v );
+          	moveit( self, vectoyaw( v ), ( 20.0f * 0.75f * FRAMETIME ) * 0.001f );
+          }
+
+          void DarkWolf_ApplyRetailDestructiblePolicy( gentity_t *ent ) {
+          	const darkwolfRetailModelProfile_t *modelProfile;
+          	const darkwolfRetailDecorationProfile_t *decoProfile;
+          	qboolean isTree;
+          	qboolean isVehicle;
+
+          	if ( !ent || !ent->inuse || !ent->classname ) {
+          		return;
+          	}
+
+          	if ( !Q_stricmp( ent->classname, "misc_gamemodel" ) ) {
+          		float sx, sy, sz;
+
+          		modelProfile = DarkWolf_FindRetailGameModelProfile( ent->model );
+          		if ( !modelProfile ) {
+          			return;
+          	}
+
+          	// A saved fallen tree or destroyed vehicle must never be resurrected
+          	// by policy rehydration.
+          	if ( ent->is_dead ) {
+          			return;
+          	}
+
+          	isTree = DarkWolf_IsRetailTreeModel( ent->model );
+          	isVehicle = DarkWolf_IsRetailVehicleModel( ent->model );
+
+          	if ( !g_darkwolfCampaignDestructibles.integer ||
+          		 ( isTree && !g_darkwolfTreeFall.integer ) ||
+          		 ( isVehicle && !g_darkwolfVehicleDamage.integer ) ||
+          		 DarkWolf_HasGameplayDependency( ent ) ) {
+          		if ( ent->die == DarkWolf_RetailBreakableModel_Die ||
+          			 ent->die == DarkWolf_RetailTree_Die ||
+          			 ent->die == DarkWolf_RetailVehicle_Die ) {
+          			ent->die = NULL;
+          			ent->takedamage = qfalse;
+          			ent->isProp = qfalse;
+          		}
+          		if ( ent->pain == DarkWolf_RetailTree_Pain ||
+          			 ent->pain == DarkWolf_RetailVehicle_Pain ) {
+          			ent->pain = NULL;
+          		}
+          		if ( ent->r.contents == CONTENTS_CLIPSHOT ) {
+          			ent->r.contents = 0;
+          			ent->clipmask = 0;
+          			VectorClear( ent->r.mins );
+          			VectorClear( ent->r.maxs );
+          		}
+          		return;
+          	}
+
+          	if ( ent->health <= 0 ) {
+          		ent->health = modelProfile->health;
+          	}
+          	ent->wait = modelProfile->shardCount;
+          	ent->count = modelProfile->shardType;
+          	ent->isProp = qtrue;
+          	ent->takedamage = qtrue;
+
+          	if ( isTree ) {
+          		ent->pain = DarkWolf_RetailTree_Pain;
+          		ent->die = DarkWolf_RetailTree_Die;
+          	} else if ( isVehicle ) {
+          		ent->pain = DarkWolf_RetailVehicle_Pain;
+          		ent->die = DarkWolf_RetailVehicle_Die;
+          	} else {
+          		ent->pain = NULL;
+          		ent->die = DarkWolf_RetailBreakableModel_Die;
+          	}
+
+          	// Preserve map-authored trunk/solid collision. Otherwise add
+          	// shot-only collision: bullets interact, player movement is unchanged.
+          	if ( ent->r.contents == 0 || ent->r.contents == CONTENTS_CLIPSHOT ) {
+          		sx = (float)fabs( ent->s.angles2[0] );
+          		sy = (float)fabs( ent->s.angles2[1] );
+          		sz = (float)fabs( ent->s.angles2[2] );
+          		if ( sx < 0.01f ) sx = 1.0f;
+          		if ( sy < 0.01f ) sy = 1.0f;
+          		if ( sz < 0.01f ) sz = 1.0f;
+
+          		ent->r.contents = CONTENTS_CLIPSHOT;
+          		ent->clipmask = MASK_SHOT;
+          		VectorSet( ent->r.mins,
+          			modelProfile->mins[0] * sx,
+          			modelProfile->mins[1] * sy,
+          			modelProfile->mins[2] * sz );
+          		VectorSet( ent->r.maxs,
+          			modelProfile->maxs[0] * sx,
+          			modelProfile->maxs[1] * sy,
+          			modelProfile->maxs[2] * sz );
+          	}
+          	return;
+          	}
+
+          	if ( !Q_stricmp( ent->classname, "props_decoration" ) ) {
+          		decoProfile = DarkWolf_FindRetailDecorationProfile( ent->model2 );
+          		if ( !decoProfile ) {
+          			return;
+          		}
+
+          	if ( !g_darkwolfCampaignDestructibles.integer || DarkWolf_HasGameplayDependency( ent ) ) {
+          			if ( ent->die == props_decoration_death ) {
+          				ent->die = NULL;
+          				ent->takedamage = qfalse;
+          				ent->isProp = qfalse;
+          			}
+          			if ( ent->r.contents == CONTENTS_CLIPSHOT ) {
+          				ent->r.contents = 0;
+          				ent->clipmask = 0;
+          			}
+          			return;
+          		}
+
+          		if ( ent->health <= 0 ) {
+          			ent->health = decoProfile->health;
+          		}
+
+          		ent->spawnflags &= ~4;
+
+          		if ( decoProfile->shardCount > 0 ) {
+          			ent->spawnflags |= 2;
+          			ent->count = decoProfile->shardCount;
+          			ent->key = decoProfile->shardType;
+          		} else {
+          			ent->spawnflags &= ~2;
+          		}
+
+          		ent->isProp = qtrue;
+          		ent->takedamage = qtrue;
+          		ent->die = props_decoration_death;
+          		ent->clipmask = MASK_SHOT;
+          		ent->r.contents = CONTENTS_CLIPSHOT;
+          		ent->s.eType = ET_MOVER;
+          		VectorCopy( decoProfile->mins, ent->r.mins );
+          		VectorCopy( decoProfile->maxs, ent->r.maxs );
+          		return;
+          	}
+
+          	if ( !Q_stricmp( ent->classname, "func_explosive" ) ) {
+          		if ( g_darkwolfPushableWoodBreakables.integer && DarkWolf_IsRetailPushableWoodBModel( ent ) ) {
+          			ent->touch = DarkWolf_PushableWoodBreakable_Touch;
+          		} else if ( ent->touch == DarkWolf_PushableWoodBreakable_Touch ) {
+          			ent->touch = NULL;
+          		}
+          	}
+          }
+
+          '''
+          s = s.replace(anchor, policy + anchor, 1)
+
+          # Pre-stock and post-stock hooks for props_decoration.
+          s = replace_in_window(
+              s,
+              'void SP_props_decoration( gentity_t *ent ) {',
+              '/*QUAKED props_decorBRUSH',
+              '\n\tif ( ent->health ) {\n',
+              '\n\t// DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5\n'
+              '\t// Supply health for audited retail decorations before stock setup.\n'
+              '\tDarkWolf_ApplyRetailDestructiblePolicy( ent );\n\n'
+              '\tif ( ent->health ) {\n',
+              'props_decoration pre-health hook')
+
+          s = replace_in_window(
+              s,
+              'void SP_props_decoration( gentity_t *ent ) {',
+              '/*QUAKED props_decorBRUSH',
+              '\n\tif ( ent->spawnflags & 64 ) {\n',
+              '\n\t// DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5\n'
+              '\t// Restore profile collision/material after generic stock defaults.\n'
+              '\tDarkWolf_ApplyRetailDestructiblePolicy( ent );\n\n'
+              '\tif ( ent->spawnflags & 64 ) {\n',
+              'props_decoration post-health hook')
+          write(p_props, s)
+
+          # ------------------------------------------------------------------
+          # 3. misc_gamemodel hook after scale setup, before final link.
+          # ------------------------------------------------------------------
+          s = read(p_misc)
+          s = replace_in_window(
+              s,
+              'void SP_misc_gamemodel( gentity_t *ent ) {',
+              '//----(SA)',
+              '\ttrap_LinkEntity( ent );\n',
+              '\t// DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5\n'
+              '\tDarkWolf_ApplyRetailDestructiblePolicy( ent );\n'
+              '\ttrap_LinkEntity( ent );\n',
+              'misc_gamemodel retail policy hook')
+          write(p_misc, s)
+
+          # ------------------------------------------------------------------
+          # 4. func_explosive hook after stock type/health/death setup.
+          # ------------------------------------------------------------------
+          s = read(p_mover)
+          s = replace_in_window(
+              s,
+              'void SP_func_explosive( gentity_t *ent ) {',
+              '/*QUAKED func_invisible_user',
+              '\tent->die = func_explosive_explode;\n}',
+              '\tent->die = func_explosive_explode;\n\n'
+              '\t// DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5\n'
+              '\t// Exact map+submodel whitelist: movement only, stock destruction unchanged.\n'
+              '\tDarkWolf_ApplyRetailDestructiblePolicy( ent );\n'
+              '}',
+              'func_explosive push policy hook')
+          write(p_mover, s)
+
+          # ------------------------------------------------------------------
+          # 5. Savegame rehydration.
+          # ------------------------------------------------------------------
+          s = read(p_save)
+          s = replace_once(
+              s,
+              '\n\t// notify server of changes in position/orientation\n',
+              '\n\t// DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5\n'
+              '\t// Old saves bypass spawn functions; restore the audited policy.\n'
+              '\tDarkWolf_ApplyRetailDestructiblePolicy( ent );\n\n'
+              '\t// notify server of changes in position/orientation\n',
+              'savegame rehydration hook')
+          write(p_save, s)
+
+          # ------------------------------------------------------------------
+          # 6. Savegame function-pointer registry for new die/touch callbacks.
+          # ------------------------------------------------------------------
+          s = read(p_funcs)
+          s = replace_once(
+              s,
+              '{"Prop_Break_Sound", (byte *)Prop_Break_Sound},\n{"Spawn_Shard", (byte *)Spawn_Shard},\n',
+              '{"Prop_Break_Sound", (byte *)Prop_Break_Sound},\n'
+              '// DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5\n'
+              '{"DarkWolf_RetailBreakableModel_Die", (byte *)DarkWolf_RetailBreakableModel_Die},\n'
+              '{"DarkWolf_RetailTree_Pain", (byte *)DarkWolf_RetailTree_Pain},\n'
+              '{"DarkWolf_RetailTree_Die", (byte *)DarkWolf_RetailTree_Die},\n'
+              '{"DarkWolf_RetailVehicle_Pain", (byte *)DarkWolf_RetailVehicle_Pain},\n'
+              '{"DarkWolf_RetailVehicle_Die", (byte *)DarkWolf_RetailVehicle_Die},\n'
+              '{"DarkWolf_RetailVehicleSmoke_Think", (byte *)DarkWolf_RetailVehicleSmoke_Think},\n'
+              '{"DarkWolf_PushableWoodBreakable_Touch", (byte *)DarkWolf_PushableWoodBreakable_Touch},\n'
+              '{"Spawn_Shard", (byte *)Spawn_Shard},\n',
+              'save function registry')
+          write(p_funcs, s)
+
+          s = read(p_decs)
+          s = replace_once(
+              s,
+              'extern void Prop_Break_Sound ( gentity_t * ent ) ;\nextern void Spawn_Shard ( gentity_t * ent , gentity_t * inflictor , int quantity , int type ) ;\n',
+              'extern void Prop_Break_Sound ( gentity_t * ent ) ;\n'
+              '// DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5\n'
+              'extern void DarkWolf_RetailBreakableModel_Die ( gentity_t * ent , gentity_t * inflictor , gentity_t * attacker , int damage , int mod ) ;\n'
+              'extern void DarkWolf_RetailTree_Pain ( gentity_t * self , gentity_t * attacker , int damage , vec3_t point ) ;\n'
+              'extern void DarkWolf_RetailTree_Die ( gentity_t * ent , gentity_t * inflictor , gentity_t * attacker , int damage , int mod ) ;\n'
+              'extern void DarkWolf_RetailVehicle_Pain ( gentity_t * self , gentity_t * attacker , int damage , vec3_t point ) ;\n'
+              'extern void DarkWolf_RetailVehicle_Die ( gentity_t * ent , gentity_t * inflictor , gentity_t * attacker , int damage , int mod ) ;\n'
+              'extern void DarkWolf_RetailVehicleSmoke_Think ( gentity_t * ent ) ;\n'
+              'extern void DarkWolf_PushableWoodBreakable_Touch ( gentity_t * self , gentity_t * other , trace_t * trace ) ;\n'
+              'extern void Spawn_Shard ( gentity_t * ent , gentity_t * inflictor , int quantity , int type ) ;\n',
+              'save function declarations')
+          write(p_decs, s)
+
+          required = {
+              p_local: [
+                  'g_darkwolfCampaignDestructibles',
+                  'g_darkwolfPushableWoodBreakables',
+                  'DarkWolf_ApplyRetailDestructiblePolicy'
+              ],
+              p_main: [
+                  'g_darkwolfCampaignDestructibles',
+                  'g_darkwolfPushableWoodBreakables',
+                  'g_darkwolfTreeFall',
+                  'g_darkwolfVehicleDamage'
+              ],
+              p_props: [
+                  'DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5',
+                  'tree_m08.md3',
+                  'rocket_trans.md3',
+                  'cage1.md3',
+                  'flag_escape.md3',
+                  '{ "escape2", "*205" }',
+                  '{ "norway", "*2" }',
+                  'DarkWolf_RetailTree_Die',
+                  'DarkWolf_RetailVehicle_Pain',
+                  'DarkWolf_RetailVehicleSmoke_Think',
+                  'TR_ACCELERATE',
+                  'EV_SPARKS',
+                  'EV_SMOKE',
+                  'DarkWolf_PushableWoodBreakable_Touch',
+                  'CONTENTS_CLIPSHOT'
+              ],
+              p_misc: ['DarkWolf_ApplyRetailDestructiblePolicy( ent )'],
+              p_mover: ['Exact map+submodel whitelist', 'DarkWolf_ApplyRetailDestructiblePolicy( ent )'],
+              p_save: ['restore the audited policy'],
+              p_funcs: ['DarkWolf_RetailBreakableModel_Die', 'DarkWolf_RetailTree_Die', 'DarkWolf_RetailVehicle_Die', 'DarkWolf_RetailVehicleSmoke_Think', 'DarkWolf_PushableWoodBreakable_Touch'],
+              p_decs: ['DarkWolf_RetailBreakableModel_Die', 'DarkWolf_RetailTree_Die', 'DarkWolf_RetailVehicle_Die', 'DarkWolf_RetailVehicleSmoke_Think', 'DarkWolf_PushableWoodBreakable_Touch']
+          }
+          for p, needles in required.items():
+              text = read(p)
+              for needle in needles:
+                  if needle not in text:
+                      raise SystemExit(f'ERROR: final validation failed: {needle!r} missing from {p}')
+
+          print('Applied DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5')
+          PY_PATCHER
+
+          python3 "$PATCHER_NAME" source
+
+      - name: Static validate retail BSP destructibles RC v0.5
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          cat > expected_changed.txt <<'EOF_EXPECTED'
+          SP/code/game/g_func_decs.h
+          SP/code/game/g_funcs.h
+          SP/code/game/g_local.h
+          SP/code/game/g_main.c
+          SP/code/game/g_misc.c
+          SP/code/game/g_mover.c
+          SP/code/game/g_props.c
+          SP/code/game/g_save.c
+          EOF_EXPECTED
+          git -C source diff --name-only "$base_commit" -- | LC_ALL=C sort > actual_changed.txt
+          diff -u expected_changed.txt actual_changed.txt
+
+          grep -Fq 'DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5' source/SP/code/game/g_props.c
+          grep -Fq 'DarkWolf_RetailTree_Die' source/SP/code/game/g_props.c
+          grep -Fq 'TR_ACCELERATE' source/SP/code/game/g_props.c
+          grep -Fq 'DarkWolf_RetailVehicle_Pain' source/SP/code/game/g_props.c
+          grep -Fq 'DarkWolf_RetailVehicleSmoke_Think' source/SP/code/game/g_props.c
+          grep -Fq 'EV_SPARKS' source/SP/code/game/g_props.c
+          grep -Fq 'EV_SMOKE' source/SP/code/game/g_props.c
+          grep -Fq 'g_darkwolfTreeFall' source/SP/code/game/g_main.c
+          grep -Fq 'g_darkwolfVehicleDamage' source/SP/code/game/g_main.c
+          grep -Fq '{ "escape2", "*205" }' source/SP/code/game/g_props.c
+          grep -Fq '{ "norway", "*2" }' source/SP/code/game/g_props.c
+          grep -Fq 'DarkWolf_RetailVehicleSmoke_Think' source/SP/code/game/g_funcs.h
+          grep -Fq 'DarkWolf_ApplyRetailDestructiblePolicy( ent )' source/SP/code/game/g_mover.c
+          grep -Fq 'DarkWolf_ApplyRetailDestructiblePolicy( ent )' source/SP/code/game/g_misc.c
+          grep -Fq 'DarkWolf_ApplyRetailDestructiblePolicy( ent )' source/SP/code/game/g_save.c
+
+          test "$(grep -c '{ "models/mapobjects/' source/SP/code/game/g_props.c)" -ge 27 || {
+            echo "ERROR: retail model/decor profile count unexpectedly below 27" >&2
+            exit 1
+          }
+
+          if git -C source diff --name-only "$base_commit" -- | grep -E '^SP/code/(rend2|renderer|cgame)/'; then
+            echo "ERROR: renderer/cgame drift detected" >&2
+            exit 1
+          fi
+          echo "Retail BSP destructibles RC v0.5 static validation PASS"
+
+      - name: Generate delta and cumulative patches with replay validation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          rm -rf release-docs replay
+          mkdir -p release-docs
+
+          git -C source diff --binary "$base_commit" -- . > "release-docs/$DELTA_NAME"
+          git -C source diff --binary "$UPSTREAM_SHA" -- . > "release-docs/$CUMULATIVE_NAME"
+          test -s "release-docs/$DELTA_NAME"
+          test -s "release-docs/$CUMULATIVE_NAME"
+
+          git -C source worktree add -q --detach ../replay "$UPSTREAM_SHA"
+          git -C replay apply --check --binary --whitespace=nowarn "../release-docs/$CUMULATIVE_NAME"
+          git -C replay apply --binary --whitespace=nowarn "../release-docs/$CUMULATIVE_NAME"
+
+          for rel in \
+            SP/code/game/g_func_decs.h \
+            SP/code/game/g_funcs.h \
+            SP/code/game/g_local.h \
+            SP/code/game/g_main.c \
+            SP/code/game/g_misc.c \
+            SP/code/game/g_mover.c \
+            SP/code/game/g_props.c \
+            SP/code/game/g_save.c; do
+            cmp "source/$rel" "replay/$rel"
+          done
+          echo "Cumulative replay validation PASS"
+
+      - name: Build Windows x64 SP game DLL for retail BSP destructibles RC v0.5
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          (
+            cd source/SP
+            # DARKWOLF_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5_BUILD
+            # Game-code-only RC: preserve the exact accepted Unified V1 client,
+            # Rend2 renderer and cgame binaries. Rebuilding Rend2 from the
+            # cumulative patch is invalid because that historical artifact did
+            # not include its untracked generated/custom GLSL source files.
+            ./cross-make-mingw64.sh -j1 \
+              BUILD_CLIENT=0 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+              BUILD_BASEGAME=1 BUILD_RENDERER_REND2=0 USE_RENDERER_DLOPEN=1
+          )
+
+          build="source/SP/build/release-mingw32-x86_64"
+          test -s "$build/main/qagame_sp_x64.dll"
+          file "$build/main/qagame_sp_x64.dll" | grep -Eiq 'PE32\+|x86-64'
+          new_qagame_sha="$(sha256sum "$build/main/qagame_sp_x64.dll" | awk '{print $1}')"
+          test "$new_qagame_sha" != "$BASE_QAGAME_SHA256" || { echo "ERROR: qagame did not change" >&2; exit 1; }
+          printf '%s\n' "$new_qagame_sha" > .new_qagame_sha
+          echo "Build PASS: qagame=$new_qagame_sha"
+
+      - name: Package over exact Unified Production V1 without renderer drift
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          build="source/SP/build/release-mingw32-x86_64"
+          rm -rf dist
+          mkdir -p "dist/$RELEASE_BASENAME" dist/upload
+          stage="dist/$RELEASE_BASENAME"
+
+          cp -a "$base/." "$stage/"
+          cp "$build/main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cp "release-docs/$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "release-docs/$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+
+          cat > "$stage/docs/$AUDIT_NAME" <<'EOF_AUDIT'
+          DARKWOLF RETAIL BSP DESTRUCTIBLES RC V0.5
+          ==========================================
+
+          BASE
+          - DarkWolf ioRTCW Rend2 Unified Production V1.
+          - User-provided retail maps.zip audit: 32 BSP / 27,292 entities.
+          - Retains RC v0.4 broad 27-profile / 266-placement destructible coverage.
+          - Retains exact 26 pushable wooden func_explosive submodels.
+
+          TREE DESTRUCTION V0.5
+          - Seven audited tree models no longer disappear on death.
+          - Increased tree health so a tree requires sustained gunfire / heavier damage.
+          - Bullet damage emits small wood/bark shards with debounce.
+          - On death the fall direction is chosen away from attacker/inflictor.
+          - Angular trajectory uses TR_ACCELERATE for a slow-start / gravity-like fall.
+          - Final tilt is approximately 88 degrees.
+          - Upright trunk/shot collision is removed when the fall begins.
+          - The visual tree entity is NOT freed; it remains lying in the world.
+          - Save/load preserves is_dead and trajectory state.
+
+          VEHICLE DAMAGE V0.5
+          Retail dependency-free vehicles:
+          - staff_car.md3 (4 placements: dam/end/village2)
+          - rocket_trans.md3 (2 placements: assault)
+
+          Behavior:
+          damage
+            -> EV_SPARKS at impact point
+            -> health depletion
+            -> larger spark burst + metal debris + break sound
+            -> destroyed logical state (is_dead)
+            -> repeated EV_SMOKE for 30 seconds
+            -> original model remains permanently as wreck
+            -> no G_FreeEntity
+            -> wreck no longer takes damage
+
+          The uploaded retail BSP entities for these six vehicles have no trunk key.
+          RC v0.5 therefore preserves their original no-player-blocking semantics rather
+          than inventing a new large collision volume after destruction.
+
+          CVARS
+          - g_darkwolfCampaignDestructibles 0/1 (default 1)
+          - g_darkwolfPushableWoodBreakables 0/1 (default 1)
+          - g_darkwolfTreeFall 0/1 (default 1)
+          - g_darkwolfVehicleDamage 0/1 (default 1)
+
+          SCOPE
+          - qagame_sp_x64.dll only.
+          - renderer_sp_rend2_x64.dll remains byte-identical to Unified Production V1.
+          - Main/cgame_sp_x64.dll remains byte-identical to Unified Production V1.
+          - No lighting / StaticPromote / shadow / volumetric / Bloom / ToneMap changes.
+          EOF_AUDIT
+
+          cat > "$stage/docs/README_RETAIL_BSP_DESTRUCTIBLES_RC_V0_5_RU.txt" <<'EOF_README'
+          DarkWolf ioRTCW Rend2 - Retail BSP Destructibles RC v0.5
+
+          Деревья:
+          - после попаданий видны небольшие деревянные щепки;
+          - после исчерпания health дерево НЕ исчезает;
+          - дерево плавно ускоряясь падает в сторону от источника урона;
+          - после падения визуальная модель остаётся лежать до конца уровня.
+
+          Машины:
+          - попадания вызывают искры;
+          - после исчерпания health: крупный burst искр + металлические обломки;
+          - машина переходит в destroyed/wreck state;
+          - около 30 секунд идёт дым;
+          - wreck остаётся на карте и больше не получает damage.
+
+          Основные cvars:
+            /g_darkwolfCampaignDestructibles 1
+            /g_darkwolfPushableWoodBreakables 1
+            /g_darkwolfTreeFall 1
+            /g_darkwolfVehicleDamage 1
+
+          Рекомендуется начинать тест с map_restart.
+          EOF_README
+
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$(cat .new_qagame_sha)"
+
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          (cd dist && zip -q -r -9 "upload/$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/upload/$RELEASE_BASENAME.zip" > "dist/upload/$RELEASE_BASENAME.zip.sha256"
+
+          echo "renderer_sha256=$BASE_RENDERER_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo "cgame_sha256=$BASE_CGAME_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo "qagame_sha256=$(cat .new_qagame_sha)" >> "$GITHUB_STEP_SUMMARY"
+          echo "delta_sha256=$(sha256sum "release-docs/$DELTA_NAME" | awk '{print $1}')" >> "$GITHUB_STEP_SUMMARY"
+          echo "cumulative_sha256=$(sha256sum "release-docs/$CUMULATIVE_NAME" | awk '{print $1}')" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Retail BSP Destructibles RC v0.5 artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-ioRTCW-Rend2-Retail-BSP-Destructibles-RC-v0.5-Win64
+          path: dist/upload/
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Record artifact identifiers
+        shell: bash
+        run: |
+          echo "workflow_run_id=${GITHUB_RUN_ID}" >> "$GITHUB_STEP_SUMMARY"
+          echo "artifact_id=${{ steps.upload.outputs.artifact-id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "artifact_digest=${{ steps.upload.outputs.artifact-digest }}" >> "$GITHUB_STEP_SUMMARY"
