@@ -1,0 +1,260 @@
+name: DarkWolf ioRTCW Rend2 Elite Guard v0.5 Game Logic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - darkwolf-elite-guard-v0-5-game
+    paths:
+      - .github/workflows/DARKWOLF_IORTCW_REND2_ELITE_GUARD_V0_5_GAME.yml
+      - .github/scripts/apply_darkwolf_elite_guard_v0_5_game.py
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-elite-guard-v0-5-game
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64-sp:
+    name: Elite Guard v0.5 game logic over Ignitable Props RC v0.6
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      BASE_WORKFLOW: DARKWOLF_IORTCW_REND2_IGNITABLE_PROPS_RC_V0_6.yml
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Ignitable-Props-RC-v0.6-Win64
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch
+      PATCHER: .github/scripts/apply_darkwolf_elite_guard_v0_5_game.py
+      DELTA_NAME: darkwolf-elite-guard-v0-5-game-over-ignitable-props-rc-v0-6.patch
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-elite-guard-v0-5-game.patch
+      RELEASE_BASENAME: DarkWolf-ioRTCW-Rend2-Elite-Guard-v0.5-Game-Logic-Win64
+
+    steps:
+      - name: Checkout build repository
+        uses: actions/checkout@v4
+
+      - name: Install canonical MinGW and validation dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             binutils-mingw-w64-x86-64 build-essential ca-certificates             g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git             make mingw-w64 python3 python3-yaml unzip zip jq file
+
+      - name: Preflight
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -s "$PATCHER"
+          python3 -m py_compile "$PATCHER"
+          workflow_rel="${GITHUB_WORKFLOW_REF#${GITHUB_REPOSITORY}/}"
+          workflow_rel="${workflow_rel%@*}"
+          test -s "$workflow_rel"
+          python3 - "$workflow_rel" <<'PY'
+          from pathlib import Path
+          import sys, yaml
+          p = Path(sys.argv[1])
+          raw = p.read_bytes()
+          if b'\r' in raw:
+              raise SystemExit('ERROR: CR byte found')
+          doc = yaml.safe_load(raw.decode('utf-8'))
+          if doc.get('name') != 'DarkWolf ioRTCW Rend2 Elite Guard v0.5 Game Logic':
+              raise SystemExit('ERROR: workflow identity drift')
+          print('Preflight PASS')
+          PY
+
+      - name: Resolve latest successful Ignitable Props RC v0.6 base
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          runs="$(gh run list --repo "$GITHUB_REPOSITORY"             --workflow "$BASE_WORKFLOW" --branch main --status success --limit 10             --json databaseId,headSha,conclusion,createdAt)"
+          run_id="$(jq -r '.[0].databaseId // empty' <<<"$runs")"
+          head_sha="$(jq -r '.[0].headSha // empty' <<<"$runs")"
+          test -n "$run_id" && test -n "$head_sha" || {
+            echo 'ERROR: no successful Ignitable Props RC v0.6 run found' >&2
+            exit 1
+          }
+          printf '%s\n' "$run_id" > .base_run_id
+          printf '%s\n' "$head_sha" > .base_run_head_sha
+          echo "Base run: $run_id @ $head_sha"
+
+      - name: Download and verify current RC v0.6 package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_id="$(cat .base_run_id)"
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY"             --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+
+          mapfile -t zips < <(find base-artifact -maxdepth 1 -type f -name '*.zip' -print | LC_ALL=C sort)
+          test "${#zips[@]}" -eq 1 || {
+            echo "ERROR: expected one release ZIP, got ${#zips[@]}" >&2
+            exit 1
+          }
+          z="${zips[0]}"
+          unzip -tq "$z"
+          unzip -q "$z" -d base-release
+          mapfile -t roots < <(find base-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1
+          base="${roots[0]}"
+          printf '%s\n' "$base" > .base_stage_path
+
+          test -s "$base/docs/$BASE_CUMULATIVE_NAME"
+          test -s "$base/Main/qagame_sp_x64.dll"
+          test -s "$base/Main/cgame_sp_x64.dll"
+          test -s "$base/renderer_sp_rend2_x64.dll"
+          if test -s "$base/docs/SHA256SUMS.txt"; then
+            (cd "$base" && sha256sum -c docs/SHA256SUMS.txt)
+          fi
+          sha256sum "$base/Main/qagame_sp_x64.dll" | awk '{print $1}' > .base_qagame_sha
+          sha256sum "$base/Main/cgame_sp_x64.dll" | awk '{print $1}' > .base_cgame_sha
+          sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}' > .base_renderer_sha
+
+      - name: Reconstruct exact RC v0.6 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source reset -q --hard "$UPSTREAM_SHA"
+          git -C source clean -fdx
+
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" .base-cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../.base-cumulative.patch
+          git -C source apply --reverse --check --binary --whitespace=nowarn ../.base-cumulative.patch
+          grep -R -Fq 'DARKWOLF_IGNITABLE_PROPS_RC_V0_6' source/SP/code
+
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid'             commit -q -m 'Reconstructed exact Ignitable Props RC v0.6 source postimage'
+          git -C source rev-parse HEAD > .base_source_commit
+
+      - name: Apply production Elite Guard v0.5 runtime class
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 "$PATCHER" source
+          grep -Fq '{"ai_darkwolf_eliteguard", SP_ai_darkwolf_eliteguard}'             source/SP/code/game/g_spawn.c
+          grep -Fq 'ent->aiSkin = "darkwolf_eliteguard/default";'             source/SP/code/game/ai_cast_characters.c
+          grep -Fq 'AICast_DelayedSpawnCast( ent, AICHAR_BLACKGUARD );'             source/SP/code/game/ai_cast_characters.c
+
+          base_commit="$(cat .base_source_commit)"
+          mapfile -t changed < <(git -C source diff --name-only "$base_commit" -- | LC_ALL=C sort)
+          expected=$'SP/code/game/ai_cast_characters.c\nSP/code/game/g_func_decs.h\nSP/code/game/g_funcs.h\nSP/code/game/g_spawn.c'
+          actual="$(printf '%s\n' "${changed[@]}")"
+          test "$actual" = "$expected" || {
+            printf 'ERROR: source scope drift\n%s\n' "$actual" >&2
+            exit 1
+          }
+
+      - name: Generate validated patches
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base_commit="$(cat .base_source_commit)"
+          rm -rf release-docs replay
+          mkdir -p release-docs
+
+          git -C source diff --binary "$base_commit" -- . > "release-docs/$DELTA_NAME"
+          git -C source diff --binary "$UPSTREAM_SHA" -- . > "release-docs/$CUMULATIVE_NAME"
+          test -s "release-docs/$DELTA_NAME"
+          test -s "release-docs/$CUMULATIVE_NAME"
+
+          git -C source worktree add -q --detach ../replay "$UPSTREAM_SHA"
+          git -C replay apply --check --binary --whitespace=nowarn "../release-docs/$CUMULATIVE_NAME"
+          git -C replay apply --binary --whitespace=nowarn "../release-docs/$CUMULATIVE_NAME"
+
+          for rel in             SP/code/game/ai_cast_characters.c             SP/code/game/g_spawn.c             SP/code/game/g_funcs.h             SP/code/game/g_func_decs.h; do
+            cmp "source/$rel" "replay/$rel"
+          done
+
+      - name: Build Windows x64 SP qagame
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          (
+            cd source/SP
+            ./cross-make-mingw64.sh -j1               BUILD_CLIENT=0 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0               BUILD_BASEGAME=1 BUILD_RENDERER_REND2=0 USE_RENDERER_DLOPEN=1
+          )
+
+          build="source/SP/build/release-mingw32-x86_64"
+          test -s "$build/main/qagame_sp_x64.dll"
+          file "$build/main/qagame_sp_x64.dll" | grep -Eiq 'PE32\+|x86-64'
+          new_qagame_sha="$(sha256sum "$build/main/qagame_sp_x64.dll" | awk '{print $1}')"
+          test "$new_qagame_sha" != "$(cat .base_qagame_sha)"
+          printf '%s\n' "$new_qagame_sha" > .new_qagame_sha
+
+      - name: Package game-logic release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_stage_path)"
+          build="source/SP/build/release-mingw32-x86_64"
+          rm -rf dist
+          mkdir -p "dist/$RELEASE_BASENAME" dist/upload
+          stage="dist/$RELEASE_BASENAME"
+
+          cp -a "$base/." "$stage/"
+          cp "$build/main/qagame_sp_x64.dll" "$stage/Main/qagame_sp_x64.dll"
+          cp "release-docs/$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+          cp "release-docs/$CUMULATIVE_NAME" "$stage/docs/$CUMULATIVE_NAME"
+
+          cat > "$stage/docs/README_ELITE_GUARD_V0_5_GAME_LOGIC_RU.txt" <<'EOF'
+          DarkWolf Elite Guard v0.5 - game logic
+
+          Добавлен отдельный classname:
+            ai_darkwolf_eliteguard
+
+          Он использует боевое поведение/анимационный профиль BlackGuard,
+          но загружает выделенную модель:
+            models/players/darkwolf_eliteguard
+            skin: default
+            head: default
+
+          После установки визуального PK3 проверка:
+            /aicast spawn ai_darkwolf_eliteguard
+
+          Существующие ai_blackguard и другие NPC кампании не заменяются.
+          EOF
+
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$(cat .base_renderer_sha)"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$(cat .base_cgame_sha)"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$(cat .new_qagame_sha)"
+
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 |             LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+
+          (cd dist && zip -q -r -9 "upload/$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/upload/$RELEASE_BASENAME.zip" >             "dist/upload/$RELEASE_BASENAME.zip.sha256"
+
+          echo "base_run_id=$(cat .base_run_id)" >> "$GITHUB_STEP_SUMMARY"
+          echo "base_run_head_sha=$(cat .base_run_head_sha)" >> "$GITHUB_STEP_SUMMARY"
+          echo "qagame_sha256=$(cat .new_qagame_sha)" >> "$GITHUB_STEP_SUMMARY"
+          echo "renderer/cgame preserved from RC v0.6" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Elite Guard v0.5 game-logic artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-ioRTCW-Rend2-Elite-Guard-v0.5-Game-Logic-Win64
+          path: dist/upload/
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Record artifact identifiers
+        shell: bash
+        run: |
+          echo "workflow_run_id=${GITHUB_RUN_ID}" >> "$GITHUB_STEP_SUMMARY"
+          echo "artifact_id=${{ steps.upload.outputs.artifact-id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "artifact_digest=${{ steps.upload.outputs.artifact-digest }}" >> "$GITHUB_STEP_SUMMARY"
