@@ -1,0 +1,141 @@
+name: DarkWolf RTCW Character Studio v0.1
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_repository:
+        description: "Private repo containing players.zip as release asset or repository file"
+        required: true
+        default: "jaha2002-stack/DarkWolfRTCW-CharacterAssets"
+      asset_ref:
+        description: "Git ref when players.zip is stored in repository contents"
+        required: false
+        default: "main"
+      asset_path:
+        description: "Repository path to players.zip"
+        required: false
+        default: "players.zip"
+      donor:
+        description: "Donor player family"
+        required: true
+        default: "blackguard"
+
+permissions:
+  contents: read
+
+jobs:
+  eliteguard-roundtrip:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      BLENDER_VERSION: "2.93.18"
+      REMT_REPO: "https://github.com/mino-git/rtcw-wet-blender-model-tools.git"
+      REMT_SHA: "77ab6b10e1098495addb9801125cea6a1e026051"
+
+    steps:
+      - name: Checkout Character Studio scripts
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl git jq unzip xz-utils \
+            libx11-6 libxi6 libxrender1 libxfixes3 libxkbcommon0 \
+            libgl1 libegl1 libsm6 libice6
+
+      - name: Download pinned Blender
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          url="https://download.blender.org/release/Blender2.93/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          curl -fL --retry 4 --retry-all-errors "$url" -o blender.tar.xz
+          tar -xf blender.tar.xz
+          mv "blender-${BLENDER_VERSION}-linux-x64" blender
+          ./blender/blender --version | head -n 2
+
+      - name: Checkout pinned RtCW ET Blender Model Tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone -q "$REMT_REPO" remt
+          git -C remt checkout -q --detach "$REMT_SHA"
+          test "$(git -C remt rev-parse HEAD)" = "$REMT_SHA"
+
+      - name: Acquire private player assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_REPO: ${{ inputs.asset_repository }}
+          ASSET_REF: ${{ inputs.asset_ref }}
+          ASSET_PATH: ${{ inputs.asset_path }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p private-assets
+          # This succeeds when the workflow token has read access to the private
+          # asset repository. No retail assets are written to the public repo.
+          gh api "/repos/${ASSET_REPO}/contents/${ASSET_PATH}?ref=${ASSET_REF}" \
+            --jq '.content' | tr -d '\n' | base64 -d > private-assets/players.zip
+          test -s private-assets/players.zip
+          unzip -tq private-assets/players.zip
+          sha256sum private-assets/players.zip > private-assets/players.zip.sha256
+
+      - name: Extract requested donor only
+        shell: bash
+        env:
+          DONOR: ${{ inputs.donor }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf donor
+          mkdir -p donor
+          unzip -q private-assets/players.zip "players/${DONOR}/*" -d donor
+          test -s "donor/players/${DONOR}/body.mds"
+          find "donor/players/${DONOR}" -maxdepth 2 -type f -print | LC_ALL=C sort
+
+      - name: Blender MDS import export round-trip
+        shell: bash
+        env:
+          DONOR: ${{ inputs.donor }}
+          REMT_REPO_ROOT: ${{ github.workspace }}/remt
+        run: |
+          set -Eeuo pipefail
+          rm -rf studio-out
+          mkdir -p studio-out
+          ./blender/blender --background --factory-startup \
+            --python tools/character_studio/character_studio_roundtrip.py -- \
+            "donor/players/${DONOR}/body.mds" \
+            "studio-out" \
+            0
+          test -s studio-out/roundtrip_work.blend
+          test -s studio-out/roundtrip_body.mds
+          test -s studio-out/ROUNDTRIP_AUDIT.txt
+          grep -Fq 'Result: PASS' studio-out/ROUNDTRIP_AUDIT.txt
+          test -s studio-out/preview/front.png
+          test -s studio-out/preview/back.png
+          test -s studio-out/preview/left.png
+          test -s studio-out/preview/three_quarter.png
+
+      - name: Package audit only
+        shell: bash
+        env:
+          DONOR: ${{ inputs.donor }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p upload
+          cp studio-out/ROUNDTRIP_AUDIT.txt upload/
+          cp studio-out/roundtrip_audit.json upload/
+          cp studio-out/roundtrip_work.blend upload/
+          cp studio-out/roundtrip_body.mds upload/
+          cp -a studio-out/preview upload/
+          sha256sum upload/* 2>/dev/null || true
+          cat studio-out/ROUNDTRIP_AUDIT.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Character Studio round-trip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-Character-Studio-v0.1-${{ inputs.donor }}
+          path: upload/
+          if-no-files-found: error
+          compression-level: 6
