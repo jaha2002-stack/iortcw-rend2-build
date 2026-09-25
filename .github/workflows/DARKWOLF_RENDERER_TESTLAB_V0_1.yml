@@ -44,8 +44,9 @@ jobs:
       SHADER_DONOR_PATCH_SHA256: cb8379d56e57ec83be75251756ecea781dc9d2c6d66620e17fb56538ba157d97
       EVIDENCE_NAME: DarkWolfRTCW-Renderer-TestLab-v0.1-Evidence
       TEST_BUILD_NAME: DarkWolfRTCW-Renderer-TestLab-v0.1-Linux-x64
-      ASSETS_URL: ${{ secrets.DARKWOLF_RTCW_ASSETS_URL }}
-      ASSETS_SHA256: ${{ secrets.DARKWOLF_RTCW_ASSETS_SHA256 }}
+      ASSET_REPO: jaha2002-stack/DarkWolfRTCW-TestAssets
+      ASSET_RELEASE_TAG: rtcw-retail-v1
+      ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -217,25 +218,25 @@ jobs:
       - name: Prepare protected retail assets
         id: assets
         shell: bash
+        env:
+          GH_TOKEN: ${{ env.ASSET_TOKEN }}
         run: |
           set -Eeuo pipefail
-          if [ -z "${ASSETS_URL:-}" ]; then
-            echo 'BLOCKED_MISSING_RETAIL_ASSETS' > evidence/runtime-status.txt
+          if [ -z "${ASSET_TOKEN:-}" ]; then
+            echo 'BLOCKED_MISSING_RETAIL_ASSET_TOKEN' > evidence/runtime-status.txt
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Retail assets not configured; runtime map tests correctly gated."
+            echo "Private RTCW asset token is not configured; runtime map tests correctly gated."
             exit 0
           fi
-          mkdir -p protected-assets
-          curl --fail --location --retry 3 "$ASSETS_URL" -o protected-assets/rtcw-assets.zip
-          if [ -n "${ASSETS_SHA256:-}" ]; then
-            echo "$ASSETS_SHA256  protected-assets/rtcw-assets.zip" | sha256sum -c -
-          fi
-          unzip -q protected-assets/rtcw-assets.zip -d protected-assets/unpacked
-          pak0="$(find protected-assets/unpacked -type f -iname 'pak0.pk3' -print -quit)"
-          test -n "$pak0" || { echo 'ERROR: retail asset bundle contains no pak0.pk3' >&2; exit 1; }
-          dirname "$pak0" > .retail_main
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh "$ASSET_REPO" "$ASSET_RELEASE_TAG" protected-assets | tail -1)"
+          test -n "$retail_main"
+          test -d "$retail_main"
+          printf '%s\n' "$retail_main" > .retail_main
+          cp protected-assets/release-assets.txt evidence/retail-release-assets.txt
+          cp protected-assets/pk3-files.txt evidence/retail-pk3-files.txt
+          cp protected-assets/release/rtcw-assets.sha256 evidence/retail-assets.sha256
           echo "available=true" >> "$GITHUB_OUTPUT"
-          echo "Retail asset gate PASS"
+          echo "Private release multipart retail asset gate PASS"
 
       - name: Assemble native runtime
         if: steps.assets.outputs.available == 'true'
