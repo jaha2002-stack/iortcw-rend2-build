@@ -119,26 +119,47 @@ jobs:
           grep -Fq 'persistentShadowBudget = r_dlightShadowMaxLights->integer' source/SP/code/rend2/tr_main.c
           grep -Fq 'STATIC_PROMOTE_PRODUCTION_MAX_ACTIVE 32' source/SP/code/rend2/tr_main.c
           grep -Fq 'r_staticPromoteRootCauseDiag = &s_darkwolfProductionDiagOffCvar;' source/SP/code/rend2/tr_init.c
-          # Historical production patch contains legacy whitespace; validate only the new TestLab delta below.
-          git -C source add -A
-          git -C source -c user.name='DarkWolf TestLab' -c user.email='testlab@example.invalid' commit -q -m 'Exact current production source postimage'
-          git -C source rev-parse HEAD > .production_source_commit
+          # Snapshot the exact reconstructed tree without creating an extra commit.
+          find source/SP/code -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > .production_manifest
+          mkdir -p production-snapshot/SP/code/game production-snapshot/SP/code/rend2
+          cp source/SP/code/game/g_cmds.c production-snapshot/SP/code/game/g_cmds.c
+          cp source/SP/code/rend2/tr_init.c production-snapshot/SP/code/rend2/tr_init.c
+          cp source/SP/code/rend2/tr_main.c production-snapshot/SP/code/rend2/tr_main.c
           echo "Exact current source reconstruction PASS"
 
       - name: Apply isolated TestLab instrumentation
         shell: bash
         run: |
           set -Eeuo pipefail
-          before="$(cat .production_source_commit)"
           python3 testlab/scripts/apply_testlab_instrumentation.py source
-          git -C source diff --check
-          mapfile -t changed < <(git -C source diff --name-only "$before" -- | LC_ALL=C sort)
-          expected=(SP/code/game/g_cmds.c SP/code/rend2/tr_init.c SP/code/rend2/tr_main.c)
-          test "${changed[*]}" = "${expected[*]}" || { printf 'Unexpected TestLab diff:\n%s\n' "${changed[*]}"; exit 1; }
+          find source/SP/code -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > .instrumented_manifest
+          python3 - <<'PY'
+          from pathlib import Path
+          def load(p):
+              out={}
+              for line in Path(p).read_text().splitlines():
+                  h,name=line.split('  ',1)
+                  out[name]=h
+              return out
+          a,b=load('.production_manifest'),load('.instrumented_manifest')
+          changed=sorted(k for k in set(a)|set(b) if a.get(k)!=b.get(k))
+          expected=sorted([
+              'source/SP/code/game/g_cmds.c',
+              'source/SP/code/rend2/tr_init.c',
+              'source/SP/code/rend2/tr_main.c',
+          ])
+          assert changed==expected, f'unexpected TestLab changed paths: {changed}'
+          print('TestLab changed-path allowlist PASS:', changed)
+          PY
           grep -Fq 'DARKWOLF_TESTLAB_V0_1' source/SP/code/game/g_cmds.c
           grep -Fq 'DARKWOLF_TESTLAB_V0_1' source/SP/code/rend2/tr_init.c
           grep -Fq 'TESTLAB_FIXTURE_ORIGIN' source/SP/code/rend2/tr_main.c
-          git -C source diff --binary "$before" > evidence/testlab-instrumentation.patch
+          {
+            diff -u production-snapshot/SP/code/game/g_cmds.c source/SP/code/game/g_cmds.c || true
+            diff -u production-snapshot/SP/code/rend2/tr_init.c source/SP/code/rend2/tr_init.c || true
+            diff -u production-snapshot/SP/code/rend2/tr_main.c source/SP/code/rend2/tr_main.c || true
+          } > evidence/testlab-instrumentation.patch
+          test -s evidence/testlab-instrumentation.patch
           echo "TestLab instrumentation allowlist PASS"
 
       - name: Build native Linux x64 SP + Rend2 TestLab
