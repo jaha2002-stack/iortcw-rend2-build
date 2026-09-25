@@ -7,7 +7,7 @@ tr_init = root/"SP/code/rend2/tr_init.c"
 tr_main = root/"SP/code/rend2/tr_main.c"
 g_cmds = root/"SP/code/game/g_cmds.c"
 
-for p in (tr_init,tr_main,g_cmds):
+for p in (tr_init,tr_main,tr_scene,g_cmds):
     if not p.is_file():
         raise SystemExit(f"missing source file: {p}")
 
@@ -53,7 +53,7 @@ insert='''    // DARKWOLF_TESTLAB_V0_1: machine-readable discovery record.
 
     ri.Printf(PRINT_ALL,
         "USLRD_RC_FRONT ms=%d map=%s fixture=%d'''
-one(tr_main,anchor,insert,"fixture origin telemetry")
+one(tr_scene,anchor,insert,"fixture origin telemetry")
 
 # Full 6-DOF view placement, intentionally only present in TestLab qagame.
 cmd_anchor='''/*
