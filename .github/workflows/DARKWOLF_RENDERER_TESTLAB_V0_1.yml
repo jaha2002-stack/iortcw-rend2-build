@@ -1,0 +1,307 @@
+name: DarkWolfRTCW Renderer TestLab v0.1
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ testlab-v0.1 ]
+    paths:
+      - '.github/workflows/DARKWOLF_RENDERER_TESTLAB_V0_1.yml'
+      - 'testlab/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-renderer-testlab-v0-1
+  cancel-in-progress: false
+
+jobs:
+  testlab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      BASE_RUN_ID: "36132076583"
+      BASE_HEAD_SHA: c2550b0a3e8e2ad49cc561d34c5c121d5768af8c
+      BASE_ARTIFACT_ID: "10862130986"
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Final-Native-Settings-Win64
+      BASE_ARTIFACT_DIGEST: sha256:776cd253a2ffb7fef5f47fcc4e7b63780d06ca868f576a735a673f1fff9be945
+      BASE_INNER_SHA256: 35b223998125c3dad60599df54c66a954d8cdd0cb5a52d0097e8149d644e0370
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch
+      CUMULATIVE_SHA256: 2c1da09485d489bca253eef8c7626d7417d5493fee493c2d83ffb7c6b7048d0c
+      UI_DELTA_NAME: darkwolf-settings-ui-v3-native-source-delta.patch
+      UI_DELTA_SHA256: 1bff105e21e78fcc5463e2f6082d31e09e9cc12e2ec27c5090cf58758ed0c783
+      PRODUCTION_RENDERER_SHA256: 92b1db33486ea2dd7d04ccda8f3030692578a13569440f100b677b63b7a6e6d2
+      EVIDENCE_NAME: DarkWolfRTCW-Renderer-TestLab-v0.1-Evidence
+      TEST_BUILD_NAME: DarkWolfRTCW-Renderer-TestLab-v0.1-Linux-x64
+      ASSETS_URL: ${{ secrets.DARKWOLF_RTCW_ASSETS_URL }}
+      ASSETS_SHA256: ${{ secrets.DARKWOLF_RTCW_ASSETS_SHA256 }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install TestLab dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl gh git jq python3 python3-yaml unzip zip file \
+            xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 -m py_compile testlab/scripts/*.py
+
+      - name: Verify workflow and scenario schema
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json, pathlib, yaml
+          wf=pathlib.Path('.github/workflows/DARKWOLF_RENDERER_TESTLAB_V0_1.yml')
+          d=yaml.safe_load(wf.read_text())
+          assert d['name']=='DarkWolfRTCW Renderer TestLab v0.1'
+          base=json.loads(pathlib.Path('testlab/baseline/current.json').read_text())
+          sc=json.loads(pathlib.Path('testlab/scenarios/escape1_staticpromote.json').read_text())
+          assert base['runtime_contract']['r_staticPromoteMaxLights']==32
+          assert base['runtime_contract']['r_dlightShadowMaxLights']==3
+          assert sc['assertions']['max_shadow_slot_exclusive']==3
+          assert {x['fixture'] for x in sc['fixtures']}=={918,782}
+          print('TestLab schema PASS')
+          PY
+
+      - name: Verify and download exact production baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run_json")" = "$BASE_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run_json")" = success
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          IFS=$'\t' read -r n expired digest <<<"$row"
+          test "$n" = "$BASE_ARTIFACT_NAME"
+          test "$expired" = false
+          test "$digest" = "$BASE_ARTIFACT_DIGEST"
+          mkdir -p base-artifact base-release evidence
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          outer="base-artifact/$BASE_ARTIFACT_NAME.zip"
+          test -s "$outer"
+          test "$(sha256sum "$outer" | awk '{print $1}')" = "$BASE_INNER_SHA256"
+          unzip -q "$outer" -d base-release
+          base="$(find base-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$base"
+          echo "$base" > .base
+          test "$(sha256sum "$base/docs/$CUMULATIVE_NAME"|awk '{print $1}')" = "$CUMULATIVE_SHA256"
+          test "$(sha256sum "$base/docs/$UI_DELTA_NAME"|awk '{print $1}')" = "$UI_DELTA_SHA256"
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll"|awk '{print $1}')" = "$PRODUCTION_RENDERER_SHA256"
+          cp testlab/baseline/current.json evidence/baseline.json
+          echo "Production baseline provenance PASS"
+
+      - name: Reconstruct exact current source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          cp "$base/docs/$CUMULATIVE_NAME" cumulative.patch
+          cp "$base/docs/$UI_DELTA_NAME" ui.patch
+          git -C source apply --check --binary --whitespace=nowarn ../cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../ui.patch
+          git -C source apply --binary --whitespace=nowarn ../ui.patch
+          grep -Fq 'r_staticPromoteMaxLights = ri.Cvar_Get( "r_staticPromoteMaxLights", "32"' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_dlightShadowMaxLights = ri.Cvar_Get( "r_dlightShadowMaxLights", "3"' source/SP/code/rend2/tr_init.c
+          grep -Fq 'persistentShadowBudget = r_dlightShadowMaxLights->integer' source/SP/code/rend2/tr_main.c
+          grep -Fq 'STATIC_PROMOTE_PRODUCTION_MAX_ACTIVE 32' source/SP/code/rend2/tr_main.c
+          grep -Fq 'r_staticPromoteRootCauseDiag = &s_darkwolfProductionDiagOffCvar;' source/SP/code/rend2/tr_init.c
+          git -C source diff --check
+          git -C source add -A
+          git -C source -c user.name='DarkWolf TestLab' -c user.email='testlab@example.invalid' commit -q -m 'Exact current production source postimage'
+          git -C source rev-parse HEAD > .production_source_commit
+          echo "Exact current source reconstruction PASS"
+
+      - name: Apply isolated TestLab instrumentation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          before="$(cat .production_source_commit)"
+          python3 testlab/scripts/apply_testlab_instrumentation.py source
+          git -C source diff --check
+          mapfile -t changed < <(git -C source diff --name-only "$before" -- | LC_ALL=C sort)
+          expected=(SP/code/game/g_cmds.c SP/code/rend2/tr_init.c SP/code/rend2/tr_main.c)
+          test "${changed[*]}" = "${expected[*]}" || { printf 'Unexpected TestLab diff:\n%s\n' "${changed[*]}"; exit 1; }
+          grep -Fq 'DARKWOLF_TESTLAB_V0_1' source/SP/code/game/g_cmds.c
+          grep -Fq 'DARKWOLF_TESTLAB_V0_1' source/SP/code/rend2/tr_init.c
+          grep -Fq 'TESTLAB_FIXTURE_ORIGIN' source/SP/code/rend2/tr_main.c
+          git -C source diff --binary "$before" > evidence/testlab-instrumentation.patch
+          echo "TestLab instrumentation allowlist PASS"
+
+      - name: Build native Linux x64 SP + Rend2 TestLab
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          exe="$(find source/SP/build -type f -name 'ioWolfSP.*' -perm -111 -print | head -1)"
+          if [ -z "$exe" ]; then exe="$(find source/SP/build -type f -name 'ioWolfSP*' -perm -111 -print | head -1)"; fi
+          test -n "$exe" && test -x "$exe"
+          buildroot="$(dirname "$exe")"
+          echo "$exe" > .native_exe
+          echo "$buildroot" > .native_root
+          find "$buildroot" -maxdepth 2 -type f -print | LC_ALL=C sort > evidence/native-build-files.txt
+          file "$exe" | tee evidence/native-executable.txt
+          echo "Native TestLab compile PASS"
+
+      - name: Prepare protected retail assets
+        id: assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${ASSETS_URL:-}" ]; then
+            echo 'BLOCKED_MISSING_RETAIL_ASSETS' > evidence/runtime-status.txt
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Retail assets not configured; runtime map tests correctly gated."
+            exit 0
+          fi
+          mkdir -p protected-assets
+          curl --fail --location --retry 3 "$ASSETS_URL" -o protected-assets/rtcw-assets.zip
+          if [ -n "${ASSETS_SHA256:-}" ]; then
+            echo "$ASSETS_SHA256  protected-assets/rtcw-assets.zip" | sha256sum -c -
+          fi
+          unzip -q protected-assets/rtcw-assets.zip -d protected-assets/unpacked
+          pak0="$(find protected-assets/unpacked -type f -iname 'pak0.pk3' -print -quit)"
+          test -n "$pak0" || { echo 'ERROR: retail asset bundle contains no pak0.pk3' >&2; exit 1; }
+          dirname "$pak0" > .retail_main
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          echo "Retail asset gate PASS"
+
+      - name: Assemble native runtime
+        if: steps.assets.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf runtime home
+          mkdir -p runtime/Main home evidence/screenshots
+          buildroot="$(cat .native_root)"
+          cp -a "$buildroot/." runtime/
+          retail="$(cat .retail_main)"
+          find "$retail" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/Main/ \;
+          test -s runtime/Main/pak0.pk3 || test -s runtime/Main/PAK0.PK3
+          echo "Runtime assembly PASS"
+
+      - name: Runtime pass 1 - discover fixture origins
+        if: steps.assets.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          exe_rel="$(python3 - <<'PY'
+          from pathlib import Path
+          root=Path('runtime')
+          c=[p for p in root.glob('ioWolfSP*') if p.is_file()]
+          print(c[0] if c else '')
+          PY
+          )"
+          test -n "$exe_rel"
+          chmod +x "$exe_rel"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout 90s "$exe_rel" \
+            +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
+            +set com_introplayed 1 +set logfile 2 +set r_fullscreen 0 \
+            +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
+            +set r_staticPromoteMaxLights 32 +set r_dlightShadowMaxLights 3 \
+            +set r_staticPromoteUnifiedDiag 1 +set r_staticPromoteRootCauseDiag 1 \
+            +set r_staticPromoteRootCauseFocus 918 +set r_staticPromoteRootCauseSampleMs 100 \
+            +set r_staticPromotePhysicalGroupDiag 1 +spdevmap escape1 +wait 480 +quit
+          rc=$?
+          set -e
+          echo "$rc" > evidence/probe-exit-code.txt
+          qlog="$(find home -type f -iname 'qconsole.log' -print -quit)"
+          test -n "$qlog" || { find home -maxdepth 4 -type f -print; exit 1; }
+          cp "$qlog" evidence/probe-qconsole.log
+          grep -Fq 'TESTLAB_FIXTURE_ORIGIN map=escape1 fixture=918' evidence/probe-qconsole.log
+          python3 testlab/scripts/make_ring_cfg.py evidence/probe-qconsole.log testlab/scenarios/escape1_staticpromote.json runtime/Main/testlab_ring.cfg
+          echo "Runtime discovery PASS"
+
+      - name: Runtime pass 2 - deterministic ring capture
+        if: steps.assets.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          exe="$(find runtime -maxdepth 1 -type f -name 'ioWolfSP*' -print -quit)"
+          rm -f home/Main/qconsole.log
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout 180s "$exe" \
+            +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
+            +set com_introplayed 1 +set logfile 2 +set r_fullscreen 0 \
+            +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
+            +spdevmap escape1 +wait 300 +exec testlab_ring.cfg
+          qlog="$(find home -type f -iname 'qconsole.log' -print -quit)"
+          test -n "$qlog"
+          cp "$qlog" evidence/ring-qconsole.log
+          find home -type f -path '*/screenshots/testlab_*.tga' -exec cp -a {} evidence/screenshots/ \;
+          test "$(find evidence/screenshots -type f -name '*.tga' | wc -l)" -gt 0
+          python3 testlab/scripts/analyze_runtime.py evidence/ring-qconsole.log testlab/scenarios/escape1_staticpromote.json evidence/runtime-analysis.json
+          echo 'PASS' > evidence/runtime-status.txt
+          echo "Runtime ring PASS"
+
+      - name: Record gated runtime status
+        if: steps.assets.outputs.available != 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          reg=json.loads(Path('testlab/scenarios/regression_registry.json').read_text())
+          out={'schema':1,'runtime_status':'BLOCKED_MISSING_RETAIL_ASSETS','false_pass_prevented':True,'registry':reg}
+          Path('evidence/runtime-analysis.json').write_text(json.dumps(out,indent=2)+'\n')
+          PY
+
+      - name: Package TestLab native binary and evidence
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p out
+          if [ -f .native_root ]; then
+            root="$(cat .native_root)"
+            mkdir -p "out/$TEST_BUILD_NAME"
+            cp -a "$root/." "out/$TEST_BUILD_NAME/"
+            cp -a testlab "out/$TEST_BUILD_NAME/testlab"
+            (cd out && zip -q -X -r "$TEST_BUILD_NAME.zip" "$TEST_BUILD_NAME")
+            sha256sum "out/$TEST_BUILD_NAME.zip" > "out/$TEST_BUILD_NAME.zip.sha256"
+          fi
+          cp -a testlab/scenarios evidence/
+          cp -a testlab/README.md evidence/TESTLAB_README.md
+          (cd evidence && find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+          (cd evidence && zip -q -X -r "../out/$EVIDENCE_NAME.zip" .)
+          sha256sum "out/$EVIDENCE_NAME.zip" > "out/$EVIDENCE_NAME.zip.sha256"
+
+      - name: Upload TestLab evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.EVIDENCE_NAME }}
+          path: |
+            out/${{ env.EVIDENCE_NAME }}.zip
+            out/${{ env.EVIDENCE_NAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+      - name: Upload native TestLab build
+        if: always() && hashFiles('out/DarkWolfRTCW-Renderer-TestLab-v0.1-Linux-x64.zip') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.TEST_BUILD_NAME }}
+          path: |
+            out/${{ env.TEST_BUILD_NAME }}.zip
+            out/${{ env.TEST_BUILD_NAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
