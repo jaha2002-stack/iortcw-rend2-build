@@ -1,0 +1,218 @@
+name: DarkWolf ioRTCW Rend2 Settings UI v3 Native
+# rerun after runtime-cvar audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - .github/workflows/DARKWOLF_IORTCW_REND2_SETTINGS_UI_V3_NATIVE.yml
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-settings-ui-v3-native
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64-sp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      BASE_RUN_ID: "35884381549"
+      BASE_RUN_HEAD_SHA: 80c06f523096507027552e2f58bb9409062e5b8d
+      BASE_ARTIFACT_ID: "10762122831"
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Ignitable-Props-RC-v0.6-Win64
+      BASE_ARTIFACT_DIGEST: sha256:f2fbed32899da9f2d7b91fd2d42e5758ee654ab6b736b89d7dc83d0e7fec185c
+      BASE_INNER_SHA256: 60cca0e57599a7530b6ee5a050e9be29764fc2dadabc26078e36fe614dfd6a09
+      BASE_CUMULATIVE_SHA256: 2c1da09485d489bca253eef8c7626d7417d5493fee493c2d83ffb7c6b7048d0c
+      BASE_RENDERER_SHA256: 92b1db33486ea2dd7d04ccda8f3030692578a13569440f100b677b63b7a6e6d2
+      BASE_EXE_SHA256: d5fad5fa49d6dca642b3509900785cb4078d233480a387189c8a94bf4c9c561d
+      BASE_UI_SHA256: e841cb2c96cdbc2f7d25c5f781c7d8bf856149e9a26f424870d43145b3516b39
+      BASE_CGAME_SHA256: 30f977adabe6813ef0acefb1c13ca23b6c6e480ff1ea5ff61405fc6d0e263d38
+      BASE_QAGAME_SHA256: 04f91be7a666245441415758e68d2a194d1585fb6ff5672750a20702f908f74c
+      BASE_IGNITION_SHA256: 63f468e4edcb1fc6f2059b153c165f66b2c0b1237e93ea3b9518ef76358af5ee
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch
+      RELEASE_BASENAME: DarkWolf-ioRTCW-Rend2-Final-Native-Settings-Win64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install canonical dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64 build-essential ca-certificates g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git make mingw-w64 python3 python3-yaml unzip zip jq file
+
+      - name: Pre-CI validation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          wf=".github/workflows/DARKWOLF_IORTCW_REND2_SETTINGS_UI_V3_NATIVE.yml"
+          python3 - "$wf" <<'PY'
+          import pathlib, subprocess, sys, tempfile, yaml
+          p=pathlib.Path(sys.argv[1]); raw=p.read_bytes()
+          assert b'\r' not in raw
+          d=yaml.safe_load(raw)
+          assert d['name']=='DarkWolf ioRTCW Rend2 Settings UI v3 Native'
+          for job in d['jobs'].values():
+              for i,s in enumerate(job.get('steps',[])):
+                  if 'run' in s:
+                      q=pathlib.Path(tempfile.gettempdir())/f'dw_run_{i}.sh'
+                      q.write_text(s['run'],encoding='utf-8')
+                      subprocess.run(['bash','-n',str(q)],check=True)
+          print('YAML + bash -n PASS')
+          PY
+          python3 -m py_compile integration/settings-ui-v3-native/apply_darkwolf_settings_ui_v3_native.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('integration/settings-ui-v3-native/apply_darkwolf_settings_ui_v3_native.py').read_text()
+          for x in ['DarkWolf_CreateNativeMenus','DARKWOLF / ioRTCW REND2 GRAPHICS','DARKWOLF DEVELOPER / TOOLS','PERFORMANCE','QUALITY','HIGH QUALITY','CINEMATIC','AUTHORING ARM']:
+              assert x in p
+          for forbidden in ['ui/darkwolf_menus.txt','darkwolf_graphics.menu','darkwolf_developer.menu']:
+              assert forbidden not in p
+          print('Native menu source validation PASS')
+          PY
+
+      - name: Verify and download exact RC v0.6 base
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run")" = "$BASE_RUN_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run")" = success
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          IFS=$'\t' read -r n e d <<<"$row"
+          test "$n" = "$BASE_ARTIFACT_NAME"; test "$e" = false; test "$d" = "$BASE_ARTIFACT_DIGEST"
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/${BASE_ARTIFACT_NAME}.zip"
+          test "$(sha256sum "$z"|awk '{print $1}')" = "$BASE_INNER_SHA256"
+          unzip -tq "$z"
+          unzip -q "$z" -d base-release
+          base="$(find base-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$base"
+          echo "$base" > .base
+          test "$(sha256sum "$base/docs/$CUMULATIVE_NAME"|awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll"|awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$base/ioWolfSP.x64.exe"|awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$base/Main/ui_sp_x64.dll"|awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$base/Main/cgame_sp_x64.dll"|awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$base/Main/qagame_sp_x64.dll"|awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$base/Main/darkwolf_ignition_rc_v0_6.pk3"|awk '{print $1}')" = "$BASE_IGNITION_SHA256"
+
+      - name: Reconstruct exact source and apply UI delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base)"
+          rm -rf source replay
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          cp "$base/docs/$CUMULATIVE_NAME" base.patch
+          git -C source apply --check --binary --whitespace=nowarn ../base.patch
+          git -C source apply --binary --whitespace=nowarn ../base.patch
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='ci@example.invalid' commit -q -m 'Exact RC v0.6 source'
+          basecommit="$(git -C source rev-parse HEAD)"
+          python3 integration/settings-ui-v3-native/apply_darkwolf_settings_ui_v3_native.py source --check-only
+          python3 integration/settings-ui-v3-native/apply_darkwolf_settings_ui_v3_native.py source
+          git -C source diff --check
+          mapfile -t changed < <(git -C source diff --name-only | LC_ALL=C sort)
+          expected=(SP/code/ui/ui_main.c SP/code/ui/ui_shared.c SP/code/ui/ui_shared.h)
+          test "${changed[*]}" = "${expected[*]}"
+          git -C source diff --binary > settings-ui-v3-native.patch
+          git -C source apply --reverse --check --binary ../settings-ui-v3-native.patch
+          git -C source worktree add -q ../replay "$basecommit"
+          git -C replay apply --check --binary ../settings-ui-v3-native.patch
+          git -C replay apply --binary ../settings-ui-v3-native.patch
+          for f in "${expected[@]}"; do cmp "source/$f" "replay/$f"; done
+          grep -Fq 'DarkWolf_InjectSystemGraphicsEntry' source/SP/code/ui/ui_shared.c
+          grep -Fq 'ui/darkwolf_menus.txt' source/SP/code/ui/ui_main.c
+          echo "apply/reverse/replay/allowlist PASS"
+
+      - name: Validate runtime CVar contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base)"
+          strings "$base/renderer_sp_rend2_x64.dll" | grep -E '^r_[A-Za-z0-9_]+$' | sort -u > runtime-cvars.txt
+          grep -oE 'r_[A-Za-z0-9_]+' integration/settings-ui-v3-native/apply_darkwolf_settings_ui_v3_native.py | sort -u > requested-cvars.txt
+          comm -23 requested-cvars.txt runtime-cvars.txt > missing-cvars.txt
+          test ! -s missing-cvars.txt || { cat missing-cvars.txt; exit 1; }
+          echo "Runtime CVar contract PASS"
+
+      - name: Build Windows x64 SP game modules
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          (cd source/SP && ./cross-make-mingw64.sh -j1 BUILD_CLIENT=0 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=0 USE_RENDERER_DLOPEN=1)
+          b=source/SP/build/release-mingw32-x86_64/main
+          test -s "$b/ui_sp_x64.dll"; test -s "$b/cgame_sp_x64.dll"; test -s "$b/qagame_sp_x64.dll"
+          file "$b/ui_sp_x64.dll" | grep -Eiq 'PE32\+|x86-64'
+          test "$(sha256sum "$b/ui_sp_x64.dll"|awk '{print $1}')" != "$BASE_UI_SHA256"
+          echo "UI compile PASS"
+
+      - name: Package no-drift release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base)"
+          rm -rf dist pk3
+          mkdir -p "dist/$RELEASE_BASENAME"
+          stage="dist/$RELEASE_BASENAME"
+          cp -a "$base/." "$stage/"
+          cp source/SP/build/release-mingw32-x86_64/main/ui_sp_x64.dll "$stage/Main/ui_sp_x64.dll"
+          cp settings-ui-v3-native.patch "$stage/docs/darkwolf-settings-ui-v3-native-source-delta.patch"
+          cat > "$stage/docs/DARKWOLF_SETTINGS_UI_V3_NATIVE_AUDIT.txt" <<EOF
+          BASE_RUN_ID=$BASE_RUN_ID
+          BASE_HEAD_SHA=$BASE_RUN_HEAD_SHA
+          BASE_ARTIFACT_ID=$BASE_ARTIFACT_ID
+          BASE_ARTIFACT_DIGEST=$BASE_ARTIFACT_DIGEST
+          PINNED_UPSTREAM_SHA=$UPSTREAM_SHA
+          INTENDED_CHANGE=UI module + custom settings PK3 + Developer Tools only
+          FROZEN=EXE renderer cgame qagame ignition gameplay
+          PROFILES=PERFORMANCE QUALITY HIGH_QUALITY CINEMATIC
+          PROFILE_IMPLEMENTATION=native_ui_code_no_external_cfg
+          MENU_IMPLEMENTATION=fully_native_ui_sp_x64_dll_no_pk3_no_menu_files
+          DEVTOOLS=StaticPromote MapLighting DLightDiagnostics Materials SSGI VolumetricFire
+          EOF
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll"|awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe"|awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll"|awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll"|awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/darkwolf_ignition_rc_v0_6.pk3"|awk '{print $1}')" = "$BASE_IGNITION_SHA256"
+          if find "$stage" -type f \( -iname 'darkwolf_settings_ui*.pk3' -o -iname 'darkwolf_graphics.menu' -o -iname 'darkwolf_developer.menu' -o -iname 'darkwolf_menus.txt' \) -print -quit | grep -q .; then
+            echo "ERROR: external DarkWolf settings UI payload found" >&2
+            exit 1
+          fi
+          if find "$stage" -type f -path '*/darkwolf/profiles/*.cfg' -print -quit | grep -q .; then
+            echo "ERROR: external DarkWolf quality profile cfg found" >&2
+            exit 1
+          fi
+          strings "$stage/Main/ui_sp_x64.dll" | grep -Fq 'DarkWolf graphics profile applied directly'
+          strings "$stage/Main/ui_sp_x64.dll" | grep -Fq 'DarkWolf Tools:'
+          strings "$stage/Main/ui_sp_x64.dll" | grep -Fq 'r_dlightShadowMaxLights'
+          ! find "$stage" -iname 'pak*.pk3' -print -quit | grep -q .
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          (cd dist && zip -q -X -r "$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/$RELEASE_BASENAME.zip" > "dist/$RELEASE_BASENAME.zip.sha256"
+          echo "Package PASS"
+
+      - name: Upload release
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
