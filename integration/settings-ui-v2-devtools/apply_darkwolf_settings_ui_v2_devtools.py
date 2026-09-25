@@ -466,16 +466,16 @@ if data.count(profile_anchor) != 1:
     raise SystemExit(f"{main}: profile anchor count={data.count(profile_anchor)}")
 data = data.replace(profile_anchor, profile_impl + profile_anchor, 1)
 
-profile_case_anchor = """		} else if ( Q_stricmp( name, "darkwolfTool" ) == 0 ) {
-			if ( String_Parse( args, &name2 ) ) {
-				DarkWolf_RunTool( name2 );
-			}
-		} else if ( Q_stricmp( name, "glCustom" ) == 0 ) {
+profile_case_anchor = """		} else if ( Q_stricmp( name, "glCustom" ) == 0 ) {
 			trap_Cvar_Set( "ui_glCustom", "4" );"""
 profile_case = """		} else if ( Q_stricmp( name, "darkwolfProfile" ) == 0 ) {
 			int profile;
 			if ( Int_Parse( args, &profile ) ) {
 				DarkWolf_ApplyGraphicsProfile( profile );
+			}
+		} else if ( Q_stricmp( name, "darkwolfTool" ) == 0 ) {
+			if ( String_Parse( args, &name2 ) ) {
+				DarkWolf_RunTool( name2 );
 			}
 		} else if ( Q_stricmp( name, "glCustom" ) == 0 ) {
 			trap_Cvar_Set( "ui_glCustom", "4" );"""
