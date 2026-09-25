@@ -5,6 +5,7 @@ import sys
 root = Path(sys.argv[1] if len(sys.argv) > 1 else "source")
 tr_init = root/"SP/code/rend2/tr_init.c"
 tr_main = root/"SP/code/rend2/tr_main.c"
+tr_scene = root/"SP/code/rend2/tr_scene.c"
 g_cmds = root/"SP/code/game/g_cmds.c"
 
 for p in (tr_init,tr_main,tr_scene,g_cmds):
