@@ -131,8 +131,42 @@ jobs:
           donor_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${SHADER_DONOR_RUN_ID}")"
           test "$(jq -r .head_sha <<<"$donor_json")" = "$SHADER_DONOR_HEAD_SHA"
           test "$(jq -r .conclusion <<<"$donor_json")" = success
-          donor_row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${SHADER_DONOR_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${SHADER_DONOR_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
-          IFS=          python3 - <<'PY'
+          donor_name="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${SHADER_DONOR_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${SHADER_DONOR_ARTIFACT_ID}) | .name")"
+          donor_expired="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${SHADER_DONOR_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${SHADER_DONOR_ARTIFACT_ID}) | .expired")"
+          donor_digest="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${SHADER_DONOR_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${SHADER_DONOR_ARTIFACT_ID}) | .digest")"
+          test "$donor_name" = "$SHADER_DONOR_ARTIFACT_NAME"
+          test "$donor_expired" = false
+          test "$donor_digest" = "$SHADER_DONOR_ARTIFACT_DIGEST"
+          rm -rf shader-donor shader-donor-release
+          mkdir -p shader-donor shader-donor-release
+          gh run download "$SHADER_DONOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$SHADER_DONOR_ARTIFACT_NAME" --dir shader-donor
+          donor_zip="shader-donor/$SHADER_DONOR_ARTIFACT_NAME.zip"
+          test -s "$donor_zip"
+          test "$(sha256sum "$donor_zip" | awk '{print $1}')" = "$SHADER_DONOR_INNER_SHA256"
+          unzip -q "$donor_zip" -d shader-donor-release
+          donor_base="$(find shader-donor-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$donor_base"
+          donor_patch="$donor_base/docs/$SHADER_DONOR_PATCH"
+          test "$(sha256sum "$donor_patch" | awk '{print $1}')" = "$SHADER_DONOR_PATCH_SHA256"
+          shader_paths=(
+            SP/code/rend2/glsl/ssgi_fp.glsl
+            SP/code/rend2/glsl/ssgi_vp.glsl
+            SP/code/rend2/glsl/volumetriclocal_fp.glsl
+            SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl
+            SP/code/rend2/glsl/volumetriclocal_vp.glsl
+            SP/code/rend2/glsl/volumetricsun_fp.glsl
+            SP/code/rend2/glsl/volumetricsun_vp.glsl
+          )
+          for p in "${shader_paths[@]}"; do
+            test ! -e "source/$p"
+            git -C source apply --check --binary --whitespace=nowarn --include="$p" "../$donor_patch"
+            git -C source apply --binary --whitespace=nowarn --include="$p" "../$donor_patch"
+            test -s "source/$p"
+          done
+          printf '%s\n' "${shader_paths[@]}" > evidence/recovered-shader-sources.txt
+          echo "Historical GLSL source recovery PASS"
+
+          python3 - <<'PY'
           from pathlib import Path
           import hashlib, shutil
           root=Path('source/SP/code')
