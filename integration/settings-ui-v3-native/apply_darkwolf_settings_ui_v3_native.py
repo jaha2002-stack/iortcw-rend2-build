@@ -384,7 +384,7 @@ static void DarkWolf_BuildGraphicsNativeMenu( void ) {
 	DarkWolf_AddNativeButton( m, "ad_wide", "dw_advanced", "WIDE INSPECT", 367, 176, 92, 20, .16f, qfalse, "uiScript darkwolfTool staticWideInspect", 0 );
 	DarkWolf_AddNativeText( m, "ad_note", "dw_advanced", "Authoring and destructive commands are available under DEV / TOOLS.", 255, 208, 220, 32, .15f, qfalse, qfalse );
 
-	DarkWolf_AddNativeButton( m, "restart", NULL, "APPLY / RESTART", 18, 330, 125, 22, .18f, qtrue, "exec \"vid_restart\"", 0 );
+	DarkWolf_AddNativeButton( m, "restart", NULL, "APPLY / RESTART", 18, 330, 125, 22, .18f, qtrue, "exec vid_restart", 0 );
 	it = DarkWolf_AddNativeButton( m, "back_main", NULL, "BACK", 357, 330, 125, 22, .19f, qtrue, "close darkwolf_graphics ; open system_menu", 0 );
 	DarkWolf_ShowNativeWhen( it, "ui_darkwolfReturnIngame", "0" );
 	it = DarkWolf_AddNativeButton( m, "back_game", NULL, "BACK", 357, 330, 125, 22, .19f, qtrue, "close darkwolf_graphics ; open ingame_system", 0 );
