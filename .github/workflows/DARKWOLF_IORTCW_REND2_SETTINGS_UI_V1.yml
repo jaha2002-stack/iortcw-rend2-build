@@ -143,7 +143,7 @@ jobs:
           base="$(cat .base)"
           strings "$base/renderer_sp_rend2_x64.dll" | grep -E '^r_[A-Za-z0-9_]+$' | sort -u > runtime-cvars.txt
           grep -rhoE 'cvar "(r_[A-Za-z0-9_]+)"|cvarfloat "(r_[A-Za-z0-9_]+)"' integration/settings-ui-v1/assets/ui/darkwolf_graphics.menu | grep -oE 'r_[A-Za-z0-9_]+' | sort -u > ui-cvars.txt
-          grep -rhoE '^seta (r_[A-Za-z0-9_]+)' integration/settings-ui-v1/assets/darkwolf/profiles/*.cfg | awk '{print $2}' | sort -u > profile-cvars.txt
+          grep -oE '\{ "r_[A-Za-z0-9_]+", "[^"]+" \}' integration/settings-ui-v1/apply_darkwolf_settings_ui_v1.py | grep -oE 'r_[A-Za-z0-9_]+' | sort -u > profile-cvars.txt
           cat ui-cvars.txt profile-cvars.txt | sort -u > requested-cvars.txt
           comm -23 requested-cvars.txt runtime-cvars.txt > missing-cvars.txt
           test ! -s missing-cvars.txt || { cat missing-cvars.txt; exit 1; }
@@ -183,6 +183,7 @@ jobs:
           INTENDED_CHANGE=UI module + custom settings PK3 only
           FROZEN=EXE renderer cgame qagame ignition gameplay
           PROFILES=PERFORMANCE QUALITY HIGH_QUALITY CINEMATIC
+          PROFILE_IMPLEMENTATION=native_ui_code_no_external_cfg
           EOF
           test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll"|awk '{print $1}')" = "$BASE_RENDERER_SHA256"
           test "$(sha256sum "$stage/ioWolfSP.x64.exe"|awk '{print $1}')" = "$BASE_EXE_SHA256"
@@ -190,7 +191,12 @@ jobs:
           test "$(sha256sum "$stage/Main/qagame_sp_x64.dll"|awk '{print $1}')" = "$BASE_QAGAME_SHA256"
           test "$(sha256sum "$stage/Main/darkwolf_ignition_rc_v0_6.pk3"|awk '{print $1}')" = "$BASE_IGNITION_SHA256"
           unzip -l "$stage/Main/darkwolf_settings_ui_v1.pk3" | grep -q 'ui/darkwolf_graphics.menu'
-          unzip -l "$stage/Main/darkwolf_settings_ui_v1.pk3" | grep -q 'darkwolf/profiles/cinematic.cfg'
+          if unzip -l "$stage/Main/darkwolf_settings_ui_v1.pk3" | grep -qE 'darkwolf/profiles/.*\.cfg'; then
+            echo "ERROR: external quality profile cfg found in package" >&2
+            exit 1
+          fi
+          strings "$stage/Main/ui_sp_x64.dll" | grep -Fq 'DarkWolf graphics profile applied directly'
+          strings "$stage/Main/ui_sp_x64.dll" | grep -Fq 'r_dlightShadowMaxLights'
           ! find "$stage" -iname 'pak*.pk3' -print -quit | grep -q .
           (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
           (cd dist && zip -q -X -r "$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
