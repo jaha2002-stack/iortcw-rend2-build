@@ -120,11 +120,19 @@ jobs:
           grep -Fq 'STATIC_PROMOTE_PRODUCTION_MAX_ACTIVE 32' source/SP/code/rend2/tr_main.c
           grep -Fq 'r_staticPromoteRootCauseDiag = &s_darkwolfProductionDiagOffCvar;' source/SP/code/rend2/tr_init.c
           # Snapshot the exact reconstructed tree without creating an extra commit.
-          find source/SP/code -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > .production_manifest
-          mkdir -p production-snapshot/SP/code/game production-snapshot/SP/code/rend2
-          cp source/SP/code/game/g_cmds.c production-snapshot/SP/code/game/g_cmds.c
-          cp source/SP/code/rend2/tr_init.c production-snapshot/SP/code/rend2/tr_init.c
-          cp source/SP/code/rend2/tr_main.c production-snapshot/SP/code/rend2/tr_main.c
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, shutil
+          root=Path('source/SP/code')
+          rows=[]
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              rows.append(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.as_posix()}")
+          Path('.production_manifest').write_text('\n'.join(rows)+'\n')
+          for rel in ['SP/code/game/g_cmds.c','SP/code/rend2/tr_init.c','SP/code/rend2/tr_main.c']:
+              src=Path('source')/rel; dst=Path('production-snapshot')/rel
+              dst.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(src,dst)
+          print('production manifest files=',len(rows))
+          PY
           echo "Exact current source reconstruction PASS"
 
       - name: Apply isolated TestLab instrumentation
@@ -132,7 +140,15 @@ jobs:
         run: |
           set -Eeuo pipefail
           python3 testlab/scripts/apply_testlab_instrumentation.py source
-          find source/SP/code -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > .instrumented_manifest
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          root=Path('source/SP/code')
+          rows=[]
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              rows.append(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.as_posix()}")
+          Path('.instrumented_manifest').write_text('\n'.join(rows)+'\n')
+          PY
           python3 - <<'PY'
           from pathlib import Path
           def load(p):
