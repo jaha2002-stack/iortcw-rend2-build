@@ -170,6 +170,161 @@ for old, new in hooks:
         raise SystemExit(f"{main}: expected load hook exactly once, found {count}")
     data = data.replace(old, new, 1)
 
+
+profile_anchor = """/*
+==============
+UI_RunMenuScript
+==============
+*/
+
+static void UI_RunMenuScript( char **args ) {"""
+
+profile_impl = r"""/*
+===============================
+DarkWolf_ApplyGraphicsProfile
+
+Production presets are compiled into ui_sp_x64.dll. They do not execute or
+read external cfg files. Selecting a profile writes renderer CVars through
+the UI trap API and restarts video so latched values take effect immediately.
+===============================
+*/
+typedef struct {
+	const char *name;
+	const char *value;
+} darkWolfProfileCvar_t;
+
+static const darkWolfProfileCvar_t s_darkWolfPerformance[] = {
+	{ "r_pbr", "0" }, { "r_normalMapping", "1" }, { "r_specularMapping", "1" },
+	{ "r_cubeMapping", "1" }, { "r_materialAwareFallback", "1" },
+	{ "r_materialAwareReflections", "1" }, { "r_picmip", "1" }, { "r_picmip2", "1" },
+	{ "r_hdr", "1" }, { "r_toneMap", "1" }, { "r_autoExposure", "1" },
+	{ "r_ssgi", "0" }, { "r_ssao", "0" }, { "r_dlightMode", "2" },
+	{ "r_dlightShadowMapSize", "1024" }, { "r_dlightShadowMaxLights", "1" },
+	{ "r_dlightPlayerShadow", "1" }, { "r_dlightShadowKernelMode", "0" },
+	{ "r_sunShadows", "1" }, { "r_shadowFilter", "4" }, { "r_shadowMapSize", "1024" },
+	{ "r_staticPromote", "1" }, { "r_staticPromoteMaxLights", "24" },
+	{ "r_staticPromotePVS", "1" }, { "r_volumetricLocal", "0" },
+	{ "r_volumetricSun", "0" }, { "r_volumetricFire", "0" },
+	{ "r_softParticles", "1" }, { "r_fxStage9Enable", "1" }
+};
+
+static const darkWolfProfileCvar_t s_darkWolfQuality[] = {
+	{ "r_pbr", "0" }, { "r_normalMapping", "1" }, { "r_specularMapping", "1" },
+	{ "r_cubeMapping", "1" }, { "r_materialAwareFallback", "1" },
+	{ "r_materialAwareReflections", "1" }, { "r_picmip", "1" }, { "r_picmip2", "0" },
+	{ "r_hdr", "1" }, { "r_toneMap", "1" }, { "r_autoExposure", "1" },
+	{ "r_ssgi", "0" }, { "r_ssao", "0" }, { "r_dlightMode", "2" },
+	{ "r_dlightShadowMapSize", "2048" }, { "r_dlightShadowMaxLights", "3" },
+	{ "r_dlightPlayerShadow", "1" }, { "r_dlightShadowKernelMode", "0" },
+	{ "r_dlightShadowBias", "0.0033" }, { "r_dlightShadowSoftness", "1.70" },
+	{ "r_dlightShadowStrength", "0.88" }, { "r_sunShadows", "1" },
+	{ "r_shadowFilter", "4" }, { "r_shadowMapSize", "1024" }, { "r_staticPromote", "1" },
+	{ "r_staticPromoteMaxLights", "32" }, { "r_staticPromotePVS", "1" },
+	{ "r_volumetricLocal", "1" }, { "r_volumetricLocalMode", "5" },
+	{ "r_volumetricLocalSamples", "24" }, { "r_volumetricSun", "1" },
+	{ "r_volumetricSunSamples", "32" }, { "r_volumetricFire", "0" },
+	{ "r_softParticles", "1" }, { "r_fxStage9Enable", "1" }
+};
+
+static const darkWolfProfileCvar_t s_darkWolfHighQuality[] = {
+	{ "r_pbr", "0" }, { "r_normalMapping", "1" }, { "r_specularMapping", "1" },
+	{ "r_cubeMapping", "1" }, { "r_materialAwareFallback", "1" },
+	{ "r_materialAwareReflections", "1" }, { "r_picmip", "0" }, { "r_picmip2", "0" },
+	{ "r_hdr", "1" }, { "r_toneMap", "1" }, { "r_autoExposure", "1" },
+	{ "r_ssgi", "1" }, { "r_ssgiStrength", "0.75" }, { "r_ssgiRadius", "32" },
+	{ "r_ssgiSaturation", "0.85" }, { "r_ssgiMax", "0.30" }, { "r_ssao", "0" },
+	{ "r_dlightMode", "2" }, { "r_dlightShadowMapSize", "2048" },
+	{ "r_dlightShadowMaxLights", "3" }, { "r_dlightPlayerShadow", "1" },
+	{ "r_dlightShadowKernelMode", "1" }, { "r_dlightShadowBias", "0.0033" },
+	{ "r_dlightShadowSoftness", "1.70" }, { "r_dlightShadowStrength", "0.88" },
+	{ "r_sunShadows", "1" }, { "r_shadowFilter", "4" }, { "r_shadowMapSize", "2048" },
+	{ "r_staticPromote", "1" }, { "r_staticPromoteMaxLights", "32" },
+	{ "r_staticPromotePVS", "1" }, { "r_volumetricLocal", "1" },
+	{ "r_volumetricLocalMode", "5" }, { "r_volumetricLocalSamples", "32" },
+	{ "r_volumetricSun", "1" }, { "r_volumetricSunSamples", "48" },
+	{ "r_volumetricFire", "0" }, { "r_softParticles", "1" }, { "r_fxStage9Enable", "1" }
+};
+
+static const darkWolfProfileCvar_t s_darkWolfCinematic[] = {
+	{ "r_pbr", "0" }, { "r_normalMapping", "1" }, { "r_specularMapping", "1" },
+	{ "r_cubeMapping", "1" }, { "r_materialAwareFallback", "1" },
+	{ "r_materialAwareReflections", "1" }, { "r_picmip", "0" }, { "r_picmip2", "0" },
+	{ "r_hdr", "1" }, { "r_toneMap", "1" }, { "r_autoExposure", "1" },
+	{ "r_ssgi", "1" }, { "r_ssgiStrength", "0.85" }, { "r_ssgiRadius", "32" },
+	{ "r_ssgiSaturation", "0.90" }, { "r_ssgiMax", "0.35" }, { "r_ssao", "0" },
+	{ "r_dlightMode", "2" }, { "r_dlightShadowMapSize", "2048" },
+	{ "r_dlightShadowMaxLights", "3" }, { "r_dlightPlayerShadow", "1" },
+	{ "r_dlightShadowKernelMode", "1" }, { "r_dlightShadowBias", "0.0033" },
+	{ "r_dlightShadowSoftness", "1.70" }, { "r_dlightShadowStrength", "0.88" },
+	{ "r_sunShadows", "1" }, { "r_shadowFilter", "4" }, { "r_shadowMapSize", "2048" },
+	{ "r_staticPromote", "1" }, { "r_staticPromoteMaxLights", "32" },
+	{ "r_staticPromotePVS", "1" }, { "r_volumetricLocal", "1" },
+	{ "r_volumetricLocalMode", "5" }, { "r_volumetricLocalSamples", "48" },
+	{ "r_volumetricSun", "1" }, { "r_volumetricSunSamples", "64" },
+	{ "r_volumetricFire", "1" }, { "r_volumetricFireSamples", "32" },
+	{ "r_volumetricFireMaxActive", "2" }, { "r_softParticles", "1" },
+	{ "r_fxStage9Enable", "1" }
+};
+
+static void DarkWolf_ApplyGraphicsProfile( int profile ) {
+	const darkWolfProfileCvar_t *list = NULL;
+	int count = 0;
+	int i;
+	const char *label = "UNKNOWN";
+
+	switch ( profile ) {
+	case 0:
+		list = s_darkWolfPerformance;
+		count = ARRAY_LEN( s_darkWolfPerformance );
+		label = "PERFORMANCE";
+		break;
+	case 1:
+		list = s_darkWolfQuality;
+		count = ARRAY_LEN( s_darkWolfQuality );
+		label = "QUALITY";
+		break;
+	case 2:
+		list = s_darkWolfHighQuality;
+		count = ARRAY_LEN( s_darkWolfHighQuality );
+		label = "HIGH QUALITY";
+		break;
+	case 3:
+		list = s_darkWolfCinematic;
+		count = ARRAY_LEN( s_darkWolfCinematic );
+		label = "CINEMATIC";
+		break;
+	default:
+		Com_Printf( S_COLOR_YELLOW "DarkWolf: invalid graphics profile %d\\n", profile );
+		return;
+	}
+
+	for ( i = 0; i < count; i++ ) {
+		trap_Cvar_Set( list[i].name, list[i].value );
+	}
+	trap_Cvar_Set( "ui_darkwolfProfile", va( "%d", profile ) );
+	Com_Printf( S_COLOR_GREEN "DarkWolf graphics profile applied directly: %s (%d CVars)\\n", label, count );
+	trap_Cmd_ExecuteText( EXEC_APPEND, "vid_restart\\n" );
+}
+
+"""
+
+if data.count(profile_anchor) != 1:
+    raise SystemExit(f"{main}: profile anchor count={data.count(profile_anchor)}")
+data = data.replace(profile_anchor, profile_impl + profile_anchor, 1)
+
+profile_case_anchor = """		} else if ( Q_stricmp( name, "glCustom" ) == 0 ) {
+			trap_Cvar_Set( "ui_glCustom", "4" );"""
+profile_case = """		} else if ( Q_stricmp( name, "darkwolfProfile" ) == 0 ) {
+			int profile;
+			if ( Int_Parse( args, &profile ) ) {
+				DarkWolf_ApplyGraphicsProfile( profile );
+			}
+		} else if ( Q_stricmp( name, "glCustom" ) == 0 ) {
+			trap_Cvar_Set( "ui_glCustom", "4" );"""
+if data.count(profile_case_anchor) != 1:
+    raise SystemExit(f"{main}: profile case anchor count={data.count(profile_case_anchor)}")
+data = data.replace(profile_case_anchor, profile_case, 1)
+
 if not CHECK_ONLY:
     p.write_text(data, encoding="utf-8", newline="\n")
 
