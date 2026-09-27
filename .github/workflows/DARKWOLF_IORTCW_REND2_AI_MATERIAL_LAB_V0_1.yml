@@ -155,23 +155,93 @@ jobs:
           git -C source rev-parse HEAD > .materiallab_base_commit
           echo "Source reconstruction PASS"
 
-      - name: Prove untouched reconstructed renderer is byte-identical to accepted base
+      - name: Prove reconstructed renderer runtime image matches accepted base
         shell: bash
         run: |
           set -Eeuo pipefail
+
+          final_root="$(cat .final_root)"
+          manifest="$final_root/docs/FINAL_SOURCE_SHA256.txt"
+          test -s "$manifest"
+          while read -r expected rel; do
+            rel="${rel#* }"
+            rel="${rel# }"
+            test -f "source/$rel" || { echo "ERROR: source manifest path missing: $rel" >&2; exit 1; }
+            actual="$(sha256sum "source/$rel" | awk '{print $1}')"
+            test "$actual" = "$expected" || {
+              echo "ERROR: reconstructed source drift: $rel expected=$expected actual=$actual" >&2
+              exit 1
+            }
+          done < "$manifest"
+          echo "Historical source postimage manifest PASS"
+
           (
             cd source/SP
-            ./cross-make-mingw64.sh -j1               BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0               BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+            ./cross-make-mingw64.sh -j1 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
           )
-          base_renderer="source/SP/build/release-mingw32-x86_64/renderer_sp_rend2_x64.dll"
-          test -s "$base_renderer"
-          file "$base_renderer" | grep -Eiq 'PE32\+|x86-64'
-          actual="$(sha256sum "$base_renderer" | awk '{print $1}')"
-          test "$actual" = "$ACCEPTED_RENDERER_SHA256" || {
-            echo "ERROR: historical renderer reconstruction drift: $actual" >&2
-            exit 1
-          }
-          echo "Renderer provenance gate PASS: $actual"
+
+          rebuilt="source/SP/build/release-mingw32-x86_64/renderer_sp_rend2_x64.dll"
+          accepted="$final_root/renderer_sp_rend2_x64.dll"
+          test -s "$rebuilt" && test -s "$accepted"
+          file "$rebuilt" | grep -Eiq 'PE32\\+|x86-64'
+          raw_rebuilt="$(sha256sum "$rebuilt" | awk '{print $1}')"
+          raw_accepted="$(sha256sum "$accepted" | awk '{print $1}')"
+          test "$raw_accepted" = "$ACCEPTED_RENDERER_SHA256"
+
+          python3 - "$accepted" "$rebuilt" <<'PY_PE_GATE'
+          from pathlib import Path
+          import hashlib, struct, sys
+
+          def pe_sections(path):
+              data = Path(path).read_bytes()
+              if data[:2] != b'MZ':
+                  raise SystemExit(f'ERROR: not MZ: {path}')
+              pe = struct.unpack_from('<I', data, 0x3c)[0]
+              if data[pe:pe+4] != b'PE\\0\\0':
+                  raise SystemExit(f'ERROR: not PE: {path}')
+              machine, nsec, timestamp, ptrsym, numsym, optsize, chars = struct.unpack_from('<HHIIIHH', data, pe+4)
+              if machine != 0x8664:
+                  raise SystemExit(f'ERROR: not PE32+ x86-64: {path} machine=0x{machine:x}')
+              opt = pe + 24
+              magic = struct.unpack_from('<H', data, opt)[0]
+              if magic != 0x20b:
+                  raise SystemExit(f'ERROR: optional header is not PE32+: {path}')
+              sec0 = opt + optsize
+              sections = []
+              for i in range(nsec):
+                  off = sec0 + i * 40
+                  name = data[off:off+8].split(b'\\0',1)[0].decode('ascii','replace')
+                  vsize, vaddr, rawsize, rawptr = struct.unpack_from('<IIII', data, off+8)
+                  characteristics = struct.unpack_from('<I', data, off+36)[0]
+                  blob = data[rawptr:rawptr+rawsize]
+                  sections.append((name, vsize, vaddr, rawsize, characteristics,
+                                   hashlib.sha256(blob).hexdigest(), blob))
+              return data, pe, timestamp, sections
+
+          a, ape, ats, asec = pe_sections(sys.argv[1])
+          b, bpe, bts, bsec = pe_sections(sys.argv[2])
+          if len(asec) != len(bsec):
+              raise SystemExit(f'ERROR: PE section count drift {len(asec)} != {len(bsec)}')
+
+          print(f'Accepted PE timestamp={ats}; rebuilt PE timestamp={bts}')
+          for ax, bx in zip(asec, bsec):
+              if ax[:6] != bx[:6]:
+                  print('ACCEPTED', ax[:6])
+                  print('REBUILT ', bx[:6])
+                  raise SystemExit(f'ERROR: PE runtime section drift in {ax[0]}')
+              print(f'PE_SECTION_PASS {ax[0]} size={ax[3]} sha256={ax[5]}')
+
+          if len(a) != len(b):
+              raise SystemExit(f'ERROR: PE file size drift {len(a)} != {len(b)}')
+          diff = [i for i,(x,y) in enumerate(zip(a,b)) if x != y]
+          print(f'PE_HEADER_METADATA_DIFF_BYTES={len(diff)}')
+          if diff:
+              print(f'PE_DIFF_RANGE=0x{diff[0]:x}..0x{diff[-1]:x}')
+          PY_PE_GATE
+
+          printf '%s\n' "$raw_rebuilt" > .reconstructed_renderer_raw_sha
+          echo "Renderer provenance gate PASS: accepted_raw=$raw_accepted rebuilt_raw=$raw_rebuilt runtime_sections=identical"
+
 
       - name: Apply AI Material Lab v0.1
         shell: bash
