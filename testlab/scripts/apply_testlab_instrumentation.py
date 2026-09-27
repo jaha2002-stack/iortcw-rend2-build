@@ -316,10 +316,7 @@ one(cg_servercmds,
 		char testlabAutomation[16];
 		trap_Cvar_VariableStringBuffer( "dw_testAutomation", testlabAutomation, sizeof(testlabAutomation) );
 		if ( atoi( testlabAutomation ) ) {
-			// DARKWOLF_TESTLAB_V0_1: leave the stock scripted camera before deterministic captures.
-			CG_Printf( "TESTLAB_CAMERA_STOP before=%d\\n", cg.cameraMode ? 1 : 0 );
-			CG_StopCamera();
-			CG_Printf( "TESTLAB_CAMERA_STOP after=%d\\n", cg.cameraMode ? 1 : 0 );
+			// DARKWOLF_TESTLAB_V0_1: stock Continue action without UI/input emulation.
 			CG_Fade( 0, 0, 0, 0, cg.time, 0 );
 			trap_Cvar_Set( "g_playerstart", "1" );
 			trap_S_FadeAllSound( 1.0f, 1000 );
