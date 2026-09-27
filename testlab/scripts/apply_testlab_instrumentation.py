@@ -50,19 +50,34 @@ one(tr_scene,
 	staticPromotePersistentLight_t **selected, int selectedCount)
 {
 	// DARKWOLF_USLRD_CLEAN_PRODUCTION_V1: retained call site, diagnostic body disabled.
-	return;''',
+	return;
+	static unsigned int lastSignature[STATIC_PROMOTE_PERSISTENT_MAX_FIXTURES];
+	static int lastGeneration = -1;
+	int i;
+	int sceneDlights;
+	int promotedCount = 0;
+	int nativeCount;
+	int headroom;
+	int j;
+
+	if (!fd || !tr.world || !0)
+		return;''',
 '''static void R_StaticPromotePhysicalResidencyFrameDiag(const refdef_t *fd,
 	staticPromotePersistentLight_t **selected, int selectedCount)
 {
-	// DARKWOLF_TESTLAB_V0_1: enable existing read-only production residency telemetry.''',
-"enable residency frame diag body")
+	// DARKWOLF_TESTLAB_V0_1: enable existing read-only production residency telemetry.
+	static unsigned int lastSignature[STATIC_PROMOTE_PERSISTENT_MAX_FIXTURES];
+	static int lastGeneration = -1;
+	int i;
+	int sceneDlights;
+	int promotedCount = 0;
+	int nativeCount;
+	int headroom;
+	int j;
 
-one(tr_scene,
-'''	if (!fd || !tr.world || !0)
+	if (!fd || !tr.world)
 		return;''',
-'''	if (!fd || !tr.world)
-		return;''',
-"enable residency frame diag guard")
+"enable residency frame diag")
 
 # Emit stable fixture world origin for the external two-pass controller.
 # Also add an independent TestLab-only discovery path that does not depend on
