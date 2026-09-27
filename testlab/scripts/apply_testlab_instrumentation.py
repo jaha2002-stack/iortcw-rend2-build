@@ -89,6 +89,20 @@ diag_guard_new='''    R_TestLabFixtureDiscovery();
         return;'''
 one(tr_scene,diag_guard,diag_guard_new,"fixture discovery call")
 
+parse_anchor='''			parsedCandidate.style = style;
+			Q_strncpyz(parsedCandidate.targetname, targetname, sizeof(parsedCandidate.targetname));'''
+parse_insert='''			parsedCandidate.style = style;
+			// DARKWOLF_TESTLAB_V0_1: deterministic BSP entity discovery before merge/residency policy.
+			if (entityOrdinal == 918 || entityOrdinal == 782)
+			{
+				ri.Printf(PRINT_ALL,
+					"TESTLAB_FIXTURE_ORIGIN map=%s fixture=%d origin=%.3f,%.3f,%.3f\\n",
+					tr.world ? tr.world->baseName : "<none>", entityOrdinal,
+					origin[0], origin[1], origin[2]);
+			}
+			Q_strncpyz(parsedCandidate.targetname, targetname, sizeof(parsedCandidate.targetname));'''
+one(tr_scene,parse_anchor,parse_insert,"BSP fixture origin discovery")
+
 anchor='''    ri.Printf(PRINT_ALL,
         "USLRD_RC_FRONT ms=%d map=%s fixture=%d'''
 insert='''    // DARKWOLF_TESTLAB_V0_1: machine-readable discovery record.
