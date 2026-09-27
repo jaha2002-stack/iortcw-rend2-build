@@ -56,11 +56,24 @@ new_s = """void Menu_New( int handle ) {
 ===============================
 DarkWolf_InjectOptionsRend2Tab
 
-Adds REND2 SETTINGS as a real peer tab in the retail Options setup_menu2.
+Adds REND2 SETTINGS as a real peer tab in the retail Options setup_menu.
+setup_menu2 is retained only as a compatibility fallback for alternate UI packs.
 The existing five retail tabs are relaid out into six equal slots so the new
 tab sits after MODS and before DEFAULTS without replacing retail menu assets.
 ===============================
 */
+static itemDef_t *DarkWolf_FindMenuItemByName( menuDef_t *menu, const char *name ) {
+	int i;
+	if ( !menu || !name ) return NULL;
+	for ( i = 0; i < menu->itemCount; i++ ) {
+		itemDef_t *item = menu->items[i];
+		if ( item && item->window.name && !Q_stricmp( item->window.name, name ) ) {
+			return item;
+		}
+	}
+	return NULL;
+}
+
 static itemDef_t *DarkWolf_FindMenuItemByText( menuDef_t *menu, const char *text ) {
 	int i;
 	if ( !menu || !text ) return NULL;
@@ -84,11 +97,14 @@ static void DarkWolf_RelayoutOptionsTab( itemDef_t *item, float x, float y, floa
 }
 
 void DarkWolf_InjectOptionsRend2Tab( void ) {
-	menuDef_t *menu = Menus_FindByName( "setup_menu2" );
+	menuDef_t *menu = Menus_FindByName( "setup_menu" );
 	itemDef_t *controls, *system, *game, *mods, *defaults, *item;
 	float left, right, y, h, slot;
 	int i;
 
+	if ( !menu ) {
+		menu = Menus_FindByName( "setup_menu2" );
+	}
 	if ( !menu || menu->itemCount >= MAX_MENUITEMS ) return;
 
 	for ( i = 0; i < menu->itemCount; i++ ) {
@@ -98,14 +114,20 @@ void DarkWolf_InjectOptionsRend2Tab( void ) {
 		}
 	}
 
-	controls = DarkWolf_FindMenuItemByText( menu, "CONTROLS" );
-	system   = DarkWolf_FindMenuItemByText( menu, "SYSTEM" );
-	game     = DarkWolf_FindMenuItemByText( menu, "GAME OPTIONS" );
-	mods     = DarkWolf_FindMenuItemByText( menu, "MODS" );
-	defaults = DarkWolf_FindMenuItemByText( menu, "DEFAULTS" );
+	controls = DarkWolf_FindMenuItemByName( menu, "controls" );
+	system   = DarkWolf_FindMenuItemByName( menu, "system" );
+	game     = DarkWolf_FindMenuItemByName( menu, "gameoptions" );
+	mods     = DarkWolf_FindMenuItemByName( menu, "mods" );
+	defaults = DarkWolf_FindMenuItemByName( menu, "defaults" );
 
-	if ( !controls || !system || !game || !mods || !defaults ) {
-		Com_Printf( S_COLOR_YELLOW "DarkWolf UI: setup_menu2 retail tab anchors not found; REND2 SETTINGS tab not injected.\\n" );
+	if ( !controls ) controls = DarkWolf_FindMenuItemByText( menu, "CONTROLS" );
+	if ( !system )   system   = DarkWolf_FindMenuItemByText( menu, "SYSTEM" );
+	if ( !game )     game     = DarkWolf_FindMenuItemByText( menu, "GAME OPTIONS" );
+	if ( !mods )     mods     = DarkWolf_FindMenuItemByText( menu, "MODS" );
+	if ( !defaults ) defaults = DarkWolf_FindMenuItemByText( menu, "DEFAULTS" );
+
+	if ( !controls || !system || !game || !defaults ) {
+		Com_Printf( S_COLOR_YELLOW "DarkWolf UI: retail Options tab anchors not found; REND2 SETTINGS tab not injected.\\n" );
 		return;
 	}
 
@@ -117,38 +139,51 @@ void DarkWolf_InjectOptionsRend2Tab( void ) {
 		left = 18.0f;
 		right = 622.0f;
 	}
-	slot = ( right - left ) / 6.0f;
 
-	DarkWolf_RelayoutOptionsTab( controls, left + slot * 0.0f, y, slot, h );
-	DarkWolf_RelayoutOptionsTab( system,   left + slot * 1.0f, y, slot, h );
-	DarkWolf_RelayoutOptionsTab( game,     left + slot * 2.0f, y, slot, h );
-	DarkWolf_RelayoutOptionsTab( mods,     left + slot * 3.0f, y, slot, h );
-	DarkWolf_RelayoutOptionsTab( defaults, left + slot * 5.0f, y, slot, h );
+	if ( mods ) {
+		slot = ( right - left ) / 6.0f;
+		DarkWolf_RelayoutOptionsTab( controls, left + slot * 0.0f, y, slot, h );
+		DarkWolf_RelayoutOptionsTab( system,   left + slot * 1.0f, y, slot, h );
+		DarkWolf_RelayoutOptionsTab( game,     left + slot * 2.0f, y, slot, h );
+		DarkWolf_RelayoutOptionsTab( mods,     left + slot * 3.0f, y, slot, h );
+		DarkWolf_RelayoutOptionsTab( defaults, left + slot * 5.0f, y, slot, h );
+	} else {
+		// Some original SP menu packs have no MODS tab. Keep Rend2 Settings
+		// as a first-class peer tab immediately before DEFAULTS.
+		slot = ( right - left ) / 5.0f;
+		DarkWolf_RelayoutOptionsTab( controls, left + slot * 0.0f, y, slot, h );
+		DarkWolf_RelayoutOptionsTab( system,   left + slot * 1.0f, y, slot, h );
+		DarkWolf_RelayoutOptionsTab( game,     left + slot * 2.0f, y, slot, h );
+		DarkWolf_RelayoutOptionsTab( defaults, left + slot * 4.0f, y, slot, h );
+	}
 
 	item = UI_Alloc( sizeof( *item ) );
 	if ( !item ) return;
 	Item_Init( item );
 	item->window.name = String_Alloc( "ctr_darkwolf_rend2_settings" );
-	item->window.rectClient.x = left + slot * 4.0f;
+	item->window.rectClient.x = left + slot * ( mods ? 4.0f : 3.0f );
 	item->window.rectClient.y = y;
 	item->window.rectClient.w = slot;
 	item->window.rectClient.h = h;
-	item->window.style = mods->window.style;
-	item->window.border = mods->window.border;
-	item->window.borderSize = mods->window.borderSize;
-	item->window.flags = ( mods->window.flags | WINDOW_VISIBLE | WINDOW_FORECOLORSET ) & ~WINDOW_HASFOCUS;
-	Vector4Copy( mods->window.foreColor, item->window.foreColor );
-	Vector4Copy( mods->window.backColor, item->window.backColor );
-	Vector4Copy( mods->window.borderColor, item->window.borderColor );
+	{
+		itemDef_t *styleSource = mods ? mods : game;
+		item->window.style = styleSource->window.style;
+		item->window.border = styleSource->window.border;
+		item->window.borderSize = styleSource->window.borderSize;
+		item->window.flags = ( styleSource->window.flags | WINDOW_VISIBLE | WINDOW_FORECOLORSET ) & ~WINDOW_HASFOCUS;
+		Vector4Copy( styleSource->window.foreColor, item->window.foreColor );
+		Vector4Copy( styleSource->window.backColor, item->window.backColor );
+		Vector4Copy( styleSource->window.borderColor, item->window.borderColor );
+		item->textscale = styleSource->textscale > 0.0f ? styleSource->textscale : 0.22f;
+		item->textaligny = styleSource->textaligny;
+		item->textStyle = styleSource->textStyle;
+		item->font = styleSource->font;
+		item->focusSound = styleSource->focusSound;
+	}
 	item->type = ITEM_TYPE_BUTTON;
 	item->text = String_Alloc( "REND2 SETTINGS" );
-	item->textscale = mods->textscale > 0.0f ? mods->textscale : 0.22f;
 	item->textalignment = ITEM_ALIGN_CENTER;
 	item->textalignx = slot * 0.5f;
-	item->textaligny = mods->textaligny;
-	item->textStyle = mods->textStyle;
-	item->font = mods->font;
-	item->focusSound = mods->focusSound;
 	item->action = String_Alloc( "setcvar ui_darkwolfReturnIngame 0 ; open darkwolf_graphics" );
 	item->parent = menu;
 	menu->items[menu->itemCount++] = item;
@@ -448,7 +483,7 @@ static void DarkWolf_BuildGraphicsNativeMenu( void ) {
 	DarkWolf_AddNativeText( m, "ad_note", "dw_advanced", "Authoring and destructive commands are available under DEV / TOOLS.", 255, 208, 220, 32, .15f, qfalse, qfalse );
 
 	DarkWolf_AddNativeButton( m, "restart", NULL, "APPLY / RESTART", 18, 330, 125, 22, .18f, qtrue, "exec vid_restart", 0 );
-	it = DarkWolf_AddNativeButton( m, "back_main", NULL, "BACK", 357, 330, 125, 22, .19f, qtrue, "close darkwolf_graphics ; open setup_menu2", 0 );
+	it = DarkWolf_AddNativeButton( m, "back_main", NULL, "BACK", 357, 330, 125, 22, .19f, qtrue, "close darkwolf_graphics ; open setup_menu", 0 );
 	DarkWolf_ShowNativeWhen( it, "ui_darkwolfReturnIngame", "0" );
 	it = DarkWolf_AddNativeButton( m, "back_game", NULL, "BACK", 357, 330, 125, 22, .19f, qtrue, "close darkwolf_graphics ; open ingame_system", 0 );
 	DarkWolf_ShowNativeWhen( it, "ui_darkwolfReturnIngame", "1" );
@@ -961,4 +996,4 @@ new_tesla = """			if ( cent->currentState.eType == ET_TESLA_EF && cg_dlightEffec
 				// REND2_EFFECT_QUALITY_POLISH_V8_1: move only the room-light a small distance"""
 replace_once(tesla, old_tesla, new_tesla)
 
-print("DARKWOLF_SETTINGS_UI_V4_OPTIONS_TABS_TESLA351_PATCH_OK")
+print("DARKWOLF_SETTINGS_UI_V4_1_OPTIONS_TARGET_FIX_TESLA351_PATCH_OK")
