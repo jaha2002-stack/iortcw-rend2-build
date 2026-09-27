@@ -103,6 +103,28 @@ parse_insert='''			parsedCandidate.style = style;
 			Q_strncpyz(parsedCandidate.targetname, targetname, sizeof(parsedCandidate.targetname));'''
 one(tr_scene,parse_anchor,parse_insert,"BSP fixture origin discovery")
 
+registry_anchor='''	s_staticPromotePersistentBuildGeneration++;
+	ri.Printf(PRINT_ALL,
+		"STATIC_PROMOTE_V12_FIX_V5_1_REGISTRY map=%s generation=%d'''
+registry_insert='''	s_staticPromotePersistentBuildGeneration++;
+	// DARKWOLF_TESTLAB_V0_1: dump the final persistent registry once at build time.
+	{
+		int testlabIndex;
+		for (testlabIndex = 0; testlabIndex < s_staticPromotePersistentCount; ++testlabIndex)
+		{
+			staticPromotePersistentLight_t *testlabLight = &s_staticPromotePersistentLights[testlabIndex];
+			ri.Printf(PRINT_ALL,
+				"TESTLAB_PERSISTENT_FIXTURE map=%s fixtureIndex=%d fixture=%d origin=%.3f,%.3f,%.3f rawMembers=%d synthetic=%d\\n",
+				tr.world ? tr.world->baseName : "<none>", testlabIndex,
+				testlabLight->candidate.entityOrdinal,
+				testlabLight->candidate.origin[0], testlabLight->candidate.origin[1], testlabLight->candidate.origin[2],
+				testlabLight->rawMembers, testlabLight->synthetic ? 1 : 0);
+		}
+	}
+	ri.Printf(PRINT_ALL,
+		"STATIC_PROMOTE_V12_FIX_V5_1_REGISTRY map=%s generation=%d'''
+one(tr_scene,registry_anchor,registry_insert,"persistent registry dump")
+
 anchor='''    ri.Printf(PRINT_ALL,
         "USLRD_RC_FRONT ms=%d map=%s fixture=%d'''
 insert='''    // DARKWOLF_TESTLAB_V0_1: machine-readable discovery record.
