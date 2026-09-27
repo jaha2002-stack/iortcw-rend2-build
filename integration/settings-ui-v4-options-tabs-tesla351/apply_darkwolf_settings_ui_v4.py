@@ -422,13 +422,13 @@ static void DarkWolf_BuildGraphicsNativeMenu( void ) {
 	DarkWolf_AddNativeStateTab( m, "tab_advanced", "ADVANCED", 297, 32, 88, 18, .20f, "ui_darkwolfGraphicsTab", "3",
 		"setcvar ui_darkwolfGraphicsTab 3 ; hide dw_core ; hide dw_lighting ; hide dw_effects ; hide dw_advanced ; show dw_advanced" );
 	DarkWolf_AddNativeStateTab( m, "tab_dev", "DEV / TOOLS", 390, 32, 92, 18, .17f, "ui_darkwolfGraphicsTab", "4",
-		"setcvar ui_darkwolfGraphicsTab 4 ; open darkwolf_developer" );
+		"setcvar ui_darkwolfGraphicsTab 4 ; close darkwolf_graphics ; open darkwolf_developer" );
 
 	DarkWolf_AddNativeText( m, "profile_label", NULL, "PROFILE:", 18, 58, 90, 15, .20f, qtrue, qfalse );
-	DarkWolf_AddNativeButton( m, "p_perf", NULL, "PERFORMANCE", 105, 57, 82, 18, .17f, qtrue, "uiScript darkwolfProfile 0", 0 );
-	DarkWolf_AddNativeButton( m, "p_quality", NULL, "QUALITY", 191, 57, 82, 18, .18f, qtrue, "uiScript darkwolfProfile 1", 0 );
-	DarkWolf_AddNativeButton( m, "p_hq", NULL, "HIGH QUALITY", 277, 57, 94, 18, .17f, qtrue, "uiScript darkwolfProfile 2", 0 );
-	DarkWolf_AddNativeButton( m, "p_cine", NULL, "CINEMATIC", 375, 57, 105, 18, .18f, qtrue, "uiScript darkwolfProfile 3", 0 );
+	DarkWolf_AddNativeStateTab( m, "p_perf", "PERFORMANCE", 105, 57, 82, 18, .17f, "ui_darkwolfProfile", "0", "uiScript darkwolfProfile 0" );
+	DarkWolf_AddNativeStateTab( m, "p_quality", "QUALITY", 191, 57, 82, 18, .18f, "ui_darkwolfProfile", "1", "uiScript darkwolfProfile 1" );
+	DarkWolf_AddNativeStateTab( m, "p_hq", "HIGH QUALITY", 277, 57, 94, 18, .17f, "ui_darkwolfProfile", "2", "uiScript darkwolfProfile 2" );
+	DarkWolf_AddNativeStateTab( m, "p_cine", "CINEMATIC", 375, 57, 105, 18, .18f, "ui_darkwolfProfile", "3", "uiScript darkwolfProfile 3" );
 
 	DarkWolf_AddNativeToggle( m, "core_pbr", "dw_core", "PBR:", "r_pbr", 18, 88, 220, 16, .19f, qtrue );
 	DarkWolf_AddNativeToggle( m, "core_normal", "dw_core", "Normal maps:", "r_normalMapping", 18, 112, 220, 16, .19f, qtrue );
@@ -499,7 +499,7 @@ static void DarkWolf_BuildDeveloperNativeMenu( void ) {
 	if ( Menus_FindByName( "darkwolf_developer" ) ) return;
 	m = DarkWolf_BeginNativeMenu( "darkwolf_developer", 55, 45, 530, 390,
 		"setcvar ui_darkwolfDevTab 0 ; hide dev_static ; hide dev_shadow ; hide dev_material ; hide dev_fire ; show dev_static",
-		"close darkwolf_developer", qtrue );
+		"close darkwolf_developer ; open darkwolf_graphics", qtrue );
 	if ( !m ) return;
 
 	it = DarkWolf_AddNativeText( m, "title", NULL, "DARKWOLF DEVELOPER / TOOLS", 0, 0, 530, 28, .30f, qtrue, qtrue );
@@ -609,8 +609,12 @@ static void DarkWolf_BuildDeveloperNativeMenu( void ) {
 	DarkWolf_AddNativeToggle( m, "ft7", "dev_fire", "Owner lock:", "r_volumetricFireOwnerLock", 270, 254, 220, 18, .16f, qfalse );
 	DarkWolf_AddNativeButton( m, "reset", "dev_fire", "RESET DEV DIAGNOSTICS", 158, 300, 214, 20, .15f, qfalse, "uiScript darkwolfTool resetDevDiagnostics", 0 );
 
-	DarkWolf_AddNativeText( m, "note", NULL, "ARMED actions auto-disarm after one use. Diagnostics do not require arming.", 18, 336, 494, 20, .15f, qtrue, qtrue );
-	DarkWolf_AddNativeButton( m, "back", NULL, "BACK TO GRAPHICS", 390, 362, 122, 22, .16f, qtrue, "close darkwolf_developer", 0 );
+	DarkWolf_AddNativeText( m, "dev_profile_label", NULL, "PROFILE:", 18, 336, 72, 18, .17f, qtrue, qfalse );
+	DarkWolf_AddNativeStateTab( m, "dev_p_perf", "PERFORMANCE", 82, 335, 91, 19, .15f, "ui_darkwolfProfile", "0", "uiScript darkwolfProfile 0" );
+	DarkWolf_AddNativeStateTab( m, "dev_p_quality", "QUALITY", 178, 335, 82, 19, .15f, "ui_darkwolfProfile", "1", "uiScript darkwolfProfile 1" );
+	DarkWolf_AddNativeStateTab( m, "dev_p_hq", "HIGH QUALITY", 265, 335, 99, 19, .15f, "ui_darkwolfProfile", "2", "uiScript darkwolfProfile 2" );
+	DarkWolf_AddNativeStateTab( m, "dev_p_cine", "CINEMATIC", 369, 335, 105, 19, .15f, "ui_darkwolfProfile", "3", "uiScript darkwolfProfile 3" );
+	DarkWolf_AddNativeButton( m, "back", NULL, "BACK TO GRAPHICS", 390, 362, 122, 22, .16f, qtrue, "close darkwolf_developer ; open darkwolf_graphics", 0 );
 
 	DarkWolf_FinalizeNativeMenu( m );
 }
@@ -996,4 +1000,4 @@ new_tesla = """			if ( cent->currentState.eType == ET_TESLA_EF && cg_dlightEffec
 				// REND2_EFFECT_QUALITY_POLISH_V8_1: move only the room-light a small distance"""
 replace_once(tesla, old_tesla, new_tesla)
 
-print("DARKWOLF_SETTINGS_UI_V4_1_OPTIONS_TARGET_FIX_TESLA351_PATCH_OK")
+print("DARKWOLF_SETTINGS_UI_V4_2_PROFILE_NAV_FIX_TESLA351_PATCH_OK")
