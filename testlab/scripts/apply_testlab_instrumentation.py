@@ -180,41 +180,35 @@ frame_gate_anchor='''	// DARKWOLF_PCRB_E2E_V0_7_VISIBLE_SURFACE_INFLUENCE_AUDIT
 		return;'''
 frame_gate_insert='''	// DARKWOLF_TESTLAB_V0_1: read-only early-frame gate telemetry.
 	{
-		static int testlabFrameGatePrints = 0;
+		static int testlabLastFrameGateStage = -1;
 		if (!tr.world || (fd->rdflags & (RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL)))
 		{
-			if (testlabFrameGatePrints < 20)
-			{
+			if (testlabLastFrameGateStage != 0)
 				ri.Printf(PRINT_ALL,
 					"TESTLAB_FRAME_STATE stage=WORLD_GATE world=%d rdflags=%d\\n",
 					tr.world ? 1 : 0, fd ? fd->rdflags : -1);
-				testlabFrameGatePrints++;
-			}
+			testlabLastFrameGateStage = 0;
 			return;
 		}
 		R_DarkWolfPCRBE2E07ResetFrame();
 		R_StaticPromoteParseWorld();
 		if (!R_StaticPromoteBuildPersistentRegistry())
 		{
-			if (testlabFrameGatePrints < 20)
-			{
+			if (testlabLastFrameGateStage != 1)
 				ri.Printf(PRINT_ALL,
 					"TESTLAB_FRAME_STATE stage=REGISTRY_NOT_READY map=%s entityString=%d parsedCandidates=%d persistentReady=%d persistentCount=%d\\n",
 					tr.world->baseName, (tr.world->entityString && tr.world->entityString[0]) ? 1 : 0,
 					s_staticPromoteCandidateCount, s_staticPromotePersistentReady ? 1 : 0,
 					s_staticPromotePersistentCount);
-				testlabFrameGatePrints++;
-			}
+			testlabLastFrameGateStage = 1;
 			return;
 		}
-		if (testlabFrameGatePrints < 20)
-		{
+		if (testlabLastFrameGateStage != 2)
 			ri.Printf(PRINT_ALL,
 				"TESTLAB_FRAME_STATE stage=READY map=%s parsedCandidates=%d persistentCount=%d generation=%d\\n",
 				tr.world->baseName, s_staticPromoteCandidateCount, s_staticPromotePersistentCount,
 				s_staticPromotePersistentBuildGeneration);
-			testlabFrameGatePrints++;
-		}
+		testlabLastFrameGateStage = 2;
 	}'''
 one(tr_scene,frame_gate_anchor,frame_gate_insert,"StaticPromote frame gate telemetry")
 
