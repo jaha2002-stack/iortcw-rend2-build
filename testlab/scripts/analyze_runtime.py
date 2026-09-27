@@ -18,7 +18,7 @@ for line in text.splitlines():
         try:
             origins[int(kv["fixture"])]=[float(x) for x in kv["origin"].split(",")]
         except Exception: pass
-    if "USLRD_RC_FRONT " in line:
+    if "SPR_FIXV1_FRAME " in line:
         kv=dict(kv_re.findall(line)); front.append(kv)
     if "USLRD_SHADOW_GROUP " in line:
         kv=dict(kv_re.findall(line)); shadow.append(kv)
@@ -26,11 +26,11 @@ for line in text.splitlines():
 fixtures=[int(x["fixture"]) for x in cfg["fixtures"]]
 result={"schema":1,"scenario":cfg["id"],"fixtures":{},"shadow_records":len(shadow),"status":"FAIL","failures":[]}
 for fixture in fixtures:
-    rows=[r for r in front if int(r.get("fixture","-999"))==fixture]
-    direct=any(r.get("directPresent")=="1" for r in rows)
-    resident=any(r.get("resident")=="1" for r in rows)
+    rows=[r for r in front if int(r.get("entity","-999"))==fixture]
+    direct=any(int(r.get("addedDlightIndex","-1")) >= 0 for r in rows)
+    resident=any(r.get("finalResidencyDecision","NO_RESIDENCY") != "NO_RESIDENCY" for r in rows)
     result["fixtures"][str(fixture)]={"records":len(rows),"origin":origins.get(fixture),"direct_seen":direct,"resident_seen":resident}
-    if not rows: result["failures"].append(f"fixture {fixture}: no USLRD_RC_FRONT telemetry")
+    if not rows: result["failures"].append(f"fixture {fixture}: no SPR_FIXV1_FRAME telemetry")
     if cfg["assertions"].get("require_direct_light_somewhere") and not direct:
         result["failures"].append(f"fixture {fixture}: direct light never observed")
     if cfg["assertions"].get("require_resident_somewhere") and not resident:
