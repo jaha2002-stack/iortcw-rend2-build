@@ -46,6 +46,49 @@ one(tr_main,
 "physical group diag")
 
 # Emit stable fixture world origin for the external two-pass controller.
+# Also add an independent TestLab-only discovery path that does not depend on
+# historical root-cause diagnostic CVars.
+diag_fn_anchor='''static void R_StaticPromoteRootCauseDiagFrame(const refdef_t *fd)
+{'''
+diag_fn_insert='''static void R_TestLabFixtureDiscovery(void)
+{
+    static int done = 0;
+    int i;
+    int found = 0;
+
+    if (done || !tr.world || s_staticPromotePersistentCount <= 0)
+        return;
+
+    for (i = 0; i < s_staticPromotePersistentCount; ++i)
+    {
+        staticPromotePersistentLight_t *light = &s_staticPromotePersistentLights[i];
+        const int fixture = light->candidate.entityOrdinal;
+        if (fixture != 918 && fixture != 782)
+            continue;
+
+        ri.Printf(PRINT_ALL,
+            "TESTLAB_FIXTURE_ORIGIN map=%s fixture=%d origin=%.3f,%.3f,%.3f\\n",
+            tr.world->baseName, fixture,
+            light->candidate.origin[0], light->candidate.origin[1], light->candidate.origin[2]);
+        found++;
+    }
+
+    if (found >= 2)
+        done = 1;
+}
+
+static void R_StaticPromoteRootCauseDiagFrame(const refdef_t *fd)
+{'''
+one(tr_scene,diag_fn_anchor,diag_fn_insert,"independent fixture discovery helper")
+
+diag_guard='''    if (!r_staticPromoteRootCauseDiag || !r_staticPromoteRootCauseDiag->integer || !fd || !tr.world)
+        return;'''
+diag_guard_new='''    R_TestLabFixtureDiscovery();
+
+    if (!r_staticPromoteRootCauseDiag || !r_staticPromoteRootCauseDiag->integer || !fd || !tr.world)
+        return;'''
+one(tr_scene,diag_guard,diag_guard_new,"fixture discovery call")
+
 anchor='''    ri.Printf(PRINT_ALL,
         "USLRD_RC_FRONT ms=%d map=%s fixture=%d'''
 insert='''    // DARKWOLF_TESTLAB_V0_1: machine-readable discovery record.
