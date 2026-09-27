@@ -59,6 +59,7 @@ static materialLabOverride_t s_materialLabOverrides[MATERIAL_LAB_MAX_OVERRIDES];
 static int s_materialLabSelected = -1;
 static world_t *s_materialLabWorld = NULL;
 static qboolean s_materialLabProfileLoaded = qfalse;
+static qboolean s_materialLabAutoloadAttempted = qfalse;
 static qboolean s_materialLabRuntimeApplied = qfalse;
 static char s_materialLabMapName[MAX_QPATH] = "";
 static char s_materialLabProfilePath[MAX_OSPATH] = "";
@@ -414,12 +415,11 @@ static void R_MaterialLabEnsureWorld(void)
 	s_materialLabSelected = -1;
 	s_materialLabRuntimeApplied = qfalse;
 	s_materialLabProfileLoaded = qfalse;
+	s_materialLabAutoloadAttempted = qfalse;
 	s_materialLabWorld = tr.world;
 	Q_strncpyz(s_materialLabMapName, tr.world->baseName, sizeof(s_materialLabMapName));
 	Com_sprintf(s_materialLabProfilePath, sizeof(s_materialLabProfilePath),
 		"materiallab/%s.materials", s_materialLabMapName);
-	if (r_materialLab && r_materialLab->integer && r_materialLabAutoload && r_materialLabAutoload->integer)
-		R_MaterialLabLoadInternal(qtrue);
 }
 
 static void R_MaterialLabFrontEndTick(void)
@@ -431,6 +431,11 @@ static void R_MaterialLabFrontEndTick(void)
 	{
 		if (s_materialLabRuntimeApplied) R_MaterialLabRestoreAll();
 		return;
+	}
+	if (!s_materialLabAutoloadAttempted && r_materialLabAutoload && r_materialLabAutoload->integer)
+	{
+		s_materialLabAutoloadAttempted = qtrue;
+		R_MaterialLabLoadInternal(qtrue);
 	}
 	for (i = 0; i < MATERIAL_LAB_MAX_OVERRIDES; ++i)
 	{
@@ -599,6 +604,7 @@ static void R_MaterialLabSave_f(void)
 static void R_MaterialLabLoad_f(void)
 {
 	R_MaterialLabEnsureWorld();
+	s_materialLabAutoloadAttempted = qtrue;
 	R_MaterialLabLoadInternal(qfalse);
 }
 
@@ -672,6 +678,7 @@ void R_MaterialLabShutdown(void)
 	s_materialLabProfilePath[0] = '\0';
 	s_materialLabRuntimeApplied = qfalse;
 	s_materialLabProfileLoaded = qfalse;
+	s_materialLabAutoloadAttempted = qfalse;
 }
 
 '''
