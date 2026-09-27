@@ -406,8 +406,10 @@ done:
 static void R_MaterialLabEnsureWorld(void)
 {
 	if (!tr.world || !tr.world->baseName[0]) return;
-	if (s_materialLabWorld == tr.world) return;
-	// Previous shader pointers belong to the old world; never dereference them here.
+	if (s_materialLabWorld == tr.world && !Q_stricmp(s_materialLabMapName, tr.world->baseName)) return;
+	// tr.world points at static s_worldData and can keep the same address across
+	// map loads. baseName is therefore part of world identity. Previous shader
+	// pointers belong to the old registration set; never dereference them here.
 	Com_Memset(s_materialLabOverrides, 0, sizeof(s_materialLabOverrides));
 	s_materialLabSelected = -1;
 	s_materialLabRuntimeApplied = qfalse;
