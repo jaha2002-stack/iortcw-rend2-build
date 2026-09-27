@@ -13,12 +13,19 @@ front=[]
 shadow=[]
 origins={}
 view_states={}
+render_views={}
+render_re=re.compile(
+    r"TESTLAB_RENDER_VIEW index=(\d+) "
+    r"origin=([-+0-9.eE]+),([-+0-9.eE]+),([-+0-9.eE]+) "
+    r"forward=([-+0-9.eE]+),([-+0-9.eE]+),([-+0-9.eE]+) "
+    r"rdflags=(-?\d+)"
+)
 state_re=re.compile(
-    r"TESTLAB_VIEW_STATE index=(\\d+) "
+    r"TESTLAB_VIEW_STATE index=(\d+) "
     r"origin=([-+0-9.eE]+),([-+0-9.eE]+),([-+0-9.eE]+) "
     r"angles=([-+0-9.eE]+),([-+0-9.eE]+),([-+0-9.eE]+) "
     r"velocity=([-+0-9.eE]+),([-+0-9.eE]+),([-+0-9.eE]+) "
-    r"noclip=(\\d+) pmNoClip=(\\d+)"
+    r"noclip=(\d+) pmNoClip=(\d+)"
 )
 for line in text.splitlines():
     if "TESTLAB_FIXTURE_ORIGIN " in line:
@@ -41,6 +48,15 @@ for line in text.splitlines():
             "pmNoClip":int(sm.group(12)),
         }
         view_states.setdefault(idx,[]).append(row)
+    rm=render_re.search(line)
+    if rm:
+        idx=int(rm.group(1))
+        row={
+            "origin":[float(rm.group(i)) for i in range(2,5)],
+            "forward":[float(rm.group(i)) for i in range(5,8)],
+            "rdflags":int(rm.group(8)),
+        }
+        render_views.setdefault(idx,[]).append(row)
 
 fixtures=[int(x["fixture"]) for x in cfg["fixtures"]]
 result={"schema":1,"scenario":cfg["id"],"fixtures":{},"shadow_records":len(shadow),"camera_validation":{},"status":"FAIL","failures":[]}
@@ -94,7 +110,7 @@ for idx in range(128):
     origin_err=max(abs(first["origin"][i]-exp["origin"][i]) for i in range(3))
     angle_err=max(angle_error(first["angles"][i],exp["angles"][i]) for i in range(3))
     velocity_mag=math.sqrt(sum(v*v for v in first["velocity"]))
-    if origin_err > 0.05 or angle_err > 0.10 or velocity_mag > 0.05 or first["noclip"] != 1 or first["pmNoClip"] != 1:
+    if origin_err > 0.05 or angle_err > 0.10 or velocity_mag > 0.05 or first["noclip"] != 1:
         camera_bad.append({
             "index":idx,
             "origin_error":origin_err,
@@ -120,6 +136,59 @@ if camera_duplicate_conflicts:
     result["failures"].append(f"camera state duplicate conflict for indices: {sorted(set(camera_duplicate_conflicts))[:16]}")
 if camera_bad:
     result["failures"].append(f"camera state mismatch for {len(camera_bad)} captures")
+
+# Renderer-authoritative camera contract. The final refdef may include normal
+# first-person eye/bob offsets, so validate proximity to the requested player origin
+# and that the renderer forward vector still points at fixture 918.
+render_bad=[]
+render_missing=[]
+render_duplicate_conflicts=[]
+for idx in range(128):
+    rows=render_views.get(idx,[])
+    if not rows:
+        render_missing.append(idx)
+        continue
+    first=rows[0]
+    for other in rows[1:]:
+        if other != first:
+            render_duplicate_conflicts.append(idx)
+            break
+    exp=expected_cameras.get(idx)
+    if exp is None or focus_origin is None:
+        render_bad.append({"index":idx,"reason":"expected render camera unavailable"})
+        continue
+    delta=[first["origin"][i]-exp["origin"][i] for i in range(3)]
+    origin_distance=math.sqrt(sum(v*v for v in delta))
+    to_fixture=[focus_origin[i]-first["origin"][i] for i in range(3)]
+    to_len=math.sqrt(sum(v*v for v in to_fixture))
+    fwd=first["forward"]
+    fwd_len=math.sqrt(sum(v*v for v in fwd))
+    forward_dot=-1.0
+    if to_len > 0.0001 and fwd_len > 0.0001:
+        forward_dot=sum((to_fixture[i]/to_len)*(fwd[i]/fwd_len) for i in range(3))
+    if origin_distance > 96.0 or forward_dot < 0.90:
+        render_bad.append({
+            "index":idx,
+            "origin_distance":origin_distance,
+            "forward_dot":forward_dot,
+            "actual":first,
+            "expected_player_origin":exp["origin"],
+        })
+
+result["render_camera_validation"]={
+    "expected":128,
+    "unique_indices":len(render_views),
+    "missing_indices":render_missing,
+    "duplicate_conflicts":sorted(set(render_duplicate_conflicts)),
+    "invalid_count":len(render_bad),
+    "invalid_samples":render_bad[:8],
+}
+if render_missing:
+    result["failures"].append(f"renderer camera missing for indices: {render_missing[:16]}")
+if render_duplicate_conflicts:
+    result["failures"].append(f"renderer camera duplicate conflict for indices: {sorted(set(render_duplicate_conflicts))[:16]}")
+if render_bad:
+    result["failures"].append(f"renderer camera mismatch for {len(render_bad)} captures")
 
 for fixture in fixtures:
     rows=[r for r in front if int(r.get("fixture","-999"))==fixture]

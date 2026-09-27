@@ -218,7 +218,27 @@ one(tr_scene,frame_gate_anchor,frame_gate_insert,"StaticPromote frame gate telem
 # only the two Escape1 fixtures after production selection/delivery has run.
 runtime_probe_anchor='''	// DARKWOLF_USLRD_V0_1: compact transition/summary telemetry only when explicitly enabled.
 	R_StaticPromoteUSLRDDiagFrame();'''
-runtime_probe_insert='''	// DARKWOLF_TESTLAB_V0_1: read-only post-delivery runtime proof.
+runtime_probe_insert='''	// DARKWOLF_TESTLAB_V0_1: renderer-authoritative camera proof.
+	{
+		static cvar_t *testlabCaptureIndexCvar = NULL;
+		static int testlabLastCaptureIndex = -999999;
+		int testlabCaptureIndex;
+		if (!testlabCaptureIndexCvar)
+			testlabCaptureIndexCvar = ri.Cvar_Get("r_testlabCaptureIndex", "-1", 0);
+		testlabCaptureIndex = testlabCaptureIndexCvar ? testlabCaptureIndexCvar->integer : -1;
+		if (fd && testlabCaptureIndex >= 0 && testlabCaptureIndex != testlabLastCaptureIndex)
+		{
+			ri.Printf(PRINT_ALL,
+				"TESTLAB_RENDER_VIEW index=%d origin=%.3f,%.3f,%.3f forward=%.6f,%.6f,%.6f rdflags=%d\\n",
+				testlabCaptureIndex,
+				fd->vieworg[0], fd->vieworg[1], fd->vieworg[2],
+				fd->viewaxis[0][0], fd->viewaxis[0][1], fd->viewaxis[0][2],
+				fd->rdflags);
+			testlabLastCaptureIndex = testlabCaptureIndex;
+		}
+	}
+
+	// DARKWOLF_TESTLAB_V0_1: read-only post-delivery runtime proof.
 	{
 		static int testlabLastFramePrintMs = -1;
 		int testlabNowMs = ri.Milliseconds();
@@ -296,7 +316,10 @@ one(cg_servercmds,
 		char testlabAutomation[16];
 		trap_Cvar_VariableStringBuffer( "dw_testAutomation", testlabAutomation, sizeof(testlabAutomation) );
 		if ( atoi( testlabAutomation ) ) {
-			// DARKWOLF_TESTLAB_V0_1: stock Continue action without UI/input emulation.
+			// DARKWOLF_TESTLAB_V0_1: leave the stock scripted camera before deterministic captures.
+			CG_Printf( "TESTLAB_CAMERA_STOP before=%d\\n", cg.cameraMode ? 1 : 0 );
+			CG_StopCamera();
+			CG_Printf( "TESTLAB_CAMERA_STOP after=%d\\n", cg.cameraMode ? 1 : 0 );
 			CG_Fade( 0, 0, 0, 0, cg.time, 0 );
 			trap_Cvar_Set( "g_playerstart", "1" );
 			trap_S_FadeAllSound( 1.0f, 1000 );
