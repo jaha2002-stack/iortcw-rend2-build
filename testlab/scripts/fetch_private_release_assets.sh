@@ -57,7 +57,17 @@ test "$actual_sha" = "$expected_sha" || {
   exit 2
 }
 
+set +e
 unzip -q "$archive" -d "$outdir/unpacked"
+unzip_rc=$?
+set -e
+if [ "$unzip_rc" -gt 1 ]; then
+  echo "ERROR: unzip failed with exit code $unzip_rc" >&2
+  exit "$unzip_rc"
+fi
+if [ "$unzip_rc" -eq 1 ]; then
+  echo "INFO: unzip completed with Windows path-separator warnings; continuing after content verification." >&2
+fi
 
 pak0="$(find "$outdir/unpacked" -type f -iname 'pak0.pk3' -print -quit)"
 test -n "$pak0" || {
