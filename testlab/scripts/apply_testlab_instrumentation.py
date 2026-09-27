@@ -7,8 +7,10 @@ tr_init = root/"SP/code/rend2/tr_init.c"
 tr_main = root/"SP/code/rend2/tr_main.c"
 tr_scene = root/"SP/code/rend2/tr_scene.c"
 g_cmds = root/"SP/code/game/g_cmds.c"
+cg_info = root/"SP/code/cgame/cg_info.c"
+cg_servercmds = root/"SP/code/cgame/cg_servercmds.c"
 
-for p in (tr_init,tr_main,tr_scene,g_cmds):
+for p in (tr_init,tr_main,tr_scene,g_cmds,cg_info,cg_servercmds):
     if not p.is_file():
         raise SystemExit(f"missing source file: {p}")
 
@@ -260,6 +262,56 @@ runtime_probe_insert='''	// DARKWOLF_TESTLAB_V0_1: read-only post-delivery runti
 	// DARKWOLF_USLRD_V0_1: compact transition/summary telemetry only when explicitly enabled.
 	R_StaticPromoteUSLRDDiagFrame();'''
 one(tr_scene,runtime_probe_anchor,runtime_probe_insert,"post-delivery runtime probe")
+
+# TestLab must enter actual gameplay rather than remain on the SP briefing UI.
+# Mirror the stock UI "playerstart" action without opening menus or synthesizing input.
+one(cg_info,
+'''		trap_UI_Popup( "briefing" );
+
+		//trap_UpdateScreen();''',
+'''		{
+			char testlabAutomation[16];
+			trap_Cvar_VariableStringBuffer( "dw_testAutomation", testlabAutomation, sizeof(testlabAutomation) );
+			if ( !atoi( testlabAutomation ) ) {
+				trap_UI_Popup( "briefing" );
+			} else {
+				CG_Printf( "TESTLAB_BRIEFING_BYPASS active=1\\n" );
+			}
+		}
+
+		//trap_UpdateScreen();''',
+"briefing bypass")
+
+one(cg_servercmds,
+'''	if ( !strcmp( cmd, "rockandroll" ) ) {   // map loaded, game is ready to begin.
+		CG_Fade( 0, 0, 0, 255, cg.time, 0 );      // go black
+		trap_UI_Popup( "pregame" );                // start pregame menu
+		trap_Cvar_Set( "cg_norender", "1" );    // don't render the world until the player clicks in and the 'playerstart' func has been called (g_main in G_UpdateCvars() ~ilne 949)
+
+		trap_S_FadeAllSound( 1.0f, 1000 );    // fade sound up
+
+		return;
+	}''',
+'''	if ( !strcmp( cmd, "rockandroll" ) ) {   // map loaded, game is ready to begin.
+		char testlabAutomation[16];
+		trap_Cvar_VariableStringBuffer( "dw_testAutomation", testlabAutomation, sizeof(testlabAutomation) );
+		if ( atoi( testlabAutomation ) ) {
+			// DARKWOLF_TESTLAB_V0_1: stock Continue action without UI/input emulation.
+			CG_Fade( 0, 0, 0, 0, cg.time, 0 );
+			trap_Cvar_Set( "g_playerstart", "1" );
+			trap_S_FadeAllSound( 1.0f, 1000 );
+			CG_Printf( "TESTLAB_GAMEPLAY_START requested=1\\n" );
+			return;
+		}
+		CG_Fade( 0, 0, 0, 255, cg.time, 0 );      // go black
+		trap_UI_Popup( "pregame" );                // start pregame menu
+		trap_Cvar_Set( "cg_norender", "1" );    // don't render the world until the player clicks in and the 'playerstart' func has been called (g_main in G_UpdateCvars() ~ilne 949)
+
+		trap_S_FadeAllSound( 1.0f, 1000 );    // fade sound up
+
+		return;
+	}''',
+"automatic gameplay start")
 
 # Full 6-DOF view placement, intentionally only present in TestLab qagame.
 cmd_anchor='''/*
