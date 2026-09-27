@@ -169,6 +169,55 @@ insert='''    // DARKWOLF_TESTLAB_V0_1: machine-readable discovery record.
         "USLRD_RC_FRONT ms=%d map=%s fixture=%d'''
 one(tr_scene,anchor,insert,"fixture origin telemetry")
 
+# Post-delivery frame proof: bypasses historical diagnostic guards and records
+# only the two Escape1 fixtures after production selection/delivery has run.
+runtime_probe_anchor='''	// DARKWOLF_USLRD_V0_1: compact transition/summary telemetry only when explicitly enabled.
+	R_StaticPromoteUSLRDDiagFrame();'''
+runtime_probe_insert='''	// DARKWOLF_TESTLAB_V0_1: read-only post-delivery runtime proof.
+	{
+		static int testlabLastFramePrintMs = -1;
+		int testlabNowMs = ri.Milliseconds();
+		if (testlabLastFramePrintMs < 0 || testlabNowMs - testlabLastFramePrintMs >= 100)
+		{
+			int testlabFixtureIndex;
+			for (testlabFixtureIndex = 0; testlabFixtureIndex < s_staticPromotePersistentCount; ++testlabFixtureIndex)
+			{
+				staticPromotePersistentLight_t *testlabLight = &s_staticPromotePersistentLights[testlabFixtureIndex];
+				int testlabFixture = testlabLight->candidate.entityOrdinal;
+				int testlabSelectedSlot = -1;
+				int testlabAddedIndex;
+				int testlabClass;
+				int testlabSlot;
+				if (testlabFixture != 918 && testlabFixture != 782)
+					continue;
+				for (testlabSlot = 0; testlabSlot < selectedCount; ++testlabSlot)
+				{
+					if (selected[testlabSlot] == testlabLight)
+					{
+						testlabSelectedSlot = testlabSlot;
+						break;
+					}
+				}
+				testlabAddedIndex = R_DarkWolfFindPromotedDlightIndex(testlabLight);
+				testlabClass = R_StaticPromoteClassifyFixture(testlabLight);
+				ri.Printf(PRINT_ALL,
+					"TESTLAB_RUNTIME_FRAME map=%s fixture=%d enabled=%d maxLights=%d selectedCount=%d activeCount=%d physical=%d class=%d selectedSlot=%d addedDlightIndex=%d influenceVisible=%d held=%d unifiedResident=%d unifiedSlot=%d sourceRoute=%d nativeSuppressed=%d rawMembers=%d\\n",
+					tr.world->baseName, testlabFixture, enable, maxLights, selectedCount, activeCount,
+					testlabLight->physicalRecognitionAccepted ? 1 : 0, testlabClass,
+					testlabSelectedSlot, testlabAddedIndex,
+					testlabLight->influenceVisibleNow ? 1 : 0, testlabLight->heldResident ? 1 : 0,
+					testlabLight->unifiedResident ? 1 : 0, testlabLight->unifiedSelectedSlot,
+					testlabLight->physicalSourceRoute, testlabLight->nativeDuplicateSuppressed ? 1 : 0,
+					testlabLight->rawMembers);
+			}
+			testlabLastFramePrintMs = testlabNowMs;
+		}
+	}
+
+	// DARKWOLF_USLRD_V0_1: compact transition/summary telemetry only when explicitly enabled.
+	R_StaticPromoteUSLRDDiagFrame();'''
+one(tr_scene,runtime_probe_anchor,runtime_probe_insert,"post-delivery runtime probe")
+
 # Full 6-DOF view placement, intentionally only present in TestLab qagame.
 cmd_anchor='''/*
 =================
