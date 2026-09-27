@@ -314,6 +314,8 @@ one(cg_servercmds,
 "automatic gameplay start")
 
 # Full 6-DOF view placement, intentionally only present in TestLab qagame.
+# Unlike normal gameplay teleport, keep the automation camera fixed in noclip
+# with zero velocity so gravity/collision cannot collapse ring positions.
 cmd_anchor='''/*
 =================
 Cmd_SetViewpos_f
@@ -340,9 +342,44 @@ static void Cmd_DWTestView_f( gentity_t *ent ) {
         trap_Argv( i + 4, buffer, sizeof(buffer) );
         angles[i] = atof(buffer);
     }
-    TeleportPlayer( ent, origin, angles );
+
+    trap_UnlinkEntity( ent );
+    ent->client->noclip = qtrue;
+    ent->client->ps.pm_type = PM_NOCLIP;
+    ent->client->ps.groundEntityNum = ENTITYNUM_NONE;
+    VectorClear( ent->client->ps.velocity );
+    ent->client->pers.cmd.forwardmove = 0;
+    ent->client->pers.cmd.rightmove = 0;
+    ent->client->pers.cmd.upmove = 0;
+    VectorCopy( origin, ent->client->ps.origin );
+    SetClientViewAngle( ent, angles );
+    ent->client->ps.eFlags ^= EF_TELEPORT_BIT;
+    BG_PlayerStateToEntityState( &ent->client->ps, &ent->s, qtrue );
+    VectorCopy( ent->client->ps.origin, ent->r.currentOrigin );
+    trap_LinkEntity( ent );
+
     trap_SendServerCommand( ent-g_entities, va("print \\"TESTLAB_VIEW %.3f %.3f %.3f %.3f %.3f %.3f\\n\\"",
         origin[0], origin[1], origin[2], angles[0], angles[1], angles[2]) );
+}
+
+static void Cmd_DWTestViewState_f( gentity_t *ent ) {
+    char buffer[MAX_TOKEN_CHARS];
+    int index;
+
+    if ( trap_Argc() != 2 ) {
+        trap_SendServerCommand( ent-g_entities, "print \\"usage: dw_testViewState index\\n\\"" );
+        return;
+    }
+    trap_Argv( 1, buffer, sizeof(buffer) );
+    index = atoi(buffer);
+    trap_SendServerCommand( ent-g_entities, va(
+        "print \\"TESTLAB_VIEW_STATE index=%d origin=%.3f,%.3f,%.3f angles=%.3f,%.3f,%.3f velocity=%.3f,%.3f,%.3f noclip=%d pmNoClip=%d\\n\\"",
+        index,
+        ent->client->ps.origin[0], ent->client->ps.origin[1], ent->client->ps.origin[2],
+        ent->client->ps.viewangles[0], ent->client->ps.viewangles[1], ent->client->ps.viewangles[2],
+        ent->client->ps.velocity[0], ent->client->ps.velocity[1], ent->client->ps.velocity[2],
+        ent->client->noclip ? 1 : 0,
+        ent->client->ps.pm_type == PM_NOCLIP ? 1 : 0) );
 }
 
 /*
@@ -357,6 +394,8 @@ dispatch='''\t} else if ( Q_stricmp( cmd, "setviewpos" ) == 0 )  {
 \t\tCmd_SetViewpos_f( ent );'''
 dispatch_new='''\t} else if ( Q_stricmp( cmd, "dw_testView" ) == 0 )  { // DARKWOLF_TESTLAB_V0_1
 \t\tCmd_DWTestView_f( ent );
+\t} else if ( Q_stricmp( cmd, "dw_testViewState" ) == 0 )  { // DARKWOLF_TESTLAB_V0_1
+\t\tCmd_DWTestViewState_f( ent );
 \t} else if ( Q_stricmp( cmd, "setviewpos" ) == 0 )  {
 \t\tCmd_SetViewpos_f( ent );'''
 one(g_cmds,dispatch,dispatch_new,"dw_testView dispatch")

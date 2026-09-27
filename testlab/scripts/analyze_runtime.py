@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json,re,sys
+import json,math,re,sys
 from pathlib import Path
 
 log=Path(sys.argv[1])
@@ -12,6 +12,14 @@ kv_re=re.compile(r"(\w+)=([^\s]+)")
 front=[]
 shadow=[]
 origins={}
+view_states={}
+state_re=re.compile(
+    r"TESTLAB_VIEW_STATE index=(\\d+) "
+    r"origin=([-+0-9.eE]+),([-+0-9.eE]+),([-+0-9.eE]+) "
+    r"angles=([-+0-9.eE]+),([-+0-9.eE]+),([-+0-9.eE]+) "
+    r"velocity=([-+0-9.eE]+),([-+0-9.eE]+),([-+0-9.eE]+) "
+    r"noclip=(\\d+) pmNoClip=(\\d+)"
+)
 for line in text.splitlines():
     if "TESTLAB_FIXTURE_ORIGIN " in line:
         kv=dict(kv_re.findall(line))
@@ -22,9 +30,97 @@ for line in text.splitlines():
         kv=dict(kv_re.findall(line)); front.append(kv)
     if "USLRD_SHADOW_GROUP " in line:
         kv=dict(kv_re.findall(line)); shadow.append(kv)
+    sm=state_re.search(line)
+    if sm:
+        idx=int(sm.group(1))
+        row={
+            "origin":[float(sm.group(i)) for i in range(2,5)],
+            "angles":[float(sm.group(i)) for i in range(5,8)],
+            "velocity":[float(sm.group(i)) for i in range(8,11)],
+            "noclip":int(sm.group(11)),
+            "pmNoClip":int(sm.group(12)),
+        }
+        view_states.setdefault(idx,[]).append(row)
 
 fixtures=[int(x["fixture"]) for x in cfg["fixtures"]]
-result={"schema":1,"scenario":cfg["id"],"fixtures":{},"shadow_records":len(shadow),"status":"FAIL","failures":[]}
+result={"schema":1,"scenario":cfg["id"],"fixtures":{},"shadow_records":len(shadow),"camera_validation":{},"status":"FAIL","failures":[]}
+
+# Deterministic camera contract: every capture index must report a server-side
+# noclip view state matching the exact ring geometry that generated its CFG.
+focus_fixture=fixtures[0]
+focus_origin=origins.get(focus_fixture)
+expected_cameras={}
+if focus_origin is None:
+    result["failures"].append(f"fixture {focus_fixture}: origin unavailable for camera validation")
+else:
+    fx,fy,fz=focus_origin
+    d=cfg["discovery"]
+    idx=0
+    for vertical_offset in d["vertical_offsets"]:
+        for radius in d["ring_radii"]:
+            for k in range(d["ring_samples"]):
+                a=2*math.pi*k/d["ring_samples"]
+                x=fx+radius*math.cos(a); y=fy+radius*math.sin(a); z=fz+vertical_offset
+                dx,dy,dzv=fx-x,fy-y,fz-z
+                yaw=math.degrees(math.atan2(dy,dx))
+                h=math.hypot(dx,dy)
+                pitch=-math.degrees(math.atan2(dzv,h))
+                expected_cameras[idx]={
+                    "origin":[round(x,3),round(y,3),round(z,3)],
+                    "angles":[round(pitch,3),round(yaw,3),0.0],
+                }
+                idx+=1
+
+def angle_error(a,b):
+    return abs((a-b+180.0)%360.0-180.0)
+
+camera_bad=[]
+camera_missing=[]
+camera_duplicate_conflicts=[]
+for idx in range(128):
+    rows=view_states.get(idx,[])
+    if not rows:
+        camera_missing.append(idx)
+        continue
+    first=rows[0]
+    for other in rows[1:]:
+        if other != first:
+            camera_duplicate_conflicts.append(idx)
+            break
+    exp=expected_cameras.get(idx)
+    if exp is None:
+        camera_bad.append({"index":idx,"reason":"expected camera unavailable"})
+        continue
+    origin_err=max(abs(first["origin"][i]-exp["origin"][i]) for i in range(3))
+    angle_err=max(angle_error(first["angles"][i],exp["angles"][i]) for i in range(3))
+    velocity_mag=math.sqrt(sum(v*v for v in first["velocity"]))
+    if origin_err > 0.05 or angle_err > 0.10 or velocity_mag > 0.05 or first["noclip"] != 1 or first["pmNoClip"] != 1:
+        camera_bad.append({
+            "index":idx,
+            "origin_error":origin_err,
+            "angle_error":angle_err,
+            "velocity":velocity_mag,
+            "noclip":first["noclip"],
+            "pmNoClip":first["pmNoClip"],
+            "actual":first,
+            "expected":exp,
+        })
+
+result["camera_validation"]={
+    "expected":128,
+    "unique_indices":len(view_states),
+    "missing_indices":camera_missing,
+    "duplicate_conflicts":sorted(set(camera_duplicate_conflicts)),
+    "invalid_count":len(camera_bad),
+    "invalid_samples":camera_bad[:8],
+}
+if camera_missing:
+    result["failures"].append(f"camera state missing for indices: {camera_missing[:16]}")
+if camera_duplicate_conflicts:
+    result["failures"].append(f"camera state duplicate conflict for indices: {sorted(set(camera_duplicate_conflicts))[:16]}")
+if camera_bad:
+    result["failures"].append(f"camera state mismatch for {len(camera_bad)} captures")
+
 for fixture in fixtures:
     rows=[r for r in front if int(r.get("fixture","-999"))==fixture]
     direct=any(int(r.get("addedDlightIndex","-1")) >= 0 for r in rows)
