@@ -308,7 +308,13 @@ jobs:
           all_indices=[]
           for batch in range(4):
               cfg=Path(f'runtime/main/testlab_ring_{batch}.cfg').read_text()
-              indices=[int(x) for x in re.findall(r'^screenshot testlab_918_(\d{3})
+              indices=[int(x) for x in re.findall(r'^screenshot testlab_918_(\d{3})$',cfg,re.M)]
+              assert indices==list(range(batch*32,(batch+1)*32)), (batch,indices)
+              all_indices.extend(indices)
+          assert all_indices==list(range(128))
+          print('Ring config generation PASS: 4 batches x 32, indices 0..127')
+          PY
+          echo "Runtime discovery PASS"
 
       - name: Runtime pass 2 - deterministic ring capture
         if: steps.assets.outputs.available == 'true'
@@ -324,7 +330,6 @@ jobs:
           for batch in 0 1 2 3; do
             rm -f home/main/qconsole.log home/main/rtcwconsole.log
             find home -type f -path '*/screenshots/testlab_*.tga' -delete || true
-
             set +e
             LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout 240s "$exe" \
               +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
@@ -334,19 +339,16 @@ jobs:
             rc=$?
             set -e
             echo "$rc" > "evidence/ring-batches/batch_${batch}-exit-code.txt"
-
             qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
             test -n "$qlog"
             cp "$qlog" "evidence/ring-batches/batch_${batch}-qconsole.log"
             find home -type f -path '*/screenshots/testlab_*.tga' -printf '%f\n' | LC_ALL=C sort > "evidence/ring-batches/batch_${batch}-screenshots.txt"
             find home -type f -path '*/screenshots/testlab_*.tga' -exec cp -a {} evidence/screenshots/ \;
-
             {
               echo "TESTLAB_RING_BATCH_LOG_BEGIN batch=$batch"
               cat "evidence/ring-batches/batch_${batch}-qconsole.log"
               echo "TESTLAB_RING_BATCH_LOG_END batch=$batch"
             } >> evidence/ring-qconsole.log
-
             if [ "$rc" -ne 0 ]; then
               echo "ERROR: ring batch $batch exited with code $rc" >&2
               exit 1
@@ -375,98 +377,6 @@ jobs:
           printf '%s\n' 'TESTLAB_RING_COMPLETE captures=128 batches=4' >> evidence/ring-qconsole.log
           echo 0 > evidence/ring-exit-code.txt
           echo 128 > evidence/ring-capture-count.txt
-          python3 testlab/scripts/analyze_runtime.py evidence/ring-qconsole.log testlab/scenarios/escape1_staticpromote.json evidence/runtime-analysis.json
-          echo 'PASS' > evidence/runtime-status.txt
-          echo "Runtime ring PASS"
-
-      - name: Record gated runtime status
-        if: steps.assets.outputs.available != 'true'
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          reg=json.loads(Path('testlab/scenarios/regression_registry.json').read_text())
-          out={'schema':1,'runtime_status':'BLOCKED_MISSING_RETAIL_ASSETS','false_pass_prevented':True,'registry':reg}
-          Path('evidence/runtime-analysis.json').write_text(json.dumps(out,indent=2)+'\n')
-          PY
-
-      - name: Package TestLab native binary and evidence
-        if: always()
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          mkdir -p out
-          if [ -f .native_root ]; then
-            root="$(cat .native_root)"
-            mkdir -p "out/$TEST_BUILD_NAME"
-            cp -a "$root/." "out/$TEST_BUILD_NAME/"
-            cp -a testlab "out/$TEST_BUILD_NAME/testlab"
-            (cd out && zip -q -X -r "$TEST_BUILD_NAME.zip" "$TEST_BUILD_NAME")
-            sha256sum "out/$TEST_BUILD_NAME.zip" > "out/$TEST_BUILD_NAME.zip.sha256"
-          fi
-          cp -a testlab/scenarios evidence/
-          cp -a testlab/README.md evidence/TESTLAB_README.md
-          (cd evidence && find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
-          (cd evidence && zip -q -X -r "../out/$EVIDENCE_NAME.zip" .)
-          sha256sum "out/$EVIDENCE_NAME.zip" > "out/$EVIDENCE_NAME.zip.sha256"
-
-      - name: Upload TestLab evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.EVIDENCE_NAME }}
-          path: |
-            out/${{ env.EVIDENCE_NAME }}.zip
-            out/${{ env.EVIDENCE_NAME }}.zip.sha256
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 90
-
-      - name: Upload native TestLab build
-        if: always() && hashFiles('out/DarkWolfRTCW-Renderer-TestLab-v0.1-Linux-x64.zip') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.TEST_BUILD_NAME }}
-          path: |
-            out/${{ env.TEST_BUILD_NAME }}.zip
-            out/${{ env.TEST_BUILD_NAME }}.zip.sha256
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 90
-,cfg,re.M)]
-              assert indices==list(range(batch*32,(batch+1)*32)), (batch,indices)
-              all_indices.extend(indices)
-          assert all_indices==list(range(128))
-          print('Ring config generation PASS: 4 batches x 32, indices 0..127')
-          PY
-          echo "Runtime discovery PASS"
-
-      - name: Runtime pass 2 - deterministic ring capture
-        if: steps.assets.outputs.available == 'true'
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -print -quit)"
-          rm -f home/main/qconsole.log home/main/rtcwconsole.log
-          set +e
-          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout 180s "$exe" \
-            +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
-            +set com_introplayed 1 +set logfile 2 +set r_fullscreen 0 +set dw_testAutomation 1 \
-            +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
-            +spdevmap escape1 +wait 300 +exec testlab_ring.cfg
-          rc=$?
-          set -e
-          echo "$rc" > evidence/ring-exit-code.txt
-          qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
-          test -n "$qlog"
-          cp "$qlog" evidence/ring-qconsole.log
-          grep -Fq 'TESTLAB_RING_COMPLETE' evidence/ring-qconsole.log
-          find home -type f -path '*/screenshots/testlab_*.tga' -exec cp -a {} evidence/screenshots/ \;
-          capture_count="$(find evidence/screenshots -type f -name 'testlab_*.tga' | wc -l)"
-          echo "$capture_count" > evidence/ring-capture-count.txt
-          test "$capture_count" -eq 128
           python3 testlab/scripts/analyze_runtime.py evidence/ring-qconsole.log testlab/scenarios/escape1_staticpromote.json evidence/runtime-analysis.json
           echo 'PASS' > evidence/runtime-status.txt
           echo "Runtime ring PASS"
