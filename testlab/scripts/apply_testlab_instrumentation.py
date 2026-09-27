@@ -45,6 +45,25 @@ one(tr_main,
     s_rStaticPromotePhysicalGroupDiag = ri.Cvar_Get("r_staticPromotePhysicalGroupDiag", "0", 0);''',
 "physical group diag")
 
+one(tr_scene,
+'''static void R_StaticPromotePhysicalResidencyFrameDiag(const refdef_t *fd,
+	staticPromotePersistentLight_t **selected, int selectedCount)
+{
+	// DARKWOLF_USLRD_CLEAN_PRODUCTION_V1: retained call site, diagnostic body disabled.
+	return;''',
+'''static void R_StaticPromotePhysicalResidencyFrameDiag(const refdef_t *fd,
+	staticPromotePersistentLight_t **selected, int selectedCount)
+{
+	// DARKWOLF_TESTLAB_V0_1: enable existing read-only production residency telemetry.''',
+"enable residency frame diag body")
+
+one(tr_scene,
+'''	if (!fd || !tr.world || !0)
+		return;''',
+'''	if (!fd || !tr.world)
+		return;''',
+"enable residency frame diag guard")
+
 # Emit stable fixture world origin for the external two-pass controller.
 # Also add an independent TestLab-only discovery path that does not depend on
 # historical root-cause diagnostic CVars.
