@@ -105,7 +105,7 @@ void DarkWolf_InjectOptionsRend2Tab( void ) {
 	defaults = DarkWolf_FindMenuItemByText( menu, "DEFAULTS" );
 
 	if ( !controls || !system || !game || !mods || !defaults ) {
-		Com_Printf( S_COLOR_YELLOW "DarkWolf UI: setup_menu2 retail tab anchors not found; REND2 SETTINGS tab not injected.\n" );
+		Com_Printf( S_COLOR_YELLOW "DarkWolf UI: setup_menu2 retail tab anchors not found; REND2 SETTINGS tab not injected.\\n" );
 		return;
 	}
 
