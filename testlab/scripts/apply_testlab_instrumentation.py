@@ -169,6 +169,55 @@ insert='''    // DARKWOLF_TESTLAB_V0_1: machine-readable discovery record.
         "USLRD_RC_FRONT ms=%d map=%s fixture=%d'''
 one(tr_scene,anchor,insert,"fixture origin telemetry")
 
+# Trace only the early R_StaticPromoteFrame gates so TestLab can distinguish
+# renderer invocation from registry readiness without changing production state.
+frame_gate_anchor='''	// DARKWOLF_PCRB_E2E_V0_7_VISIBLE_SURFACE_INFLUENCE_AUDIT
+	R_DarkWolfPCRBE2E07ResetFrame();
+	if (!tr.world || (fd->rdflags & (RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL)))
+		return;
+	R_StaticPromoteParseWorld();
+	if (!R_StaticPromoteBuildPersistentRegistry())
+		return;'''
+frame_gate_insert='''	// DARKWOLF_TESTLAB_V0_1: read-only early-frame gate telemetry.
+	{
+		static int testlabFrameGatePrints = 0;
+		if (!tr.world || (fd->rdflags & (RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL)))
+		{
+			if (testlabFrameGatePrints < 20)
+			{
+				ri.Printf(PRINT_ALL,
+					"TESTLAB_FRAME_STATE stage=WORLD_GATE world=%d rdflags=%d\\n",
+					tr.world ? 1 : 0, fd ? fd->rdflags : -1);
+				testlabFrameGatePrints++;
+			}
+			return;
+		}
+		R_DarkWolfPCRBE2E07ResetFrame();
+		R_StaticPromoteParseWorld();
+		if (!R_StaticPromoteBuildPersistentRegistry())
+		{
+			if (testlabFrameGatePrints < 20)
+			{
+				ri.Printf(PRINT_ALL,
+					"TESTLAB_FRAME_STATE stage=REGISTRY_NOT_READY map=%s entityString=%d parsedCandidates=%d persistentReady=%d persistentCount=%d\\n",
+					tr.world->baseName, (tr.world->entityString && tr.world->entityString[0]) ? 1 : 0,
+					s_staticPromoteCandidateCount, s_staticPromotePersistentReady ? 1 : 0,
+					s_staticPromotePersistentCount);
+				testlabFrameGatePrints++;
+			}
+			return;
+		}
+		if (testlabFrameGatePrints < 20)
+		{
+			ri.Printf(PRINT_ALL,
+				"TESTLAB_FRAME_STATE stage=READY map=%s parsedCandidates=%d persistentCount=%d generation=%d\\n",
+				tr.world->baseName, s_staticPromoteCandidateCount, s_staticPromotePersistentCount,
+				s_staticPromotePersistentBuildGeneration);
+			testlabFrameGatePrints++;
+		}
+	}'''
+one(tr_scene,frame_gate_anchor,frame_gate_insert,"StaticPromote frame gate telemetry")
+
 # Post-delivery frame proof: bypasses historical diagnostic guards and records
 # only the two Escape1 fixtures after production selection/delivery has run.
 runtime_probe_anchor='''	// DARKWOLF_USLRD_V0_1: compact transition/summary telemetry only when explicitly enabled.
