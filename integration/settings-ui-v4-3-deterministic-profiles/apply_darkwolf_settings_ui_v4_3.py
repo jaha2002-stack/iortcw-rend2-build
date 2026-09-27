@@ -620,7 +620,6 @@ static void DarkWolf_BuildDeveloperNativeMenu( void ) {
 }
 
 void DarkWolf_CreateNativeMenus( void ) {
-	trap_Cvar_Create( "ui_darkwolfProfile", "1", CVAR_ARCHIVE );
 	DarkWolf_BuildGraphicsNativeMenu();
 	DarkWolf_BuildDeveloperNativeMenu();
 }
@@ -638,6 +637,7 @@ hooks = [
         """	UI_LoadMenus( menuSet, qtrue );
 	Menus_CloseAll();""",
         """	UI_LoadMenus( menuSet, qtrue );
+	trap_Cvar_Create( "ui_darkwolfProfile", "1", CVAR_ARCHIVE );
 	DarkWolf_CreateNativeMenus();
 	DarkWolf_InjectOptionsRend2Tab();
 	Menus_CloseAll();"""
@@ -650,6 +650,7 @@ hooks = [
 	Menus_CloseAll();""",
         """	UI_LoadMenus( menuSet, qtrue );
 	UI_LoadMenus( "ui/ingame.txt", qfalse );
+	trap_Cvar_Create( "ui_darkwolfProfile", "1", CVAR_ARCHIVE );
 	DarkWolf_CreateNativeMenus();
 	DarkWolf_InjectOptionsRend2Tab();
 #endif
@@ -660,6 +661,7 @@ hooks = [
         """	UI_LoadMenus( menuSet, qfalse );
 	uiInfo.inGameLoad = qfalse;""",
         """	UI_LoadMenus( menuSet, qfalse );
+	trap_Cvar_Create( "ui_darkwolfProfile", "1", CVAR_ARCHIVE );
 	DarkWolf_CreateNativeMenus();
 	DarkWolf_InjectOptionsRend2Tab();
 	uiInfo.inGameLoad = qfalse;"""
