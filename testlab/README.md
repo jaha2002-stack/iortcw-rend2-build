@@ -9,8 +9,11 @@ Renderer TestLab is an isolated regression harness for the current DarkWolf ioRT
 - TestLab instrumentation is applied only to a separate CI source tree.
 - The instrumentation allowlist is exactly:
   - `SP/code/game/g_cmds.c`
+  - `SP/code/cgame/cg_info.c`
+  - `SP/code/cgame/cg_servercmds.c`
   - `SP/code/rend2/tr_init.c`
   - `SP/code/rend2/tr_main.c`
+  - `SP/code/rend2/tr_scene.c`
 - No TestLab instrumentation is shipped as a production fix.
 - Missing runtime evidence is reported as a gate, never as PASS.
 
@@ -24,10 +27,11 @@ The regression registry also tracks the table double-shadow, Tesla-room lighting
 
 The public repository intentionally contains no RTCW retail `pak*.pk3` files. Full map-specific runtime needs one protected source configured once:
 
-- GitHub Actions secret `DARKWOLF_RTCW_ASSETS_URL`: a private/expiring URL to a ZIP containing the user's legitimate RTCW game data.
-- Optional secret `DARKWOLF_RTCW_ASSETS_SHA256`: SHA-256 of that ZIP.
+- Private repository: `jaha2002-stack/DarkWolfRTCW-TestAssets`.
+- Release tag: `rtcw-retail-v1`, containing the multipart retail archive and checksum.
+- GitHub Actions secret: `DARKWOLF_RTCW_ASSET_TOKEN` with read-only access to that private release.
 
-Without the secret, TestLab still reconstructs the exact production source, validates the 32-light / 3-shadow contract, applies isolated instrumentation, and compiles a native Rend2 TestLab binary. The evidence artifact records runtime status as `BLOCKED_MISSING_RETAIL_ASSETS`; it does not claim gameplay tests passed.
+Without the token, TestLab still reconstructs the exact production source, validates the 32-light / 3-shadow contract, applies isolated instrumentation, and compiles a native Rend2 TestLab binary. The evidence artifact records runtime as blocked; it never claims a gameplay PASS without retail assets.
 
 ## Current production contract
 
