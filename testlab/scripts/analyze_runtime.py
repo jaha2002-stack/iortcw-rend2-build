@@ -113,6 +113,14 @@ else:
                 }
                 idx+=1
 
+# The final eight capture IDs are intentionally reused as two fixed guard-room
+# A/B views with shadow budgets 0..3.
+if "TESTLAB_TABLE_ISOLATION_COMPLETE captures=8" in text and focus_fixture == 918:
+    for idx in range(120,124):
+        expected_cameras[idx]={"origin":[384.0,416.0,520.0],"angles":[0.0,-90.0,0.0]}
+    for idx in range(124,128):
+        expected_cameras[idx]={"origin":[608.0,192.0,520.0],"angles":[0.0,180.0,0.0]}
+
 def angle_error(a,b):
     return abs((a-b+180.0)%360.0-180.0)
 
