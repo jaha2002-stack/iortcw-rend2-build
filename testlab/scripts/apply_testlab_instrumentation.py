@@ -363,6 +363,11 @@ static void Cmd_DWTestView_f( gentity_t *ent ) {
         angles[i] = atof(buffer);
     }
 
+    // DARKWOLF_TESTLAB_V0_1: terminate any stock SP scripted camera through
+    // the normal serverCommand -> CG_StopCamera -> stopCamera handshake before
+    // placing the deterministic TestLab view.
+    trap_SendServerCommand( ent-g_entities, "stopCam" );
+
     trap_UnlinkEntity( ent );
     ent->client->noclip = qtrue;
     ent->client->ps.pm_type = PM_NOCLIP;
