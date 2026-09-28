@@ -67,14 +67,14 @@ suppressed_startcams=0
 for line in text.splitlines():
     if "TESTLAB_STARTCAM_SUPPRESSED " in line:
         suppressed_startcams+=1
-    bm=re.search(r"TESTLAB_CAPTURE_BEGIN index=(\\d+)",line)
+    bm=re.search(r"TESTLAB_CAPTURE_BEGIN index=(\d+)",line)
     if bm:
         current_capture=int(bm.group(1))
         capture_runtime.setdefault(current_capture,[])
         continue
     if current_capture is not None and "TESTLAB_RUNTIME_FRAME " in line:
         capture_runtime.setdefault(current_capture,[]).append(dict(kv_re.findall(line)))
-    dm=re.search(r"TESTLAB_CAPTURE_DONE index=(\\d+)",line)
+    dm=re.search(r"TESTLAB_CAPTURE_DONE index=(\d+)",line)
     if dm and current_capture==int(dm.group(1)):
         current_capture=None
 
