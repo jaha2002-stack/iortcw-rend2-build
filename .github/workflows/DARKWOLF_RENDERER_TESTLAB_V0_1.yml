@@ -183,6 +183,7 @@ jobs:
           print('TestLab changed-path allowlist PASS:', changed)
           PY
           grep -Fq 'DARKWOLF_TESTLAB_V0_1' source/SP/code/game/g_cmds.c
+          grep -Fq 'Cmd_DWTestEntityDump_f' source/SP/code/game/g_cmds.c
           grep -Fq 'TESTLAB_BRIEFING_BYPASS' source/SP/code/cgame/cg_info.c
           grep -Fq 'TESTLAB_GAMEPLAY_START' source/SP/code/cgame/cg_servercmds.c
           grep -Fq 'TESTLAB_STARTCAM_SUPPRESSED' source/SP/code/cgame/cg_servercmds.c
@@ -282,7 +283,7 @@ jobs:
             +set r_staticPromoteUnifiedDiag 1 +set r_staticPromoteRootCauseDiag 1 \
             +set r_staticPromoteRootCauseFocus 918 +set r_staticPromoteRootCauseSampleMs 100 \
             +set r_staticPromote 1 +set r_staticPromoteAutoMapLights 1 +set r_dlightMode 2 \
-            +set r_staticPromotePhysicalGroupDiag 1 +spdevmap escape1 +wait 300 +r_staticPromoteWideInspect +wait 180 +quit
+            +set r_staticPromotePhysicalGroupDiag 1 +spdevmap escape1 +wait 300 +r_staticPromoteWideInspect +wait 30 +dw_testEntityDump 384 192 520 1200 +wait 150 +quit
           rc=$?
           set -e
           echo "$rc" > evidence/probe-exit-code.txt
@@ -290,6 +291,52 @@ jobs:
           test -n "$qlog" || { find home -maxdepth 4 -type f -print; exit 1; }
           cp "$qlog" evidence/probe-qconsole.log
           grep 'TESTLAB_FRAME_STATE ' evidence/probe-qconsole.log > evidence/probe-frame-state.txt || true
+          grep 'TESTLAB_ENTITY ' evidence/probe-qconsole.log > evidence/escape1-doctor-entities.txt || true
+          grep -Fq 'TESTLAB_ENTITY_DUMP_BEGIN' evidence/probe-qconsole.log
+          grep -Fq 'TESTLAB_ENTITY_DUMP_END' evidence/probe-qconsole.log
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          src=Path('evidence/escape1-doctor-entities.txt')
+          rows=[]
+          kv_re=re.compile(r'(\w+)=([^\s]+)')
+          keywords=('table','desk','furniture','chair','cabinet','office','props_','gamemodel')
+          for line in src.read_text(errors='replace').splitlines():
+              kv=dict(kv_re.findall(line))
+              if not kv:
+                  continue
+              hay=' '.join(kv.get(k,'') for k in ('class','model','model2','target')).lower()
+              try:
+                  origin=[float(x) for x in kv.get('origin','0,0,0').split(',')]
+                  dist2=float(kv.get('dist2','0'))
+              except Exception:
+                  continue
+              score=0
+              if 'table' in hay: score+=100
+              if 'desk' in hay: score+=90
+              if 'furniture' in hay: score+=50
+              if 'props_' in hay: score+=25
+              if 'gamemodel' in hay: score+=10
+              if 'chair' in hay: score+=5
+              if any(k in hay for k in keywords):
+                  rows.append({
+                      'entity':int(kv.get('entity','-1')),
+                      'class':kv.get('class'),
+                      'model':kv.get('model'),
+                      'model2':kv.get('model2'),
+                      'target':kv.get('target'),
+                      'origin':origin,
+                      'dist2':dist2,
+                      'score':score
+                  })
+          rows.sort(key=lambda r:(-r['score'],r['dist2'],r['entity']))
+          out={'schema':1,'fixture':918,'center':[384.0,192.0,520.0],'radius':1200.0,
+               'candidate_count':len(rows),'candidates':rows}
+          Path('evidence/escape1-table-candidates.json').write_text(json.dumps(out,indent=2)+'\n')
+          print('Table calibration candidates:',len(rows))
+          for r in rows[:20]:
+              print(r)
+          PY
           if ! grep -Fq 'TESTLAB_FRAME_STATE stage=READY map=escape1' evidence/probe-qconsole.log; then
             echo "ERROR: StaticPromote render-frame never reached READY; see probe-frame-state.txt" >&2
             cat evidence/probe-frame-state.txt >&2 || true

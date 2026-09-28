@@ -434,6 +434,71 @@ static void Cmd_DWTestViewState_f( gentity_t *ent ) {
         ent->client->ps.pm_type == PM_NOCLIP ? 1 : 0) );
 }
 
+static void Cmd_DWTestEntityDump_f( gentity_t *ent ) {
+    char buffer[MAX_TOKEN_CHARS];
+    vec3_t center;
+    float radius;
+    float radiusSq;
+    int i;
+
+    if ( !g_cheats.integer ) {
+        trap_SendServerCommand( ent-g_entities, "print \\"dw_testEntityDump requires cheats.\\n\\"" );
+        return;
+    }
+    if ( trap_Argc() != 5 ) {
+        trap_SendServerCommand( ent-g_entities, "print \\"usage: dw_testEntityDump x y z radius\\n\\"" );
+        return;
+    }
+    for ( i = 0; i < 3; ++i ) {
+        trap_Argv( i + 1, buffer, sizeof(buffer) );
+        center[i] = atof(buffer);
+    }
+    trap_Argv( 4, buffer, sizeof(buffer) );
+    radius = atof(buffer);
+    if ( radius <= 0.0f )
+        radius = 1024.0f;
+    radiusSq = radius * radius;
+
+    trap_SendServerCommand( ent-g_entities, va(
+        "print \\"TESTLAB_ENTITY_DUMP_BEGIN center=%.3f,%.3f,%.3f radius=%.3f numEntities=%d\\n\\"",
+        center[0], center[1], center[2], radius, level.num_entities) );
+
+    for ( i = 0; i < level.num_entities; ++i ) {
+        gentity_t *e = &g_entities[i];
+        float dx, dy, dz, distSq;
+        const char *classname;
+        const char *model;
+        const char *model2;
+        const char *targetname;
+
+        if ( !e->inuse )
+            continue;
+        dx = e->r.currentOrigin[0] - center[0];
+        dy = e->r.currentOrigin[1] - center[1];
+        dz = e->r.currentOrigin[2] - center[2];
+        distSq = dx*dx + dy*dy + dz*dz;
+        if ( distSq > radiusSq )
+            continue;
+
+        classname = e->classname ? e->classname : "<null>";
+        model = e->model ? e->model : "<null>";
+        model2 = e->model2 ? e->model2 : "<null>";
+        targetname = e->targetname ? e->targetname : "<null>";
+
+        trap_SendServerCommand( ent-g_entities, va(
+            "print \\"TESTLAB_ENTITY entity=%d class=%s model=%s model2=%s target=%s origin=%.3f,%.3f,%.3f mins=%.3f,%.3f,%.3f maxs=%.3f,%.3f,%.3f isProp=%d physics=%d eType=%d modelindex=%d dist2=%.3f\\n\\"",
+            i, classname, model, model2, targetname,
+            e->r.currentOrigin[0], e->r.currentOrigin[1], e->r.currentOrigin[2],
+            e->r.mins[0], e->r.mins[1], e->r.mins[2],
+            e->r.maxs[0], e->r.maxs[1], e->r.maxs[2],
+            e->isProp ? 1 : 0, e->physicsObject ? 1 : 0,
+            e->s.eType, e->s.modelindex, distSq) );
+    }
+
+    trap_SendServerCommand( ent-g_entities, "print \\"TESTLAB_ENTITY_DUMP_END\\n\\"" );
+}
+
+
 /*
 =================
 Cmd_SetViewpos_f
@@ -448,6 +513,8 @@ dispatch_new='''\t} else if ( Q_stricmp( cmd, "dw_testView" ) == 0 )  { // DARKW
 \t\tCmd_DWTestView_f( ent );
 \t} else if ( Q_stricmp( cmd, "dw_testViewState" ) == 0 )  { // DARKWOLF_TESTLAB_V0_1
 \t\tCmd_DWTestViewState_f( ent );
+\t} else if ( Q_stricmp( cmd, "dw_testEntityDump" ) == 0 )  { // DARKWOLF_TESTLAB_V0_1
+\t\tCmd_DWTestEntityDump_f( ent );
 \t} else if ( Q_stricmp( cmd, "setviewpos" ) == 0 )  {
 \t\tCmd_SetViewpos_f( ent );'''
 one(g_cmds,dispatch,dispatch_new,"dw_testView dispatch")
