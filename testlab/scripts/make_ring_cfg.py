@@ -114,3 +114,4 @@ print(
     f"at {m[fixture]} batch={args.batch_index}/{args.batch_count} "
     f"range={first_idx}-{last_idx} settle={settle_frames}"
 )
+# TESTLAB_AUTOMATION_WRITE_PROBE
