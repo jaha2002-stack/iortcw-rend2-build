@@ -110,7 +110,7 @@ for idx in range(128):
     origin_err=max(abs(first["origin"][i]-exp["origin"][i]) for i in range(3))
     angle_err=max(angle_error(first["angles"][i],exp["angles"][i]) for i in range(3))
     velocity_mag=math.sqrt(sum(v*v for v in first["velocity"]))
-    if origin_err > 0.05 or angle_err > 0.10 or velocity_mag > 0.05 or first["noclip"] != 1:
+    if origin_err > 0.05 or angle_err > 0.10 or velocity_mag > 0.05 or first["noclip"] != 1 or first["pmNoClip"] != 1:
         camera_bad.append({
             "index":idx,
             "origin_error":origin_err,
