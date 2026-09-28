@@ -541,4 +541,39 @@ dispatch_new='''\t} else if ( Q_stricmp( cmd, "dw_testView" ) == 0 )  { // DARKW
 \t\tCmd_SetViewpos_f( ent );'''
 one(g_cmds,dispatch,dispatch_new,"dw_testView dispatch")
 
+# DARKWOLF_TESTLAB_TABLE_SHADOW_DIRECT_TOGGLE_V0_1
+shadow_toggle_anchor='''static qboolean R_DarkWolfStaticPromoteShadowGroupEligible(const dlight_t *dl)
+{
+    R_DarkWolfEnsurePhysicalShadowGroupCvars();
+    if (!s_rStaticPromotePhysicalShadowGroup || !s_rStaticPromotePhysicalShadowGroup->integer)'''
+shadow_toggle_insert='''static qboolean R_DarkWolfStaticPromoteShadowGroupEligible(const dlight_t *dl)
+{
+    static int testlabLastCapture = -999999;
+    static int testlabLastExclude = -1;
+    int testlabExclude905 = 0;
+    int testlabCapture = -1;
+
+    R_DarkWolfEnsurePhysicalShadowGroupCvars();
+
+    if (dl && tr.world && !Q_stricmp(tr.world->baseName, "escape1") &&
+        dl->staticPromoteFixtureId == 905)
+    {
+        testlabExclude905 = ri.Cvar_VariableIntegerValue("r_testlabExcludeFixture905Shadow");
+        testlabCapture = ri.Cvar_VariableIntegerValue("r_testlabCaptureIndex");
+        if (testlabCapture != testlabLastCapture || testlabExclude905 != testlabLastExclude)
+        {
+            ri.Printf(PRINT_ALL,
+                "TESTLAB_SHADOW_ELIGIBILITY map=escape1 fixture=905 capture=%d exclude905=%d directOrigin=%.2f,%.2f,%.2f\\n",
+                testlabCapture, testlabExclude905,
+                dl->origin[0], dl->origin[1], dl->origin[2]);
+            testlabLastCapture = testlabCapture;
+            testlabLastExclude = testlabExclude905;
+        }
+        if (testlabExclude905)
+            return qfalse;
+    }
+
+    if (!s_rStaticPromotePhysicalShadowGroup || !s_rStaticPromotePhysicalShadowGroup->integer)'''
+one(tr_main,shadow_toggle_anchor,shadow_toggle_insert,"fixture 905 shadow-only toggle")
+
 print("DARKWOLF_TESTLAB_V0_1 instrumentation applied")
