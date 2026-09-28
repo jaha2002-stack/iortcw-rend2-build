@@ -58,8 +58,34 @@ for line in text.splitlines():
         }
         render_views.setdefault(idx,[]).append(row)
 
+# Correlate runtime telemetry with each deterministic capture window so the
+# analyzer can detect transient direct-light/residency drops instead of only
+# proving that a fixture was seen at least once somewhere in the run.
+capture_runtime={}
+current_capture=None
+suppressed_startcams=0
+for line in text.splitlines():
+    if "TESTLAB_STARTCAM_SUPPRESSED " in line:
+        suppressed_startcams+=1
+    bm=re.search(r"TESTLAB_CAPTURE_BEGIN index=(\\d+)",line)
+    if bm:
+        current_capture=int(bm.group(1))
+        capture_runtime.setdefault(current_capture,[])
+        continue
+    if current_capture is not None and "TESTLAB_RUNTIME_FRAME " in line:
+        capture_runtime.setdefault(current_capture,[]).append(dict(kv_re.findall(line)))
+    dm=re.search(r"TESTLAB_CAPTURE_DONE index=(\\d+)",line)
+    if dm and current_capture==int(dm.group(1)):
+        current_capture=None
+
+d=cfg["discovery"]
+capture_expected=len(d["vertical_offsets"])*len(d["ring_radii"])*int(d["ring_samples"])
+
 fixtures=[int(x["fixture"]) for x in cfg["fixtures"]]
 result={"schema":1,"scenario":cfg["id"],"fixtures":{},"shadow_records":len(shadow),"camera_validation":{},"status":"FAIL","failures":[]}
+result["camera_takeover_suppression"]={"suppressed_startcam_count":suppressed_startcams}
+if cfg["assertions"].get("require_startcam_suppression_exercised",False) and suppressed_startcams<=0:
+    result["failures"].append("scripted startCam suppression was not exercised")
 
 # Deterministic camera contract: every capture index must report a server-side
 # noclip view state matching the exact ring geometry that generated its CFG.
@@ -93,7 +119,7 @@ def angle_error(a,b):
 camera_bad=[]
 camera_missing=[]
 camera_duplicate_conflicts=[]
-for idx in range(128):
+for idx in range(capture_expected):
     rows=view_states.get(idx,[])
     if not rows:
         camera_missing.append(idx)
@@ -123,7 +149,7 @@ for idx in range(128):
         })
 
 result["camera_validation"]={
-    "expected":128,
+    "expected":capture_expected,
     "unique_indices":len(view_states),
     "missing_indices":camera_missing,
     "duplicate_conflicts":sorted(set(camera_duplicate_conflicts)),
@@ -143,7 +169,7 @@ if camera_bad:
 render_bad=[]
 render_missing=[]
 render_duplicate_conflicts=[]
-for idx in range(128):
+for idx in range(capture_expected):
     rows=render_views.get(idx,[])
     if not rows:
         render_missing.append(idx)
@@ -176,7 +202,7 @@ for idx in range(128):
         })
 
 result["render_camera_validation"]={
-    "expected":128,
+    "expected":capture_expected,
     "unique_indices":len(render_views),
     "missing_indices":render_missing,
     "duplicate_conflicts":sorted(set(render_duplicate_conflicts)),
@@ -200,6 +226,38 @@ for fixture in fixtures:
         for r in rows
     )
     expected=next((x for x in cfg["fixtures"] if int(x["fixture"])==fixture),{})
+    per_capture={
+        idx:[r for r in capture_runtime.get(idx,[]) if int(r.get("fixture","-999"))==fixture]
+        for idx in range(capture_expected)
+    }
+    missing_capture_rows=[idx for idx,caprows in per_capture.items() if not caprows]
+    direct_drop_captures=[
+        idx for idx,caprows in per_capture.items()
+        if caprows and any(int(r.get("addedDlightIndex","-1"))<0 for r in caprows)
+    ]
+    residency_drop_captures=[
+        idx for idx,caprows in per_capture.items()
+        if caprows and any(
+            int(r.get("selectedSlot","-1"))<0 and
+            r.get("unifiedResident","0")!="1" and
+            r.get("held","0")!="1"
+            for r in caprows
+        )
+    ]
+    direct_drop_records=sum(
+        1 for caprows in per_capture.values() for r in caprows
+        if int(r.get("addedDlightIndex","-1"))<0
+    )
+    residency_drop_records=sum(
+        1 for caprows in per_capture.values() for r in caprows
+        if int(r.get("selectedSlot","-1"))<0 and
+           r.get("unifiedResident","0")!="1" and
+           r.get("held","0")!="1"
+    )
+    selected_slot_values=sorted({
+        int(r.get("selectedSlot","-1"))
+        for caprows in per_capture.values() for r in caprows
+    })
     result["fixtures"][str(fixture)]={
         "records":len(rows),
         "origin":origins.get(fixture),
@@ -207,7 +265,14 @@ for fixture in fixtures:
         "resident_seen":resident,
         "physical_seen":any(r.get("physical","0")=="1" for r in rows),
         "max_selected_count":max([int(r.get("selectedCount","0")) for r in rows] or [0]),
-        "max_active_count":max([int(r.get("activeCount","0")) for r in rows] or [0])
+        "max_active_count":max([int(r.get("activeCount","0")) for r in rows] or [0]),
+        "capture_coverage":capture_expected-len(missing_capture_rows),
+        "captures_without_runtime":missing_capture_rows,
+        "captures_with_direct_drop":direct_drop_captures,
+        "captures_with_residency_drop":residency_drop_captures,
+        "direct_drop_records":direct_drop_records,
+        "residency_drop_records":residency_drop_records,
+        "selected_slot_values":selected_slot_values
     }
     if not rows:
         result["failures"].append(f"fixture {fixture}: no TESTLAB_RUNTIME_FRAME telemetry")
@@ -215,6 +280,16 @@ for fixture in fixtures:
         result["failures"].append(f"fixture {fixture}: direct light never observed")
     if expected.get("require_resident", False) and not resident:
         result["failures"].append(f"fixture {fixture}: residency never observed")
+    if expected.get("require_direct_every_capture",False):
+        if missing_capture_rows:
+            result["failures"].append(f"fixture {fixture}: runtime telemetry missing in captures {missing_capture_rows[:16]}")
+        if direct_drop_captures:
+            result["failures"].append(f"fixture {fixture}: transient direct-light drop in captures {direct_drop_captures[:16]}")
+    if expected.get("require_resident_every_capture",False):
+        if missing_capture_rows:
+            result["failures"].append(f"fixture {fixture}: residency telemetry missing in captures {missing_capture_rows[:16]}")
+        if residency_drop_captures:
+            result["failures"].append(f"fixture {fixture}: transient residency drop in captures {residency_drop_captures[:16]}")
     for r in rows:
         if int(r.get("maxLights","-1")) != int(cfg["assertions"].get("max_static_promote_lights",32)):
             result["failures"].append(f"fixture {fixture}: runtime maxLights contract mismatch")
