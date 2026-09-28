@@ -333,6 +333,33 @@ one(cg_servercmds,
 	}''',
 "automatic gameplay start")
 
+# Escape1's stock map script can issue new startCam commands after a TestLab
+# view has already called stopCam. In automation mode suppress those future
+# client camera takeovers at the cgame boundary; normal production behavior is
+# untouched because this source edit exists only in the isolated TestLab build.
+one(cg_servercmds,
+'''\tif ( !strcmp( cmd, "startCam" ) ) {
+\t\tqboolean startBlack = atoi( CG_Argv( 2 ) );
+
+\t\tCG_StartCamera( CG_Argv( 1 ), startBlack );
+\t\treturn;
+\t}''',
+'''\tif ( !strcmp( cmd, "startCam" ) ) {
+\t\tchar testlabAutomation[16];
+\t\tqboolean startBlack;
+
+\t\ttrap_Cvar_VariableStringBuffer( "dw_testAutomation", testlabAutomation, sizeof(testlabAutomation) );
+\t\tif ( atoi( testlabAutomation ) ) {
+\t\t\tCG_Printf( "TESTLAB_STARTCAM_SUPPRESSED name=%s black=%s\\n", CG_Argv( 1 ), CG_Argv( 2 ) );
+\t\t\treturn;
+\t\t}
+
+\t\tstartBlack = atoi( CG_Argv( 2 ) );
+\t\tCG_StartCamera( CG_Argv( 1 ), startBlack );
+\t\treturn;
+\t}''',
+"scripted camera suppression")
+
 # Full 6-DOF view placement, intentionally only present in TestLab qagame.
 # Unlike normal gameplay teleport, keep the automation camera fixed in noclip
 # with zero velocity so gravity/collision cannot collapse ring positions.
