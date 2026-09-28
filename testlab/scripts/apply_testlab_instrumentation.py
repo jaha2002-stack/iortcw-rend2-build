@@ -459,25 +459,45 @@ static void Cmd_DWTestEntityDump_f( gentity_t *ent ) {
         radius = 1024.0f;
     radiusSq = radius * radius;
 
-    trap_SendServerCommand( ent-g_entities, va(
-        "print \\"TESTLAB_ENTITY_DUMP_BEGIN center=%.3f,%.3f,%.3f radius=%.3f numEntities=%d\\n\\"",
-        center[0], center[1], center[2], radius, level.num_entities) );
+    G_Printf( "TESTLAB_ENTITY_DUMP_BEGIN center=%.3f,%.3f,%.3f radius=%.3f numEntities=%d\\n",
+        center[0], center[1], center[2], radius, level.num_entities );
 
     for ( i = 0; i < level.num_entities; ++i ) {
         gentity_t *e = &g_entities[i];
-        float dx, dy, dz, distSq;
+        vec3_t worldMins;
+        vec3_t worldMaxs;
+        float dx, dy, dz, pointDistSq;
+        float aabbDistSq = 0.0f;
         const char *classname;
         const char *model;
         const char *model2;
         const char *targetname;
+        int axis;
 
         if ( !e->inuse )
             continue;
+
         dx = e->r.currentOrigin[0] - center[0];
         dy = e->r.currentOrigin[1] - center[1];
         dz = e->r.currentOrigin[2] - center[2];
-        distSq = dx*dx + dy*dy + dz*dz;
-        if ( distSq > radiusSq )
+        pointDistSq = dx*dx + dy*dy + dz*dz;
+
+        for ( axis = 0; axis < 3; ++axis ) {
+            float d = 0.0f;
+            worldMins[axis] = e->r.currentOrigin[axis] + e->r.mins[axis];
+            worldMaxs[axis] = e->r.currentOrigin[axis] + e->r.maxs[axis];
+            if ( worldMins[axis] > worldMaxs[axis] ) {
+                float t = worldMins[axis];
+                worldMins[axis] = worldMaxs[axis];
+                worldMaxs[axis] = t;
+            }
+            if ( center[axis] < worldMins[axis] )
+                d = worldMins[axis] - center[axis];
+            else if ( center[axis] > worldMaxs[axis] )
+                d = center[axis] - worldMaxs[axis];
+            aabbDistSq += d * d;
+        }
+        if ( aabbDistSq > radiusSq )
             continue;
 
         classname = e->classname ? e->classname : "<null>";
@@ -485,17 +505,19 @@ static void Cmd_DWTestEntityDump_f( gentity_t *ent ) {
         model2 = e->model2 ? e->model2 : "<null>";
         targetname = e->targetname ? e->targetname : "<null>";
 
-        trap_SendServerCommand( ent-g_entities, va(
-            "print \\"TESTLAB_ENTITY entity=%d class=%s model=%s model2=%s target=%s origin=%.3f,%.3f,%.3f mins=%.3f,%.3f,%.3f maxs=%.3f,%.3f,%.3f isProp=%d physics=%d eType=%d modelindex=%d dist2=%.3f\\n\\"",
+        G_Printf(
+            "TESTLAB_ENTITY entity=%d class=%s model=%s model2=%s target=%s origin=%.3f,%.3f,%.3f mins=%.3f,%.3f,%.3f maxs=%.3f,%.3f,%.3f worldmins=%.3f,%.3f,%.3f worldmaxs=%.3f,%.3f,%.3f isProp=%d physics=%d eType=%d modelindex=%d dist2=%.3f aabbDist2=%.3f\\n",
             i, classname, model, model2, targetname,
             e->r.currentOrigin[0], e->r.currentOrigin[1], e->r.currentOrigin[2],
             e->r.mins[0], e->r.mins[1], e->r.mins[2],
             e->r.maxs[0], e->r.maxs[1], e->r.maxs[2],
+            worldMins[0], worldMins[1], worldMins[2],
+            worldMaxs[0], worldMaxs[1], worldMaxs[2],
             e->isProp ? 1 : 0, e->physicsObject ? 1 : 0,
-            e->s.eType, e->s.modelindex, distSq) );
+            e->s.eType, e->s.modelindex, pointDistSq, aabbDistSq );
     }
 
-    trap_SendServerCommand( ent-g_entities, "print \\"TESTLAB_ENTITY_DUMP_END\\n\\"" );
+    G_Printf( "TESTLAB_ENTITY_DUMP_END\\n" );
 }
 
 
