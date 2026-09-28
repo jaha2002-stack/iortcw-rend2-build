@@ -89,69 +89,69 @@ lines = [
 # diagnostic run only, reuse the final eight capture IDs as a controlled A/B
 # at two already-validated guard-room views while keeping the exact 0..127
 # capture contract and screenshot names expected by the workflow/analyzer.
-+table_isolation = {}
-+if fixture == 918 and total == 128 and args.batch_count == 4 and args.batch_index == 3:
-+    table_isolation = {
-+        120: ("front", 0, (384.0, 416.0, 520.0, 0.0, -90.0)),
-+        121: ("front", 1, (384.0, 416.0, 520.0, 0.0, -90.0)),
-+        122: ("front", 2, (384.0, 416.0, 520.0, 0.0, -90.0)),
-+        123: ("front", 3, (384.0, 416.0, 520.0, 0.0, -90.0)),
-+        124: ("side",  0, (608.0, 192.0, 520.0, 0.0, 180.0)),
-+        125: ("side",  1, (608.0, 192.0, 520.0, 0.0, 180.0)),
-+        126: ("side",  2, (608.0, 192.0, 520.0, 0.0, 180.0)),
-+        127: ("side",  3, (608.0, 192.0, 520.0, 0.0, 180.0)),
-+    }
-+
-+for capture_idx, x, y, z, pitch, yaw in selected:
-+    table_case = table_isolation.get(capture_idx)
-+    if table_case:
-+        label, budget, override = table_case
-+        x, y, z, pitch, yaw = override
-+        lines += [
-+            f"set r_dlightShadowMaxLights {budget}",
-+            (
-+                f"echo TESTLAB_TABLE_PHASE label={label} budget={budget} "
-+                f"capture={capture_idx} state=BEGIN"
-+            ),
-+        ]
-+    lines += [
-+        f"echo TESTLAB_CAPTURE_BEGIN index={capture_idx}",
-+        f"dw_testView {x:.3f} {y:.3f} {z:.3f} {pitch:.3f} {yaw:.3f} 0",
-+        f"wait {settle_frames}",
-+        f"dw_testViewState {capture_idx}",
-+        f"set r_testlabCaptureIndex {capture_idx}",
-+        "wait 3",
-+        f"echo TESTLAB_CAPTURE_READY index={capture_idx}",
-+    ]
-+    if table_case:
-+        label, budget, _ = table_case
-+        lines += [
-+            (
-+                f"echo TESTLAB_TABLE_PHASE label={label} budget={budget} "
-+                f"capture={capture_idx} state=READY"
-+            ),
-+        ]
-+    lines += [
-+        f"screenshot testlab_{fixture}_{capture_idx:03d}",
-+        "wait 3",
-+        f"echo TESTLAB_CAPTURE_DONE index={capture_idx}",
-+    ]
-+    if table_case:
-+        label, budget, _ = table_case
-+        lines += [
-+            (
-+                f"echo TESTLAB_TABLE_PHASE label={label} budget={budget} "
-+                f"capture={capture_idx} state=DONE"
-+            ),
-+        ]
-+
-+if table_isolation:
-+    lines += [
-+        "set r_dlightShadowMaxLights 3",
-+        "echo TESTLAB_TABLE_ISOLATION_COMPLETE captures=8",
-+    ]
-+
-+lines += [
+table_isolation = {}
+if fixture == 918 and total == 128 and args.batch_count == 4 and args.batch_index == 3:
+    table_isolation = {
+        120: ("front", 0, (384.0, 416.0, 520.0, 0.0, -90.0)),
+        121: ("front", 1, (384.0, 416.0, 520.0, 0.0, -90.0)),
+        122: ("front", 2, (384.0, 416.0, 520.0, 0.0, -90.0)),
+        123: ("front", 3, (384.0, 416.0, 520.0, 0.0, -90.0)),
+        124: ("side",  0, (608.0, 192.0, 520.0, 0.0, 180.0)),
+        125: ("side",  1, (608.0, 192.0, 520.0, 0.0, 180.0)),
+        126: ("side",  2, (608.0, 192.0, 520.0, 0.0, 180.0)),
+        127: ("side",  3, (608.0, 192.0, 520.0, 0.0, 180.0)),
+    }
+
+for capture_idx, x, y, z, pitch, yaw in selected:
+    table_case = table_isolation.get(capture_idx)
+    if table_case:
+        label, budget, override = table_case
+        x, y, z, pitch, yaw = override
+        lines += [
+            f"set r_dlightShadowMaxLights {budget}",
+            (
+                f"echo TESTLAB_TABLE_PHASE label={label} budget={budget} "
+                f"capture={capture_idx} state=BEGIN"
+            ),
+        ]
+    lines += [
+        f"echo TESTLAB_CAPTURE_BEGIN index={capture_idx}",
+        f"dw_testView {x:.3f} {y:.3f} {z:.3f} {pitch:.3f} {yaw:.3f} 0",
+        f"wait {settle_frames}",
+        f"dw_testViewState {capture_idx}",
+        f"set r_testlabCaptureIndex {capture_idx}",
+        "wait 3",
+        f"echo TESTLAB_CAPTURE_READY index={capture_idx}",
+    ]
+    if table_case:
+        label, budget, _ = table_case
+        lines += [
+            (
+                f"echo TESTLAB_TABLE_PHASE label={label} budget={budget} "
+                f"capture={capture_idx} state=READY"
+            ),
+        ]
+    lines += [
+        f"screenshot testlab_{fixture}_{capture_idx:03d}",
+        "wait 3",
+        f"echo TESTLAB_CAPTURE_DONE index={capture_idx}",
+    ]
+    if table_case:
+        label, budget, _ = table_case
+        lines += [
+            (
+                f"echo TESTLAB_TABLE_PHASE label={label} budget={budget} "
+                f"capture={capture_idx} state=DONE"
+            ),
+        ]
+
+if table_isolation:
+    lines += [
+        "set r_dlightShadowMaxLights 3",
+        "echo TESTLAB_TABLE_ISOLATION_COMPLETE captures=8",
+    ]
+
+lines += [
     (
         f"echo TESTLAB_RING_BATCH_COMPLETE batch={args.batch_index} "
         f"count={len(selected)} first={first_idx} last={last_idx}"
