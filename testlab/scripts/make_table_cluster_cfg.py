@@ -6,6 +6,8 @@ p=argparse.ArgumentParser()
 p.add_argument("log")
 p.add_argument("out")
 p.add_argument("--settle-frames",type=int,default=45)
+p.add_argument("--exclude-shadow-fixture",type=int,default=-1)
+p.add_argument("--label",default="baseline")
 args=p.parse_args()
 
 text=Path(args.log).read_text(errors="replace")
@@ -50,10 +52,10 @@ lines=[
     "set r_staticPromoteRootCauseFocus 742",
     "set r_staticPromoteRootCauseSampleMs 100",
     "set r_staticPromotePhysicalGroupDiag 1",
-    "set r_testlabExcludeShadowFixture -1",
+    f"set r_testlabExcludeShadowFixture {args.exclude_shadow_fixture}",
     "set cg_draw2D 0",
     "set cg_drawGun 0",
-    "echo TESTLAB_TABLE_CLUSTER_BEGIN count=16 focus=742 challenger=744 budget=3 maxLights=32",
+    f"echo TESTLAB_TABLE_CLUSTER_BEGIN label={args.label} count=16 focus=742 challenger=744 budget=3 maxLights=32 excludeFixture={args.exclude_shadow_fixture}",
 ]
 for i,off in enumerate(offsets):
     x=cx+ux*off
@@ -64,24 +66,24 @@ for i,off in enumerate(offsets):
     yaw=math.degrees(math.atan2(vy,vx))
     pitch=-math.degrees(math.atan2(vz,max(1.0,math.hypot(vx,vy))))
     lines += [
-        f"echo TESTLAB_TABLE_CAPTURE_BEGIN index={i} offset={off} x={x:.3f} y={y:.3f} z={z:.3f}",
+        f"echo TESTLAB_TABLE_CAPTURE_BEGIN label={args.label} index={i} offset={off} x={x:.3f} y={y:.3f} z={z:.3f} excludeFixture={args.exclude_shadow_fixture}",
         f"dw_testView {x:.3f} {y:.3f} {z:.3f} {pitch:.3f} {yaw:.3f} 0",
         f"wait {args.settle_frames}",
         f"dw_testViewState {i}",
         f"set r_testlabCaptureIndex {i}",
         "wait 4",
-        f"echo TESTLAB_TABLE_CAPTURE_READY index={i}",
-        f"screenshot testlab_table_{i:03d}",
+        f"echo TESTLAB_TABLE_CAPTURE_READY label={args.label} index={i} excludeFixture={args.exclude_shadow_fixture}",
+        f"screenshot testlab_table_{args.label}_{i:03d}",
         "wait 4",
-        f"echo TESTLAB_TABLE_CAPTURE_DONE index={i}",
+        f"echo TESTLAB_TABLE_CAPTURE_DONE label={args.label} index={i} excludeFixture={args.exclude_shadow_fixture}",
     ]
 lines += [
     "set r_testlabCaptureIndex -1",
-    "echo TESTLAB_TABLE_CLUSTER_COMPLETE count=16 focus=742 challenger=744",
+    f"echo TESTLAB_TABLE_CLUSTER_COMPLETE label={args.label} count=16 focus=742 challenger=744 excludeFixture={args.exclude_shadow_fixture}",
     "wait 10",
     "quit",
 ]
 out=Path(args.out)
 out.parent.mkdir(parents=True,exist_ok=True)
 out.write_text("\n".join(lines)+"\n")
-print(f"generated table traversal around historical fixtures 742/744 center=({cx:.3f},{cy:.3f},{cz:.3f})")
+print(f"generated table traversal label={args.label} excludeFixture={args.exclude_shadow_fixture} around historical fixtures 742/744 center=({cx:.3f},{cy:.3f},{cz:.3f})")
