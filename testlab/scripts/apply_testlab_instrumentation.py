@@ -99,7 +99,8 @@ diag_fn_insert='''static void R_TestLabFixtureDiscovery(void)
     {
         staticPromotePersistentLight_t *light = &s_staticPromotePersistentLights[i];
         const int fixture = light->candidate.entityOrdinal;
-        if (fixture != 918 && fixture != 782)
+        if (fixture != 918 && fixture != 782 &&
+            fixture != 741 && fixture != 742 && fixture != 743 && fixture != 744)
             continue;
 
         ri.Printf(PRINT_ALL,
@@ -129,7 +130,9 @@ parse_anchor='''			parsedCandidate.style = style;
 			Q_strncpyz(parsedCandidate.targetname, targetname, sizeof(parsedCandidate.targetname));'''
 parse_insert='''			parsedCandidate.style = style;
 			// DARKWOLF_TESTLAB_V0_1: deterministic BSP entity discovery before merge/residency policy.
-			if (entityOrdinal == 918 || entityOrdinal == 782)
+			if (entityOrdinal == 918 || entityOrdinal == 782 ||
+				entityOrdinal == 741 || entityOrdinal == 742 ||
+				entityOrdinal == 743 || entityOrdinal == 744)
 			{
 				ri.Printf(PRINT_ALL,
 					"TESTLAB_FIXTURE_ORIGIN map=%s fixture=%d origin=%.3f,%.3f,%.3f\\n",
@@ -253,7 +256,9 @@ runtime_probe_insert='''	// DARKWOLF_TESTLAB_V0_1: renderer-authoritative camera
 				int testlabAddedIndex;
 				int testlabClass;
 				int testlabSlot;
-				if (testlabFixture != 918 && testlabFixture != 782)
+				if (testlabFixture != 918 && testlabFixture != 782 &&
+					testlabFixture != 741 && testlabFixture != 742 &&
+					testlabFixture != 743 && testlabFixture != 744)
 					continue;
 				for (testlabSlot = 0; testlabSlot < selectedCount; ++testlabSlot)
 				{
@@ -541,7 +546,7 @@ dispatch_new='''\t} else if ( Q_stricmp( cmd, "dw_testView" ) == 0 )  { // DARKW
 \t\tCmd_SetViewpos_f( ent );'''
 one(g_cmds,dispatch,dispatch_new,"dw_testView dispatch")
 
-# DARKWOLF_TESTLAB_TABLE_SHADOW_DIRECT_TOGGLE_V0_1
+# DARKWOLF_TESTLAB_TABLE_SHADOW_GENERIC_TOGGLE_V0_4
 shadow_toggle_anchor='''static qboolean R_DarkWolfStaticPromoteShadowGroupEligible(const dlight_t *dl)
 {
     R_DarkWolfEnsurePhysicalShadowGroupCvars();
@@ -549,31 +554,33 @@ shadow_toggle_anchor='''static qboolean R_DarkWolfStaticPromoteShadowGroupEligib
 shadow_toggle_insert='''static qboolean R_DarkWolfStaticPromoteShadowGroupEligible(const dlight_t *dl)
 {
     static int testlabLastCapture = -999999;
-    static int testlabLastExclude = -1;
-    int testlabExclude905 = 0;
+    static int testlabLastExclude = -999999;
+    int testlabExcludeFixture = -1;
     int testlabCapture = -1;
 
     R_DarkWolfEnsurePhysicalShadowGroupCvars();
 
-    if (dl && tr.world && !Q_stricmp(tr.world->baseName, "escape1") &&
-        dl->staticPromoteFixtureId == 905)
+    if (dl && tr.world && !Q_stricmp(tr.world->baseName, "escape1"))
     {
-        testlabExclude905 = ri.Cvar_VariableIntegerValue("r_testlabExcludeFixture905Shadow");
+        testlabExcludeFixture = ri.Cvar_VariableIntegerValue("r_testlabExcludeShadowFixture");
         testlabCapture = ri.Cvar_VariableIntegerValue("r_testlabCaptureIndex");
-        if (testlabCapture != testlabLastCapture || testlabExclude905 != testlabLastExclude)
+        if (testlabExcludeFixture >= 0 &&
+            dl->staticPromoteFixtureId == testlabExcludeFixture)
         {
-            ri.Printf(PRINT_ALL,
-                "TESTLAB_SHADOW_ELIGIBILITY map=escape1 fixture=905 capture=%d exclude905=%d directOrigin=%.2f,%.2f,%.2f\\n",
-                testlabCapture, testlabExclude905,
-                dl->origin[0], dl->origin[1], dl->origin[2]);
-            testlabLastCapture = testlabCapture;
-            testlabLastExclude = testlabExclude905;
-        }
-        if (testlabExclude905)
+            if (testlabCapture != testlabLastCapture || testlabExcludeFixture != testlabLastExclude)
+            {
+                ri.Printf(PRINT_ALL,
+                    "TESTLAB_SHADOW_ELIGIBILITY map=escape1 fixture=%d capture=%d excludeFixture=%d directOrigin=%.2f,%.2f,%.2f\\n",
+                    dl->staticPromoteFixtureId, testlabCapture, testlabExcludeFixture,
+                    dl->origin[0], dl->origin[1], dl->origin[2]);
+                testlabLastCapture = testlabCapture;
+                testlabLastExclude = testlabExcludeFixture;
+            }
             return qfalse;
+        }
     }
 
     if (!s_rStaticPromotePhysicalShadowGroup || !s_rStaticPromotePhysicalShadowGroup->integer)'''
-one(tr_main,shadow_toggle_anchor,shadow_toggle_insert,"fixture 905 shadow-only toggle")
+one(tr_main,shadow_toggle_anchor,shadow_toggle_insert,"generic TestLab shadow-only fixture toggle")
 
 print("DARKWOLF_TESTLAB_V0_1 instrumentation applied")
