@@ -78,43 +78,49 @@ lines = [
     f"set r_staticPromoteRootCauseFocus {fixture}",
     "set r_staticPromoteRootCauseSampleMs 100",
     "set r_staticPromotePhysicalGroupDiag 1",
-    "set r_testlabExcludeFixture905Shadow 0",
+    "set r_testlabExcludeShadowFixture -1",
+    "set cg_draw2D 0",
+    "set cg_drawGun 0",
     (
         f"echo TESTLAB_RING_BATCH_BEGIN batch={args.batch_index} "
         f"count={len(selected)} first={first_idx} last={last_idx} settleFrames={settle_frames}"
     ),
 ]
 
-# DARKWOLF_TESTLAB_TABLE_SHADOW_ISOLATION_V0_2
-# Runs 62/63 isolated the visual change to the budget transition that admits
-# fixture 905.  Keep the production shadow budget fixed at 3 and reuse the
-# final eight capture IDs as deterministic OFF/ON pairs for the shadow-only
-# fixture-905 gate.  Each state is repeated from two validated guard-room views.
+# DARKWOLF_TESTLAB_TABLE_SHADOW_LEAVE_ONE_OUT_V0_3
+# Run 67 proved that the fixture-905 gate itself works, but pixel inspection
+# did not show a corresponding table/floor change. Reuse the final eight
+# captures at one validated guard-room view and remove each actually selected
+# persistent shadow owner one at a time. Exclusion captures use budget 2 so
+# the removed owner is not silently replaced by a fourth fixture. The final
+# pair supplies an all-persistent-shadows-off reference. Direct light delivery
+# remains untouched.
 table_isolation = {}
 if fixture == 918 and total == 128 and args.batch_count == 4 and args.batch_index == 3:
+    side = (608.0, 192.0, 520.0, 0.0, 180.0)
     table_isolation = {
-        120: ("front", 0, 0, (384.0, 416.0, 520.0, 0.0, -90.0)),
-        121: ("front", 1, 0, (384.0, 416.0, 520.0, 0.0, -90.0)),
-        122: ("front", 0, 1, (384.0, 416.0, 520.0, 0.0, -90.0)),
-        123: ("front", 1, 1, (384.0, 416.0, 520.0, 0.0, -90.0)),
-        124: ("side",  0, 0, (608.0, 192.0, 520.0, 0.0, 180.0)),
-        125: ("side",  1, 0, (608.0, 192.0, 520.0, 0.0, 180.0)),
-        126: ("side",  0, 1, (608.0, 192.0, 520.0, 0.0, 180.0)),
-        127: ("side",  1, 1, (608.0, 192.0, 520.0, 0.0, 180.0)),
+        120: ("side", 3, -1, "baseline_for_918", side),
+        121: ("side", 2, 918, "exclude_918", side),
+        122: ("side", 3, -1, "baseline_for_905", side),
+        123: ("side", 2, 905, "exclude_905", side),
+        124: ("side", 3, -1, "baseline_for_892", side),
+        125: ("side", 2, 892, "exclude_892", side),
+        126: ("side", 3, -1, "baseline_for_alloff", side),
+        127: ("side", 0, -1, "all_persistent_off", side),
     }
 
 for capture_idx, x, y, z, pitch, yaw in selected:
     table_case = table_isolation.get(capture_idx)
     if table_case:
-        label, exclude905, repeat, override = table_case
+        label, budget, exclude_fixture, case_name, override = table_case
         x, y, z, pitch, yaw = override
         lines += [
-            "set r_dlightShadowMaxLights 3",
-            f"set r_testlabExcludeFixture905Shadow {exclude905}",
-            f"set r_testlabCaptureIndex {capture_idx}",
+            f"set r_dlightShadowMaxLights {budget}",
+            f"set r_testlabExcludeShadowFixture {exclude_fixture}",
             (
-                f"echo TESTLAB_TABLE_PHASE label={label} budget=3 exclude905={exclude905} "
-                f"repeat={repeat} capture={capture_idx} state=BEGIN"
+                f"echo TESTLAB_TABLE_PHASE label={label} budget={budget} "
+                f"excludeFixture={exclude_fixture} case={case_name} "
+                f"capture={capture_idx} state=BEGIN"
             ),
         ]
     lines += [
@@ -127,11 +133,12 @@ for capture_idx, x, y, z, pitch, yaw in selected:
         f"echo TESTLAB_CAPTURE_READY index={capture_idx}",
     ]
     if table_case:
-        label, exclude905, repeat, _ = table_case
+        label, budget, exclude_fixture, case_name, _ = table_case
         lines += [
             (
-                f"echo TESTLAB_TABLE_PHASE label={label} budget=3 exclude905={exclude905} "
-                f"repeat={repeat} capture={capture_idx} state=READY"
+                f"echo TESTLAB_TABLE_PHASE label={label} budget={budget} "
+                f"excludeFixture={exclude_fixture} case={case_name} "
+                f"capture={capture_idx} state=READY"
             ),
         ]
     lines += [
@@ -140,19 +147,20 @@ for capture_idx, x, y, z, pitch, yaw in selected:
         f"echo TESTLAB_CAPTURE_DONE index={capture_idx}",
     ]
     if table_case:
-        label, exclude905, repeat, _ = table_case
+        label, budget, exclude_fixture, case_name, _ = table_case
         lines += [
             (
-                f"echo TESTLAB_TABLE_PHASE label={label} budget=3 exclude905={exclude905} "
-                f"repeat={repeat} capture={capture_idx} state=DONE"
+                f"echo TESTLAB_TABLE_PHASE label={label} budget={budget} "
+                f"excludeFixture={exclude_fixture} case={case_name} "
+                f"capture={capture_idx} state=DONE"
             ),
         ]
 
 if table_isolation:
     lines += [
-        "set r_testlabExcludeFixture905Shadow 0",
+        "set r_testlabExcludeShadowFixture -1",
         "set r_dlightShadowMaxLights 3",
-        "echo TESTLAB_TABLE_ISOLATION_COMPLETE captures=8 mode=fixture905_shadow_only_ab",
+        "echo TESTLAB_TABLE_ISOLATION_COMPLETE captures=8 mode=shadow_owner_leave_one_out",
     ]
 
 lines += [
