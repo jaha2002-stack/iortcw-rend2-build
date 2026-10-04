@@ -1,0 +1,165 @@
+name: DarkWolf Rend2 Sun Performance TestLab v0.1
+on:
+  push:
+    branches: [ rend2-sun-perf-testlab-v0.1 ]
+    paths: [ '.github/workflows/DARKWOLF_REND2_SUN_PERF_TESTLAB_V1.yml', 'diagnostics/sun-perf-v1/**' ]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: rend2-sun-perf-testlab-v1
+  cancel-in-progress: false
+jobs:
+  audit-and-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      BASE_RUN_ID: "37194587469"
+      BASE_HEAD_SHA: 555bff885b96603432fddafc79a37081df1d4202
+      BASE_ARTIFACT_ID: "11300218573"
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Final-Native-v4.4.2-Real-Ingame-System-Fix-Win64
+      BASE_ARTIFACT_DIGEST: sha256:9aa4b0d8a3103f5498ea879a2328a46f46fe7aabf425829c0f586a879a510667
+      BASE_INNER_SHA256: 7b5991738de21c1ab346805fceb284797e8ef75acf84801358a1b3b82d76d28e
+      BASE_RENDERER_SHA256: 92b1db33486ea2dd7d04ccda8f3030692578a13569440f100b677b63b7a6e6d2
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch
+      BASE_CUMULATIVE_SHA256: 2c1da09485d489bca253eef8c7626d7417d5493fee493c2d83ffb7c6b7048d0c
+      SHADER_DONOR_RUN_ID: "35503262322"
+      SHADER_DONOR_ARTIFACT_ID: "10603017159"
+      SHADER_DONOR_ARTIFACT_NAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+      SHADER_DONOR_INNER_SHA256: efe9a4f3b33e5dd4b621ed3fa0d87abe677c85d09ca29088a380d813b5c082bb
+      SHADER_DONOR_PATCH: darkwolf-rend2-cumulative-dlight-fx-shadow-eligibility-loper-complete-electrical-pc-v0-3-sp.patch
+      SHADER_DONOR_PATCH_SHA256: cb8379d56e57ec83be75251756ecea781dc9d2c6d66620e17fb56538ba157d97
+      FIXER: integration/volumetric-aa-v4-4-3-production/apply_darkwolf_volumetric_aa_v4_4_3.py
+      RELEASE_BASENAME: DarkWolf-ioRTCW-Rend2-v4.4.3-Volumetric-AA-Fix-Win64
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential ca-certificates gh git jq python3 unzip zip file xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev libsdl2-dev libopenal-dev libcurl4-openssl-dev mingw-w64
+          mkdir -p evidence
+          python3 -m py_compile diagnostics/sun-perf-v1/*.py
+      - name: Audit immutable production run 37233604307
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/37233604307" > evidence/production-run.json
+          jq -e '.head_sha == "6f3533e78ec20dbbbeb5c948cea2a9d0f3e3b4c8" and .conclusion == "success"' evidence/production-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/11314644502" > evidence/production-artifact.json
+          jq -e '.expired == false and .digest == "sha256:cf84de494ec0b22feb1116be104c8b4c562dc9803eee57426d0dac666718bf52"' evidence/production-artifact.json
+          gh run download 37233604307 --repo "$GITHUB_REPOSITORY" --name DarkWolf-ioRTCW-Rend2-v4.4.3-Volumetric-AA-Fix-Win64 --dir production-artifact
+          unzip -q production-artifact/*.zip -d production-release
+          # Runner inventory may require additional permissions; inability is recorded, not hidden.
+          if ! gh api "repos/$GITHUB_REPOSITORY/actions/runners" > evidence/runners.json 2> evidence/runners-error.txt; then
+            echo 'GPU_RUNNER_INVENTORY_UNAVAILABLE' > evidence/gpu-status.txt
+          fi
+      - name: Reconstruct exact v4.4.2 renderer source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run")" = "$BASE_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run")" = success
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          IFS=$'\t' read -r name expired digest <<<"$row"
+          test "$name" = "$BASE_ARTIFACT_NAME"; test "$expired" = false; test "$digest" = "$BASE_ARTIFACT_DIGEST"
+          rm -rf base-artifact base-release source donor donor-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/${BASE_ARTIFACT_NAME}.zip"
+          test "$(sha256sum "$z" | awk '{print $1}')" = "$BASE_INNER_SHA256"
+          unzip -q "$z" -d base-release
+          base="$(find base-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$base"
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$base/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          echo "$base" > .base
+
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../cumulative.patch
+
+          mkdir -p donor donor-release
+          gh run download "$SHADER_DONOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$SHADER_DONOR_ARTIFACT_NAME" --dir donor
+          dz="donor/${SHADER_DONOR_ARTIFACT_NAME}.zip"
+          test "$(sha256sum "$dz" | awk '{print $1}')" = "$SHADER_DONOR_INNER_SHA256"
+          unzip -q "$dz" -d donor-release
+          donor_base="$(find donor-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          dp="$donor_base/docs/$SHADER_DONOR_PATCH"
+          test "$(sha256sum "$dp" | awk '{print $1}')" = "$SHADER_DONOR_PATCH_SHA256"
+          cp "$dp" donor.patch
+          for p in SP/code/rend2/glsl/ssgi_fp.glsl SP/code/rend2/glsl/ssgi_vp.glsl SP/code/rend2/glsl/volumetriclocal_fp.glsl SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl SP/code/rend2/glsl/volumetriclocal_vp.glsl SP/code/rend2/glsl/volumetricsun_fp.glsl SP/code/rend2/glsl/volumetricsun_vp.glsl; do
+            test ! -e "source/$p"
+            git -C source apply --check --binary --whitespace=nowarn --include="$p" ../donor.patch
+            git -C source apply --binary --whitespace=nowarn --include="$p" ../donor.patch
+          done
+
+          git -C source config user.name "DarkWolf Production CI"
+          git -C source config user.email "ci@example.invalid"
+          git -C source add -A
+          git -C source commit -q -m "Exact v4.4.2 renderer source"
+          git -C source rev-parse HEAD > .base_source_commit
+
+
+      - name: Restore v4.4.3 and apply isolated instrumentation
+        run: |
+          set -Eeuo pipefail
+          python3 "$FIXER" source
+          git -C source diff --binary "$(cat .base_source_commit)" > evidence/v443-reconstructed.patch
+          expected="$(find production-release -name darkwolf-volumetric-aa-v4-4-3-production.patch -print -quit)"
+          cmp "$expected" evidence/v443-reconstructed.patch
+          git -C source add -A
+          git -C source commit -qm 'Verified v4.4.3 baseline renderer'
+          python3 diagnostics/sun-perf-v1/instrument.py source
+          git -C source diff --check
+          git -C source diff --binary > evidence/diagnostic-only.patch
+          cp diagnostics/sun-perf-v1/cinematic.cfg evidence/
+          echo 'SOFTWARE_CI_NOT_75FPS_ACCEPTANCE' > evidence/acceptance-status.txt
+      - name: Build Linux and Windows diagnostic binaries
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          exe="$(find source/SP/build -type f -iname 'iowolfsp.*' -perm -111 -print -quit)"
+          test -n "$exe"
+          mkdir -p runtime/main
+          cp -a "$(dirname "$exe")/." runtime/
+          (cd source/SP && ./cross-make-mingw64.sh -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1)
+          mkdir -p diagnostic-win64
+          cp -a source/SP/build/release-mingw32-x86_64/. diagnostic-win64/
+          cp diagnostics/sun-perf-v1/cinematic.cfg runtime/main/
+          base="$(find production-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          cp "$base"/Main/*.pk3 runtime/main/
+      - name: Fetch protected assets
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$GH_TOKEN"
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          find "$retail" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+      - name: Cinematic forceSun ABBA pass-cost experiment
+        run: python3 diagnostics/sun-perf-v1/run_probe.py
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-Rend2-Sun-Perf-v1-Evidence
+          path: evidence/
+          retention-days: 30
+      - name: Upload diagnostic Windows build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-Rend2-Sun-Perf-v1-DIAGNOSTIC-Win64
+          path: diagnostic-win64/
+          if-no-files-found: warn
+          retention-days: 30
