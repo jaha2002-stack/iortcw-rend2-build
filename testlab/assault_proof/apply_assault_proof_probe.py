@@ -13,8 +13,9 @@ gs = g.read_text(encoding="utf-8")
 mark = "DARKWOLF_ASSAULT_PROOF_SUN_PROBE_V1"
 aim_mark = "DARKWOLF_ASSAULT_PROOF_AIM_V1"
 state_mark = "DARKWOLF_ASSAULT_PROOF_STATE_V1"
+weapon_mark = "DARKWOLF_ASSAULT_PROOF_MP40_V1"
 runtime_mark = "DARKWOLF_ASSAULT_PROOF_STATICPROMOTE_V1"
-if mark in s and aim_mark in gs and state_mark in gs and runtime_mark in s:
+if mark in s and aim_mark in gs and state_mark in gs and weapon_mark in gs and runtime_mark in s:
     print("assault proof probes already applied")
     raise SystemExit(0)
 
@@ -68,6 +69,31 @@ static void Cmd_DWAssaultAim_f( gentity_t *ent ) {
 '''
     gs = gs.replace(aim_anchor, aim_impl + aim_anchor, 1)
 
+# DARKWOLF_ASSAULT_PROOF_MP40_V1: force a deterministic first-person MP40 for proof screenshots.
+weapon_anchor = '''static void Cmd_DWTestViewState_f( gentity_t *ent ) {
+'''
+if weapon_mark not in gs:
+    if gs.count(weapon_anchor) != 1:
+        raise SystemExit(f"MP40 helper anchor count={gs.count(weapon_anchor)}")
+    weapon_impl = '''// DARKWOLF_ASSAULT_PROOF_MP40_V1
+static void Cmd_DWAssaultMP40_f( gentity_t *ent ) {
+    if ( !ent || !ent->client )
+        return;
+    COM_BitSet( ent->client->ps.weapons, WP_MP40 );
+    Add_Ammo( ent, WP_MP40, 999, qtrue );
+    ent->client->ps.weapon = WP_MP40;
+    ent->client->ps.weaponstate = WEAPON_READY;
+    ent->client->ps.weaponTime = 0;
+    trap_SendServerCommand( ent-g_entities, va(
+        "print \\"ASSAULT_PROOF_MP40 weapon=%d ammo=%d clip=%d\\n\\"",
+        ent->client->ps.weapon,
+        ent->client->ps.ammo[BG_FindAmmoForWeapon(WP_MP40)],
+        ent->client->ps.ammoclip[BG_FindClipForWeapon(WP_MP40)]) );
+}
+
+'''
+    gs = gs.replace(weapon_anchor, weapon_impl + weapon_anchor, 1)
+
 # DARKWOLF_ASSAULT_PROOF_STATE_V1: TestLab-only weapon/player state proof.
 state_anchor = '''static void Cmd_DWTestViewState_f( gentity_t *ent ) {
 '''
@@ -120,6 +146,8 @@ dispatch_new = '''\t} else if ( Q_stricmp( cmd, "dw_testViewState" ) == 0 )  { /
 \t\tCmd_DWAssaultAim_f( ent );
 \t} else if ( Q_stricmp( cmd, "dw_assaultState" ) == 0 )  { // DARKWOLF_ASSAULT_PROOF_STATE_V1
 \t\tCmd_DWAssaultState_f( ent );
+\t} else if ( Q_stricmp( cmd, "dw_assaultMP40" ) == 0 )  { // DARKWOLF_ASSAULT_PROOF_MP40_V1
+\t\tCmd_DWAssaultMP40_f( ent );
 '''
 if aim_mark not in gs[gs.find(dispatch_anchor):]:
     if gs.count(dispatch_anchor) != 1:
@@ -131,4 +159,5 @@ g.write_text(gs,encoding="utf-8",newline="\n")
 print("DARKWOLF_ASSAULT_PROOF_SUN_PROBE_V1 applied")
 print("DARKWOLF_ASSAULT_PROOF_AIM_V1 applied")
 print("DARKWOLF_ASSAULT_PROOF_STATE_V1 applied")
+print("DARKWOLF_ASSAULT_PROOF_MP40_V1 applied")
 print("DARKWOLF_ASSAULT_PROOF_STATICPROMOTE_V1 applied")
