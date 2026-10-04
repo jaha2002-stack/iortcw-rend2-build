@@ -1,0 +1,475 @@
+name: DarkWolf Rend2 Volumetric Edge AA TestLab Attempt 2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ volumetric-aa-testlab-v0.1 ]
+    paths:
+      - '.github/workflows/DARKWOLF_REND2_VOLUMETRIC_EDGE_AA_TESTLAB_ATTEMPT2.yml'
+      - 'diagnostics/volumetric-aa-v2/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-volumetric-edge-aa-attempt2
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "37194587469"
+      BASE_HEAD_SHA: 555bff885b96603432fddafc79a37081df1d4202
+      BASE_ARTIFACT_ID: "11300218573"
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Final-Native-v4.4.2-Real-Ingame-System-Fix-Win64
+      BASE_ARTIFACT_DIGEST: sha256:9aa4b0d8a3103f5498ea879a2328a46f46fe7aabf425829c0f586a879a510667
+      BASE_INNER_SHA256: 7b5991738de21c1ab346805fceb284797e8ef75acf84801358a1b3b82d76d28e
+      BASE_RENDERER_SHA256: 92b1db33486ea2dd7d04ccda8f3030692578a13569440f100b677b63b7a6e6d2
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch
+      BASE_CUMULATIVE_SHA256: 2c1da09485d489bca253eef8c7626d7417d5493fee493c2d83ffb7c6b7048d0c
+
+      SHADER_DONOR_RUN_ID: "35503262322"
+      SHADER_DONOR_HEAD_SHA: 80fde84b6e91febd5ab5a8c10e37ed0d6dd01476
+      SHADER_DONOR_ARTIFACT_ID: "10603017159"
+      SHADER_DONOR_ARTIFACT_NAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+      SHADER_DONOR_ARTIFACT_DIGEST: sha256:51ef9cb590b5e9c2ae96d8305eb4e63bae005b993acdca48af7b6ff51e0d0409
+      SHADER_DONOR_INNER_SHA256: efe9a4f3b33e5dd4b621ed3fa0d87abe677c85d09ca29088a380d813b5c082bb
+      SHADER_DONOR_PATCH: darkwolf-rend2-cumulative-dlight-fx-shadow-eligibility-loper-complete-electrical-pc-v0-3-sp.patch
+      SHADER_DONOR_PATCH_SHA256: cb8379d56e57ec83be75251756ecea781dc9d2c6d66620e17fb56538ba157d97
+
+      PATCHER: diagnostics/volumetric-aa-v2/apply_volumetric_edge_aa_attempt2.py
+      ANALYZER: diagnostics/volumetric-aa-v2/analyze_volumetric_edge_aa.py
+
+      ASSET_REPO: jaha2002-stack/DarkWolfRTCW-TestAssets
+      ASSET_RELEASE_TAG: rtcw-retail-v1
+      ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+
+      EVIDENCE_NAME: DarkWolf-Rend2-Volumetric-Edge-AA-Attempt2-Evidence
+      TEST_BUILD_NAME: DarkWolf-Rend2-Volumetric-Edge-AA-Attempt2-Linux-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deterministic build and TestLab dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl gh git jq python3 python3-yaml python3-numpy python3-pil \
+            unzip zip file xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          mkdir -p evidence/screenshots
+          python3 -m py_compile "$PATCHER" "$ANALYZER" testlab/scripts/*.py
+          sha256sum "$PATCHER" "$ANALYZER" > evidence/attempt2-tools.sha256
+          echo "Attempt 2 preflight PASS"
+
+      - name: Verify and download exact v4.4.2 baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run_json")" = "$BASE_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run_json")" = success
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          IFS=$'\t' read -r name expired digest <<<"$row"
+          test "$name" = "$BASE_ARTIFACT_NAME"
+          test "$expired" = false
+          test "$digest" = "$BASE_ARTIFACT_DIGEST"
+
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/${BASE_ARTIFACT_NAME}.zip"
+          test "$(sha256sum "$z" | awk '{print $1}')" = "$BASE_INNER_SHA256"
+          unzip -tq "$z"
+          unzip -q "$z" -d base-release
+          base="$(find base-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$base"
+          echo "$base" > .base
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$base/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          cp "$base/docs/DARKWOLF_FINAL_NATIVE_V4_4_2_REAL_INGAME_SYSTEM_AUDIT.txt" evidence/
+          echo "Exact v4.4.2 provenance PASS"
+
+      - name: Reconstruct exact renderer source and recover exact GLSL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base)"
+          rm -rf source shader-donor shader-donor-release
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../cumulative.patch
+
+          donor="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${SHADER_DONOR_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$donor")" = "$SHADER_DONOR_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$donor")" = success
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${SHADER_DONOR_RUN_ID}/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.id == ${SHADER_DONOR_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          IFS=$'\t' read -r dn de dd <<<"$row"
+          test "$dn" = "$SHADER_DONOR_ARTIFACT_NAME"
+          test "$de" = false
+          test "$dd" = "$SHADER_DONOR_ARTIFACT_DIGEST"
+          mkdir -p shader-donor shader-donor-release
+          gh run download "$SHADER_DONOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$SHADER_DONOR_ARTIFACT_NAME" --dir shader-donor
+          dz="shader-donor/${SHADER_DONOR_ARTIFACT_NAME}.zip"
+          test "$(sha256sum "$dz" | awk '{print $1}')" = "$SHADER_DONOR_INNER_SHA256"
+          unzip -q "$dz" -d shader-donor-release
+          donor_base="$(find shader-donor-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          dp="$donor_base/docs/$SHADER_DONOR_PATCH"
+          test "$(sha256sum "$dp" | awk '{print $1}')" = "$SHADER_DONOR_PATCH_SHA256"
+          cp "$dp" donor.patch
+
+          shaders=(
+            SP/code/rend2/glsl/ssgi_fp.glsl
+            SP/code/rend2/glsl/ssgi_vp.glsl
+            SP/code/rend2/glsl/volumetriclocal_fp.glsl
+            SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl
+            SP/code/rend2/glsl/volumetriclocal_vp.glsl
+            SP/code/rend2/glsl/volumetricsun_fp.glsl
+            SP/code/rend2/glsl/volumetricsun_vp.glsl
+          )
+          for p in "${shaders[@]}"; do
+            test ! -e "source/$p"
+            git -C source apply --check --binary --whitespace=nowarn --include="$p" ../donor.patch
+            git -C source apply --binary --whitespace=nowarn --include="$p" ../donor.patch
+          done
+
+          grep -Fq 'DARKWOLF_SUN_VOLUMETRIC_V0_3' source/SP/code/rend2/glsl/volumetricsun_fp.glsl
+          grep -Fq 'DARKWOLF_LOCAL_VOLUMETRIC_V0_1' source/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+          grep -Fq 'DARKWOLF_FIREVOL_SPATIAL_RECONSTRUCTION_EDGE_QUALITY_PC02' source/SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl
+          grep -Fq 'width / 2, height / 2' source/SP/code/rend2/tr_image.c
+          grep -Fq 'FBO_FastBlit(tr.renderFbo, NULL, tr.msaaResolveFbo' source/SP/code/rend2/tr_backend.c
+
+          git -C source config user.name "DarkWolf VAA2 TestLab"
+          git -C source config user.email "vaa2@example.invalid"
+          git -C source add -A
+          git -C source commit -q -m "Exact v4.4.2 renderer source with recovered shaders"
+          git -C source rev-parse HEAD > .base_source_commit
+
+          cat > evidence/ATTEMPT2_SOURCE_AUDIT.txt <<EOF
+          exact_base_run=$BASE_RUN_ID
+          exact_base_head=$BASE_HEAD_SHA
+          exact_renderer_sha=$BASE_RENDERER_SHA256
+          msaa_resolve_precedes_volumetrics=YES
+          production_msaa_expected=4
+          volumetric_work_resolution=HALF_WIDTH_HALF_HEIGHT
+          volumetric_work_pixel_fraction=0.25
+          sun_baseline_composite=DIRECT_HALFRES_TO_FULLRES
+          local_point_baseline_composite=DIRECT_HALFRES_TO_FULLRES
+          accepted_fire_spot_reconstruction=FROZEN
+          attempt2_algorithm=ENERGY_PRESERVING_2X2_JOINT_BILATERAL_UPSAMPLE
+          invariant_equal_depth=EXACT_BILINEAR_WEIGHTS
+          temporal_history=NONE
+          EOF
+          echo "Source audit/reconstruction PASS"
+
+      - name: Apply isolated Attempt 2 plus TestLab harness
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          basecommit="$(cat .base_source_commit)"
+          python3 testlab/scripts/apply_testlab_instrumentation.py source
+          python3 "$PATCHER" source
+          git -C source diff --check "$basecommit" --
+
+          mapfile -t changed < <(git -C source diff --name-only "$basecommit" -- | LC_ALL=C sort)
+          expected=(
+            SP/code/cgame/cg_info.c
+            SP/code/cgame/cg_servercmds.c
+            SP/code/game/g_cmds.c
+            SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl
+            SP/code/rend2/tr_backend.c
+            SP/code/rend2/tr_init.c
+            SP/code/rend2/tr_main.c
+            SP/code/rend2/tr_scene.c
+          )
+          test "${changed[*]}" = "${expected[*]}" || {
+            printf 'ERROR changed allowlist\nactual=%s\nexpected=%s\n' "${changed[*]}" "${expected[*]}" >&2
+            exit 1
+          }
+          grep -Fq 'DARKWOLF_VOLUMETRIC_EDGE_AA_V1_DIAG2' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'kernelMode == 3' source/SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl
+          grep -Fq 'reconstructionMode = 4;' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'VAA2_TRACE frame=' source/SP/code/rend2/tr_backend.c
+          git -C source diff --binary "$basecommit" -- > evidence/attempt2-plus-testlab.patch
+          echo "Attempt 2 patch isolation PASS"
+
+      - name: Build native Linux x64 SP + Rend2
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          exe="$(find source/SP/build -type f -iname 'iowolfsp.*' -perm -111 -print -quit)"
+          test -n "$exe"
+          root="$(dirname "$exe")"
+          renderer="$(find "$root" -maxdepth 1 -type f -name 'renderer_sp_rend2_*.so' -print -quit)"
+          test -x "$exe"
+          test -s "$renderer"
+          echo "$exe" > .native_exe
+          echo "$root" > .native_root
+          strings "$renderer" | grep -Fq 'VAA2_TRACE frame='
+          strings "$renderer" | grep -Fq 'r_volumetricEdgeAA'
+          file "$exe" "$renderer" | tee evidence/native-binaries.txt
+          echo "Attempt 2 native compile PASS"
+
+      - name: Fetch protected retail assets
+        id: assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ env.ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${ASSET_TOKEN:-}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "BLOCKED_MISSING_RETAIL_ASSET_TOKEN" > evidence/runtime-status.txt
+            exit 0
+          fi
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh "$ASSET_REPO" "$ASSET_RELEASE_TAG" protected-assets | tail -1)"
+          test -d "$retail_main"
+          echo "$retail_main" > .retail_main
+          cp protected-assets/release-assets.txt evidence/retail-release-assets.txt
+          cp protected-assets/pk3-files.txt evidence/retail-pk3-files.txt
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          echo "Retail asset gate PASS"
+
+      - name: Assemble runtime and stable A/B configs
+        if: steps.assets.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf runtime home-local home-sun
+          mkdir -p runtime/main home-local home-sun evidence/screenshots
+          root="$(cat .native_root)"
+          cp -a "$root/." runtime/
+          retail="$(cat .retail_main)"
+          find "$retail" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+          test -s runtime/main/pak0.pk3 || test -s runtime/main/PAK0.PK3
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def cycle(prefix):
+              out=[]
+              variants=[("base1",0,16),("aa8",1,8),("aa16",1,16),("base2",0,16)]
+              for label,on,reject in variants:
+                  out += [
+                      f'set r_volumetricEdgeAADepthReject {reject}',
+                      f'set r_volumetricEdgeAA {on}',
+                      'wait 45',
+                      f'echo VAA2_CAPTURE name={prefix} variant={label} edgeAA={on} reject={reject}',
+                      f'screenshot {prefix}_{label}',
+                      'wait 5',
+                  ]
+              return out
+
+          local=[
+              'set developer 1','set logfile 2','set con_notifytime 0',
+              'set cg_draw2D 0','set cg_drawGun 1',
+              'set r_volumetricEdgeAATrace 1',
+              'set r_staticPromoteUnifiedDiag 0','set r_staticPromoteRootCauseDiag 0',
+              'set r_staticPromotePhysicalGroupDiag 0',
+              'echo VAA2_LOCAL_BEGIN',
+          ]
+          positions=[
+              ('p0',544,192,456,180),
+              ('p1',497,305,456,-135),
+          ]
+          for tag,x,y,z,yaw in positions:
+              local += [f'setviewpos {x} {y} {z} {yaw}','wait 90']
+              local += cycle(f'vaa2_local_escape1_{tag}')
+          local += ['echo VAA2_LOCAL_COMPLETE','wait 10','quit']
+          Path('runtime/main/vaa2_local.cfg').write_text('\n'.join(local)+'\n')
+
+          sun=[
+              'set developer 1','set logfile 2','set con_notifytime 0',
+              'set cg_draw2D 0','set cg_drawGun 1',
+              'set r_volumetricEdgeAATrace 1',
+              'echo VAA2_SUN_BEGIN map=forest',
+              'wait 90',
+          ]
+          sun += cycle('vaa2_sun_forest_p0')
+          sun += ['+left','wait 28','-left','wait 45']
+          sun += cycle('vaa2_sun_forest_p1')
+          sun += ['echo VAA2_SUN_COMPLETE map=forest','wait 10','quit']
+          Path('runtime/main/vaa2_sun.cfg').write_text('\n'.join(sun)+'\n')
+          PY
+          echo "Attempt 2 deterministic configs PASS"
+
+      - name: Runtime A/B Local - normal player view with weapon
+        if: steps.assets.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -print -quit)"
+          chmod +x "$exe"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 15s 300s "$exe" \
+            +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home-local" \
+            +set com_introplayed 1 +set logfile 2 +set r_fullscreen 0 +set dw_testAutomation 1 \
+            +set r_renderer rend2 +set cl_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 768 \
+            +set r_ext_framebuffer_multisample 4 +set r_hdr 1 +set r_postProcess 1 \
+            +set r_volumetricSun 0 +set r_volumetricLocal 1 +set r_volumetricLocalMode 5 \
+            +set r_staticPromoteMaxLights 32 +set r_dlightShadowMaxLights 3 \
+            +spdevmap escape1 +wait 120 +exec vaa2_local.cfg
+          rc=$?
+          set -e
+          echo "$rc" > evidence/local-exit-code.txt
+          qlog="$(find home-local -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+          test -n "$qlog"
+          cp "$qlog" evidence/local-qconsole.log
+          grep -Fq 'VAA2_LOCAL_COMPLETE' evidence/local-qconsole.log
+          grep -Eq 'HDRMSAA_PROD_INIT .*actualSamples=4' evidence/local-qconsole.log
+          grep -Eq 'VAA2_TRACE .*map=escape1 .*edgeAA=1 .*localAA=[1-9][0-9]*' evidence/local-qconsole.log
+          find home-local -type f -path '*/screenshots/vaa2_local_*.tga' -exec cp -a {} evidence/screenshots/ \;
+          test "$rc" -eq 0
+          test "$(find evidence/screenshots -maxdepth 1 -type f -name 'vaa2_local_*.tga' | wc -l)" -eq 8
+          echo "Attempt 2 Local runtime PASS"
+
+      - name: Runtime A/B Sun - normal player view with weapon
+        if: steps.assets.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -print -quit)"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 15s 300s "$exe" \
+            +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home-sun" \
+            +set com_introplayed 1 +set logfile 2 +set r_fullscreen 0 +set dw_testAutomation 1 \
+            +set r_renderer rend2 +set cl_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 768 \
+            +set r_ext_framebuffer_multisample 4 +set r_hdr 1 +set r_postProcess 1 \
+            +set r_volumetricSun 1 +set r_volumetricLocal 0 \
+            +set r_staticPromoteMaxLights 32 +set r_dlightShadowMaxLights 3 \
+            +spdevmap forest +wait 120 +exec vaa2_sun.cfg
+          rc=$?
+          set -e
+          echo "$rc" > evidence/sun-exit-code.txt
+          qlog="$(find home-sun -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+          test -n "$qlog"
+          cp "$qlog" evidence/sun-qconsole.log
+          grep -Fq 'VAA2_SUN_COMPLETE map=forest' evidence/sun-qconsole.log
+          grep -Eq 'HDRMSAA_PROD_INIT .*actualSamples=4' evidence/sun-qconsole.log
+          grep -Eq 'VAA2_TRACE .*map=forest .*edgeAA=1 .*sunAA=[1-9][0-9]*' evidence/sun-qconsole.log
+          find home-sun -type f -path '*/screenshots/vaa2_sun_*.tga' -exec cp -a {} evidence/screenshots/ \;
+          test "$rc" -eq 0
+          test "$(find evidence/screenshots -maxdepth 1 -type f -name 'vaa2_sun_*.tga' | wc -l)" -eq 8
+          echo "Attempt 2 Sun runtime PASS"
+
+      - name: Analyze stable pairs and weapon edge quality
+        if: steps.assets.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat evidence/local-qconsole.log evidence/sun-qconsole.log > evidence/vaa2-qconsole-combined.log
+          grep 'VAA2_TRACE ' evidence/vaa2-qconsole-combined.log > evidence/vaa2-trace.log
+          test -s evidence/vaa2-trace.log
+          python3 "$ANALYZER" evidence/screenshots evidence/vaa2-image-analysis.json | tee evidence/vaa2-analysis-console.txt
+
+          python3 - <<'PY'
+          import json, re
+          from pathlib import Path
+          lines=Path('evidence/vaa2-trace.log').read_text(errors='replace').splitlines()
+          rows=[]
+          for line in lines:
+              kv=dict(re.findall(r'(\w+)=([^\s]+)',line))
+              if kv: rows.append(kv)
+          out={
+              'trace_count':len(rows),
+              'msaa_actual_4_proven': 'actualSamples=4' in Path('evidence/vaa2-qconsole-combined.log').read_text(errors='replace'),
+              'msaa_resolve_fbo_values':sorted({x.get('msaaResolveFbo') for x in rows}),
+              'source_fbos':sorted({x.get('src') for x in rows}),
+              'source_sizes':sorted({x.get('srcSize') for x in rows}),
+              'quarter_sizes':sorted({x.get('quarter') for x in rows}),
+              'local_aa_proven':any(x.get('edgeAA')=='1' and int(x.get('localAA','0'))>0 for x in rows),
+              'sun_aa_proven':any(x.get('edgeAA')=='1' and int(x.get('sunAA','0'))>0 for x in rows),
+          }
+          Path('evidence/vaa2-telemetry-summary.json').write_text(json.dumps(out,indent=2)+'\n')
+          if not out['local_aa_proven'] or not out['sun_aa_proven']:
+              raise SystemExit('ERROR: AA path not proven for both Local and Sun')
+          print(json.dumps(out,indent=2))
+          PY
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('evidence/vaa2-image-analysis.json').read_text())
+          usable=max(d['summary']['aa8']['usable_groups'], d['summary']['aa16']['usable_groups'])
+          if usable < 2:
+              raise SystemExit(f'ERROR: insufficient stable valid A/B groups: {usable}')
+          print('Stable visual evidence groups:', usable)
+          print('Recommended diagnostic variant:', d['recommended_variant'])
+          PY
+          echo "Attempt 2 analysis PASS"
+
+      - name: Record runtime blocker
+        if: steps.assets.outputs.available != 'true'
+        shell: bash
+        run: |
+          echo "BLOCKED_MISSING_RETAIL_ASSETS" > evidence/runtime-status.txt
+
+      - name: Package Attempt 2 evidence and native build
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p out
+          {
+            echo "ATTEMPT=2"
+            echo "BASE_RUN=$BASE_RUN_ID"
+            echo "BASE_HEAD=$BASE_HEAD_SHA"
+            echo "BASE_RENDERER_SHA=$BASE_RENDERER_SHA256"
+            echo "ALGORITHM=2X2_JOINT_BILATERAL_EXACT_BILINEAR_IN_EQUAL_DEPTH_REGIONS"
+            echo "FIRE_SPOT_RECONSTRUCTION_CHANGED=NO"
+            echo "RAYMARCH_LIGHT_SHADOW_SELECTION_CHANGED=NO"
+            echo "TEMPORAL_HISTORY=NO"
+          } > evidence/ATTEMPT2_SUMMARY.txt
+          if [ -f .native_root ]; then
+            root="$(cat .native_root)"
+            mkdir -p "out/$TEST_BUILD_NAME"
+            cp -a "$root/." "out/$TEST_BUILD_NAME/"
+            (cd out && zip -q -X -r "$TEST_BUILD_NAME.zip" "$TEST_BUILD_NAME")
+            sha256sum "out/$TEST_BUILD_NAME.zip" > "out/$TEST_BUILD_NAME.zip.sha256"
+          fi
+          (cd evidence && find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+          (cd evidence && zip -q -X -r "../out/$EVIDENCE_NAME.zip" .)
+          sha256sum "out/$EVIDENCE_NAME.zip" > "out/$EVIDENCE_NAME.zip.sha256"
+
+      - name: Upload Attempt 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.EVIDENCE_NAME }}
+          path: |
+            out/${{ env.EVIDENCE_NAME }}.zip
+            out/${{ env.EVIDENCE_NAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+      - name: Upload Attempt 2 native build
+        if: always() && hashFiles('out/DarkWolf-Rend2-Volumetric-Edge-AA-Attempt2-Linux-x64.zip') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.TEST_BUILD_NAME }}
+          path: |
+            out/${{ env.TEST_BUILD_NAME }}.zip
+            out/${{ env.TEST_BUILD_NAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
