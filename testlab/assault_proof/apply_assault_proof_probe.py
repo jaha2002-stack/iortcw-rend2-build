@@ -124,7 +124,8 @@ runtime_old = '''\t\t\t\tif (testlabFixture != 918 && testlabFixture != 782 &&
 runtime_new = '''\t\t\t\t// DARKWOLF_ASSAULT_PROOF_STATICPROMOTE_V1
 \t\t\t\tif (!Q_stricmp(tr.world->baseName, "assault"))
 \t\t\t\t{
-\t\t\t\t\tif (testlabFixture != 209)
+\t\t\t\t\tint assaultProofFixture = ri.Cvar_VariableIntegerValue("r_assaultProofFixture");
+\t\t\t\t\tif (assaultProofFixture >= 0 && testlabFixture != assaultProofFixture)
 \t\t\t\t\t\tcontinue;
 \t\t\t\t}
 \t\t\t\telse if (testlabFixture != 918 && testlabFixture != 782 &&
