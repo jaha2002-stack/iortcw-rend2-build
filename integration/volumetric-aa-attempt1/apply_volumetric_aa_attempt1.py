@@ -62,7 +62,7 @@ for needle in ['DARKWOLF_FIREVOL_SPATIAL_RECONSTRUCTION_EDGE_QUALITY_PC02',
                'mode >= 5 && mode <= 8 && s_rVolumetricFireUpscale',
                'DARKWOLF_SUN_VOLUMETRIC_PERF_ISOLATION_V0_3',
                'DARKWOLF_USLRD_PHYSICAL_SHADOW_GROUP_CONTINUITY_FIX_V2']:
-    if nedle not in text:
+    if needle not in text:
         fail('accepted parent behavior lost: ' + needle)
 
 BACKEND.write_text(text, encoding='utf-8', newline='\n')
