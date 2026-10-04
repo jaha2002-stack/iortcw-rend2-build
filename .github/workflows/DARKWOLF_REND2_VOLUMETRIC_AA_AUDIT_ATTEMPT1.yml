@@ -1,0 +1,103 @@
+name: DarkWolf Rend2 Volumetric AA Audit Attempt 1
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ testlab-v0.1 ]
+    paths:
+      - '.github/workflows/DARKWOLF_REND2_VOLUMETRIC_AA_AUDIT_ATTEMPT1.yml'
+      - 'integration/volumetric-aa-attempt1/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-volumetric-aa-audit-attempt1
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      BASE_RUN_ID: '37194587469'
+      BASE_HEAD_SHA: 555bff885b96603432fddafc79a37081df1d4202
+      BASE_ARTIFACT_ID: '11300218573'
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Final-Native-v4.4.2-Real-Ingame-System-Fix-Win64
+      BASE_ARTIFACT_DIGEST: sha256:9aa4b0d8a3103f5498ea879a2328a46f46fe7aabf425829c0f586a879a510667
+      BASE_INNER_SHA256: 7b5991738de21c1ab346805fceb284797e8ef75acf84801358a1b3b82d76d28e
+      BASE_RENDERER_SHA256: 92b1db33486ea2dd7d04ccda8f3030692578a13569440f100b677b63b7a6e6d2
+      BASE_CUMULATIVE: darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch
+      BASE_CUMULATIVE_SHA256: 2c1da09485d489bca253eef8c7626d7417d5493fee493c2d83ffb7c6b7048d0c
+      BASE_UI_V44: darkwolf-settings-ui-v4-4-ingame-rend2-source-delta.patch
+      BASE_UI_V44_SHA256: 12ad3c92d5ec18e7c2f6d8954209ba9212a735e8bd880f25722fafa80fd19719
+      BASE_UI_V442: darkwolf-settings-ui-v4-4-2-real-ingame-system.patch
+      BASE_UI_V442_SHA256: cd3cbea2c6f370edd4148e549fdfbad9af1a7f663573f5d840152dd1c750c742
+      SHADER_DONOR_RUN_ID: '35503262322'
+      SHADER_DONOR_HEAD_SHA: 80fde84b6e91febd5ab5a8c10e37ed0d6dd01476
+      SHADER_DONOR_ARTIFACT_ID: '10603017159'
+      SHADER_DONOR_ARTIFACT_NAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+      SHADER_DONOR_ARTIFACT_DIGEST: sha256:51ef9cb590b5e9c2ae96d8305eb4e63bae005b993acdca48af7b6ff51e0d0409
+      SHADER_DONOR_INNER_SHA256: efe9a4f3b33e5dd4b621ed3fa0d87abe677c85d09ca29088a380d813b5c082bb
+      SHADER_DONOR_PATCH: darkwolf-rend2-cumulative-dlight-fx-shadow-eligibility-loper-complete-electrical-pc-v0-3-sp.patch
+      SHADER_DONOR_PATCH_SHA256: cb8379d56e57ec83be75251756ecea781dc9d2c6d66620e17fb56538ba157d97
+      PATCHER: integration/volumetric-aa-attempt1/apply_volumetric_aa_attempt1.py
+      ASSET_REPO: jaha2002-stack/DarkWolfRTCW-TestAssets
+      ASSET_RELEASE_TAG: rtcw-retail-v1
+      ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+      EVIDENCE_NAME: DarkWolf-Rend2-Volumetric-AA-Audit-Attempt1-Evidence
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies and validate scripts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ca-certificates gh git jq python3 python3-pil python3-numpy \
+            unzip zip file xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 -m py_compile "$PATCHER"
+          bash -n integration/volumetric-aa-attempt1/run_attempt1.sh
+
+      - name: Run telemetry-first Attempt 1
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash integration/volumetric-aa-attempt1/run_attempt1.sh
+
+      - name: Package evidence
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence out
+          cp "$PATCHER" evidence/apply_volumetric_aa_attempt1.py || true
+          cp integration/volumetric-aa-attempt1/run_attempt1.sh evidence/run_attempt1.sh || true
+          cat > evidence/ROOT_CAUSE_HYPOTHESIS.txt <<'EOF'
+          MSAA resolves the main scene before Sun/Local post-process volumetrics.
+          Sun and Local point volumes raymarch at quarter-area resolution and v4.4.2 directly
+          upsamples/adds that signal after resolve. Existing depth-aware reconstruction is used by
+          spotlight/FireVol, not by Sun/Local point volumes. Attempt 1 A/B changes only the
+          reconstruction/composite stage and records pass size, MSAA/resolve state, timing and screenshots.
+          EOF
+          (cd evidence && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+          (cd evidence && zip -q -X -r "../out/${EVIDENCE_NAME}.zip" .)
+          sha256sum "out/${EVIDENCE_NAME}.zip" > "out/${EVIDENCE_NAME}.zip.sha256"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.EVIDENCE_NAME }}
+          path: |
+            out/${{ env.EVIDEENCE_NAME }}.zip
+            out/${{ env.EVIDENCE_NAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
