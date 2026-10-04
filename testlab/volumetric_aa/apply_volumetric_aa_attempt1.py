@@ -107,7 +107,7 @@ post_insert = r'''	RB_VolumetricAAEnsureCvars();
 	if (s_rVolumetricAATrace && s_rVolumetricAATrace->integer)
 	{
 		static int s_vaaLastTraceFrame = -1000000;
-		if (tr.frameCount < s_vaaLastTraceFrame || tr.frameCount - s_vaaLastTraceFrame >= 60)
+		if (tr.frameCount < s_vaaLastTraceFrame || tr.frameCount - s_vaaLastTraceFrame >= 10)
 		{
 			s_vaaLastTraceFrame = tr.frameCount;
 			ri.Printf(PRINT_ALL,
