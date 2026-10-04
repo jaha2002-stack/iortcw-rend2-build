@@ -167,13 +167,13 @@ replace_once(main, old_controls, new_controls)
 old_back = '''\t\t} else if ( Q_stricmp( name, "darkwolfSettingsBack" ) == 0 ) {
 \t\t\tMenus_CloseAll();
 \t\t\tif ( trap_Cvar_VariableValue( "ui_darkwolfReturnIngame" ) > 0.5f && Menus_FindByName( "setup_menu2" ) ) {
-\t\t\t\tMenus_ActivateByName( "setup_menu2" );''
+\t\t\t\tMenus_ActivateByName( "setup_menu2" );'''
 
 new_back = '''\t\t} else if ( Q_stricmp( name, "darkwolfSettingsBack" ) == 0 ) {
 \t\t\tMenus_CloseAll();
 \t\t\tif ( trap_Cvar_VariableValue( "ui_darkwolfReturnIngame" ) > 0.5f && Menus_FindByName( "setup_menu2" ) ) {
 \t\t\t\tDarkWolf_InjectOptionsRend2Tab();
-\t\t\t\tMenus_ActivateByName( "setup_menu2" );''
+\t\t\t\tMenus_ActivateByName( "setup_menu2" );'''
 
 replace_once(main, old_back, new_back)
 
