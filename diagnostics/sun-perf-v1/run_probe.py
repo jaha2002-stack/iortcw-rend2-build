@@ -7,12 +7,12 @@ summary={'acceptance_75fps':'NOT_TESTED_REAL_GPU_REQUIRED','root_cause':'UNCONFI
 for mode in (1,2):
  home=Path(f'home-probe-{mode}').resolve();(home/'main').mkdir(parents=True,exist_ok=True)
  shutil.copy2(runtime/'main/cinematic.cfg',home/'main/autoexec.cfg')
- cfg=['set developer 0','set logfile 1','set cg_draw2D 0','set cg_drawGun 1','god','give all','weapon 3','wait 60','set timescale 0.0001','set r_sunPerfLab 0']
+ cfg=['set developer 0','set logfile 2','set cg_draw2D 0','set cg_drawGun 1','god','give all','weapon 3','wait 180','set com_maxfps 0','set timescale 0.05','set r_sunPerfLab 0']
  for block,force in enumerate([0,1,1,0]):
   cfg += [f'set r_forceSun {force}','wait 16',f'echo SUNPERF_BLOCK_BEGIN_{block}_{force}',f'set r_sunPerfLab {mode}','wait 32','set r_sunPerfLab 0',f'echo SUNPERF_BLOCK_END_{block}_{force}',f'screenshot sunperf_m{mode}_b{block}_sun{force}']
  cfg+=['echo SUNPERF_COMPLETE','quit']
  (runtime/'main/probe.cfg').write_text('\n'.join(cfg)+'\n')
- args=[str(exe),'+set','fs_basepath',str(runtime),'+set','fs_homepath',str(home),'+set','com_introplayed','1','+set','dw_testAutomation','1','+set','r_renderer','rend2','+set','cl_renderer','rend2','+set','r_fullscreen','0','+set','r_mode','-1','+set','r_customwidth','1280','+set','r_customheight','768','+set','r_swapInterval','0','+set','com_maxfps','0','+spdevmap','forest','+wait','60','+exec','probe.cfg']
+ args=[str(exe),'+set','fs_basepath',str(runtime),'+set','fs_homepath',str(home),'+set','com_introplayed','1','+set','dw_testAutomation','1','+set','r_renderer','rend2','+set','cl_renderer','rend2','+set','r_fullscreen','0','+set','r_mode','-1','+set','r_customwidth','1280','+set','r_customheight','768','+set','r_swapInterval','0','+set','com_maxfps','76','+set','logfile','2','+spdevmap','forest','+wait','60','+exec','probe.cfg']
  env=dict(os.environ,LIBGL_ALWAYS_SOFTWARE='1')
  with (evidence/f'process-{mode}.log').open('w') as out:
   result=subprocess.run(['xvfb-run','-a','timeout','-k','15s','900s',*args],env=env,stdout=out,stderr=subprocess.STDOUT)
@@ -20,6 +20,7 @@ for mode in (1,2):
  text=logs[0].read_text(errors='replace');(evidence/f'qconsole-{mode}.log').write_text(text)
  for shot in home.rglob('sunperf*.tga'):shutil.copy2(shot,evidence/shot.name)
  assert result.returncode==0,('runtime failed',mode,result.returncode)
+ assert 'TESTLAB_GAMEPLAY_START requested=1' in text, 'gameplay not entered'
  assert 'SUNPERF_COMPLETE' in text
  assert re.search(r'HDRMSAA_PROD_INIT .*actualSamples=4',text),'MSAA not proven'
  assert re.search(r'GL_RENDERER:.*(llvmpipe|softpipe)',text,re.I),'record actual renderer before interpreting results'
