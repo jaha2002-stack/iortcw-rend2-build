@@ -1,0 +1,262 @@
+name: DarkWolf ioRTCW Rend2 Final Native Settings v4.4.1 Ingame Entry Fix
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - .github/workflows/DARKWOLF_IORTCW_REND2_FINAL_NATIVE_V4_4_1_INGAME_ENTRY_FIX.yml
+      - integration/settings-ui-v4-4-1-ingame-entry-fix/apply_darkwolf_settings_ui_v4_4_1_ingame_entry_fix.py
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-final-native-v4-4-1-ingame-entry-fix
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64-sp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "36396805525"
+      BASE_RUN_HEAD_SHA: f81ff03e140459eead06ebd16801b5852117b896
+      BASE_ARTIFACT_ID: "10958462871"
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Final-Native-v4.4-Ingame-Rend2-Live-Win64
+      BASE_ARTIFACT_DIGEST: sha256:dd7c5908f6a39c53799a0aeee956d98a5403f4a76185e93f94205caf260ee52a
+      BASE_INNER_SHA256: f1e42b0b8b34a975f2b0860154dcec4b08f0e9c96f3ae8826a3378e77b1f3ab4
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch
+      BASE_CUMULATIVE_SHA256: 2c1da09485d489bca253eef8c7626d7417d5493fee493c2d83ffb7c6b7048d0c
+      BASE_V44_DELTA_NAME: darkwolf-settings-ui-v4-4-ingame-rend2-source-delta.patch
+      BASE_V44_DELTA_SHA256: 12ad3c92d5ec18e7c2f6d8954209ba9212a735e8bd880f25722fafa80fd19719
+      BASE_RENDERER_SHA256: 92b1db33486ea2dd7d04ccda8f3030692578a13569440f100b677b63b7a6e6d2
+      BASE_EXE_SHA256: d5fad5fa49d6dca642b3509900785cb4078d233480a387189c8a94bf4c9c561d
+      BASE_UI_SHA256: 9c5757832d7f65f9e8deffe7a6611669acf3c6bd66fa350f5e2bceb98101d4f9
+      BASE_CGAME_SHA256: 81adb7d4b2686e8fb4185bf3243b81b6fb9a4d668ab709f480e5b27e5298a04e
+      BASE_QAGAME_SHA256: 04f91be7a666245441415758e68d2a194d1585fb6ff5672750a20702f908f74c
+      BASE_IGNITION_SHA256: 63f468e4edcb1fc6f2059b153c165f66b2c0b1237e93ea3b9518ef76358af5ee
+
+      FIXER: integration/settings-ui-v4-4-1-ingame-entry-fix/apply_darkwolf_settings_ui_v4_4_1_ingame_entry_fix.py
+      RELEASE_BASENAME: DarkWolf-ioRTCW-Rend2-Final-Native-v4.4.1-Ingame-Entry-Fix-Win64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install canonical dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64 build-essential ca-certificates g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git make mingw-w64 python3 python3-yaml unzip zip jq file
+
+      - name: Pre-CI validation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          wf=".github/workflows/DARKWOLF_IORTCW_REND2_FINAL_NATIVE_V4_4_1_INGAME_ENTRY_FIX.yml"
+          python3 - "$wf" <<'PY'
+          import pathlib, subprocess, sys, tempfile, yaml
+          p = pathlib.Path(sys.argv[1])
+          raw = p.read_bytes()
+          assert b'\r' not in raw
+          d = yaml.safe_load(raw)
+          assert d['name'] == 'DarkWolf ioRTCW Rend2 Final Native Settings v4.4.1 Ingame Entry Fix'
+          for job in d['jobs'].values():
+              for i, step in enumerate(job.get('steps', [])):
+                  if 'run' in step:
+                      q = pathlib.Path(tempfile.gettempdir()) / f'dw_v441_run_{i}.sh'
+                      q.write_text(step['run'], encoding='utf-8')
+                      subprocess.run(['bash', '-n', str(q)], check=True)
+          print('YAML + bash -n PASS')
+          PY
+          python3 -m py_compile "$FIXER"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('integration/settings-ui-v4-4-1-ingame-entry-fix/apply_darkwolf_settings_ui_v4_4_1_ingame_entry_fix.py').read_text()
+          required = [
+              'DarkWolf_InjectIngameRend2Button',
+              'if ( inGame )',
+              'setup_menu2 belongs to the separately loaded in-game menu set',
+              'setcvar ui_darkwolfReturnIngame 1 ; open darkwolf_graphics',
+              'DarkWolf_InjectOptionsRend2Tab();',
+              'DARKWOLF_UI_V4_4_1_INGAME_ENTRY_FIX_PATCH_OK',
+          ]
+          for marker in required:
+              assert marker in p, marker
+          assert 'SP/code/cgame/' not in p
+          assert 'SP/code/rend2/' not in p
+          print('v4.4.1 UI-only fix source validation PASS')
+          PY
+
+      - name: Verify and download exact v4.4 runtime base
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run")" = "$BASE_RUN_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run")" = success
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          IFS=$'\t' read -r n e d <<<"$row"
+          test "$n" = "$BASE_ARTIFACT_NAME"
+          test "$e" = false
+          test "$d" = "$BASE_ARTIFACT_DIGEST"
+
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/${BASE_ARTIFACT_NAME}.zip"
+          test "$(sha256sum "$z" | awk '{print $1}')" = "$BASE_INNER_SHA256"
+          unzip -tq "$z"
+          unzip -q "$z" -d base-release
+          base="$(find base-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$base"
+          echo "$base" > .base
+
+          test "$(sha256sum "$base/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(sha256sum "$base/docs/$BASE_V44_DELTA_NAME" | awk '{print $1}')" = "$BASE_V44_DELTA_SHA256"
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$base/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$base/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$base/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$base/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$base/Main/darkwolf_ignition_rc_v0_6.pk3" | awk '{print $1}')" = "$BASE_IGNITION_SHA256"
+          strings "$base/Main/ui_sp_x64.dll" | grep -Fq 'Options anchors not found in %s; REND2 SETTINGS not injected.'
+          echo "Exact v4.4 base PASS"
+
+      - name: Reconstruct exact v4.4 source and apply only UI entry fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base)"
+          rm -rf source replay
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" base-cumulative.patch
+          cp "$base/docs/$BASE_V44_DELTA_NAME" v44-source-delta.patch
+          git -C source apply --check --binary --whitespace=nowarn ../base-cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../base-cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../v44-source-delta.patch
+          git -C source apply --binary --whitespace=nowarn ../v44-source-delta.patch
+          git -C source diff --check
+
+          grep -Fq 'DarkWolf_InjectOptionsRend2TabInto' source/SP/code/ui/ui_shared.c
+          grep -Fq 'Options anchors not found in %s; REND2 SETTINGS not injected.' source/SP/code/ui/ui_shared.c
+          grep -Fq 'Menus_ActivateByName( "setup_menu2" );' source/SP/code/ui/ui_main.c
+          grep -Fq 'selected 50 ms slots' source/SP/code/cgame/cg_ents.c
+
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='ci@example.invalid' commit -q -m 'Exact v4.4 source from run 36396805525'
+          basecommit="$(git -C source rev-parse HEAD)"
+
+          python3 "$FIXER" source --check-only
+          python3 "$FIXER" source
+          git -C source diff --check
+          mapfile -t changed < <(git -C source diff --name-only | LC_ALL=C sort)
+          expected=(SP/code/ui/ui_main.c SP/code/ui/ui_shared.c)
+          test "${changed[*]}" = "${expected[*]}"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          shared = Path('source/SP/code/ui/ui_shared.c').read_text()
+          main = Path('source/SP/code/ui/ui_main.c').read_text()
+          ingame = shared.index('if ( inGame )')
+          anchors = shared.index('controls = DarkWolf_FindMenuItemByName')
+          assert ingame < anchors
+          assert 'DarkWolf_InjectIngameRend2Button( menu );' in shared[ingame:anchors]
+          controls = main.index('Q_stricmp( name, "Controls" ) == 0')
+          activate = main.index('Menus_ActivateByName( "setup_menu2" );', controls)
+          retry = main.index('DarkWolf_InjectOptionsRend2Tab();', controls)
+          assert retry < activate
+          assert 'DARKWOLF_UI_V4_4_1_INGAME_ENTRY_FIX' not in shared
+          print('Runtime-path ordering contract PASS')
+          PY
+
+          git -C source diff --binary > darkwolf-settings-ui-v4-4-1-ingame-entry-fix.patch
+          git -C source apply --reverse --check --binary ../darkwolf-settings-ui-v4-4-1-ingame-entry-fix.patch
+          git -C source worktree add -q ../replay "$basecommit"
+          git -C replay apply --check --binary ../darkwolf-settings-ui-v4-4-1-ingame-entry-fix.patch
+          git -C replay apply --binary ../darkwolf-settings-ui-v4-4-1-ingame-entry-fix.patch
+          git -C replay diff --check
+          for f in "${expected[@]}"; do cmp "source/$f" "replay/$f"; done
+          test "$(git -C replay diff --name-only | LC_ALL=C sort | tr '\n' ' ')" = "SP/code/ui/ui_main.c SP/code/ui/ui_shared.c "
+          echo "apply/reverse/clean-replay/allowlist PASS"
+
+      - name: Build Windows x64 SP UI module on exact v4.4 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          (cd source/SP && ./cross-make-mingw64.sh -j1 BUILD_CLIENT=0 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=0 USE_RENDERER_DLOPEN=1)
+          b=source/SP/build/release-mingw32-x86_64/main
+          test -s "$b/ui_sp_x64.dll"
+          file "$b/ui_sp_x64.dll" | grep -Eiq 'PE32\+|x86-64'
+          test "$(sha256sum "$b/ui_sp_x64.dll" | awk '{print $1}')" != "$BASE_UI_SHA256"
+          strings "$b/ui_sp_x64.dll" | grep -Fq 'DarkWolf UI v4.4.1: REND2 SETTINGS attached to in-game setup_menu2.'
+          strings "$b/ui_sp_x64.dll" | grep -Fq 'REND2 SETTINGS'
+          strings "$b/ui_sp_x64.dll" | grep -Fq 'darkwolfSettingsBack'
+          strings "$b/ui_sp_x64.dll" | grep -Fq 'setup_menu2'
+          echo "UI compile + binary markers PASS"
+
+      - name: Package no-drift v4.4.1 release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base)"
+          rm -rf dist
+          mkdir -p "dist/$RELEASE_BASENAME"
+          stage="dist/$RELEASE_BASENAME"
+          cp -a "$base/." "$stage/"
+          cp source/SP/build/release-mingw32-x86_64/main/ui_sp_x64.dll "$stage/Main/ui_sp_x64.dll"
+          cp darkwolf-settings-ui-v4-4-1-ingame-entry-fix.patch "$stage/docs/darkwolf-settings-ui-v4-4-1-ingame-entry-fix.patch"
+
+          cat > "$stage/docs/DARKWOLF_FINAL_NATIVE_V4_4_1_INGAME_ENTRY_FIX_AUDIT.txt" <<EOF
+          EXACT_BASE_RUN_ID=$BASE_RUN_ID
+          EXACT_BASE_HEAD_SHA=$BASE_RUN_HEAD_SHA
+          EXACT_BASE_ARTIFACT_ID=$BASE_ARTIFACT_ID
+          EXACT_BASE_ARTIFACT_DIGEST=$BASE_ARTIFACT_DIGEST
+          EXACT_BASE_INNER_SHA256=$BASE_INNER_SHA256
+          PINNED_UPSTREAM_SHA=$UPSTREAM_SHA
+          ROOT_CAUSE=v4.4_reused_frontend_controls_system_gameoptions_defaults_anchor_contract_for_setup_menu2_and_returned_without_creating_REND2_SETTINGS_when_those_anchors_were_absent
+          ONLY_INTENDED_CHANGE=setup_menu2_gets_independent_native_REND2_SETTINGS_button_without_frontend_asset_name_dependencies_plus_activation_time_idempotent_retry
+          CHANGED_SOURCE=SP/code/ui/ui_shared.c;SP/code/ui/ui_main.c
+          FROZEN=renderer;exe;cgame;qagame;ignition;profiles;Tesla351;shadows;StaticPromote;PVS;materials;GI;volumetrics
+          FRONTEND_SETUP_MENU=v4.4_semantic_relayout_unchanged
+          INGAME_SETUP_MENU=asset_name_independent_native_entry
+          INGAME_RETURN_FLAG=ui_darkwolfReturnIngame_1
+          INGAME_BACK_TARGET=setup_menu2
+          STATUS=CI_COMPILE_CANDIDATE_REQUIRES_USER_RUNTIME_TEST
+          EOF
+
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/darkwolf_ignition_rc_v0_6.pk3" | awk '{print $1}')" = "$BASE_IGNITION_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" != "$BASE_UI_SHA256"
+
+          strings "$stage/Main/ui_sp_x64.dll" | grep -Fq 'DarkWolf UI v4.4.1: REND2 SETTINGS attached to in-game setup_menu2.'
+          strings "$stage/Main/ui_sp_x64.dll" | grep -Fq 'setcvar ui_darkwolfReturnIngame 1 ; open darkwolf_graphics'
+          strings "$stage/Main/ui_sp_x64.dll" | grep -Fq 'RETURN TO GAME'
+          ! find "$stage" -iname 'pak*.pk3' -print -quit | grep -q .
+
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          (cd dist && zip -q -X -r "$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/$RELEASE_BASENAME.zip" > "dist/$RELEASE_BASENAME.zip.sha256"
+          echo "Package no-drift PASS"
+
+      - name: Upload release
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
