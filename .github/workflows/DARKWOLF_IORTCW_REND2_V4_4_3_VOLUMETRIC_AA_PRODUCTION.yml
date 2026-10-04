@@ -1,0 +1,192 @@
+name: DarkWolf ioRTCW Rend2 v4.4.3 Volumetric AA Production
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ volumetric-aa-testlab-v0.1 ]
+    paths:
+      - '.github/workflows/DARKWOLF_IORTCW_REND2_V4_4_3_VOLUMETRIC_AA_PRODUCTION.yml'
+      - 'integration/volumetric-aa-v4-4-3-production/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-v4-4-3-volumetric-aa-production
+  cancel-in-progress: true
+
+jobs:
+  build-windows-x64-sp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      BASE_RUN_ID: "37194587469"
+      BASE_HEAD_SHA: 555bff885b96603432fddafc79a37081df1d4202
+      BASE_ARTIFACT_ID: "11300218573"
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Final-Native-v4.4.2-Real-Ingame-System-Fix-Win64
+      BASE_ARTIFACT_DIGEST: sha256:9aa4b0d8a3103f5498ea879a2328a46f46fe7aabf425829c0f586a879a510667
+      BASE_INNER_SHA256: 7b5991738de21c1ab346805fceb284797e8ef75acf84801358a1b3b82d76d28e
+      BASE_RENDERER_SHA256: 92b1db33486ea2dd7d04ccda8f3030692578a13569440f100b677b63b7a6e6d2
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch
+      BASE_CUMULATIVE_SHA256: 2c1da09485d489bca253eef8c7626d7417d5493fee493c2d83ffb7c6b7048d0c
+      SHADER_DONOR_RUN_ID: "35503262322"
+      SHADER_DONOR_ARTIFACT_ID: "10603017159"
+      SHADER_DONOR_ARTIFACT_NAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+      SHADER_DONOR_INNER_SHA256: efe9a4f3b33e5dd4b621ed3fa0d87abe677c85d09ca29088a380d813b5c082bb
+      SHADER_DONOR_PATCH: darkwolf-rend2-cumulative-dlight-fx-shadow-eligibility-loper-complete-electrical-pc-v0-3-sp.patch
+      SHADER_DONOR_PATCH_SHA256: cb8379d56e57ec83be75251756ecea781dc9d2c6d66620e17fb56538ba157d97
+      FIXER: integration/volumetric-aa-v4-4-3-production/apply_darkwolf_volumetric_aa_v4_4_3.py
+      RELEASE_BASENAME: DarkWolf-ioRTCW-Rend2-v4.4.3-Volumetric-AA-Fix-Win64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64 build-essential ca-certificates g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git make mingw-w64 python3 unzip zip jq file
+          python3 -m py_compile "$FIXER"
+
+      - name: Reconstruct exact v4.4.2 renderer source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run")" = "$BASE_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run")" = success
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          IFS=$'\t' read -r name expired digest <<<"$row"
+          test "$name" = "$BASE_ARTIFACT_NAME"; test "$expired" = false; test "$digest" = "$BASE_ARTIFACT_DIGEST"
+          rm -rf base-artifact base-release source donor donor-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/${BASE_ARTIFACT_NAME}.zip"
+          test "$(sha256sum "$z" | awk '{print $1}')" = "$BASE_INNER_SHA256"
+          unzip -q "$z" -d base-release
+          base="$(find base-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$base"
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$base/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          echo "$base" > .base
+
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../cumulative.patch
+
+          mkdir -p donor donor-release
+          gh run download "$SHADER_DONOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$SHADER_DONOR_ARTIFACT_NAME" --dir donor
+          dz="donor/${SHADER_DONOR_ARTIFACT_NAME}.zip"
+          test "$(sha256sum "$dz" | awk '{print $1}')" = "$SHADER_DONOR_INNER_SHA256"
+          unzip -q "$dz" -d donor-release
+          donor_base="$(find donor-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          dp="$donor_base/docs/$SHADER_DONOR_PATCH"
+          test "$(sha256sum "$dp" | awk '{print $1}')" = "$SHADER_DONOR_PATCH_SHA256"
+          cp "$dp" donor.patch
+          for p in SP/code/rend2/glsl/ssgi_fp.glsl SP/code/rend2/glsl/ssgi_vp.glsl SP/code/rend2/glsl/volumetriclocal_fp.glsl SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl SP/code/rend2/glsl/volumetriclocal_vp.glsl SP/code/rend2/glsl/volumetricsun_fp.glsl SP/code/rend2/glsl/volumetricsun_vp.glsl; do
+            test ! -e "source/$p"
+            git -C source apply --check --binary --whitespace=nowarn --include="$p" ../donor.patch
+            git -C source apply --binary --whitespace=nowarn --include="$p" ../donor.patch
+          done
+
+          git -C source config user.name "DarkWolf Production CI"
+          git -C source config user.email "ci@example.invalid"
+          git -C source add -A
+          git -C source commit -q -m "Exact v4.4.2 renderer source"
+          git -C source rev-parse HEAD > .base_source_commit
+
+      - name: Apply clean production volumetric AA fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          basecommit="$(cat .base_source_commit)"
+          python3 "$FIXER" source
+          git -C source diff --check "$basecommit" --
+          grep -Fq 'DARKWOLF_VOLUMETRIC_COVERAGE_AA_PRODUCTION_V443' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'DARKWOLF_VOLUMETRIC_COVERAGE_AA_FINAL_V1' source/SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl
+          ! grep -Eq 'r_volumetricAAFinal|r_volumetricAAFinalTrace|VAA3_TRACE|s_vaa3SunFull|s_vaa3LocalFull' source/SP/code/rend2/tr_backend.c
+          mapfile -t changed < <(git -C source diff --name-only "$basecommit" -- | LC_ALL=C sort)
+          printf '%s\n' "${changed[@]}" | tee changed-files.txt
+          allowed=(
+            SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl
+            SP/code/rend2/tr_backend.c
+            SP/code/rend2/tr_fbo.c
+            SP/code/rend2/tr_image.c
+            SP/code/rend2/tr_local.h
+          )
+          test "${changed[*]}" = "${allowed[*]}"
+          git -C source diff --binary "$basecommit" -- > darkwolf-volumetric-aa-v4-4-3-production.patch
+          echo "Production patch allowlist PASS"
+
+      - name: Build Windows x64 SP Rend2 renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          (cd source/SP && ./cross-make-mingw64.sh -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1)
+          root=source/SP/build/release-mingw32-x86_64
+          renderer="$(find "$root" -maxdepth 1 -type f -name 'renderer_sp_rend2_x64.dll' -print -quit)"
+          test -s "$renderer"
+          file "$renderer" | grep -Eiq 'PE32\+|x86-64'
+          test "$(sha256sum "$renderer" | awk '{print $1}')" != "$BASE_RENDERER_SHA256"
+          strings "$renderer" | grep -Fq 'DARKWOLF_VOLUMETRIC_COVERAGE_AA_PRODUCTION_V443'
+          ! strings "$renderer" | grep -Eq 'VAA3_TRACE|r_volumetricAAFinal'
+          echo "$renderer" > .renderer
+          echo "Windows x64 renderer compile PASS"
+
+      - name: Package v4.4.3 no-regression release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base)"
+          renderer="$(cat .renderer)"
+          rm -rf dist
+          mkdir -p "dist/$RELEASE_BASENAME"
+          stage="dist/$RELEASE_BASENAME"
+          cp -a "$base/." "$stage/"
+          cp "$renderer" "$stage/renderer_sp_rend2_x64.dll"
+          cp darkwolf-volumetric-aa-v4-4-3-production.patch "$stage/docs/darkwolf-volumetric-aa-v4-4-3-production.patch"
+          cat > "$stage/docs/DARKWOLF_V4_4_3_VOLUMETRIC_AA_AUDIT.txt" <<EOF
+          EXACT_BASE_RUN_ID=$BASE_RUN_ID
+          EXACT_BASE_HEAD_SHA=$BASE_HEAD_SHA
+          PINNED_UPSTREAM_SHA=$UPSTREAM_SHA
+          DEFECT=POST_MSAA_LOCAL_AND_SUN_VOLUMETRIC_STAIR_STEPPING
+          ROOT_CAUSE=HALF_RESOLUTION_VOLUMETRIC_COMPOSITE_AFTER_MSAA_RESOLVE
+          ACCEPTED_FIX=COVERAGE_AWARE_FULLRES_RECONSTRUCTION_OF_VOLUMETRIC_CONTRIBUTION
+          LOCAL_TEST_EDGE_HF_DELTA=-0.012947899278745068
+          LOCAL_TEST_ENERGY_RATIO=1.0075720164736226
+          SUN_TEST_EDGE_HF_DELTA=-0.0069619605307709165
+          SUN_TEST_ENERGY_RATIO=1.009681106027478
+          MSAA=4X_PROVEN
+          RAYMARCH_POLICY=UNCHANGED
+          LIGHT_SELECTION=UNCHANGED
+          SHADOW_SELECTION=UNCHANGED
+          STATICPROMOTE=UNCHANGED
+          BLOOM_TONEMAP_EXPOSURE=UNCHANGED
+          DIAGNOSTIC_CVARS=NONE
+          TELEMETRY=NONE
+          STATUS=PRODUCTION_CANDIDATE
+          EOF
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" != "$BASE_RENDERER_SHA256"
+          ! strings "$stage/renderer_sp_rend2_x64.dll" | grep -Eq 'VAA3_TRACE|r_volumetricAAFinal|r_volumetricAAFinalTrace'
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          (cd dist && zip -q -X -r "$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/$RELEASE_BASENAME.zip" > "dist/$RELEASE_BASENAME.zip.sha256"
+
+      - name: Upload production release
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
