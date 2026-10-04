@@ -90,7 +90,7 @@ static qboolean RB_VolumetricAA3Enabled(int bit)
 // DARKWOLF_SUN_VOLUMETRIC_PERF_ISOLATION_V0_3
 static void RB_VolumetricSun(FBO_t *srcFbo, ivec4_t srcBox)
 {
-'''
+'''.replace("\\t", "\t")
 b = rep(b, sun_anchor, sun_helper, "insert Attempt3 controls")
 
 sun_old = '''\ttr.volumetricSunPerfRaymarchThisFrame = 1; // DARKWOLF_SUN_VOLUMETRIC_PERF_ISOLATION_V0_3\n\tFBO_Blit(srcFbo, srcBox, NULL, tr.quarterFbo[0], NULL, &tr.volumetricSunShader, params, 0);\n\tFBO_Blit(tr.quarterFbo[0], NULL, NULL, srcFbo, srcBox, NULL, NULL, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);\n'''
@@ -135,7 +135,7 @@ post_new = r'''\tRB_VolumetricAA3EnsureCvars();
 \t}
 
 \tdstBox[0] = backEnd.viewParms.viewportX;
-'''
+'''.replace("\\t", "\t")
 b = rep(b, post_anchor, post_new, "Attempt3 telemetry")
 
 for x in [MARK, "r_volumetricAAFinal", "VAA3_TRACE frame=", "volumetricFullresFbo", "s_vaa3SunFull++", "s_vaa3LocalFull++"]:
