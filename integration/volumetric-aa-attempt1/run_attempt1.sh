@@ -76,7 +76,7 @@ if [ -z "${ASSET_TOKEN:-}" ]; then
   echo 'BLOCKED_MISSING_RETAIL_ASSET_TOKEN' | tee evidence/runtime-status.txt
   exit 0
 fi
-retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh "$ASSET_REPO" "$ASSET_RELEASE_TAG" protected-assets | tail -1)"
+retail_main="$(GH_TOKEN="$ASSET_TOKEN" bash testlab/scripts/fetch_private_release_assets.sh "$ASSET_REPO" "$ASSET_RELEASE_TAG" protected-assets | tail -1)"
 test -d "$retail_main"
 
 echo '=== assemble native runtime ==='
