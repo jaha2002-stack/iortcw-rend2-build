@@ -16,9 +16,8 @@ if mark in s:
 # 0 = exact v4.4.2 composite fallback, 1 = v4.4.3 coverage-aware reconstruction.
 sun_old='''\tif (tr.volumetricFullresFbo && tr.volumetricLocalUpscaleShader.program)\n\t{\n'''
 sun_new='''\t// DARKWOLF_ASSAULT_PROOF_AA_TOGGLE_V1\n\tif (ri.Cvar_VariableIntegerValue("r_assaultProofVolumetricAA") != 0 &&\n\t\ttr.volumetricFullresFbo && tr.volumetricLocalUpscaleShader.program)\n\t{\n'''
-if s.count(sun_old) < 2:
-    raise SystemExit(f"expected at least 2 production fullres branches, found {s.count(sun_old)}")
-# First occurrence is Sun.
+if s.count(sun_old) != 1:
+    raise SystemExit(f"Sun production branch count={s.count(sun_old)}")
 s=s.replace(sun_old,sun_new,1)
 
 local_old='''\t\tif (tr.volumetricFullresFbo && tr.volumetricLocalUpscaleShader.program &&\n\t\t\t((mode >= 1 && mode <= 3) || reconstructionMode > 0))\n'''
