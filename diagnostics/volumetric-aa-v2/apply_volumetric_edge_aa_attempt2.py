@@ -4,8 +4,10 @@ import sys
 
 ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("source")
 B = ROOT / "SP/code/rend2/tr_backend.c"
+F = ROOT / "SP/code/rend2/tr_fbo.c"
 S = ROOT / "SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl"
 MARK = "DARKWOLF_VOLUMETRIC_EDGE_AA_V1_DIAG2"
+DEPTH_MARK = "DARKWOLF_VOLUMETRIC_EDGE_AA_DEPTH_FEEDBACK_FIX_V1"
 
 
 def rep(text, old, new, label):
@@ -16,8 +18,11 @@ def rep(text, old, new, label):
 
 
 b = B.read_text(encoding="utf-8")
+f = F.read_text(encoding="utf-8")
 s = S.read_text(encoding="utf-8")
 if MARK in b:
+    if DEPTH_MARK not in f:
+        raise SystemExit("ERROR Attempt2 backend applied but depth-feedback fix missing")
     print("Attempt2 already applied")
     raise SystemExit(0)
 
@@ -32,6 +37,31 @@ for x in required_b:
         raise SystemExit("ERROR backend missing parent marker: " + x)
 if "DARKWOLF_FIREVOL_SPATIAL_RECONSTRUCTION_EDGE_QUALITY_PC02" not in s:
     raise SystemExit("ERROR shader PC02 parent missing")
+
+# screenScratchFbo is a full-resolution color scratch used by shadow blur/tone-map and
+# volumetric reconstruction. The stock FBO also attaches tr.renderDepthImage as its
+# destination depth attachment. Volumetric reconstruction samples that same depth
+# texture, which creates an OpenGL framebuffer-texture feedback hazard. None of the
+# accepted screenScratch users needs a writable depth attachment, so make it color-only.
+fbo_old = '''	if (tr.screenScratchImage)
+	{
+		tr.screenScratchFbo = FBO_Create("screenScratch", tr.screenScratchImage->width, tr.screenScratchImage->height);
+		FBO_AttachImage(tr.screenScratchFbo, tr.screenScratchImage, GL_COLOR_ATTACHMENT0, 0);
+		FBO_AttachImage(tr.screenScratchFbo, tr.renderDepthImage, GL_DEPTH_ATTACHMENT, 0);
+		R_CheckFBO(tr.screenScratchFbo);
+	}
+'''
+fbo_new = '''	if (tr.screenScratchImage)
+	{
+		tr.screenScratchFbo = FBO_Create("screenScratch", tr.screenScratchImage->width, tr.screenScratchImage->height);
+		FBO_AttachImage(tr.screenScratchFbo, tr.screenScratchImage, GL_COLOR_ATTACHMENT0, 0);
+		// DARKWOLF_VOLUMETRIC_EDGE_AA_DEPTH_FEEDBACK_FIX_V1
+		// Color-only scratch: volumetric reconstruction samples tr.renderDepthImage.
+		// Do not attach the sampled depth texture to the draw framebuffer.
+		R_CheckFBO(tr.screenScratchFbo);
+	}
+'''
+f = rep(f, fbo_old, fbo_new, "detach sampled render depth from screenScratchFbo")
 
 shader_old = ''' int kernelMode=int(floor(u_Color.y+0.5)); vec3 sum=vec3(0.0); float sumW=0.0;
  if (kernelMode >= 2)
@@ -233,6 +263,10 @@ for x in [
     if x not in b and x not in s:
         raise SystemExit("ERROR final marker missing: " + x)
 
+if DEPTH_MARK not in f:
+    raise SystemExit("ERROR final depth-feedback marker missing")
+
 B.write_text(b, encoding="utf-8", newline="\n")
+F.write_text(f, encoding="utf-8", newline="\n")
 S.write_text(s, encoding="utf-8", newline="\n")
 print("DARKWOLF_VOLUMETRIC_EDGE_AA_ATTEMPT2_PATCH_OK")
