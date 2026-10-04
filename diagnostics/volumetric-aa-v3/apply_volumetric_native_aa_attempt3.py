@@ -47,13 +47,13 @@ img_new = '''\t\ttr.renderImage = R_CreateImage("_render", NULL, width, height, 
 i = rep(i, img_anchor, img_new, "create fullres volumetric HDR image")
 
 h = rep(h,
-'''\timage_t\t\t\t\t\t\t*screenScratchImage;\n\timage_t\t\t\t\t\t\t*textureScratchImage[2];\n''',
-'''\timage_t\t\t\t\t\t\t*screenScratchImage;\n\timage_t                 *volumetricFullresImage; // DARKWOLF_VOLUMETRIC_NATIVE_AA_ATTEMPT3\n\timage_t\t\t\t\t\t\t*textureScratchImage[2];\n''',
+'''\timage_t\t\t\t\t\t*screenScratchImage;\n\timage_t\t\t\t\t\t*textureScratchImage[2];\n''',
+'''\timage_t\t\t\t\t\t*screenScratchImage;\n\timage_t                 *volumetricFullresImage; // DARKWOLF_VOLUMETRIC_NATIVE_AA_ATTEMPT3\n\timage_t\t\t\t\t\t*textureScratchImage[2];\n''',
 "declare fullres volumetric image")
 
 h = rep(h,
-'''\tFBO_t\t\t\t\t\t\t*screenScratchFbo;\n\tFBO_t\t\t\t\t\t\t*textureScratchFbo[2];\n''',
-'''\tFBO_t\t\t\t\t\t\t*screenScratchFbo;\n\tFBO_t                   *volumetricFullresFbo; // DARKWOLF_VOLUMETRIC_NATIVE_AA_ATTEMPT3\n\tFBO_t\t\t\t\t\t\t*textureScratchFbo[2];\n''',
+'''\tFBO_t\t\t\t\t\t*screenScratchFbo;\n\tFBO_t\t\t\t\t\t*textureScratchFbo[2];\n''',
+'''\tFBO_t\t\t\t\t\t*screenScratchFbo;\n\tFBO_t                   *volumetricFullresFbo; // DARKWOLF_VOLUMETRIC_NATIVE_AA_ATTEMPT3\n\tFBO_t\t\t\t\t\t*textureScratchFbo[2];\n''',
 "declare fullres volumetric FBO")
 
 fbo_anchor = '''\tif (tr.screenScratchImage)\n\t{\n\t\ttr.screenScratchFbo = FBO_Create("screenScratch", tr.screenScratchImage->width, tr.screenScratchImage->height);\n\t\tFBO_AttachImage(tr.screenScratchFbo, tr.screenScratchImage, GL_COLOR_ATTACHMENT0, 0);\n\t\tFBO_AttachImage(tr.screenScratchFbo, tr.renderDepthImage, GL_DEPTH_ATTACHMENT, 0);\n\t\tR_CheckFBO(tr.screenScratchFbo);\n\t}\n\n'''
