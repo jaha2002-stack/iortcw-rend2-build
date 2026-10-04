@@ -12,7 +12,9 @@ s = p.read_text(encoding="utf-8")
 gs = g.read_text(encoding="utf-8")
 mark = "DARKWOLF_ASSAULT_PROOF_SUN_PROBE_V1"
 aim_mark = "DARKWOLF_ASSAULT_PROOF_AIM_V1"
-if mark in s and aim_mark in gs:
+state_mark = "DARKWOLF_ASSAULT_PROOF_STATE_V1"
+runtime_mark = "DARKWOLF_ASSAULT_PROOF_STATICPROMOTE_V1"
+if mark in s and aim_mark in gs and state_mark in gs and runtime_mark in s:
     print("assault proof probes already applied")
     raise SystemExit(0)
 
@@ -66,6 +68,49 @@ static void Cmd_DWAssaultAim_f( gentity_t *ent ) {
 '''
     gs = gs.replace(aim_anchor, aim_impl + aim_anchor, 1)
 
+# DARKWOLF_ASSAULT_PROOF_STATE_V1: TestLab-only weapon/player state proof.
+state_anchor = '''static void Cmd_DWTestViewState_f( gentity_t *ent ) {
+'''
+if state_mark not in gs:
+    if gs.count(state_anchor) != 1:
+        raise SystemExit(f"state helper anchor count={gs.count(state_anchor)}")
+    state_impl = '''// DARKWOLF_ASSAULT_PROOF_STATE_V1
+static void Cmd_DWAssaultState_f( gentity_t *ent ) {
+    int weapon = ent->client ? ent->client->ps.weapon : -1;
+    int pmType = ent->client ? ent->client->ps.pm_type : -1;
+    int weaponState = ent->client ? ent->client->ps.weaponstate : -1;
+    trap_SendServerCommand( ent-g_entities, va(
+        "print \\"ASSAULT_PROOF_STATE weapon=%d pmType=%d weaponState=%d origin=%.3f,%.3f,%.3f angles=%.3f,%.3f,%.3f\\n\\"",
+        weapon, pmType, weaponState,
+        ent->client->ps.origin[0], ent->client->ps.origin[1], ent->client->ps.origin[2],
+        ent->client->ps.viewangles[0], ent->client->ps.viewangles[1], ent->client->ps.viewangles[2]) );
+}
+
+'''
+    gs = gs.replace(state_anchor, state_impl + state_anchor, 1)
+
+# Extend the existing TestLab post-delivery telemetry to the observation-tower lamp.
+runtime_old = '''\t\t\t\tif (testlabFixture != 918 && testlabFixture != 782 &&
+\t\t\t\t\ttestlabFixture != 741 && testlabFixture != 742 &&
+\t\t\t\t\ttestlabFixture != 743 && testlabFixture != 744)
+\t\t\t\t\tcontinue;
+'''
+runtime_new = '''\t\t\t\t// DARKWOLF_ASSAULT_PROOF_STATICPROMOTE_V1
+\t\t\t\tif (!Q_stricmp(tr.world->baseName, "assault"))
+\t\t\t\t{
+\t\t\t\t\tif (testlabFixture != 209)
+\t\t\t\t\t\tcontinue;
+\t\t\t\t}
+\t\t\t\telse if (testlabFixture != 918 && testlabFixture != 782 &&
+\t\t\t\t\ttestlabFixture != 741 && testlabFixture != 742 &&
+\t\t\t\t\ttestlabFixture != 743 && testlabFixture != 744)
+\t\t\t\t\tcontinue;
+'''
+if runtime_mark not in s:
+    if s.count(runtime_old) != 1:
+        raise SystemExit(f"StaticPromote runtime anchor count={s.count(runtime_old)}")
+    s = s.replace(runtime_old, runtime_new, 1)
+
 dispatch_anchor = '''\t} else if ( Q_stricmp( cmd, "dw_testViewState" ) == 0 )  { // DARKWOLF_TESTLAB_V0_1
 \t\tCmd_DWTestViewState_f( ent );
 '''
@@ -73,6 +118,8 @@ dispatch_new = '''\t} else if ( Q_stricmp( cmd, "dw_testViewState" ) == 0 )  { /
 \t\tCmd_DWTestViewState_f( ent );
 \t} else if ( Q_stricmp( cmd, "dw_assaultAim" ) == 0 )  { // DARKWOLF_ASSAULT_PROOF_AIM_V1
 \t\tCmd_DWAssaultAim_f( ent );
+\t} else if ( Q_stricmp( cmd, "dw_assaultState" ) == 0 )  { // DARKWOLF_ASSAULT_PROOF_STATE_V1
+\t\tCmd_DWAssaultState_f( ent );
 '''
 if aim_mark not in gs[gs.find(dispatch_anchor):]:
     if gs.count(dispatch_anchor) != 1:
@@ -83,3 +130,5 @@ p.write_text(s,encoding="utf-8",newline="\n")
 g.write_text(gs,encoding="utf-8",newline="\n")
 print("DARKWOLF_ASSAULT_PROOF_SUN_PROBE_V1 applied")
 print("DARKWOLF_ASSAULT_PROOF_AIM_V1 applied")
+print("DARKWOLF_ASSAULT_PROOF_STATE_V1 applied")
+print("DARKWOLF_ASSAULT_PROOF_STATICPROMOTE_V1 applied")
