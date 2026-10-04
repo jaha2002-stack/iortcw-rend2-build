@@ -1,0 +1,338 @@
+name: DarkWolf Assault Volumetric AA Proof Pass
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ volumetric-aa-testlab-v0.1 ]
+    paths:
+      - '.github/workflows/DARKWOLF_ASSAULT_VOLUMETRIC_AA_PROOF_PASS.yml'
+      - 'testlab/assault_proof/**'
+      - 'integration/volumetric-aa-v4-4-3-production/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-assault-volumetric-aa-proof-pass
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      BASE_RUN_ID: "37194587469"
+      BASE_HEAD_SHA: 555bff885b96603432fddafc79a37081df1d4202
+      BASE_ARTIFACT_ID: "11300218573"
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Final-Native-v4.4.2-Real-Ingame-System-Fix-Win64
+      BASE_ARTIFACT_DIGEST: sha256:9aa4b0d8a3103f5498ea879a2328a46f46fe7aabf425829c0f586a879a510667
+      BASE_INNER_SHA256: 7b5991738de21c1ab346805fceb284797e8ef75acf84801358a1b3b82d76d28e
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch
+      BASE_CUMULATIVE_SHA256: 2c1da09485d489bca253eef8c7626d7417d5493fee493c2d83ffb7c6b7048d0c
+      SHADER_DONOR_RUN_ID: "35503262322"
+      SHADER_DONOR_ARTIFACT_ID: "10603017159"
+      SHADER_DONOR_ARTIFACT_NAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+      SHADER_DONOR_INNER_SHA256: efe9a4f3b33e5dd4b621ed3fa0d87abe677c85d09ca29088a380d813b5c082bb
+      SHADER_DONOR_PATCH: darkwolf-rend2-cumulative-dlight-fx-shadow-eligibility-loper-complete-electrical-pc-v0-3-sp.patch
+      SHADER_DONOR_PATCH_SHA256: cb8379d56e57ec83be75251756ecea781dc9d2c6d66620e17fb56538ba157d97
+      PROD_FIXER: integration/volumetric-aa-v4-4-3-production/apply_darkwolf_volumetric_aa_v4_4_3.py
+      PROBE: testlab/assault_proof/apply_assault_proof_probe.py
+      TOGGLE: testlab/assault_proof/apply_assault_proof_toggle.py
+      ASSET_REPO: jaha2002-stack/DarkWolfRTCW-TestAssets
+      ASSET_RELEASE_TAG: rtcw-retail-v1
+      ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+      EVIDENCE_NAME: DarkWolf-Assault-Volumetric-AA-Proof-Pass
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential ca-certificates curl gh git jq python3 python3-numpy python3-pil unzip zip file xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 -m py_compile "$PROD_FIXER" "$PROBE" "$TOGGLE" testlab/scripts/apply_testlab_instrumentation.py
+
+      - name: Reconstruct exact v4.4.3 fixed renderer source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run")" = "$BASE_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run")" = success
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          IFS=$'\t' read -r name expired digest <<<"$row"
+          test "$name" = "$BASE_ARTIFACT_NAME"; test "$expired" = false; test "$digest" = "$BASE_ARTIFACT_DIGEST"
+
+          rm -rf base-artifact base-release source donor donor-release evidence runtime home
+          mkdir -p base-artifact base-release evidence/screenshots evidence/comparisons
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/${BASE_ARTIFACT_NAME}.zip"
+          test "$(sha256sum "$z" | awk '{print $1}')" = "$BASE_INNER_SHA256"
+          unzip -q "$z" -d base-release
+          base="$(find base-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$base"
+          test "$(sha256sum "$base/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../cumulative.patch
+
+          mkdir -p donor donor-release
+          gh run download "$SHADER_DONOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$SHADER_DONOR_ARTIFACT_NAME" --dir donor
+          dz="donor/${SHADER_DONOR_ARTIFACT_NAME}.zip"
+          test "$(sha256sum "$dz" | awk '{print $1}')" = "$SHADER_DONOR_INNER_SHA256"
+          unzip -q "$dz" -d donor-release
+          donor_base="$(find donor-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          dp="$donor_base/docs/$SHADER_DONOR_PATCH"
+          test "$(sha256sum "$dp" | awk '{print $1}')" = "$SHADER_DONOR_PATCH_SHA256"
+          cp "$dp" donor.patch
+          for p in SP/code/rend2/glsl/ssgi_fp.glsl SP/code/rend2/glsl/ssgi_vp.glsl SP/code/rend2/glsl/volumetriclocal_fp.glsl SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl SP/code/rend2/glsl/volumetriclocal_vp.glsl SP/code/rend2/glsl/volumetricsun_fp.glsl SP/code/rend2/glsl/volumetricsun_vp.glsl; do
+            test ! -e "source/$p"
+            git -C source apply --check --binary --whitespace=nowarn --include="$p" ../donor.patch
+            git -C source apply --binary --whitespace=nowarn --include="$p" ../donor.patch
+          done
+
+          python3 "$PROD_FIXER" source
+          grep -Fq 'DARKWOLF_VOLUMETRIC_COVERAGE_AA_FINAL_V1' source/SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl
+          git -C source config user.name "DarkWolf Assault Proof"
+          git -C source config user.email "assault-proof@example.invalid"
+          git -C source add -A
+          git -C source commit -q -m "Exact v4.4.3 fixed renderer source"
+          git -C source rev-parse HEAD > .proof_base
+
+      - name: Apply isolated Assault proof controls
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 testlab/scripts/apply_testlab_instrumentation.py source
+          python3 "$PROBE" source
+          python3 "$TOGGLE" source
+          grep -Fq 'DARKWOLF_ASSAULT_PROOF_MP40_V1' source/SP/code/game/g_cmds.c
+          grep -Fq 'DARKWOLF_ASSAULT_PROOF_AA_TOGGLE_V1' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'DARKWOLF_ASSAULT_PROOF_STATICPROMOTE_V1' source/SP/code/rend2/tr_scene.c
+          basecommit="$(cat .proof_base)"
+          git -C source diff --check "$basecommit" --
+
+      - name: Build native Linux x64 TestLab
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          exe="$(find source/SP/build -type f -iname 'iowolfsp.*' -perm -111 -print -quit)"
+          test -n "$exe"
+          root="$(dirname "$exe")"
+          echo "$root" > .native_root
+
+      - name: Fetch protected retail assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ env.ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${ASSET_TOKEN:-}"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh "$ASSET_REPO" "$ASSET_RELEASE_TAG" protected-assets | tail -1)"
+          test -d "$retail_main"
+          echo "$retail_main" > .retail_main
+
+      - name: Assemble runtime and proof cfg
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p runtime/main home
+          root="$(cat .native_root)"
+          cp -a "$root/." runtime/
+          retail="$(cat .retail_main)"
+          find "$retail" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+          test -s runtime/main/pak0.pk3 || test -s runtime/main/PAK0.PK3
+
+          cat > runtime/main/assault_proof.cfg <<'EOF'
+          set cg_draw2D 0
+          set cg_drawGun 1
+          set con_notifytime 0
+          set r_autoExposure 0
+          set r_forceAutoExposure 0
+          set r_staticPromoteMaxLights 32
+          set r_dlightShadowMaxLights 3
+          set r_staticPromoteUnifiedDiag 0
+          set r_staticPromoteRootCauseDiag 0
+          set r_staticPromotePhysicalGroupDiag 0
+          set r_volumetricSun 1
+          set r_volumetricLocal 1
+          give all
+          dw_assaultMP40
+          wait 30
+          dw_assaultState
+          wait 90
+          set timescale 0.05
+          wait 6
+
+          // Radar observation tower: weapon directly into the Sun direction.
+          dw_testView 4736 7040 1320 -15 295 0
+          wait 12
+          dw_assaultMP40
+          set r_assaultProofVolumetricAA 0
+          wait 10
+          screenshot assault_radar_sun_before
+          set r_assaultProofVolumetricAA 1
+          wait 10
+          screenshot assault_radar_sun_after
+          set r_assaultProofVolumetricAA 0
+          wait 10
+          screenshot assault_radar_sun_before2
+
+          // Second Sun angle, same tower, slightly offset to move the weapon edge across the shaft.
+          dw_testView 4696 7068 1300 -10 302 0
+          wait 10
+          dw_assaultMP40
+          set r_assaultProofVolumetricAA 0
+          wait 10
+          screenshot assault_radar_sun_angle2_before
+          set r_assaultProofVolumetricAA 1
+          wait 10
+          screenshot assault_radar_sun_angle2_after
+
+          // Very close view of the metal grating/fence seen from the observation tower spawn.
+          dw_testView 4736 7136 1176 0 180 0
+          wait 10
+          dw_assaultMP40
+          set r_assaultProofVolumetricAA 0
+          wait 10
+          screenshot assault_grate_close_before
+          set r_assaultProofVolumetricAA 1
+          wait 10
+          screenshot assault_grate_close_after
+
+          // Active StaticPromote fixture 209 at 4660,7136,1257, directly beside the tower.
+          dw_testView 4692 7136 1188 -38 180 0
+          wait 10
+          dw_assaultMP40
+          set r_assaultProofVolumetricAA 0
+          wait 10
+          screenshot assault_staticpromote_weapon_before
+          set r_assaultProofVolumetricAA 1
+          wait 10
+          screenshot assault_staticpromote_weapon_after
+          dw_assaultState
+          echo ASSAULT_PROOF_COMPLETE
+          wait 5
+          quit
+          EOF
+
+      - name: Capture Assault proof A/B
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -print -quit)"
+          chmod +x "$exe"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 15s 480s "$exe"             +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home"             +set com_introplayed 1 +set logfile 2 +set r_fullscreen 0 +set dw_testAutomation 1             +set r_renderer rend2 +set cl_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 768             +set r_ext_framebuffer_multisample 4 +set r_hdr 1 +set r_postProcess 1             +set r_staticPromote 1 +set r_staticPromoteAutoMapLights 1 +spdevmap assault +wait 120 +exec assault_proof.cfg
+          rc=$?
+          set -e
+          qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+          test -n "$qlog"
+          cp "$qlog" evidence/assault-proof-qconsole.log
+          grep -Fq 'ASSAULT_PROOF_COMPLETE' evidence/assault-proof-qconsole.log
+          grep -Eq 'ASSAULT_PROOF_STATE weapon=3 ' evidence/assault-proof-qconsole.log
+          grep -Eq 'HDRMSAA_PROD_INIT .*actualSamples=4' evidence/assault-proof-qconsole.log
+          grep -Eq 'TESTLAB_RUNTIME_FRAME map=assault fixture=209 .*enabled=1 .*maxLights=32 ' evidence/assault-proof-qconsole.log
+          find home -type f -path '*/screenshots/assault_*.tga' -exec cp -a {} evidence/screenshots/ \;
+          test "$rc" -eq 0
+          test "$(find evidence/screenshots -maxdepth 1 -name 'assault_*.tga' | wc -l)" -eq 9
+
+      - name: Build comparisons, crops and visual metrics
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageDraw
+          import json, numpy as np
+
+          src=Path('evidence/screenshots'); out=Path('evidence/comparisons'); out.mkdir(parents=True,exist_ok=True)
+          pairs=[
+            ('radar_sun','assault_radar_sun_before.tga','assault_radar_sun_after.tga'),
+            ('radar_sun_angle2','assault_radar_sun_angle2_before.tga','assault_radar_sun_angle2_after.tga'),
+            ('grate_close','assault_grate_close_before.tga','assault_grate_close_after.tga'),
+            ('staticpromote_weapon','assault_staticpromote_weapon_before.tga','assault_staticpromote_weapon_after.tga'),
+          ]
+          def arr(im):
+              return np.asarray(im.convert('RGB'),dtype=np.float32)/255.0
+          def luma(a):
+              return a[...,0]*.2126+a[...,1]*.7152+a[...,2]*.0722
+          def hf(a):
+              g=luma(a)
+              gx=np.abs(g[:,1:]-g[:,:-1]).mean()
+              gy=np.abs(g[1:,:]-g[:-1,:]).mean()
+              return float(gx+gy)
+          rows=[]
+          for name,bn,an in pairs:
+              b=Image.open(src/bn).convert('RGB'); a=Image.open(src/an).convert('RGB')
+              assert b.size==a.size
+              w,h=b.size
+              sheet=Image.new('RGB',(w*2,h),(0,0,0)); sheet.paste(b,(0,0)); sheet.paste(a,(w,0))
+              d=ImageDraw.Draw(sheet); d.text((12,12),'BEFORE v4.4.2 composite',fill=(255,255,255)); d.text((w+12,12),'AFTER v4.4.3 coverage AA',fill=(255,255,255))
+              sheet.save(out/f'{name}_comparison.png')
+              # Weapon region: right-lower half. Grate uses near-full central frame.
+              if name=='grate_close':
+                  box=(int(.10*w),int(.08*h),int(.90*w),int(.92*h))
+              else:
+                  box=(int(.48*w),int(.38*h),w,h)
+              bc=b.crop(box); ac=a.crop(box)
+              zoom=3
+              z=Image.new('RGB',(bc.width*zoom*2,bc.height*zoom))
+              z.paste(bc.resize((bc.width*zoom,bc.height*zoom),Image.Resampling.NEAREST),(0,0))
+              z.paste(ac.resize((ac.width*zoom,ac.height*zoom),Image.Resampling.NEAREST),(bc.width*zoom,0))
+              ImageDraw.Draw(z).text((8,8),'BEFORE | AFTER 300%',fill=(255,255,255))
+              z.save(out/f'{name}_crop_300.png')
+              ba,aa=arr(b),arr(a)
+              energy=float(luma(aa).mean()/max(luma(ba).mean(),1e-8))
+              rows.append({'pair':name,'hf_before':hf(ba),'hf_after':hf(aa),'hf_delta':hf(aa)-hf(ba),'frame_luma_ratio':energy})
+          Path('evidence/assault-proof-metrics.json').write_text(json.dumps({'schema':1,'pairs':rows},indent=2)+'\n')
+          print(json.dumps(rows,indent=2))
+          PY
+
+          cat > evidence/ASSAULT_PROOF_SUMMARY.txt <<'EOF'
+          ASSAULT_VOLUMETRIC_AA_PROOF=CAPTURED
+          MAP=assault
+          WEAPON=MP40
+          RADAR_ENTITY=904
+          RADAR_ORIGIN=4736,7206,1216
+          SUN_DIRECTION=0.4082182,-0.8754259,0.2588190
+          SUN_AIM_PITCH=-15
+          SUN_AIM_YAW=295
+          STATICPROMOTE_FIXTURE=209
+          STATICPROMOTE_ORIGIN=4660,7136,1257
+          MSAA=4X
+          STATICPROMOTE_MAX_LIGHTS=32
+          SHADOW_SLOTS=3
+          EOF
+
+      - name: Package proof evidence
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p out
+          (cd evidence && find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+          (cd evidence && zip -q -X -r "../out/$EVIDENCE_NAME.zip" .)
+          sha256sum "out/$EVIDENCE_NAME.zip" > "out/$EVIDENCE_NAME.zip.sha256"
+
+      - name: Upload Assault proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.EVIDENCE_NAME }}
+          path: |
+            out/${{ env.EVIDENCE_NAME }}.zip
+            out/${{ env.EVIDENCE_NAME }}.zip.sha256
+          compression-level: 0
+          retention-days: 90
