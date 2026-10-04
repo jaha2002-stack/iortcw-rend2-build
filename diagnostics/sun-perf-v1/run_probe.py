@@ -5,13 +5,14 @@ runtime=Path('runtime').resolve(); evidence=Path('evidence'); evidence.mkdir(exi
 exe=next(p for p in runtime.glob('iowolfsp*') if p.is_file());exe.chmod(0o755)
 summary={'acceptance_75fps':'NOT_TESTED_REAL_GPU_REQUIRED','root_cause':'UNCONFIRMED','stage_names':['cascade0','cascade1','cascade2','cascade3','other_draws','sun_volume','local_volume','fire_volume','postprocess_inclusive'],'notes':['Software renderer evidence only. Mode 2 serialized wall cost is not GPU timer duration.','Stage 8 includes stages 5-7; do not add them.','A/B changes forceSun only; off state may retain map-defined sun.']}
 for mode in (1,2):
- home=Path(f'home-probe-{mode}').resolve();home.mkdir(exist_ok=True)
+ home=Path(f'home-probe-{mode}').resolve();(home/'main').mkdir(parents=True,exist_ok=True)
+ shutil.copy2(runtime/'main/cinematic.cfg',home/'main/autoexec.cfg')
  cfg=['set developer 0','set logfile 1','set cg_draw2D 0','set cg_drawGun 1','god','give all','weapon 3','wait 60','set timescale 0.0001','set r_sunPerfLab 0']
  for block,force in enumerate([0,1,1,0]):
   cfg += [f'set r_forceSun {force}','wait 16',f'echo SUNPERF_BLOCK_BEGIN_{block}_{force}',f'set r_sunPerfLab {mode}','wait 32','set r_sunPerfLab 0',f'echo SUNPERF_BLOCK_END_{block}_{force}',f'screenshot sunperf_m{mode}_b{block}_sun{force}']
  cfg+=['echo SUNPERF_COMPLETE','quit']
  (runtime/'main/probe.cfg').write_text('\n'.join(cfg)+'\n')
- args=[str(exe),'+set','fs_basepath',str(runtime),'+set','fs_homepath',str(home),'+set','com_introplayed','1','+set','dw_testAutomation','1','+set','r_renderer','rend2','+set','cl_renderer','rend2','+exec','cinematic.cfg','+set','r_fullscreen','0','+set','r_mode','-1','+set','r_customwidth','1280','+set','r_customheight','768','+set','r_swapInterval','0','+set','com_maxfps','0','+spdevmap','forest','+wait','60','+exec','probe.cfg']
+ args=[str(exe),'+set','fs_basepath',str(runtime),'+set','fs_homepath',str(home),'+set','com_introplayed','1','+set','dw_testAutomation','1','+set','r_renderer','rend2','+set','cl_renderer','rend2','+set','r_fullscreen','0','+set','r_mode','-1','+set','r_customwidth','1280','+set','r_customheight','768','+set','r_swapInterval','0','+set','com_maxfps','0','+spdevmap','forest','+wait','60','+exec','probe.cfg']
  env=dict(os.environ,LIBGL_ALWAYS_SOFTWARE='1')
  with (evidence/f'process-{mode}.log').open('w') as out:
   result=subprocess.run(['xvfb-run','-a','timeout','-k','15s','900s',*args],env=env,stdout=out,stderr=subprocess.STDOUT)
