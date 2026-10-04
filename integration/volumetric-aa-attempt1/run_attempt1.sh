@@ -105,6 +105,10 @@ set r_volumetricAATrace 1
 set r_volumetricAAKernel 2
 set r_volumetricAADepthReject 4
 set r_volumetricAAMode 0
+set cg_drawGun 1
+set cg_draw2D 0
+echo VAA_LOCAL_CAMERA fixture=918 origin=384,192,520 view=544,192,456 pitch=-21.801 yaw=180
+dw_testView 544.000 192.000 456.000 -21.801 180.000 0
 wait 120
 screenshot vaa_local_baseline
 wait 30
