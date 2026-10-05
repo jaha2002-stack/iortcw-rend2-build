@@ -41,12 +41,19 @@ insert="""\tlevel.time = levelTime;
 \t\t\tdwProofMask |= 1;
 \t\t\tG_Printf("DWPROOF_SERVER_BEGIN map=swf kind=gas\\n");
 \t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
-\t\t\t\tif ( dwEnt->inuse && dwEnt->classname && dwEnt->model &&
-\t\t\t\t\t !Q_stricmp(dwEnt->classname,"func_explosive") && !Q_stricmp(dwEnt->model,"*90") && dwEnt->die ) {
-\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=gas entity=%d model=%s origin=%.1f,%.1f,%.1f\\n",
-\t\t\t\t\t\tdwEnt->s.number,dwEnt->model,dwEnt->r.currentOrigin[0],dwEnt->r.currentOrigin[1],dwEnt->r.currentOrigin[2]);
-\t\t\t\t\tdwEnt->die(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt,dwEnt->health+100,MOD_MACHINEGUN);
-\t\t\t\t\tbreak;
+\t\t\t\tif ( dwEnt->inuse && dwEnt->classname && !Q_stricmp(dwEnt->classname,"func_explosive") && dwEnt->die ) {
+\t\t\t\t\tvec3_t dwCenter;
+\t\t\t\t\tVectorAdd(dwEnt->r.absmin, dwEnt->r.absmax, dwCenter);
+\t\t\t\t\tVectorScale(dwCenter, 0.5f, dwCenter);
+\t\t\t\t\tif ( fabs(dwCenter[0] - 2370.5f) < 80.0f && fabs(dwCenter[1] + 64.0f) < 80.0f && fabs(dwCenter[2] - 557.0f) < 80.0f ) {
+\t\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=gas entity=%d model=%s modelindex=%d center=%.1f,%.1f,%.1f absmin=%.1f,%.1f,%.1f absmax=%.1f,%.1f,%.1f damage=%d key=%d\\n",
+\t\t\t\t\t\t\tdwEnt->s.number,dwEnt->model?dwEnt->model:"<null>",dwEnt->s.modelindex,
+\t\t\t\t\t\t\tdwCenter[0],dwCenter[1],dwCenter[2],
+\t\t\t\t\t\t\tdwEnt->r.absmin[0],dwEnt->r.absmin[1],dwEnt->r.absmin[2],
+\t\t\t\t\t\t\tdwEnt->r.absmax[0],dwEnt->r.absmax[1],dwEnt->r.absmax[2],dwEnt->damage,dwEnt->key);
+\t\t\t\t\t\tdwEnt->die(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt,dwEnt->health+100,MOD_MACHINEGUN);
+\t\t\t\t\t\tbreak;
+\t\t\t\t\t}
 \t\t\t\t}
 \t\t\t}
 \t\t}
