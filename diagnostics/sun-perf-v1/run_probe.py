@@ -7,7 +7,7 @@ summary={
  'acceptance_75fps':'NOT_TESTED_REAL_GPU_REQUIRED',
  'root_cause_hypothesis':'r_forceSun=1 enters legacy visible-sun CSM path and refreshes cascades 0/1/2 every rendered scene instead of the existing smart CSM reuse path',
  'stage_names':['cascade0','cascade1','cascade2','cascade3','other_draws','sun_volume','local_volume','fire_volume','postprocess_inclusive'],
- 'candidate_modes':{'0':'production baseline','1':'skip sun CSM generation for RDF_SKYBOXPORTAL secondary views','2':'mode 1 + near/mid/far visible CSM cadence 1/2/4 with full-res cache reuse; level3 direction/area invalidated'},
+ 'candidate_modes':{'0':'production baseline','1':'skip sun CSM generation for RDF_SKYBOXPORTAL secondary views','2':'mode 1 + near/mid/far visible CSM cadence 1/2/4 with full-res cache reuse; level3 direction-invalidated'},
  'notes':['Software llvmpipe evidence only; never treat measured FPS as acceptance.','Mode 2 serialized wall cost is not a GPU timer query.','Stage 8 includes stages 5-7; do not add them.','No candidate changes shadow-map size, filter, PCF, volumetric samples, MSAA, Bloom, ToneMap, Exposure, dlight shadows, or local volumetrics.']
 }
 blocks=[('off_base',0,0,20),('on_base_a',1,0,24),('on_portal_guard',1,1,24),('on_cache',1,2,40),('on_base_b',1,0,24),('off_base_end',0,0,20)]
