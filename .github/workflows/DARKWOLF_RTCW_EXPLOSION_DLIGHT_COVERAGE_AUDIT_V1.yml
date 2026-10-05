@@ -1,0 +1,109 @@
+name: DarkWolf RTCW Explosion Dlight Coverage Audit v0.1
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ rend2-explosion-dlight-audit-v0.1 ]
+    paths:
+      - '.github/workflows/DARKWOLF_RTCW_EXPLOSION_DLIGHT_COVERAGE_AUDIT_V1.yml'
+      - 'diagnostics/explosion-dlight-audit-v1/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rtcw-explosion-dlight-coverage-audit-v1
+  cancel-in-progress: true
+
+jobs:
+  audit-retail-entities:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BASE_RUN_ID: "37251837354"
+      BASE_HEAD_SHA: b4573cba51c654214972c30b9d5e51a8db5d04f5
+      ASSET_REPO: jaha2002-stack/DarkWolfRTCW-TestAssets
+      ASSET_RELEASE_TAG: rtcw-retail-v1
+      ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+      EVIDENCE_NAME: DarkWolf-Explosion-Dlight-Coverage-Audit-v1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencies and baseline audit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gh jq python3 unzip zip
+          python3 -m py_compile diagnostics/explosion-dlight-audit-v1/analyze_retail_entities.py
+          run="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run")" = "$BASE_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run")" = success
+          mkdir -p evidence
+          echo "BASE_RUN_ID=$BASE_RUN_ID" > evidence/provenance.txt
+          echo "BASE_HEAD_SHA=$BASE_HEAD_SHA" >> evidence/provenance.txt
+
+      - name: Fetch protected retail assets
+        id: assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ env.ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${ASSET_TOKEN:-}" || { echo "ERROR: missing DARKWOLF_RTCW_ASSET_TOKEN" >&2; exit 1; }
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh "$ASSET_REPO" "$ASSET_RELEASE_TAG" protected-assets | tail -1)"
+          test -n "$retail_main"
+          test -d "$retail_main"
+          printf '%s\n' "$retail_main" > .retail_main
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -printf '%f\n' | LC_ALL=C sort > evidence/pk3-files.txt
+          test -s evidence/pk3-files.txt
+
+      - name: Extract exact SWF and rocket entity/model coverage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          retail="$(cat .retail_main)"
+          python3 diagnostics/explosion-dlight-audit-v1/analyze_retail_entities.py "$retail" evidence
+          test -s evidence/swf-entities-interesting.json
+          test -s evidence/rocket-entities-interesting.json
+          test -s evidence/retail-model-assets.json
+          cat evidence/summary.json
+
+      - name: Build compact coverage report
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json, pathlib, re
+          out=pathlib.Path('evidence')
+          report=[]
+          for mapname in ('swf','rocket'):
+              ents=json.loads((out/f'{mapname}-entities-interesting.json').read_text())
+              report.append(f'## {mapname}\n')
+              for e in ents:
+                  fields=[]
+                  for k in ('classname','model','model2','target','targetname','scriptName','scriptname','health','dmg','spawnflags','origin','message'):
+                      if k in e:
+                          fields.append(f'{k}={e[k]}')
+                  report.append(f"entity={e.get('__index')} " + ' | '.join(fields))
+              report.append('')
+          models=json.loads((out/'retail-model-assets.json').read_text())
+          report.append('## matching retail model assets')
+          for row in models:
+              report.append(row['path'])
+          (out/'coverage-report.txt').write_text('\n'.join(report), encoding='utf-8')
+          PY
+          sed -n '1,260p' evidence/coverage-report.txt
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.EVIDENCE_NAME }}
+          path: evidence/**
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 90
