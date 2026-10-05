@@ -9,6 +9,7 @@ cgents=root/"SP/code/cgame/cg_ents.c"
 trscene=root/"SP/code/rend2/tr_scene.c"
 svmain=root/"SP/code/server/sv_main.c"
 uimain=root/"SP/code/ui/ui_main.c"
+cgview=root/"SP/code/cgame/cg_view.c"
 
 def once(s,a,b,label):
     n=s.count(a)
@@ -214,4 +215,25 @@ new="""\t\tcase UIMENU_BRIEFING:
 """
 s=once(s,old,new,"briefing bypass")
 uimain.write_text(s)
+
+# CG_DrawActiveFrame normally returns before snapshot processing while infoScreenText is non-empty.
+# For diagnostic proof only, let it process snapshots and enter real 3D rendering.
+s=cgview.read_text()
+old="""\tif ( cg.infoScreenText[0] != 0 ) {
+\t\tCG_DrawInformation();
+\t\treturn;
+\t}
+"""
+new="""\tif ( cg.infoScreenText[0] != 0 ) {
+\t\tchar dwProofLab[8];
+\t\ttrap_Cvar_VariableStringBuffer( "dw_explosionProofLab", dwProofLab, sizeof(dwProofLab) );
+\t\tif ( dwProofLab[0] != '1' ) {
+\t\t\tCG_DrawInformation();
+\t\t\treturn;
+\t\t}
+\t\tCG_Printf("DWPROOF_CGAME_INFOSCREEN_BYPASS serverTime=%d\\n", serverTime);
+\t}
+"""
+s=once(s,old,new,"cgame infoScreen bypass")
+cgview.write_text(s)
 print("instrumented explosion/spotlight proof v1")
