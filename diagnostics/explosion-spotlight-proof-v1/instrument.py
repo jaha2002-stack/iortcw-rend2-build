@@ -27,6 +27,14 @@ insert="""\tlevel.previousTime = level.time;
 \t// DARKWOLF_EXPLOSION_SPOTLIGHT_PROOF_TESTLAB_V1
 \t// Diagnostic-only deterministic runtime trigger; production never contains this block.
 \tif ( trap_Cvar_VariableIntegerValue( "dw_explosionProofLab" ) ) {
+\t\t// Make Dam spotlights visible to cgame throughout the diagnostic proof so
+\t\t// we can prove alive LocalVol submission before destruction and suppression after it.
+\t\tif ( trap_Cvar_VariableIntegerValue( "dw_explosionProofMode" ) == 4 ) {
+\t\t\tgentity_t *dwSpot;
+\t\t\tfor ( dwSpot = g_entities; dwSpot < &g_entities[level.num_entities]; ++dwSpot )
+\t\t\t\tif ( dwSpot->inuse && dwSpot->s.eType == ET_SPOTLIGHT_EF )
+\t\t\t\t\tdwSpot->r.svFlags |= SVF_BROADCAST;
+\t\t}
 \t\tstatic int dwLastFire = 0;
 \t\tint dwFire = trap_Cvar_VariableIntegerValue( "dw_explosionProofFire" );
 \t\tif ( dwFire && !dwLastFire ) {
