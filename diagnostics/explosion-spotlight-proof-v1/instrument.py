@@ -8,6 +8,7 @@ cgevent=root/"SP/code/cgame/cg_event.c"
 cgents=root/"SP/code/cgame/cg_ents.c"
 trscene=root/"SP/code/rend2/tr_scene.c"
 svmain=root/"SP/code/server/sv_main.c"
+uimain=root/"SP/code/ui/ui_main.c"
 
 def once(s,a,b,label):
     n=s.count(a)
@@ -188,4 +189,29 @@ new="""\t// DARKWOLF_EXPLOSION_SPOTLIGHT_PROOF_TESTLAB_V1
 """
 s=once(s,old,new,"headless pause bypass")
 svmain.write_text(s)
+
+# Headless TestLab must enter the actual 3D game instead of remaining on the SP briefing page.
+# This is diagnostic-only; production UI is untouched.
+s=uimain.read_text()
+old="""\t\tcase UIMENU_BRIEFING:
+\t\t\tMenus_CloseAll();
+\t\t\tMenus_ActivateByName( "briefing" );
+\t\t\treturn;
+"""
+new="""\t\tcase UIMENU_BRIEFING:
+\t\t\t// DARKWOLF_EXPLOSION_SPOTLIGHT_PROOF_TESTLAB_V1
+\t\t\tif ( trap_Cvar_VariableValue( "dw_explosionProofLab" ) ) {
+\t\t\t\ttrap_Key_SetCatcher( trap_Key_GetCatcher() & ~KEYCATCH_UI );
+\t\t\t\ttrap_Key_ClearStates();
+\t\t\t\ttrap_Cvar_Set( "cl_paused", "0" );
+\t\t\t\tMenus_CloseAll();
+\t\t\t\ttrap_Print( "DWPROOF_UI_BRIEFING_BYPASS\\n" );
+\t\t\t\treturn;
+\t\t\t}
+\t\t\tMenus_CloseAll();
+\t\t\tMenus_ActivateByName( "briefing" );
+\t\t\treturn;
+"""
+s=once(s,old,new,"briefing bypass")
+uimain.write_text(s)
 print("instrumented explosion/spotlight proof v1")
