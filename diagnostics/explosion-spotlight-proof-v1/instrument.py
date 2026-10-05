@@ -16,13 +16,9 @@ def once(s,a,b,label):
 
 # Server-side deterministic proof trigger. It is diagnostic-only and gated by cvars.
 s=gmain.read_text()
-anchor="""\tlevel.previousTime = level.time;
-\tlevel.time = levelTime;
-
-\t// Ridah, check for loading a save game
+anchor="""\tlevel.time = levelTime;
 """
-insert="""\tlevel.previousTime = level.time;
-\tlevel.time = levelTime;
+insert="""\tlevel.time = levelTime;
 
 \t// DARKWOLF_EXPLOSION_SPOTLIGHT_PROOF_TESTLAB_V1
 \t// Diagnostic-only deterministic runtime trigger; production never contains this block.
@@ -98,7 +94,6 @@ insert="""\tlevel.previousTime = level.time;
 \t\tdwLastFire = dwFire;
 \t}
 
-\t// Ridah, check for loading a save game
 """
 s=once(s,anchor,insert,"g_main trigger")
 gmain.write_text(s)
