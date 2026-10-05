@@ -29,7 +29,7 @@ anchor='''static void R_VolumetricSunRestoreCascade(int cascade)
 }
 '''
 helper=anchor+'''\n// DARKWOLF_SUN_PERF_TESTLAB_V2: diagnostic candidate only. Near cascade stays live every frame;
-// middle/far visible cascades reuse the exact full-resolution 2048 shadow maps between refreshes.
+// middle/far visible cascades reuse the exact full-resolution 2048 shadow maps between refreshes.\n// Match the renderer's existing smart-CSM model: sun direction invalidates globally; camera/PVS motion is absorbed by short cadence.
 // This changes cadence only; map size, filter, PCF, MSAA, volumetric samples and light selection are untouched.
 static int s_sunPerfVisibleCacheActive = 0;
 static qboolean R_SunPerfVisibleShouldUpdateCascade(int cascade)
@@ -60,7 +60,7 @@ new='''\t\telse if (r_sunPerfCandidate && r_sunPerfCandidate->integer >= 2 && r_
 \t\t\t\ts_sunPerfVisibleCacheActive = 1;
 \t\t\t}
 \t\t\tsunChanged = R_VolumetricSunDirectionChanged(tr.refdef.sunDir, tr.volumetricSunCsmSunDirection);
-\t\t\tforceAll = sunChanged || tr.refdef.areamaskModified;
+\t\t\tforceAll = sunChanged;
 
 \t\t\tif (r_shadowCascadeZFar->integer != 0)
 \t\t\t{
