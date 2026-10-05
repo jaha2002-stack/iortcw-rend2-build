@@ -28,7 +28,7 @@ for label,mapname,setup in cases:
     ]
     (runtime/"main"/"proof.cfg").write_text("\n".join(cfg)+"\n")
     args=[str(exe),"+set","fs_basepath",str(runtime),"+set","fs_homepath",str(home),
-          "+set","developer","1","+set","com_introplayed","1","+set","dw_testAutomation","1",
+          "+set","developer","1","+set","com_introplayed","1","+set","dw_testAutomation","1","+set","dw_explosionProofLab","1",
           "+set","vm_game","0","+set","vm_cgame","0","+set","vm_ui","0",
           "+set","r_renderer","rend2","+set","cl_renderer","rend2",
           "+set","r_fullscreen","0","+set","r_mode","-1","+set","r_customwidth","960","+set","r_customheight","540",
@@ -47,6 +47,7 @@ for label,mapname,setup in cases:
     assert rc==0,(label,rc)
     assert f"DWPROOF_CASE_BEGIN_{label}" in text
     assert f"DWPROOF_CASE_END_{label}" in text
+    assert "DWPROOF_SERVER_HEARTBEAT" in text,(label,"no diagnostic qagame heartbeat")
 
     if mapname=="swf":
         assert "DWPROOF_SERVER_ENTITY kind=gas" in text
