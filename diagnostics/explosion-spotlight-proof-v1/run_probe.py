@@ -22,6 +22,7 @@ for label,mapname,mode,setup in cases:
     cfg=[
       "set developer 1","set logfile 2","set cg_draw2D 0",
       "set r_dlightShadowMaxLights 3","set r_dlightMode 2","set r_volumetricLocal 1",
+      "set dw_explosionProofLab 1",f"set dw_explosionProofMode {mode}","set dw_explosionProofFire 0",
       "wait 160",*setup,"wait 20",
       f"echo DWPROOF_CASE_BEGIN_{label}",
       f"screenshot {label}_pre",
@@ -33,6 +34,7 @@ for label,mapname,mode,setup in cases:
     (runtime/"main"/"proof.cfg").write_text("\n".join(cfg)+"\n")
     args=[str(exe),"+set","fs_basepath",str(runtime),"+set","fs_homepath",str(home),
           "+set","com_introplayed","1","+set","dw_testAutomation","1",
+          "+set","vm_game","0","+set","vm_cgame","0","+set","vm_ui","0",
           "+set","dw_explosionProofLab","1","+set","dw_explosionProofMode",str(mode),
           "+set","dw_explosionProofFire","0","+set","r_renderer","rend2","+set","cl_renderer","rend2",
           "+set","r_fullscreen","0","+set","r_mode","-1","+set","r_customwidth","960","+set","r_customheight","540",
