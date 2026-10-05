@@ -46,7 +46,6 @@ require(cg, [
     "#define DARKWOLF_BARREL_BLAST_EVENT_MARKER 0x4457424C",
     "#define DARKWOLF_DAMAGE_PROP_BLAST_MARKER  0x44575046",
     "#define DARKWOLF_PROP_BLAST_PROFILE_SCRIPT_FIRE 3",
-    "REF_FORCE_DLIGHT | DARKWOLF_REF_TRANSIENT_BLAST_DLIGHT",
 ], "cgame v4.4.5 blast contract")
 require(gp, [
     "DARKWOLF_EXPLOSIVE_PROPS_RADAR_TRANSIENT_DLIGHT_SHADOW_CLEAN_PRODUCTION_V1",
@@ -264,7 +263,9 @@ gm = once(gm,
 \t\tchar dwMapName[MAX_QPATH];
 \t\ttrap_Cvar_VariableStringBuffer( "mapname", dwMapName, sizeof(dwMapName) );
 \t\tif ( !Q_stricmp( dwMapName, "swf" ) ) {
-\t\t\tself->s.time2 = 0x44574743; // DWGC
+\t\t\tgentity_t *blastEvent = G_TempEntity( origin, EV_EFFECT );
+\t\t\tblastEvent->s.eventParm = 0;
+\t\t\tblastEvent->s.time2 = 0x44574743; // DWGC
 \t\t}
 \t}
 
