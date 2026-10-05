@@ -21,77 +21,83 @@ anchor="""\tlevel.time = levelTime;
 insert="""\tlevel.time = levelTime;
 
 \t// DARKWOLF_EXPLOSION_SPOTLIGHT_PROOF_TESTLAB_V1
-\t// Diagnostic-only deterministic runtime trigger; production never contains this block.
-\tif ( trap_Cvar_VariableIntegerValue( "dw_explosionProofLab" ) ) {
-\t\t// Make Dam spotlights visible to cgame throughout the diagnostic proof so
-\t\t// we can prove alive LocalVol submission before destruction and suppression after it.
-\t\tif ( trap_Cvar_VariableIntegerValue( "dw_explosionProofMode" ) == 4 ) {
-\t\t\tgentity_t *dwSpot;
-\t\t\tfor ( dwSpot = g_entities; dwSpot < &g_entities[level.num_entities]; ++dwSpot )
-\t\t\t\tif ( dwSpot->inuse && dwSpot->s.eType == ET_SPOTLIGHT_EF )
-\t\t\t\t\tdwSpot->r.svFlags |= SVF_BROADCAST;
-\t\t}
-\t\tstatic int dwLastFire = 0;
-\t\tint dwFire = trap_Cvar_VariableIntegerValue( "dw_explosionProofFire" );
-\t\tif ( dwFire && !dwLastFire ) {
-\t\t\tchar dwMap[MAX_QPATH];
-\t\t\tint dwMode = trap_Cvar_VariableIntegerValue( "dw_explosionProofMode" );
-\t\t\tgentity_t *dwEnt;
-\t\t\tgentity_t *dwPlayer = AICast_FindEntityForName( "player" );
-\t\t\ttrap_Cvar_VariableStringBuffer( "mapname", dwMap, sizeof(dwMap) );
-\t\t\tG_Printf( "DWPROOF_SERVER_BEGIN map=%s mode=%d\\n", dwMap, dwMode );
+\t// Diagnostic-only autonomous proof. No production behavior uses this block.
+\t{
+\t\tstatic int dwProofMask = 0;
+\t\tchar dwMap[MAX_QPATH];
+\t\tint dwElapsed = level.time - level.startTime;
+\t\tgentity_t *dwEnt;
+\t\tgentity_t *dwPlayer = AICast_FindEntityForName( "player" );
+\t\ttrap_Cvar_VariableStringBuffer( "mapname", dwMap, sizeof(dwMap) );
 
-\t\t\tif ( dwMode == 1 ) {
-\t\t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
-\t\t\t\t\tif ( dwEnt->inuse && dwEnt->classname && dwEnt->model &&
-\t\t\t\t\t\t !Q_stricmp(dwEnt->classname,"func_explosive") && !Q_stricmp(dwEnt->model,"*90") && dwEnt->die ) {
-\t\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=gas entity=%d model=%s origin=%.1f,%.1f,%.1f\\n",
-\t\t\t\t\t\t\tdwEnt->s.number,dwEnt->model,dwEnt->r.currentOrigin[0],dwEnt->r.currentOrigin[1],dwEnt->r.currentOrigin[2]);
-\t\t\t\t\t\tdwEnt->die(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt,dwEnt->health+100,MOD_MACHINEGUN);
-\t\t\t\t\t\tbreak;
-\t\t\t\t\t}
-\t\t\t\t}
-\t\t\t} else if ( dwMode == 2 ) {
-\t\t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
-\t\t\t\t\tif ( dwEnt->inuse && dwEnt->classname && dwEnt->target && !Q_stricmp(dwEnt->classname,"target_kill") &&
-\t\t\t\t\t\t !Q_stricmp(dwEnt->target,"v2_rocket") && dwEnt->use ) {
-\t\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=v2 target=%s entity=%d\\n",dwEnt->target,dwEnt->s.number);
-\t\t\t\t\t\tdwEnt->use(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt);
-\t\t\t\t\t\tbreak;
-\t\t\t\t\t}
-\t\t\t\t}
-\t\t\t} else if ( dwMode == 3 ) {
-\t\t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
-\t\t\t\t\tif ( dwEnt->inuse && dwEnt->classname && !Q_stricmp(dwEnt->classname,"alarm_box") && dwEnt->die ) {
-\t\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=alarm entity=%d origin=%.1f,%.1f,%.1f\\n",
-\t\t\t\t\t\t\tdwEnt->s.number,dwEnt->r.currentOrigin[0],dwEnt->r.currentOrigin[1],dwEnt->r.currentOrigin[2]);
-\t\t\t\t\t\tdwEnt->die(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt,dwEnt->health+100,MOD_MACHINEGUN);
-\t\t\t\t\t\tbreak;
-\t\t\t\t\t}
-\t\t\t\t}
-\t\t\t} else if ( dwMode == 4 ) {
-\t\t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
-\t\t\t\t\tif ( dwEnt->inuse && dwEnt->s.eType == ET_SPOTLIGHT_EF && dwEnt->die ) {
-\t\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=spotlight entity=%d frame_before=%d origin=%.1f,%.1f,%.1f\\n",
-\t\t\t\t\t\t\tdwEnt->s.number,dwEnt->s.frame,dwEnt->r.currentOrigin[0],dwEnt->r.currentOrigin[1],dwEnt->r.currentOrigin[2]);
-\t\t\t\t\t\tdwEnt->die(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt,100,MOD_MACHINEGUN);
-\t\t\t\t\t\tG_Printf("DWPROOF_SERVER_SPOTLIGHT_DEAD entity=%d frame_after=%d\\n",dwEnt->s.number,dwEnt->s.frame);
-\t\t\t\t\t\tbreak;
-\t\t\t\t\t}
-\t\t\t\t}
-\t\t\t} else if ( dwMode == 5 || dwMode == 6 ) {
-\t\t\t\tif ( dwPlayer ) {
-\t\t\t\t\tgentity_t *ev = G_TempEntity(dwPlayer->r.currentOrigin, EV_EFFECT);
-\t\t\t\t\tev->s.eventParm = 0;
-\t\t\t\t\tev->s.time2 = (dwMode == 5) ? 0x44575244 : 0x44574D45;
-\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=%s semantic_marker=0x%x origin=%.1f,%.1f,%.1f\\n",
-\t\t\t\t\t\tdwMode==5?"radio_profile":"me109_profile",ev->s.time2,
-\t\t\t\t\t\tdwPlayer->r.currentOrigin[0],dwPlayer->r.currentOrigin[1],dwPlayer->r.currentOrigin[2]);
+\t\t// Keep Dam spotlights visible to cgame during the diagnostic alive/dead proof.
+\t\tif ( !Q_stricmp(dwMap,"dam") ) {
+\t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt )
+\t\t\t\tif ( dwEnt->inuse && dwEnt->s.eType == ET_SPOTLIGHT_EF )
+\t\t\t\t\tdwEnt->r.svFlags |= SVF_BROADCAST;
+\t\t}
+
+\t\tif ( !Q_stricmp(dwMap,"swf") && dwElapsed > 4000 && !(dwProofMask & 1) ) {
+\t\t\tdwProofMask |= 1;
+\t\t\tG_Printf("DWPROOF_SERVER_BEGIN map=swf kind=gas\\n");
+\t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
+\t\t\t\tif ( dwEnt->inuse && dwEnt->classname && dwEnt->model &&
+\t\t\t\t\t !Q_stricmp(dwEnt->classname,"func_explosive") && !Q_stricmp(dwEnt->model,"*90") && dwEnt->die ) {
+\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=gas entity=%d model=%s origin=%.1f,%.1f,%.1f\\n",
+\t\t\t\t\t\tdwEnt->s.number,dwEnt->model,dwEnt->r.currentOrigin[0],dwEnt->r.currentOrigin[1],dwEnt->r.currentOrigin[2]);
+\t\t\t\t\tdwEnt->die(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt,dwEnt->health+100,MOD_MACHINEGUN);
+\t\t\t\t\tbreak;
 \t\t\t\t}
 \t\t\t}
-\t\t\tG_Printf( "DWPROOF_SERVER_END map=%s mode=%d\\n", dwMap, dwMode );
 \t\t}
-\t\tdwLastFire = dwFire;
+\t\tif ( !Q_stricmp(dwMap,"swf") && dwElapsed > 6000 && !(dwProofMask & 2) && dwPlayer ) {
+\t\t\tgentity_t *ev;
+\t\t\tdwProofMask |= 2;
+\t\t\tev = G_TempEntity(dwPlayer->r.currentOrigin, EV_EFFECT);
+\t\t\tev->s.eventParm = 0; ev->s.time2 = 0x44575244;
+\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=radio_profile semantic_marker=0x%x\\n",ev->s.time2);
+\t\t}
+\t\tif ( !Q_stricmp(dwMap,"swf") && dwElapsed > 8000 && !(dwProofMask & 4) && dwPlayer ) {
+\t\t\tgentity_t *ev;
+\t\t\tdwProofMask |= 4;
+\t\t\tev = G_TempEntity(dwPlayer->r.currentOrigin, EV_EFFECT);
+\t\t\tev->s.eventParm = 0; ev->s.time2 = 0x44574D45;
+\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=me109_profile semantic_marker=0x%x\\n",ev->s.time2);
+\t\t}
+\t\tif ( !Q_stricmp(dwMap,"rocket") && dwElapsed > 4000 && !(dwProofMask & 8) ) {
+\t\t\tdwProofMask |= 8;
+\t\t\tG_Printf("DWPROOF_SERVER_BEGIN map=rocket kind=v2\\n");
+\t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
+\t\t\t\tif ( dwEnt->inuse && dwEnt->classname && dwEnt->target &&
+\t\t\t\t\t !Q_stricmp(dwEnt->classname,"target_kill") && !Q_stricmp(dwEnt->target,"v2_rocket") && dwEnt->use ) {
+\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=v2 entity=%d target=%s\\n",dwEnt->s.number,dwEnt->target);
+\t\t\t\t\tdwEnt->use(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt);
+\t\t\t\t\tbreak;
+\t\t\t\t}
+\t\t\t}
+\t\t}
+\t\tif ( !Q_stricmp(dwMap,"rocket") && dwElapsed > 7000 && !(dwProofMask & 16) ) {
+\t\t\tdwProofMask |= 16;
+\t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
+\t\t\t\tif ( dwEnt->inuse && dwEnt->classname && !Q_stricmp(dwEnt->classname,"alarm_box") && dwEnt->die ) {
+\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=alarm entity=%d origin=%.1f,%.1f,%.1f\\n",
+\t\t\t\t\t\tdwEnt->s.number,dwEnt->r.currentOrigin[0],dwEnt->r.currentOrigin[1],dwEnt->r.currentOrigin[2]);
+\t\t\t\t\tdwEnt->die(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt,dwEnt->health+100,MOD_MACHINEGUN);
+\t\t\t\t\tbreak;
+\t\t\t\t}
+\t\t\t}
+\t\t}
+\t\tif ( !Q_stricmp(dwMap,"dam") && dwElapsed > 4000 && !(dwProofMask & 32) ) {
+\t\t\tdwProofMask |= 32;
+\t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
+\t\t\t\tif ( dwEnt->inuse && dwEnt->s.eType == ET_SPOTLIGHT_EF && dwEnt->die ) {
+\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=spotlight entity=%d frame_before=%d\\n",dwEnt->s.number,dwEnt->s.frame);
+\t\t\t\t\tdwEnt->die(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt,100,MOD_MACHINEGUN);
+\t\t\t\t\tG_Printf("DWPROOF_SERVER_SPOTLIGHT_DEAD entity=%d frame_after=%d\\n",dwEnt->s.number,dwEnt->s.frame);
+\t\t\t\t\tbreak;
+\t\t\t\t}
+\t\t\t}
+\t\t}
 \t}
 
 """
