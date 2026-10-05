@@ -95,7 +95,9 @@ insert="""\tlevel.time = levelTime;
 \t}
 
 """
-s=once(s,anchor,insert,"g_main trigger")
+runframe = s.index("void G_RunFrame( int levelTime ) {")
+idx = s.index(anchor, runframe)
+s = s[:idx] + insert + s[idx + len(anchor):]
 gmain.write_text(s)
 
 # cgame proof: event marker -> LE_EXPLOSION profile.
