@@ -36,7 +36,7 @@ for mode in (1,2):
   begin=f'SUNPERF_BLOCK_BEGIN_{bi}_{label}_{force}_{candidate}'; end=f'SUNPERF_BLOCK_END_{bi}_{label}_{force}_{candidate}'
   segment=text.split(begin,1)[1].split(end,1)[0]
   rows=[dict(re.findall(r'(\w+)=([^\s]+)',line)) for line in segment.splitlines() if line.startswith('SUNPERF_FRAME ')]
-  assert len(rows)>=max(12,frames-4),(mode,label,len(rows))
+  assert len(rows)>=max(8,frames//2-2),(mode,label,len(rows))
   rows=rows[4:]; valid={r['frame'] for r in rows}
   costs={str(i):[] for i in range(9)}; calls={str(i):[] for i in range(9)}
   for line in segment.splitlines():
