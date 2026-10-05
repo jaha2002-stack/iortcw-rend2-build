@@ -1,0 +1,151 @@
+name: DarkWolf Explosion + Spotlight Runtime Proof TestLab v0.1
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ rend2-explosion-spotlight-proof-testlab-v0.1 ]
+    paths:
+      - '.github/workflows/DARKWOLF_EXPLOSION_SPOTLIGHT_RUNTIME_PROOF_V1.yml'
+      - 'diagnostics/explosion-spotlight-proof-v1/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-explosion-spotlight-runtime-proof-v1
+  cancel-in-progress: true
+
+jobs:
+  runtime-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      BASE_RUN_ID: "37266797451"
+      BASE_HEAD_SHA: e410db87b5704fb1518740f1cfc760e9ea67d34f
+      BASE_ARTIFACT_ID: "11326603946"
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-v4.4.6-Explosion-Coverage-Candidate-Win64
+      BASE_ARTIFACT_DIGEST: sha256:51a49587a0c4e7ad9c7ad651d5a4fcc34c7774d89ed9366dd659ed7efa97154b
+      BASE_INNER_SHA256: 10ca3d568fdca89569912835d110fa9f365d531ec83982927fb5c1fe590f7aea
+      SHADER_DONOR_RUN_ID: "35503262322"
+      SHADER_DONOR_ARTIFACT_ID: "10603017159"
+      SHADER_DONOR_ARTIFACT_NAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+      SHADER_DONOR_INNER_SHA256: efe9a4f3b33e5dd4b621ed3fa0d87abe677c85d09ca29088a380d813b5c082bb
+      SHADER_DONOR_PATCH: darkwolf-rend2-cumulative-dlight-fx-shadow-eligibility-loper-complete-electrical-pc-v0-3-sp.patch
+      SHADER_DONOR_PATCH_SHA256: cb8379d56e57ec83be75251756ecea781dc9d2c6d66620e17fb56538ba157d97
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential ca-certificates gh git jq python3 unzip zip file xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 -m py_compile diagnostics/explosion-spotlight-proof-v1/*.py
+          mkdir -p evidence
+
+      - name: Verify and download exact v4.4.6
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run")" = "$BASE_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run")" = success
+          art="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${BASE_ARTIFACT_ID}")"
+          test "$(jq -r .name <<<"$art")" = "$BASE_ARTIFACT_NAME"
+          test "$(jq -r .digest <<<"$art")" = "$BASE_ARTIFACT_DIGEST"
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/$BASE_ARTIFACT_NAME.zip"
+          test "$(sha256sum "$z" | awk '{print $1}')" = "$BASE_INNER_SHA256"
+          unzip -q "$z" -d base-release
+          base="$(find base-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$base"
+          (cd "$base" && sha256sum -c docs/SHA256SUMS.txt)
+          echo "$base" > .base
+
+      - name: Reconstruct exact v4.4.6 source and instrument
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base)"
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+
+          cp "$base/docs/darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch" cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../cumulative.patch
+
+          mkdir -p donor donor-release
+          gh run download "$SHADER_DONOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$SHADER_DONOR_ARTIFACT_NAME" --dir donor
+          dz="donor/$SHADER_DONOR_ARTIFACT_NAME.zip"
+          test "$(sha256sum "$dz" | awk '{print $1}')" = "$SHADER_DONOR_INNER_SHA256"
+          unzip -q "$dz" -d donor-release
+          donor_base="$(find donor-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          dp="$donor_base/docs/$SHADER_DONOR_PATCH"
+          test "$(sha256sum "$dp" | awk '{print $1}')" = "$SHADER_DONOR_PATCH_SHA256"
+          for p in SP/code/rend2/glsl/ssgi_fp.glsl SP/code/rend2/glsl/ssgi_vp.glsl SP/code/rend2/glsl/volumetriclocal_fp.glsl SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl SP/code/rend2/glsl/volumetriclocal_vp.glsl SP/code/rend2/glsl/volumetricsun_fp.glsl SP/code/rend2/glsl/volumetricsun_vp.glsl; do
+            if test ! -e "source/$p"; then
+              git -C source apply --check --binary --whitespace=nowarn --include="$p" "$GITHUB_WORKSPACE/$dp"
+              git -C source apply --binary --whitespace=nowarn --include="$p" "$GITHUB_WORKSPACE/$dp"
+            fi
+          done
+
+          for p in darkwolf-volumetric-aa-v4-4-3-production.patch darkwolf-force-sun-csm-smart-v4-4-4-production.patch darkwolf-dam-spotlight-halo-v4-4-5.patch darkwolf-explosion-coverage-v4-4-6.patch; do
+            git -C source apply --check --binary --whitespace=nowarn "$GITHUB_WORKSPACE/$base/docs/$p"
+            git -C source apply --binary --whitespace=nowarn "$GITHUB_WORKSPACE/$base/docs/$p"
+          done
+
+          grep -Fq DARKWOLF_EXPLOSION_COVERAGE_V446 source/SP/code/cgame/cg_event.c
+          grep -Fq DARKWOLF_SPOTLIGHT_DEATH_LOCALVOL_SYNC_V445 source/SP/code/cgame/cg_ents.c
+          grep -Fq DARKWOLF_FORCE_SUN_CSM_SMART_PRODUCTION_V444 source/SP/code/rend2/tr_scene.c
+
+          git -C source config user.name 'DarkWolf Proof CI'
+          git -C source config user.email 'ci@example.invalid'
+          git -C source add -A
+          git -C source commit -qm 'Exact v4.4.6 reconstructed'
+          git -C source rev-parse HEAD > .v446_source
+          python3 diagnostics/explosion-spotlight-proof-v1/instrument.py source
+          git -C source diff --check
+          git -C source diff --binary "$(cat .v446_source)" > evidence/diagnostic-only.patch
+          echo DIAGNOSTIC_ONLY_NOT_FOR_PRODUCTION > evidence/status.txt
+
+      - name: Build Linux diagnostic runtime
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          exe="$(find source/SP/build -type f -iname 'iowolfsp.*' -perm -111 -print -quit)"
+          test -n "$exe"
+          mkdir -p runtime/main
+          cp -a "$(dirname "$exe")/." runtime/
+          base="$(cat .base)"
+          cp "$base/Main/darkwolf_ignition_rc_v0_6.pk3" runtime/main/
+
+      - name: Fetch protected RTCW retail assets
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$GH_TOKEN"
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          find "$retail" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ ;
+          test -f runtime/main/pak0.pk3
+
+      - name: Execute six runtime proof scenarios
+        run: |
+          set -Eeuo pipefail
+          python3 diagnostics/explosion-spotlight-proof-v1/run_probe.py
+
+      - name: Upload proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-Explosion-Spotlight-Runtime-Proof-v1
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 90
