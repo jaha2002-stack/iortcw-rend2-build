@@ -7,6 +7,7 @@ gmain=root/"SP/code/game/g_main.c"
 cgevent=root/"SP/code/cgame/cg_event.c"
 cgents=root/"SP/code/cgame/cg_ents.c"
 trscene=root/"SP/code/rend2/tr_scene.c"
+svmain=root/"SP/code/server/sv_main.c"
 
 def once(s,a,b,label):
     n=s.count(a)
@@ -182,4 +183,21 @@ needle="\tif (overdraw & DARKWOLF_REF_LOCALVOL_SPOTLIGHT)\n\t{"
 idx=s.index(needle,fn)+len(needle)
 s=s[:idx]+"""\n\t\tri.Printf(PRINT_ALL, "DWPROOF_RENDERER_SPOT_LOCALVOL_ACCEPT origin=%.1f,%.1f,%.1f range=%.1f\\n", org[0],org[1],org[2],intensity);"""+s[idx:]
 trscene.write_text(s)
+
+# Headless SP TestLab otherwise remains paused after the first server frame.
+# Bypass pause only when the explicit diagnostic cvar is enabled.
+s=svmain.read_text()
+old="""\t// allow pause if only the local client is connected
+\tif ( SV_CheckPaused() ) {
+\t\treturn;
+\t}
+"""
+new="""\t// DARKWOLF_EXPLOSION_SPOTLIGHT_PROOF_TESTLAB_V1
+\t// Let the headless diagnostic simulation advance; production keeps stock pause behavior.
+\tif ( !Cvar_VariableIntegerValue("dw_explosionProofLab") && SV_CheckPaused() ) {
+\t\treturn;
+\t}
+"""
+s=once(s,old,new,"headless pause bypass")
+svmain.write_text(s)
 print("instrumented explosion/spotlight proof v1")
