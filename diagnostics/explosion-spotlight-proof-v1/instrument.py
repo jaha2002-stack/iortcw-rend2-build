@@ -24,56 +24,58 @@ insert="""\tlevel.time = levelTime;
 \t// Diagnostic-only autonomous proof. No production behavior uses this block.
 \t{
 \t\tstatic int dwProofMask = 0;
+\t\tstatic int dwHeartbeat = 0;
 \t\tchar dwMap[MAX_QPATH];
-\t\tint dwElapsed = level.time - level.startTime;
 \t\tgentity_t *dwEnt;
 \t\tgentity_t *dwPlayer = AICast_FindEntityForName( "player" );
 \t\ttrap_Cvar_VariableStringBuffer( "mapname", dwMap, sizeof(dwMap) );
 
-\t\t// Keep Dam spotlights visible to cgame during the diagnostic alive/dead proof.
-\t\tif ( !Q_stricmp(dwMap,"dam") ) {
+\t\tif ( !dwHeartbeat ) {
+\t\t\tdwHeartbeat = 1;
+\t\t\tG_Printf("DWPROOF_SERVER_HEARTBEAT map=%s frame=%d levelTime=%d startTime=%d entities=%d\\n",
+\t\t\t\tdwMap, level.framenum, level.time, level.startTime, level.num_entities);
+\t\t}
+
+\t\tif ( strstr(dwMap,"dam") ) {
 \t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt )
 \t\t\t\tif ( dwEnt->inuse && dwEnt->s.eType == ET_SPOTLIGHT_EF )
 \t\t\t\t\tdwEnt->r.svFlags |= SVF_BROADCAST;
 \t\t}
 
-\t\tif ( !Q_stricmp(dwMap,"swf") && dwElapsed > 4000 && !(dwProofMask & 1) ) {
+\t\tif ( strstr(dwMap,"swf") && level.framenum > 40 && !(dwProofMask & 1) ) {
 \t\t\tdwProofMask |= 1;
-\t\t\tG_Printf("DWPROOF_SERVER_BEGIN map=swf kind=gas\\n");
+\t\t\tG_Printf("DWPROOF_SERVER_BEGIN map=%s kind=gas frame=%d\\n",dwMap,level.framenum);
 \t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
-\t\t\t\tif ( dwEnt->inuse && dwEnt->classname && !Q_stricmp(dwEnt->classname,"func_explosive") && dwEnt->die ) {
-\t\t\t\t\tvec3_t dwCenter;
-\t\t\t\t\tVectorAdd(dwEnt->r.absmin, dwEnt->r.absmax, dwCenter);
-\t\t\t\t\tVectorScale(dwCenter, 0.5f, dwCenter);
-\t\t\t\t\tif ( fabs(dwCenter[0] - 2370.5f) < 80.0f && fabs(dwCenter[1] + 64.0f) < 80.0f && fabs(dwCenter[2] - 557.0f) < 80.0f ) {
-\t\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=gas entity=%d model=%s modelindex=%d center=%.1f,%.1f,%.1f absmin=%.1f,%.1f,%.1f absmax=%.1f,%.1f,%.1f damage=%d key=%d\\n",
-\t\t\t\t\t\t\tdwEnt->s.number,dwEnt->model?dwEnt->model:"<null>",dwEnt->s.modelindex,
-\t\t\t\t\t\t\tdwCenter[0],dwCenter[1],dwCenter[2],
-\t\t\t\t\t\t\tdwEnt->r.absmin[0],dwEnt->r.absmin[1],dwEnt->r.absmin[2],
-\t\t\t\t\t\t\tdwEnt->r.absmax[0],dwEnt->r.absmax[1],dwEnt->r.absmax[2],dwEnt->damage,dwEnt->key);
-\t\t\t\t\t\tdwEnt->die(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt,dwEnt->health+100,MOD_MACHINEGUN);
-\t\t\t\t\t\tbreak;
-\t\t\t\t\t}
+\t\t\t\tif ( dwEnt->inuse && dwEnt->classname && dwEnt->model &&
+\t\t\t\t\t !Q_stricmp(dwEnt->classname,"func_explosive") && !Q_stricmp(dwEnt->model,"*90") && dwEnt->die ) {
+\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=gas entity=%d model=%s modelindex=%d origin=%.1f,%.1f,%.1f damage=%d key=%d\\n",
+\t\t\t\t\t\tdwEnt->s.number,dwEnt->model,dwEnt->s.modelindex,
+\t\t\t\t\t\tdwEnt->r.currentOrigin[0],dwEnt->r.currentOrigin[1],dwEnt->r.currentOrigin[2],dwEnt->damage,dwEnt->key);
+\t\t\t\t\tdwEnt->die(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt,dwEnt->health+100,MOD_MACHINEGUN);
+\t\t\t\t\tbreak;
 \t\t\t\t}
 \t\t\t}
 \t\t}
-\t\tif ( !Q_stricmp(dwMap,"swf") && dwElapsed > 6000 && !(dwProofMask & 2) && dwPlayer ) {
+
+\t\tif ( strstr(dwMap,"swf") && level.framenum > 80 && !(dwProofMask & 2) && dwPlayer ) {
 \t\t\tgentity_t *ev;
 \t\t\tdwProofMask |= 2;
 \t\t\tev = G_TempEntity(dwPlayer->r.currentOrigin, EV_EFFECT);
 \t\t\tev->s.eventParm = 0; ev->s.time2 = 0x44575244;
 \t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=radio_profile semantic_marker=0x%x\\n",ev->s.time2);
 \t\t}
-\t\tif ( !Q_stricmp(dwMap,"swf") && dwElapsed > 8000 && !(dwProofMask & 4) && dwPlayer ) {
+
+\t\tif ( strstr(dwMap,"swf") && level.framenum > 120 && !(dwProofMask & 4) && dwPlayer ) {
 \t\t\tgentity_t *ev;
 \t\t\tdwProofMask |= 4;
 \t\t\tev = G_TempEntity(dwPlayer->r.currentOrigin, EV_EFFECT);
 \t\t\tev->s.eventParm = 0; ev->s.time2 = 0x44574D45;
 \t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=me109_profile semantic_marker=0x%x\\n",ev->s.time2);
 \t\t}
-\t\tif ( !Q_stricmp(dwMap,"rocket") && dwElapsed > 4000 && !(dwProofMask & 8) ) {
+
+\t\tif ( strstr(dwMap,"rocket") && level.framenum > 40 && !(dwProofMask & 8) ) {
 \t\t\tdwProofMask |= 8;
-\t\t\tG_Printf("DWPROOF_SERVER_BEGIN map=rocket kind=v2\\n");
+\t\t\tG_Printf("DWPROOF_SERVER_BEGIN map=%s kind=v2 frame=%d\\n",dwMap,level.framenum);
 \t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
 \t\t\t\tif ( dwEnt->inuse && dwEnt->classname && dwEnt->target &&
 \t\t\t\t\t !Q_stricmp(dwEnt->classname,"target_kill") && !Q_stricmp(dwEnt->target,"v2_rocket") && dwEnt->use ) {
@@ -83,7 +85,8 @@ insert="""\tlevel.time = levelTime;
 \t\t\t\t}
 \t\t\t}
 \t\t}
-\t\tif ( !Q_stricmp(dwMap,"rocket") && dwElapsed > 7000 && !(dwProofMask & 16) ) {
+
+\t\tif ( strstr(dwMap,"rocket") && level.framenum > 90 && !(dwProofMask & 16) ) {
 \t\t\tdwProofMask |= 16;
 \t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
 \t\t\t\tif ( dwEnt->inuse && dwEnt->classname && !Q_stricmp(dwEnt->classname,"alarm_box") && dwEnt->die ) {
@@ -94,11 +97,13 @@ insert="""\tlevel.time = levelTime;
 \t\t\t\t}
 \t\t\t}
 \t\t}
-\t\tif ( !Q_stricmp(dwMap,"dam") && dwElapsed > 4000 && !(dwProofMask & 32) ) {
+
+\t\tif ( strstr(dwMap,"dam") && level.framenum > 90 && !(dwProofMask & 32) ) {
 \t\t\tdwProofMask |= 32;
 \t\t\tfor ( dwEnt = g_entities; dwEnt < &g_entities[level.num_entities]; ++dwEnt ) {
 \t\t\t\tif ( dwEnt->inuse && dwEnt->s.eType == ET_SPOTLIGHT_EF && dwEnt->die ) {
-\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=spotlight entity=%d frame_before=%d\\n",dwEnt->s.number,dwEnt->s.frame);
+\t\t\t\t\tG_Printf("DWPROOF_SERVER_ENTITY kind=spotlight entity=%d frame_before=%d origin=%.1f,%.1f,%.1f\\n",
+\t\t\t\t\t\tdwEnt->s.number,dwEnt->s.frame,dwEnt->r.currentOrigin[0],dwEnt->r.currentOrigin[1],dwEnt->r.currentOrigin[2]);
 \t\t\t\t\tdwEnt->die(dwEnt,dwPlayer?dwPlayer:dwEnt,dwPlayer?dwPlayer:dwEnt,100,MOD_MACHINEGUN);
 \t\t\t\t\tG_Printf("DWPROOF_SERVER_SPOTLIGHT_DEAD entity=%d frame_after=%d\\n",dwEnt->s.number,dwEnt->s.frame);
 \t\t\t\t\tbreak;
