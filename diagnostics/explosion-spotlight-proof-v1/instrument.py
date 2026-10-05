@@ -102,21 +102,11 @@ gmain.write_text(s)
 
 # cgame proof: event marker -> LE_EXPLOSION profile.
 s=cgevent.read_text()
-anchor="""\tle->light = peak;
-\tle->lightColor[0] = red;
-\tle->lightColor[1] = green;
-\tle->lightColor[2] = blue;
-}
-"""
-insert="""\tle->light = peak;
-\tle->lightColor[0] = red;
-\tle->lightColor[1] = green;
-\tle->lightColor[2] = blue;
-\tCG_Printf("DWPROOF_CGAME_BLAST profile=%d leType=%d peak=%.1f floor=%.1f hold=%d total=%d origin=%.1f,%.1f,%.1f\\n",
-\t\tprofile, le->leType, peak, floorRadius, holdMs, totalMs, origin[0], origin[1], origin[2]);
-}
-"""
-s=once(s,anchor,insert,"cg event spawn proof")
+fn=s.index("static void CG_SpawnDarkWolfPropBlastDlight")
+needle="\tle->lightColor[2] = blue;"
+idx=s.index(needle,fn)+len(needle)
+s=s[:idx]+"""\n\tCG_Printf("DWPROOF_CGAME_BLAST profile=%d leType=%d peak=%.1f floor=%.1f hold=%d total=%d origin=%.1f,%.1f,%.1f\\n",
+\t\tprofile, le->leType, peak, floorRadius, holdMs, totalMs, origin[0], origin[1], origin[2]);"""+s[idx:]
 cgevent.write_text(s)
 
 # Spotlight proof of alive submit vs dead suppression.
@@ -155,35 +145,23 @@ cgents.write_text(s)
 
 # Renderer proof: transient blast marker is accepted as a real dlight and classified.
 s=trscene.read_text()
-anchor="""\tdl->transientBlast = transientBlastMarker; // DARKWOLF_GRENADE_DYNAMITE_EXPLOSION_DLIGHT_PRODUCTION_V1
-\tdl->noDlightShadow = fxNoDlightShadowMarker;
-"""
-insert="""\tdl->transientBlast = transientBlastMarker; // DARKWOLF_GRENADE_DYNAMITE_EXPLOSION_DLIGHT_PRODUCTION_V1
-\tif (transientBlastMarker) {
+fn=s.index("void RE_AddLightToScene(")
+needle="\tdl->transientBlast = transientBlastMarker; // DARKWOLF_GRENADE_DYNAMITE_EXPLOSION_DLIGHT_PRODUCTION_V1"
+idx=s.index(needle,fn)+len(needle)
+s=s[:idx]+"""\n\tif (transientBlastMarker) {
 \t\tri.Printf(PRINT_ALL, "DWPROOF_RENDERER_DLIGHT transientBlast=1 index=%d radius=%.1f rgb=%.3f,%.3f,%.3f origin=%.1f,%.1f,%.1f\\n",
 \t\t\tr_numdlights-1, intensity, r, g, b, org[0], org[1], org[2]);
-\t}
-\tdl->noDlightShadow = fxNoDlightShadowMarker;
-"""
-s=once(s,anchor,insert,"renderer dlight accept")
-anchor2="""\telse if (shadowSourceExplosionMarker || transientBlastMarker)
-\t\tdl->shadowSourceClass = DWSHADOW_SOURCE_TRANSIENT_EXPLOSION;
-"""
-insert2="""\telse if (shadowSourceExplosionMarker || transientBlastMarker) {
+\t}"""+s[idx:]
+needle="\telse if (shadowSourceExplosionMarker || transientBlastMarker)\n\t\tdl->shadowSourceClass = DWSHADOW_SOURCE_TRANSIENT_EXPLOSION;"
+idx=s.index(needle,fn)
+rep="""\telse if (shadowSourceExplosionMarker || transientBlastMarker) {
 \t\tdl->shadowSourceClass = DWSHADOW_SOURCE_TRANSIENT_EXPLOSION;
 \t\tif (transientBlastMarker)
 \t\t\tri.Printf(PRINT_ALL, "DWPROOF_RENDERER_CLASS transientBlast=1 class=%d\\n", dl->shadowSourceClass);
-\t}
-"""
-s=once(s,anchor2,insert2,"renderer class")
-# LocalVol acceptance proof.
-anchor3="""\tif (overdraw & DARKWOLF_REF_LOCALVOL_SPOTLIGHT)
-\t{
-"""
-insert3="""\tif (overdraw & DARKWOLF_REF_LOCALVOL_SPOTLIGHT)
-\t{
-\t\tri.Printf(PRINT_ALL, "DWPROOF_RENDERER_SPOT_LOCALVOL_ACCEPT origin=%.1f,%.1f,%.1f range=%.1f\\n", org[0],org[1],org[2],intensity);
-"""
-s=once(s,anchor3,insert3,"renderer spotlight")
+\t}"""
+s=s[:idx]+rep+s[idx+len(needle):]
+needle="\tif (overdraw & DARKWOLF_REF_LOCALVOL_SPOTLIGHT)\n\t{"
+idx=s.index(needle,fn)+len(needle)
+s=s[:idx]+"""\n\t\tri.Printf(PRINT_ALL, "DWPROOF_RENDERER_SPOT_LOCALVOL_ACCEPT origin=%.1f,%.1f,%.1f range=%.1f\\n", org[0],org[1],org[2],intensity);"""+s[idx:]
 trscene.write_text(s)
 print("instrumented explosion/spotlight proof v1")
