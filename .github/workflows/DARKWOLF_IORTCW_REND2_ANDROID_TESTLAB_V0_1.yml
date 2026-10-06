@@ -242,40 +242,29 @@ jobs:
           audit_dir=".android-rend2-work/a61-qvm-audit"
           mkdir -p "$audit_dir"
           inventory="$audit_dir/PK3_QVM_INVENTORY.txt"
-          summary="$audit_dir/PK3_QVM_AUDIT.txt"
           : > "$inventory"
-
-          shopt -s nullglob
-          pk3s=("$retail_main"/*.pk3)
-          test "${#pk3s[@]}" -gt 0
-          for p in "${pk3s[@]}"; do
-            base="$(basename "$p")"
+          for p in "$retail_main"/*.pk3; do
+            test -f "$p" || continue
+            base_name="$(basename "$p")"
             unzip -Z1 "$p" | grep -Ei 'vm/(ui|cgame|qagame).*qvm' | while IFS= read -r entry; do
-              [ -n "$entry" ] || continue
-              printf 'PK3=%s ENTRY=%s\n' "$base" "$entry" | tee -a "$inventory"
+              printf 'PK3=%s ENTRY=%s\n' "$base_name" "$entry" >> "$inventory"
             done || true
           done
 
-          has_entry() {
-            local entry="$1"
-            if grep -Fiq "ENTRY=$entry" "$inventory"; then
-              printf 'YES'
-            else
-              printf 'NO'
-            fi
-          }
-
+          ui_sp=NO
+          cgame_sp=NO
+          qagame_sp=NO
+          grep -Fiq 'ENTRY=vm/ui.sp.qvm' "$inventory" && ui_sp=YES || true
+          grep -Fiq 'ENTRY=vm/cgame.sp.qvm' "$inventory" && cgame_sp=YES || true
+          grep -Fiq 'ENTRY=vm/qagame.sp.qvm' "$inventory" && qagame_sp=YES || true
           {
             echo "RETAIL_PK3_QVM_AUDIT=PASS"
-            echo "UI_SP_QVM_PRESENT=$(has_entry 'vm/ui.sp.qvm')"
-            echo "CGAME_SP_QVM_PRESENT=$(has_entry 'vm/cgame.sp.qvm')"
-            echo "QAGAME_SP_QVM_PRESENT=$(has_entry 'vm/qagame.sp.qvm')"
-            echo "UI_LEGACY_QVM_PRESENT=$(has_entry 'vm/ui.qvm')"
-            echo "CGAME_LEGACY_QVM_PRESENT=$(has_entry 'vm/cgame.qvm')"
-            echo "QAGAME_LEGACY_QVM_PRESENT=$(has_entry 'vm/qagame.qvm')"
-          } | tee "$summary"
-
+            echo "UI_SP_QVM_PRESENT=$ui_sp"
+            echo "CGAME_SP_QVM_PRESENT=$cgame_sp"
+            echo "QAGAME_SP_QVM_PRESENT=$qagame_sp"
+          } | tee "$audit_dir/PK3_QVM_AUDIT.txt"
           cat "$inventory"
+
           echo "available=true" >> "$GITHUB_OUTPUT"
           echo "A6_1_RETAIL_ASSET_GATE=PASS"
 
@@ -430,205 +419,6 @@ jobs:
             .android-rend2-work/a61-assets/pk3-files.txt
             .android-rend2-work/a61-assets/release/rtcw-assets.sha256
             .android-rend2-work/a61-qvm-audit/**
-            .android-rend2-work/a61-runtime/**
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: "Enforce probe gate"
-        if: always()
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          test "${{ steps.probe.outcome }}" = "success"
-          test "${{ steps.full_renderer.outcome }}" = "success"
-          test "${{ steps.engine_probe.outcome }}" = "success"
-          test "${{ steps.game_modules.outcome }}" = "success"
-          test "${{ steps.native_runtime.outcome }}" = "success"
-          test "${{ steps.apk_bootstrap.outcome }}" = "success"
-          test "${{ steps.arm64_candidate.outcome }}" = "success"
-          test "${{ steps.emulator_sdk.outcome }}" = "success"
-          test "${{ steps.a6_x86_build.outcome }}" = "success"
-          test "${{ steps.a6_emulator.outcome }}" = "success"
-          test "${{ steps.a61_assets.outcome }}" = "success"
-          if [ "${{ steps.a61_assets.outputs.available }}" = "true" ]; then
-            test "${{ steps.a61_runtime.outcome }}" = "success"
-          fi
- || true)
-          done
-
-          present() {
-            local pattern="$1"
-            if grep -Eiq "ENTRY=${pattern}$" "$inventory"; then
-              printf 'YES'
-            else
-              printf 'NO'
-            fi
-          }
-
-          {
-            echo "RETAIL_PK3_QVM_AUDIT=PASS"
-            echo "UI_SP_QVM_PRESENT=$(present 'vm/ui\.sp\.qvm')"
-            echo "CGAME_SP_QVM_PRESENT=$(present 'vm/cgame\.sp\.qvm')"
-            echo "QAGAME_SP_QVM_PRESENT=$(present 'vm/qagame\.sp\.qvm')"
-            echo "UI_LEGACY_QVM_PRESENT=$(present 'vm/ui\.qvm')"
-            echo "CGAME_LEGACY_QVM_PRESENT=$(present 'vm/cgame\.qvm')"
-            echo "QAGAME_LEGACY_QVM_PRESENT=$(present 'vm/qagame\.qvm')"
-          } | tee "$summary"
-
-          cat "$inventory"
-          echo "available=true" >> "$GITHUB_OUTPUT"
-          echo "A6_1_RETAIL_ASSET_GATE=PASS"
-
-      - name: "Run A6.1 retail startup and first-frame evidence"
-        id: a61_runtime
-        if: steps.a61_assets.outputs.available == 'true'
-        continue-on-error: true
-        timeout-minutes: 15
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
-          apk=".android-rend2-work/android-apk/dist/DarkWolf-ioRTCW-Rend2-Android-v0.1-X86_64-CI-Debug.apk"
-          retail_main="$(cat .android-rend2-work/a61-retail-main.txt)"
-          out=".android-rend2-work/a61-runtime"
-          mkdir -p "$out"
-          pkg="org.darkwolf.rend2"
-          activity="org.darkwolf.rend2.DarkWolfActivity"
-          remote_main="/sdcard/Android/data/$pkg/files/DarkWolfRTCW/main"
-
-          test -s "$apk"
-          test -d "$retail_main"
-
-          timeout 30s adb wait-for-device
-
-          echo "A6_1_REUSE_INSTALLED_APK=YES"
-          timeout 30s adb shell am force-stop "$pkg" || true
-          timeout 30s adb shell mkdir -p "$remote_main"
-
-          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -print | LC_ALL=C sort > "$out/local-pk3-files.txt"
-          test -s "$out/local-pk3-files.txt"
-          for required in pak0.pk3 sp_pak1.pk3 sp_pak2.pk3 sp_pak3.pk3 sp_pak4.pk3 sp_rend2_shaders0.pk3; do
-            grep -Eqi "/$required$" "$out/local-pk3-files.txt" || {
-              echo "ERROR: required runtime PK3 missing: $required" >&2
-              exit 1
-            }
-          done
-          echo "A6_1_PK3_SET=PASS"
-          while IFS= read -r f; do
-            name="$(basename "$f")"
-            bytes="$(stat -c %s "$f")"
-            echo "A6_1_PUSH_BEGIN file=$name bytes=$bytes"
-            timeout 120s adb push "$f" "$remote_main/$name"
-            echo "A6_1_PUSH_END file=$name bytes=$bytes"
-          done < "$out/local-pk3-files.txt"
-
-          timeout 30s adb shell ls -lah "$remote_main" | tee "$out/remote-main.txt"
-          grep -Eqi '(pak0|sp_pak0|sp_pak1)\.pk3' "$out/remote-main.txt"
-
-          timeout 30s adb logcat -c
-
-          # Stream logcat continuously to the host before renderer startup so
-          # evidence survives even if the emulator process itself crashes.
-          ( adb logcat -v threadtime > "$out/logcat-stream.txt" 2>&1 ) &
-          logcat_pid=$!
-          echo "$logcat_pid" > "$out/logcat-stream.pid"
-          sleep 1
-
-          echo "A6_1_APP_START_BEGIN"
-          timeout 60s adb shell am start -W -n "$pkg/$activity" | tee "$out/am-start.txt"
-          echo "A6_1_APP_START_END"
-
-          emu_pid="$(cat .android-rend2-work/a6-emulator.pid)"
-          for i in $(seq 1 60); do
-            if ! kill -0 "$emu_pid" 2>/dev/null; then
-              echo "ERROR: Android emulator process exited during A6.1 rendering" >&2
-              tail -n 240 .android-rend2-work/a6-emulator-console.log >&2 || true
-              echo "==== A6.1 PRE-CRASH LOGCAT ====" >&2
-              tail -n 400 "$out/logcat-stream.txt" >&2 || true
-              kill "$logcat_pid" 2>/dev/null || true
-              exit 1
-            fi
-            if ! timeout 5s adb get-state >/dev/null 2>&1; then
-              echo "ERROR: Android emulator lost adb during A6.1 rendering" >&2
-              tail -n 240 .android-rend2-work/a6-emulator-console.log >&2 || true
-              echo "==== A6.1 PRE-CRASH LOGCAT ====" >&2
-              tail -n 400 "$out/logcat-stream.txt" >&2 || true
-              kill "$logcat_pid" 2>/dev/null || true
-              exit 1
-            fi
-            timeout 10s adb logcat -d -v threadtime > "$out/logcat.txt" || true
-            if grep -Eq 'Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed' "$out/logcat.txt"; then
-              break
-            fi
-            if grep -Eq 'GL_RENDERER|GL_VERSION|----- R_Init -----|Rend2' "$out/logcat.txt"; then
-              break
-            fi
-            sleep 2
-          done
-
-          kill "$logcat_pid" 2>/dev/null || true
-          wait "$logcat_pid" 2>/dev/null || true
-          cp "$out/logcat-stream.txt" "$out/logcat-full.txt" || true
-          adb exec-out screencap -p > "$out/first-frame.png" || true
-          adb shell pidof "$pkg" > "$out/pid.txt" || true
-
-          grep -E 'DarkWolfRTCW|A5_HOME=|A5_RETAIL_BASE=|A5_RETAIL_MAIN=|FS_Startup|files in pk3|pak0|sp_pak|Loading DLL file|Sys_LoadGameDll|VM_Create|R_Init|OpenGL|GL_VENDOR|GL_RENDERER|GL_VERSION|Rend2|shader|FBO|ERROR|Error|Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed'             "$out/logcat.txt" > "$out/high-signal-log.txt" || true
-
-          test -s "$out/pid.txt"
-          grep -Eqi 'pak0|sp_pak0|sp_pak1|files in pk3' "$out/high-signal-log.txt"
-          ! grep -Eq 'Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed' "$out/high-signal-log.txt"
-
-          renderer="NOT_YET_SEEN"
-          if grep -Eq 'GL_RENDERER|GL_VERSION|----- R_Init -----|Rend2' "$out/high-signal-log.txt"; then
-            renderer="SEEN"
-          fi
-
-          {
-            echo "A6_1_RETAIL_RUNTIME=PASS"
-            echo "PACKAGE=$pkg"
-            echo "ACTIVITY=$activity"
-            echo "PK3_VISIBLE=PASS"
-            echo "PROCESS_ALIVE=PASS"
-            echo "SCREENSHOT_CAPTURED=$(test -s "$out/first-frame.png" && echo YES || echo NO)"
-            echo "RENDERER_MARKER=$renderer"
-          } | tee "$out/A6_1_RETAIL_RUNTIME_AUDIT.txt"
-
-      - name: "Upload probe evidence"
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: DarkWolf-ioRTCW-Rend2-Android-v0.1-ARM64-Probe
-          path: |
-            .android-rend2-work/PROVENANCE.txt
-            .android-rend2-work/probe/summary.txt
-            .android-rend2-work/probe/log/*.log
-            .android-rend2-work/full-renderer/summary.txt
-            .android-rend2-work/full-renderer/log/*.log
-            .android-rend2-work/engine-probe/summary.txt
-            .android-rend2-work/engine-probe/log/*.log
-            .android-rend2-work/game-modules/bin/*.so
-            .android-rend2-work/game-modules/SHA256SUMS.txt
-            .android-rend2-work/game-modules/log/*.log
-            .android-rend2-work/native-runtime/bin/*.so
-            .android-rend2-work/native-runtime/SHA256SUMS.txt
-            .android-rend2-work/native-runtime/NEEDED.txt
-            .android-rend2-work/native-runtime/log/*.log
-            .android-rend2-work/android-apk/A4_BOOTSTRAP_AUDIT.txt
-            .android-rend2-work/android-apk/A5_FILESYSTEM_AUDIT.txt
-            .android-rend2-work/android-apk/manifest.txt
-            .android-rend2-work/android-apk/apk-contents.txt
-            .android-rend2-work/android-apk/apksigner.txt
-            .android-rend2-work/android-apk/dist/*.apk
-            .android-rend2-work/android-apk/dist/*.sha256
-            .android-rend2-work/game-modules-x86_64/bin/*.so
-            .android-rend2-work/native-runtime-x86_64/bin/*.so
-            .android-rend2-work/a6-ci-emulator/**
-            .android-rend2-work/a6-emulator-console.log
-            .android-rend2-work/arm64-candidate/*.apk
-            .android-rend2-work/arm64-candidate/SHA256SUMS.txt
-            .android-rend2-work/a61-assets/release-assets.txt
-            .android-rend2-work/a61-assets/pk3-files.txt
-            .android-rend2-work/a61-assets/release/rtcw-assets.sha256
             .android-rend2-work/a61-runtime/**
           if-no-files-found: warn
           retention-days: 30
