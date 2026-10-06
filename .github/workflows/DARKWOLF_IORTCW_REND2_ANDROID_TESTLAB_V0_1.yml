@@ -162,8 +162,12 @@ jobs:
             accel="on"
           fi
           echo "A6_EMULATOR_ACCEL=$accel"
+          echo "A6_EMULATOR_GPU=software"
 
-          nohup emulator -avd darkwolf-a6             -no-window -noaudio -no-boot-anim -no-snapshot             -gpu swiftshader_indirect -accel "$accel"             > .android-rend2-work/a6-emulator-console.log 2>&1 &
+          nohup emulator -avd darkwolf-a6 \
+            -no-window -noaudio -no-boot-anim -no-snapshot \
+            -gpu software -accel "$accel" \
+            > .android-rend2-work/a6-emulator-console.log 2>&1 &
           emu_pid=$!
           echo "$emu_pid" > .android-rend2-work/a6-emulator.pid
 
@@ -275,8 +279,19 @@ jobs:
           timeout 60s adb shell am start -W -n "$pkg/$activity" | tee "$out/am-start.txt"
           echo "A6_1_APP_START_END"
 
+          emu_pid="$(cat .android-rend2-work/a6-emulator.pid)"
           for i in $(seq 1 60); do
-            timeout 20s adb logcat -d -v threadtime > "$out/logcat.txt" || true
+            if ! kill -0 "$emu_pid" 2>/dev/null; then
+              echo "ERROR: Android emulator process exited during A6.1 rendering" >&2
+              tail -n 240 .android-rend2-work/a6-emulator-console.log >&2 || true
+              exit 1
+            fi
+            if ! timeout 5s adb get-state >/dev/null 2>&1; then
+              echo "ERROR: Android emulator lost adb during A6.1 rendering" >&2
+              tail -n 240 .android-rend2-work/a6-emulator-console.log >&2 || true
+              exit 1
+            fi
+            timeout 10s adb logcat -d -v threadtime > "$out/logcat.txt" || true
             if grep -Eq 'Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed' "$out/logcat.txt"; then
               break
             fi
