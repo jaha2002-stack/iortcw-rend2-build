@@ -76,6 +76,77 @@ typedef double GLclampd;
 #ifndef GL_SAMPLES_PASSED
 # define GL_SAMPLES_PASSED GL_ANY_SAMPLES_PASSED
 #endif
+/* Legacy enums kept as source metadata; actual GLES-safe texture formats
+ * are translated separately before texture allocation/upload. */
+#ifndef GL_EYE_PLANE
+# define GL_EYE_PLANE 0x2502
+#endif
+#ifndef GL_BACK_LEFT
+# define GL_BACK_LEFT 0x0402
+#endif
+#ifndef GL_BACK_RIGHT
+# define GL_BACK_RIGHT 0x0403
+#endif
+#ifndef GL_STACK_OVERFLOW
+# define GL_STACK_OVERFLOW 0x0503
+#endif
+#ifndef GL_STACK_UNDERFLOW
+# define GL_STACK_UNDERFLOW 0x0504
+#endif
+#ifndef GL_EXP
+# define GL_EXP 0x0800
+#endif
+#ifndef GL_RGBA16
+# define GL_RGBA16 0x805B
+#endif
+#ifndef GL_RGB5
+# define GL_RGB5 0x8050
+#endif
+#ifndef GL_LUMINANCE8
+# define GL_LUMINANCE8 0x8040
+#endif
+#ifndef GL_LUMINANCE8_ALPHA8
+# define GL_LUMINANCE8_ALPHA8 0x8045
+#endif
+#ifndef GL_DEPTH_COMPONENT32
+# define GL_DEPTH_COMPONENT32 0x81A7
+#endif
+#ifndef GL_SRGB_EXT
+# define GL_SRGB_EXT 0x8C40
+#endif
+#ifndef GL_SRGB8_EXT
+# define GL_SRGB8_EXT GL_SRGB8
+#endif
+#ifndef GL_SRGB_ALPHA_EXT
+# define GL_SRGB_ALPHA_EXT 0x8C42
+#endif
+#ifndef GL_SRGB8_ALPHA8_EXT
+# define GL_SRGB8_ALPHA8_EXT GL_SRGB8_ALPHA8
+#endif
+#ifndef GL_SLUMINANCE_EXT
+# define GL_SLUMINANCE_EXT 0x8C46
+#endif
+#ifndef GL_SLUMINANCE8_EXT
+# define GL_SLUMINANCE8_EXT 0x8C47
+#endif
+#ifndef GL_SLUMINANCE_ALPHA_EXT
+# define GL_SLUMINANCE_ALPHA_EXT 0x8C44
+#endif
+#ifndef GL_SLUMINANCE8_ALPHA8_EXT
+# define GL_SLUMINANCE8_ALPHA8_EXT 0x8C45
+#endif
+#ifndef GL_COMPRESSED_SRGB_S3TC_DXT1_EXT
+# define GL_COMPRESSED_SRGB_S3TC_DXT1_EXT 0x8C4C
+#endif
+#ifndef GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT
+# define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT 0x8C4D
+#endif
+#ifndef GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT
+# define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT 0x8C4E
+#endif
+#ifndef GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
+# define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT 0x8C4F
+#endif
 #else
 #ifdef USE_LOCAL_HEADERS
 # include "SDL_opengl.h"
