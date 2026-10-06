@@ -13,6 +13,10 @@ permissions:
   contents: read
   actions: read
 
+concurrency:
+  group: darkwolf-rend2-android-testlab-v0-1
+  cancel-in-progress: true
+
 jobs:
   arm64-rend2-probe:
     runs-on: ubuntu-24.04
@@ -224,6 +228,7 @@ jobs:
         id: a61_runtime
         if: steps.a61_assets.outputs.available == 'true'
         continue-on-error: true
+        timeout-minutes: 15
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -239,19 +244,26 @@ jobs:
           test -s "$apk"
           test -d "$retail_main"
 
-          adb wait-for-device
-          adb install -r "$apk" | tee "$out/adb-install.txt"
+          timeout 30s adb wait-for-device
 
-          adb shell am force-stop "$pkg" || true
-          adb shell mkdir -p "$remote_main"
+          echo "A6_1_REUSE_INSTALLED_APK=YES"
+          timeout 30s adb shell am force-stop "$pkg" || true
+          timeout 30s adb shell mkdir -p "$remote_main"
 
           find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -print | LC_ALL=C sort > "$out/local-pk3-files.txt"
           test -s "$out/local-pk3-files.txt"
+          for required in pak0.pk3 sp_pak1.pk3 sp_pak2.pk3 sp_pak3.pk3 sp_pak4.pk3 sp_rend2_shaders0.pk3; do
+            grep -Eqi "/$required$" "$out/local-pk3-files.txt" || {
+              echo "ERROR: required runtime PK3 missing: $required" >&2
+              exit 1
+            }
+          done
+          echo "A6_1_PK3_SET=PASS"
           while IFS= read -r f; do
             name="$(basename "$f")"
             bytes="$(stat -c %s "$f")"
             echo "A6_1_PUSH_BEGIN file=$name bytes=$bytes"
-            timeout 300s adb push "$f" "$remote_main/$name"
+            timeout 120s adb push "$f" "$remote_main/$name"
             echo "A6_1_PUSH_END file=$name bytes=$bytes"
           done < "$out/local-pk3-files.txt"
 
