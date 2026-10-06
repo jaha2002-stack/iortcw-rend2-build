@@ -194,6 +194,103 @@ jobs:
           chmod +x integration/android-rend2-v0-1/run_a6_ci_emulator_bootstrap.sh
           integration/android-rend2-v0-1/run_a6_ci_emulator_bootstrap.sh             .android-rend2-work/android-apk/dist/DarkWolf-ioRTCW-Rend2-Android-v0.1-X86_64-CI-Debug.apk
 
+      - name: "Prepare A6.1 retail data from existing TestLab fetcher"
+        id: a61_assets
+        continue-on-error: true
+        shell: bash
+        env:
+          ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${ASSET_TOKEN:-}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "A6.1 blocked: retail asset secret is not configured"
+            exit 0
+          fi
+
+          git show origin/testlab-v0.1:testlab/scripts/fetch_private_release_assets.sh > .android-rend2-work/fetch_private_release_assets.sh
+          chmod +x .android-rend2-work/fetch_private_release_assets.sh
+
+          export GH_TOKEN="$ASSET_TOKEN"
+          retail_main="$(bash .android-rend2-work/fetch_private_release_assets.sh             "$A6_ASSET_REPO" "$A6_ASSET_RELEASE_TAG"             .android-rend2-work/a61-assets | tail -1)"
+          test -n "$retail_main"
+          test -d "$retail_main"
+          printf '%s\n' "$retail_main" > .android-rend2-work/a61-retail-main.txt
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          echo "A6_1_RETAIL_ASSET_GATE=PASS"
+
+      - name: "Run A6.1 retail startup and first-frame evidence"
+        id: a61_runtime
+        if: steps.a61_assets.outputs.available == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          apk=".android-rend2-work/android-apk/dist/DarkWolf-ioRTCW-Rend2-Android-v0.1-X86_64-CI-Debug.apk"
+          retail_main="$(cat .android-rend2-work/a61-retail-main.txt)"
+          out=".android-rend2-work/a61-runtime"
+          mkdir -p "$out"
+          pkg="org.darkwolf.rend2"
+          activity="org.darkwolf.rend2.DarkWolfActivity"
+          remote_main="/sdcard/Android/data/$pkg/files/DarkWolfRTCW/main"
+
+          test -s "$apk"
+          test -d "$retail_main"
+
+          adb wait-for-device
+          adb install -r "$apk" | tee "$out/adb-install.txt"
+
+          adb shell am force-stop "$pkg" || true
+          adb shell mkdir -p "$remote_main"
+
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -print | LC_ALL=C sort > "$out/local-pk3-files.txt"
+          test -s "$out/local-pk3-files.txt"
+          while IFS= read -r f; do
+            adb push "$f" "$remote_main/$(basename "$f")"
+          done < "$out/local-pk3-files.txt"
+
+          adb shell ls -lah "$remote_main" | tee "$out/remote-main.txt"
+          grep -Eqi '(pak0|sp_pak0|sp_pak1)\.pk3' "$out/remote-main.txt"
+
+          adb logcat -c
+          adb shell am start -W -n "$pkg/$activity" | tee "$out/am-start.txt"
+
+          for i in $(seq 1 60); do
+            adb logcat -d -v threadtime > "$out/logcat.txt" || true
+            if grep -Eq 'Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed' "$out/logcat.txt"; then
+              break
+            fi
+            if grep -Eq 'GL_RENDERER|GL_VERSION|----- R_Init -----|Rend2' "$out/logcat.txt"; then
+              break
+            fi
+            sleep 2
+          done
+
+          adb exec-out screencap -p > "$out/first-frame.png" || true
+          adb shell pidof "$pkg" > "$out/pid.txt" || true
+
+          grep -E 'DarkWolfRTCW|A5_HOME=|A5_RETAIL_BASE=|A5_RETAIL_MAIN=|FS_Startup|files in pk3|pak0|sp_pak|Loading DLL file|Sys_LoadGameDll|VM_Create|R_Init|OpenGL|GL_VENDOR|GL_RENDERER|GL_VERSION|Rend2|shader|FBO|ERROR|Error|Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed'             "$out/logcat.txt" > "$out/high-signal-log.txt" || true
+
+          test -s "$out/pid.txt"
+          grep -Eqi 'pak0|sp_pak0|sp_pak1|files in pk3' "$out/high-signal-log.txt"
+          ! grep -Eq 'Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed' "$out/high-signal-log.txt"
+
+          renderer="NOT_YET_SEEN"
+          if grep -Eq 'GL_RENDERER|GL_VERSION|----- R_Init -----|Rend2' "$out/high-signal-log.txt"; then
+            renderer="SEEN"
+          fi
+
+          {
+            echo "A6_1_RETAIL_RUNTIME=PASS"
+            echo "PACKAGE=$pkg"
+            echo "ACTIVITY=$activity"
+            echo "PK3_VISIBLE=PASS"
+            echo "PROCESS_ALIVE=PASS"
+            echo "SCREENSHOT_CAPTURED=$(test -s "$out/first-frame.png" && echo YES || echo NO)"
+            echo "RENDERER_MARKER=$renderer"
+          } | tee "$out/A6_1_RETAIL_RUNTIME_AUDIT.txt"
+
       - name: "Upload probe evidence"
         if: always()
         uses: actions/upload-artifact@v4
@@ -225,6 +322,10 @@ jobs:
             .android-rend2-work/native-runtime-x86_64/bin/*.so
             .android-rend2-work/a6-ci-emulator/**
             .android-rend2-work/a6-emulator-console.log
+            .android-rend2-work/a61-assets/release-assets.txt
+            .android-rend2-work/a61-assets/pk3-files.txt
+            .android-rend2-work/a61-assets/release/rtcw-assets.sha256
+            .android-rend2-work/a61-runtime/**
           if-no-files-found: warn
           retention-days: 30
 
@@ -242,3 +343,7 @@ jobs:
           test "${{ steps.emulator_sdk.outcome }}" = "success"
           test "${{ steps.a6_x86_build.outcome }}" = "success"
           test "${{ steps.a6_emulator.outcome }}" = "success"
+          test "${{ steps.a61_assets.outcome }}" = "success"
+          if [ "${{ steps.a61_assets.outputs.available }}" = "true" ]; then
+            test "${{ steps.a61_runtime.outcome }}" = "success"
+          fi
