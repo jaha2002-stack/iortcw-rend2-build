@@ -484,6 +484,19 @@ static GLenum PixelDataFormatFromInternalFormat(GLenum internalFormat)
     s = replace_once(s, alloc_anchor, alloc_new, "tr_image GLES3 immutable texture storage")
     path.write_text(s)
 
+def patch_depth_texture_mode(path: Path) -> None:
+    s = path.read_text()
+    old = '''\t\t\tif ( !QGL_VERSION_ATLEAST( 3, 0 ) ) {
+\t\t\t\tqglTextureParameterfEXT(image->texnum, textureTarget, GL_DEPTH_TEXTURE_MODE, GL_LUMINANCE);
+\t\t\t}
+'''
+    new = f'''\t\t\tif ( !QGL_VERSION_ATLEAST( 3, 0 ) && !QGLES_VERSION_ATLEAST( 3, 0 ) ) {{
+\t\t\t\tqglTextureParameterfEXT(image->texnum, textureTarget, GL_DEPTH_TEXTURE_MODE, GL_LUMINANCE);
+\t\t\t}}
+'''
+    s = replace_once(s, old, new, "depth texture mode GLES3 guard")
+    path.write_text(s)
+
 def patch_backend(path: Path) -> None:
     s = path.read_text()
     old = '''qglDisable( GL_FOG );'''
@@ -519,6 +532,7 @@ def main(root: Path) -> None:
     patch_glimp(sp / "sdl" / "sdl_glimp.c")
     patch_glsl(sp / "rend2" / "tr_glsl.c")
     patch_tr_image(sp / "rend2" / "tr_image.c")
+    patch_depth_texture_mode(sp / "rend2" / "tr_image.c")
     patch_backend(sp / "rend2" / "tr_backend.c")
     patch_tr_extensions(sp / "rend2" / "tr_extensions.c")
     print(f"{MARKER}: patched Android GLES3 bring-up layer")
