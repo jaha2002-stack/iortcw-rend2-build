@@ -38,7 +38,7 @@ cc "$SRC/SP/code/tools/stringify.c" -o "$OUT/stringify"
 for glsl in "$SRC"/SP/code/rend2/glsl/*.glsl; do
   base="$(basename "$glsl" .glsl)"
   case "$base" in
-    bokeh_fp|bokeh_vp|calclevels4x_fp|calclevels4x_vp|depthblur_fp|depthblur_vp|dlight_fp|dlight_vp|down4x_fp|down4x_vp|fogpass_fp|fogpass_vp|generic_fp|generic_vp|lightall_fp|lightall_vp|pshadow_fp|pshadow_vp|shadowfill_fp|shadowfill_vp|shadowmask_fp|shadowmask_vp|ssao_fp|ssao_vp|texturecolor_fp|texturecolor_vp|tonemap_fp|tonemap_vp)
+    bokeh_fp|bokeh_vp|calclevels4x_fp|calclevels4x_vp|depthblur_fp|depthblur_vp|dlight_fp|dlight_vp|down4x_fp|down4x_vp|fogpass_fp|fogpass_vp|generic_fp|generic_vp|lightall_fp|lightall_vp|pshadow_fp|pshadow_vp|shadowfill_fp|shadowfill_vp|shadowmask_fp|shadowmask_vp|ssao_fp|ssao_vp|texturecolor_fp|texturecolor_vp|tonemap_fp|tonemap_vp|volumetricsun_vp|volumetricsun_fp|volumetriclocal_vp|volumetriclocal_fp|volumetriclocal_upscale_fp|ssgi_vp|ssgi_fp)
       "$OUT/stringify" "$glsl" "$OUT/gen/$base.c"
       ;;
   esac
