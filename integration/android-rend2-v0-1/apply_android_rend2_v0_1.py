@@ -32,6 +32,50 @@ def patch_qgl(path: Path) -> None:
 #endif
 typedef double GLdouble;
 typedef double GLclampd;
+
+/* Desktop ARB/EXT tokens used by Rend2 source, mapped to GLES3 equivalents. */
+#ifndef GL_COLOR_ATTACHMENT0_EXT
+# define GL_COLOR_ATTACHMENT0_EXT GL_COLOR_ATTACHMENT0
+#endif
+#ifndef GL_TEXTURE_CUBE_MAP_POSITIVE_X_ARB
+# define GL_TEXTURE_CUBE_MAP_POSITIVE_X_ARB GL_TEXTURE_CUBE_MAP_POSITIVE_X
+#endif
+#ifndef GL_DEPTH_COMPONENT16_ARB
+# define GL_DEPTH_COMPONENT16_ARB GL_DEPTH_COMPONENT16
+#endif
+#ifndef GL_DEPTH_COMPONENT24_ARB
+# define GL_DEPTH_COMPONENT24_ARB GL_DEPTH_COMPONENT24
+#endif
+#ifndef GL_DEPTH_COMPONENT32_ARB
+# define GL_DEPTH_COMPONENT32_ARB 0x81A7
+#endif
+#ifndef GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER
+# define GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER 0x8CDB
+#endif
+#ifndef GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER
+# define GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER 0x8CDC
+#endif
+#ifndef GL_STENCIL_INDEX
+# define GL_STENCIL_INDEX 0x1901
+#endif
+#ifndef GL_STENCIL_INDEX1
+# define GL_STENCIL_INDEX1 0x8D46
+#endif
+#ifndef GL_STENCIL_INDEX4
+# define GL_STENCIL_INDEX4 0x8D47
+#endif
+#ifndef GL_STENCIL_INDEX16
+# define GL_STENCIL_INDEX16 0x8D49
+#endif
+#ifndef GL_LINE
+# define GL_LINE 0x1B01
+#endif
+#ifndef GL_FILL
+# define GL_FILL 0x1B02
+#endif
+#ifndef GL_SAMPLES_PASSED
+# define GL_SAMPLES_PASSED GL_ANY_SAMPLES_PASSED
+#endif
 #else
 #ifdef USE_LOCAL_HEADERS
 # include "SDL_opengl.h"
@@ -142,6 +186,11 @@ def patch_glimp(path: Path) -> None:
 \t\t\tQGL_1_3_PROCS;
 \t\t\tQGL_1_5_PROCS;
 \t\t\tQGL_2_0_PROCS;
+\t\t\t/* Desktop entry points still referenced by shared Rend2 code. */
+\t\t\tqglClearDepth = GLimp_GLES_ClearDepth;
+\t\t\tqglDepthRange = GLimp_GLES_DepthRange;
+\t\t\tqglDrawBuffer = GLimp_GLES_DrawBuffer;
+\t\t\tqglPolygonMode = GLimp_GLES_PolygonMode;
 '''
     s = replace_once(s, old5, new5, "glimp GLES3 proc gate")
     path.write_text(s)
@@ -192,6 +241,19 @@ def patch_glsl(path: Path) -> None:
     s = replace_once(s, end_anchor, end_new, "GLSL header end")
     path.write_text(s)
 
+def patch_backend(path: Path) -> None:
+    s = path.read_text()
+    old = '''\tqglDisable( GL_FOG ); //----(SA)        added
+'''
+    new = f'''#ifndef DARKWOLF_ANDROID_GLES
+\tqglDisable( GL_FOG ); //----(SA)        added
+#else
+\t/* {MARKER}: fixed-function fog state does not exist in GLES3. */
+#endif
+'''
+    s = replace_once(s, old, new, "backend fixed-function fog")
+    path.write_text(s)
+
 def patch_tr_extensions(path: Path) -> None:
     s = path.read_text()
     old = '''\tq_gl_version_at_least_3_0 = QGL_VERSION_ATLEAST( 3, 0 );
@@ -214,6 +276,7 @@ def main(root: Path) -> None:
     patch_qgl(sp / "rend2" / "qgl.h")
     patch_glimp(sp / "sdl" / "sdl_glimp.c")
     patch_glsl(sp / "rend2" / "tr_glsl.c")
+    patch_backend(sp / "rend2" / "tr_backend.c")
     patch_tr_extensions(sp / "rend2" / "tr_extensions.c")
     print(f"{MARKER}: patched Android GLES3 bring-up layer")
 
