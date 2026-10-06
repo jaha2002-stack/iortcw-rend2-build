@@ -28,10 +28,11 @@ echo "A4_SDL_MAIN_EXPORT=PASS"
 rm -rf "$OUT"
 mkdir -p "$PROJECT/app/src/main/java" "$PROJECT/app/src/main/res" \
   "$PROJECT/app/src/main/jniLibs/arm64-v8a" \
-  "$PROJECT/app/src/main/assets/darkwolf-runtime/Main" "$DIST"
+  "$PROJECT/app/src/main/assets/darkwolf-runtime/main" "$DIST"
 
 cp -a "$SDL/android-project/app/src/main/java/org" "$PROJECT/app/src/main/java/"
 cp -a "$SDL/android-project/app/src/main/res/." "$PROJECT/app/src/main/res/"
+mkdir -p "$PROJECT/app/src/main/java/org/darkwolf/rend2"
 cp -a "$SDL/android-project/gradle" "$PROJECT/"
 cp "$SDL/android-project/gradlew" "$PROJECT/"
 chmod +x "$PROJECT/gradlew"
@@ -114,6 +115,110 @@ android {
 }
 EOF
 
+cat > "$PROJECT/app/src/main/java/org/darkwolf/rend2/DarkWolfActivity.java" <<'EOF'
+package org.darkwolf.rend2;
+
+import android.os.Bundle;
+import android.util.Log;
+import org.libsdl.app.SDLActivity;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+
+public final class DarkWolfActivity extends SDLActivity {
+    private static final String TAG = "DarkWolfRTCW";
+    private File homeRoot;
+    private File retailRoot;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        prepareFilesystem();
+        super.onCreate(savedInstanceState);
+    }
+
+    private void prepareFilesystem() {
+        homeRoot = new File(getFilesDir(), "DarkWolfRTCW");
+        File external = getExternalFilesDir(null);
+        retailRoot = external != null
+                ? new File(external, "DarkWolfRTCW")
+                : homeRoot;
+
+        File homeMain = new File(homeRoot, "main");
+        File retailMain = new File(retailRoot, "main");
+        if (!homeMain.mkdirs() && !homeMain.isDirectory()) {
+            throw new IllegalStateException("Cannot create " + homeMain);
+        }
+        if (!retailMain.mkdirs() && !retailMain.isDirectory()) {
+            throw new IllegalStateException("Cannot create " + retailMain);
+        }
+
+        try {
+            copyAsset("darkwolf-runtime/main/cgame.sp.arm64.so",
+                    new File(homeMain, "cgame.sp.arm64.so"));
+            copyAsset("darkwolf-runtime/main/qagame.sp.arm64.so",
+                    new File(homeMain, "qagame.sp.arm64.so"));
+            copyAsset("darkwolf-runtime/main/ui.sp.arm64.so",
+                    new File(homeMain, "ui.sp.arm64.so"));
+            writeInstallHint(retailRoot, retailMain);
+        } catch (IOException e) {
+            throw new IllegalStateException("DarkWolf Android filesystem bootstrap failed", e);
+        }
+
+        Log.i(TAG, "A5_HOME=" + homeRoot.getAbsolutePath());
+        Log.i(TAG, "A5_RETAIL_BASE=" + retailRoot.getAbsolutePath());
+        Log.i(TAG, "A5_RETAIL_MAIN=" + retailMain.getAbsolutePath());
+    }
+
+    private void copyAsset(String assetName, File target) throws IOException {
+        File tmp = new File(target.getParentFile(), target.getName() + ".tmp");
+        try (InputStream in = getAssets().open(assetName);
+             FileOutputStream out = new FileOutputStream(tmp, false)) {
+            byte[] buffer = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buffer)) > 0) {
+                out.write(buffer, 0, n);
+            }
+            out.getFD().sync();
+        }
+        if (target.exists() && !target.delete()) {
+            throw new IOException("Cannot replace " + target);
+        }
+        if (!tmp.renameTo(target)) {
+            throw new IOException("Cannot install " + target);
+        }
+        target.setReadable(true, true);
+        target.setExecutable(true, true);
+    }
+
+    private void writeInstallHint(File base, File main) throws IOException {
+        File hint = new File(base, "INSTALL_RTCW_DATA_HERE.txt");
+        String message =
+                "DarkWolf RTCW Rend2 Android\n" +
+                "Copy your legally owned Return to Castle Wolfenstein retail PK3 files into:\n" +
+                main.getAbsolutePath() + "\n" +
+                "Expected directory name is lowercase: main\n" +
+                "The application never bundles or downloads retail game data.\n";
+        try (FileOutputStream out = new FileOutputStream(hint, false)) {
+            out.write(message.getBytes("UTF-8"));
+        }
+    }
+
+    @Override
+    protected String[] getArguments() {
+        if (homeRoot == null || retailRoot == null) {
+            prepareFilesystem();
+        }
+        return new String[] {
+                "+set", "fs_basepath", retailRoot.getAbsolutePath(),
+                "+set", "fs_homepath", homeRoot.getAbsolutePath(),
+                "+set", "fs_game", ""
+        };
+    }
+}
+EOF
+
 cat > "$PROJECT/app/src/main/AndroidManifest.xml" <<'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -133,7 +238,7 @@ cat > "$PROJECT/app/src/main/AndroidManifest.xml" <<'EOF'
         android:largeHeap="true"
         android:theme="@style/AppTheme">
         <activity
-            android:name="org.libsdl.app.SDLActivity"
+            android:name="org.darkwolf.rend2.DarkWolfActivity"
             android:label="DarkWolf RTCW Rend2"
             android:alwaysRetainTaskState="true"
             android:launchMode="singleTop"
@@ -157,9 +262,9 @@ CXX_SHARED="$(find "$NDK" -type f -path '*/aarch64-linux-android/libc++_shared.s
 test -s "$CXX_SHARED"
 cp "$CXX_SHARED" "$PROJECT/app/src/main/jniLibs/arm64-v8a/libc++_shared.so"
 
-cp "$MODULES/bin/cgame.sp.arm64.so" "$PROJECT/app/src/main/assets/darkwolf-runtime/Main/"
-cp "$MODULES/bin/qagame.sp.arm64.so" "$PROJECT/app/src/main/assets/darkwolf-runtime/Main/"
-cp "$MODULES/bin/ui.sp.arm64.so" "$PROJECT/app/src/main/assets/darkwolf-runtime/Main/"
+cp "$MODULES/bin/cgame.sp.arm64.so" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/"
+cp "$MODULES/bin/qagame.sp.arm64.so" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/"
+cp "$MODULES/bin/ui.sp.arm64.so" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/"
 
 cat > "$PROJECT/app/src/main/assets/darkwolf-runtime/PROVENANCE.txt" <<EOF
 BASE_RUN_ID=37266797451
@@ -186,9 +291,9 @@ unzip -l "$DIST/$APK_NAME" | tee "$OUT/apk-contents.txt"
 grep -F 'lib/arm64-v8a/libmain.so' "$OUT/apk-contents.txt" >/dev/null
 grep -F 'lib/arm64-v8a/libSDL2.so' "$OUT/apk-contents.txt" >/dev/null
 grep -F 'lib/arm64-v8a/libc++_shared.so' "$OUT/apk-contents.txt" >/dev/null
-grep -F 'assets/darkwolf-runtime/Main/cgame.sp.arm64.so' "$OUT/apk-contents.txt" >/dev/null
-grep -F 'assets/darkwolf-runtime/Main/qagame.sp.arm64.so' "$OUT/apk-contents.txt" >/dev/null
-grep -F 'assets/darkwolf-runtime/Main/ui.sp.arm64.so' "$OUT/apk-contents.txt" >/dev/null
+grep -F 'assets/darkwolf-runtime/main/cgame.sp.arm64.so' "$OUT/apk-contents.txt" >/dev/null
+grep -F 'assets/darkwolf-runtime/main/qagame.sp.arm64.so' "$OUT/apk-contents.txt" >/dev/null
+grep -F 'assets/darkwolf-runtime/main/ui.sp.arm64.so' "$OUT/apk-contents.txt" >/dev/null
 if grep -E 'lib/(armeabi-v7a|x86|x86_64)/' "$OUT/apk-contents.txt" >/dev/null; then
   echo "Unexpected non-arm64 ABI in APK" >&2
   exit 1
@@ -213,6 +318,11 @@ GLES_REQUIRED=3.0
 SDL_MAIN_EXPORT=PASS
 REND2_NATIVE_RUNTIME=PACKAGED
 NATIVE_GAME_MODULES=PACKAGED_AS_A5_ASSETS
+A5_ACTIVITY=org.darkwolf.rend2.DarkWolfActivity
+A5_BASEGAME_CASE=main
+A5_FS_BASEPATH=APP_SCOPED_EXTERNAL_DARKWOLF_ROOT
+A5_FS_HOMEPATH=APP_PRIVATE_DARKWOLF_ROOT
+A5_NATIVE_MODULE_EXTRACTION=PASS_BY_JAVA_COMPILE_AND_APK_CONTENT
 RETAIL_GAME_DATA=NOT_BUNDLED
 EOF
 
