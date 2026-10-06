@@ -38,7 +38,8 @@ compile_set() {
     -o "$OUT/bin/$module.sp.arm64.so" "${objs[@]}" -lm -llog >>"$OUT/log/$module.log" 2>&1
 }
 
-compile_set cgame -DCGAMEDLL -DCGAME "${CGAME[@]}" "${BG_CGAME[@]}" "${QCOMMON[@]}"
+# Match upstream Q3CGOBJ exactly: cgame also links the shared menu framework.
+compile_set cgame -DCGAMEDLL -DCGAME "${CGAME[@]}" "${BG_CGAME[@]}" SP/code/ui/ui_shared.c "${QCOMMON[@]}"
 compile_set qagame -DGAMEDLL -DQAGAME "${QAGAME[@]}" "${QCOMMON[@]}"
 compile_set ui -DUI -DUI "${UI[@]}" "${BG_UI[@]}" "${QCOMMON[@]}"
 
