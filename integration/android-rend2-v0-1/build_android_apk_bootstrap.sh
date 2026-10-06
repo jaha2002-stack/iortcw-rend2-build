@@ -196,8 +196,13 @@ public final class LauncherActivity extends Activity {
         button.setText("SELECT RTCW PK3 FOLDER");
         button.setOnClickListener(v -> openFolderPicker());
 
+        Button logButton = new Button(this);
+        logButton.setText("SHOW LAST STARTUP LOG");
+        logButton.setOnClickListener(v -> showLastLog());
+
         box.addView(text);
         box.addView(button);
+        box.addView(logButton);
         setContentView(box);
     }
 
@@ -324,6 +329,30 @@ public final class LauncherActivity extends Activity {
         finish();
     }
 
+    private void showLastLog() {
+        File log = new File(retailMain, "rtcwconsole.log");
+        if (!log.isFile()) {
+            showFatal("No startup log exists yet.");
+            return;
+        }
+        try {
+            byte[] data = new byte[(int)Math.min(log.length(), 64 * 1024)];
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(log, "r")) {
+                long start = Math.max(0, log.length() - data.length);
+                raf.seek(start);
+                raf.readFully(data);
+            }
+            String text = new String(data, "UTF-8");
+            new AlertDialog.Builder(this)
+                    .setTitle("DarkWolf startup log")
+                    .setMessage(text)
+                    .setPositiveButton("OK", null)
+                    .show();
+        } catch (Exception e) {
+            showFatal("Cannot read startup log:\n" + e.getMessage());
+        }
+    }
+
     private void showFatal(String message) {
         new AlertDialog.Builder(this)
                 .setTitle("DarkWolf RTCW Rend2")
@@ -431,9 +460,14 @@ public final class DarkWolfActivity extends SDLActivity {
         }
         return new String[] {
                 "+set", "fs_basepath", retailRoot.getAbsolutePath(),
-                "+set", "fs_homepath", homeRoot.getAbsolutePath(),
+                "+set", "fs_homepath", retailRoot.getAbsolutePath(),
                 "+set", "fs_game", "",
+                "+set", "vm_cgame", "1",
+                "+set", "vm_game", "1",
+                "+set", "vm_ui", "1",
                 "+set", "com_introplayed", "1",
+                "+set", "logfile", "2",
+                "+set", "developer", "1",
                 "+set", "r_ext_texture_filter_anisotropic", "0",
                 "+set", "r_fullscreen", "0",
                 "+spdevmap", "escape1"
@@ -551,6 +585,11 @@ A5_ACTIVITY=org.darkwolf.rend2.LauncherActivity
 A5_GAME_ACTIVITY=org.darkwolf.rend2.DarkWolfActivity
 PHONE_FIRST_DATA_IMPORTER=SAF_DOCUMENT_TREE
 PHONE_FIRST_AUTO_MAP=escape1
+PHONE_FIRST_VM_MODE=QVM_BYTECODE
+PHONE_FIRST_VM_CGAME=1
+PHONE_FIRST_VM_GAME=1
+PHONE_FIRST_VM_UI=1
+PHONE_FIRST_LOGFILE=2
 A5_BASEGAME_CASE=main
 A5_FS_BASEPATH=APP_SCOPED_EXTERNAL_DARKWOLF_ROOT
 A5_FS_HOMEPATH=APP_PRIVATE_DARKWOLF_ROOT
