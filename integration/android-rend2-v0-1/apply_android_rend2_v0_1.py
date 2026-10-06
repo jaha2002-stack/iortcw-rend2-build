@@ -539,27 +539,45 @@ def patch_depth_texture_mode(path: Path) -> None:
 def patch_backend(path: Path) -> None:
     s = path.read_text()
 
-    # v4.4.6 contains more than one inherited fixed-function fog disable,
-    # including a legacy Wolf path with an inline //----(SA) comment.
-    # GLES3 has no GL_FOG token, so guard every occurrence.
-    import re
-    pattern = re.compile(r'(?m)^(?P<indent>[ \\t]*)qglDisable\\( GL_FOG \\);(?P<comment>[^\\n]*)$')
-    matches = list(pattern.finditer(s))
-    if not matches:
+    # Guard every inherited fixed-function fog disable. Do this line-by-line
+    # instead of with a regex so tabs and legacy inline comments cannot evade
+    # the Android GLES3 patch.
+    needle = "qglDisable( GL_FOG );"
+    lines = s.splitlines(keepends=True)
+    out = []
+    patched = 0
+
+    for line in lines:
+        if needle not in line:
+            out.append(line)
+            continue
+
+        before, after = line.split(needle, 1)
+        newline = "\n" if line.endswith("\n") else ""
+        suffix = after[:-1] if newline else after
+        out.append(before + "#ifndef DARKWOLF_ANDROID_GLES\n")
+        out.append(before + needle + suffix + "\n")
+        out.append(before + "#else\n")
+        out.append(before + f"/* {MARKER}: fixed-function fog state does not exist in GLES3. */\n")
+        out.append(before + "#endif" + newline)
+        patched += 1
+
+    if patched < 1:
         raise SystemExit("backend fixed-function fog: no GL_FOG disable sites found")
 
-    def repl(m):
-        indent = m.group("indent")
-        comment = m.group("comment")
-        return (
-            f"{indent}#ifndef DARKWOLF_ANDROID_GLES\\n"
-            f"{indent}qglDisable( GL_FOG );{comment}\\n"
-            f"{indent}#else\\n"
-            f"{indent}/* {MARKER}: fixed-function fog state does not exist in GLES3. */\\n"
-            f"{indent}#endif"
-        )
+    s = "".join(out)
 
-    s = pattern.sub(repl, s)
+    # Every original call must now be immediately protected by an Android guard.
+    unguarded = 0
+    scan = s.splitlines()
+    for i, line in enumerate(scan):
+        if needle in line:
+            prev = scan[i - 1].strip() if i > 0 else ""
+            if prev != "#ifndef DARKWOLF_ANDROID_GLES":
+                unguarded += 1
+    if unguarded:
+        raise SystemExit(f"backend fixed-function fog: {unguarded} unguarded sites remain")
+
     path.write_text(s)
 
 def patch_tr_extensions(path: Path) -> None:
