@@ -320,6 +320,65 @@ def patch_glsl(path: Path) -> None:
     s = replace_once(s, end_anchor, end_new, "GLSL header end")
     path.write_text(s)
 
+def patch_gles_shader_literals(path: Path) -> None:
+    s = path.read_text()
+
+    old = '''\t// a negative frequency is for Z deformation based on normal
+\tfloat zDeformScale = 0;
+\tif (frequency < 0)
+\t{
+\t\tzDeformScale = 1;
+\t\tfrequency *= -1;
+
+\t\tif (frequency > 999)
+\t\t{
+\t\t\tfrequency -= 999;
+\t\t\tzDeformScale = -1;
+\t\t}
+\t}
+'''
+    new = f'''\t// a negative frequency is for Z deformation based on normal
+\t// {MARKER}: GLSL ES 3.x does not permit implicit int -> float conversion.
+\tfloat zDeformScale = 0.0;
+\tif (frequency < 0.0)
+\t{{
+\t\tzDeformScale = 1.0;
+\t\tfrequency *= -1.0;
+
+\t\tif (frequency > 999.0)
+\t\t{{
+\t\t\tfrequency -= 999.0;
+\t\t\tzDeformScale = -1.0;
+\t\t}}
+\t}}
+'''
+    s = replace_once(s, old, new, "generic_vp strict float literals")
+
+    old = '''\tif (zDeformScale != 0)
+\t{
+'''
+    new = '''\tif (zDeformScale != 0.0)
+\t{
+'''
+    s = replace_once(s, old, new, "generic_vp zDeformScale compare")
+
+    old = '''\t\tif (nDot * scale > 0)
+\t\t{
+'''
+    new = '''\t\tif (nDot * scale > 0.0)
+\t\t{
+'''
+    s = replace_once(s, old, new, "generic_vp deform scale compare")
+
+    zero_alpha = "\\t\\t\\tcolor.a = 0;\\n"
+    zero_alpha_fixed = "\\t\\t\\tcolor.a = 0.0;\\n"
+    count = s.count(zero_alpha)
+    if count != 2:
+        raise SystemExit(f"generic_vp expected 2 integer alpha zero assignments, found {count}")
+    s = s.replace(zero_alpha, zero_alpha_fixed)
+
+    path.write_text(s)
+
 def patch_tr_image(path: Path) -> None:
     s = path.read_text()
 
@@ -531,6 +590,7 @@ def main(root: Path) -> None:
     patch_qgl(sp / "rend2" / "qgl.h")
     patch_glimp(sp / "sdl" / "sdl_glimp.c")
     patch_glsl(sp / "rend2" / "tr_glsl.c")
+    patch_gles_shader_literals(sp / "rend2" / "glsl" / "generic_vp.glsl")
     patch_tr_image(sp / "rend2" / "tr_image.c")
     patch_depth_texture_mode(sp / "rend2" / "tr_image.c")
     patch_backend(sp / "rend2" / "tr_backend.c")
