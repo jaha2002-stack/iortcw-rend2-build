@@ -139,15 +139,47 @@ jobs:
         run: |
           set -Eeuo pipefail
           export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          mkdir -p .android-rend2-work
           sudo chmod 666 /dev/kvm || true
-          nohup emulator -avd darkwolf-a6 -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > .android-rend2-work/a6-emulator-console.log 2>&1 &
-          adb wait-for-device
+
+          accel="off"
+          if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+            accel="on"
+          fi
+          echo "A6_EMULATOR_ACCEL=$accel"
+
+          nohup emulator -avd darkwolf-a6             -no-window -noaudio -no-boot-anim -no-snapshot             -gpu swiftshader_indirect -accel "$accel"             > .android-rend2-work/a6-emulator-console.log 2>&1 &
+          emu_pid=$!
+          echo "$emu_pid" > .android-rend2-work/a6-emulator.pid
+
+          if ! timeout 240s adb wait-for-device; then
+            echo "ERROR: Android emulator did not expose adb within 240s" >&2
+            ps -p "$emu_pid" -o pid,stat,etime,cmd || true
+            tail -n 240 .android-rend2-work/a6-emulator-console.log || true
+            exit 1
+          fi
+
+          boot_ok=0
           for i in $(seq 1 120); do
+            if ! kill -0 "$emu_pid" 2>/dev/null; then
+              echo "ERROR: emulator process exited during boot" >&2
+              tail -n 240 .android-rend2-work/a6-emulator-console.log || true
+              exit 1
+            fi
             boot="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
-            [ "$boot" = "1" ] && break
+            if [ "$boot" = "1" ]; then
+              boot_ok=1
+              break
+            fi
             sleep 2
           done
-          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+          if [ "$boot_ok" -ne 1 ]; then
+            echo "ERROR: Android emulator adb connected but boot did not complete" >&2
+            adb shell getprop || true
+            tail -n 240 .android-rend2-work/a6-emulator-console.log || true
+            exit 1
+          fi
+          adb shell input keyevent 82 || true
           chmod +x integration/android-rend2-v0-1/run_a6_ci_emulator_bootstrap.sh
           integration/android-rend2-v0-1/run_a6_ci_emulator_bootstrap.sh             .android-rend2-work/android-apk/dist/DarkWolf-ioRTCW-Rend2-Android-v0.1-X86_64-CI-Debug.apk
 
