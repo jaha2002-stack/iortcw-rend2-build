@@ -320,6 +320,170 @@ def patch_glsl(path: Path) -> None:
     s = replace_once(s, end_anchor, end_new, "GLSL header end")
     path.write_text(s)
 
+def patch_tr_image(path: Path) -> None:
+    s = path.read_text()
+
+    helper_anchor = '''static GLenum PixelDataFormatFromInternalFormat(GLenum internalFormat)
+{
+'''
+    helper = f'''#ifdef DARKWOLF_ANDROID_GLES
+/*
+ * {MARKER}: desktop Rend2 allocates texture storage with glTexImage2D(NULL)
+ * and relies on desktop GL to convert loosely-matched internal/external
+ * format+type combinations. GLES3 validates these combinations strictly.
+ *
+ * Keep source uploads RGBA-compatible and canonicalize legacy/unsized desktop
+ * formats to sized GLES3 storage formats. Render/depth/float/compressed formats
+ * that are already GLES3-valid are preserved.
+ */
+static GLenum AndroidGLES_TextureStorageFormat(GLenum internalFormat)
+{{
+    switch (internalFormat)
+    {{
+        case GL_RGB:
+        case GL_RGB8:
+        case GL_RGB5:
+        case GL_RGBA:
+        case GL_RGBA4:
+            return GL_RGBA8;
+
+        case GL_SRGB_EXT:
+        case GL_SRGB8_EXT:
+        case GL_SRGB_ALPHA_EXT:
+            return GL_SRGB8_ALPHA8;
+
+        case GL_LUMINANCE:
+        case GL_LUMINANCE8:
+        case GL_LUMINANCE_ALPHA:
+        case GL_LUMINANCE8_ALPHA8:
+        case GL_SLUMINANCE_EXT:
+        case GL_SLUMINANCE8_EXT:
+        case GL_SLUMINANCE_ALPHA_EXT:
+        case GL_SLUMINANCE8_ALPHA8_EXT:
+            /* Legacy luminance paths are disabled in current Rend2, but keep
+             * a valid sampled-color fallback instead of illegal ES tokens. */
+            return GL_RGBA8;
+
+        case GL_DEPTH_COMPONENT:
+            return GL_DEPTH_COMPONENT24;
+
+        case GL_DEPTH_COMPONENT32_ARB:
+            return GL_DEPTH_COMPONENT32F;
+
+        default:
+            return internalFormat;
+    }}
+}}
+#endif
+
+static GLenum PixelDataFormatFromInternalFormat(GLenum internalFormat)
+{{
+'''
+    if helper not in s:
+        if helper_anchor not in s:
+            raise SystemExit("tr_image helper anchor not found")
+        s = s.replace(helper_anchor, helper, 1)
+
+    format_anchor = '''\tif (!internalFormat)
+\t\tinternalFormat = RawImage_GetFormat(pic, width * height, picFormat, isLightmap, image->type, image->flags);
+
+\timage->internalFormat = internalFormat;
+'''
+    format_new = f'''\tif (!internalFormat)
+\t\tinternalFormat = RawImage_GetFormat(pic, width * height, picFormat, isLightmap, image->type, image->flags);
+
+#ifdef DARKWOLF_ANDROID_GLES
+\t/* {MARKER}: canonical storage format must be chosen before both allocation
+\t * and later subimage upload bookkeeping. */
+\tinternalFormat = AndroidGLES_TextureStorageFormat(internalFormat);
+#endif
+\timage->internalFormat = internalFormat;
+'''
+    s = replace_once(s, format_anchor, format_new, "tr_image storage format normalization")
+
+    alloc_anchor = '''\t// Allocate texture storage so we don't have to worry about it later.
+\tdataFormat = PixelDataFormatFromInternalFormat(internalFormat);
+\tmipWidth = width;
+\tmipHeight = height;
+\tmiplevel = 0;
+\tdo
+\t{
+\t\tlastMip = !mipmap || (mipWidth == 1 && mipHeight == 1);
+\t\tif (cubemap)
+\t\t{
+\t\t\tint i;
+
+\t\t\tfor (i = 0; i < 6; i++)
+\t\t\t\tqglTextureImage2DEXT(image->texnum, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, miplevel, internalFormat, mipWidth, mipHeight, 0, dataFormat, GL_UNSIGNED_BYTE, NULL);
+\t\t}
+\t\telse
+\t\t{
+\t\t\tqglTextureImage2DEXT(image->texnum, GL_TEXTURE_2D, miplevel, internalFormat, mipWidth, mipHeight, 0, dataFormat, GL_UNSIGNED_BYTE, NULL);
+\t\t}
+
+\t\tmipWidth  = MAX(1, mipWidth >> 1);
+\t\tmipHeight = MAX(1, mipHeight >> 1);
+\t\tmiplevel++;
+\t}
+\twhile (!lastMip);
+'''
+    alloc_new = f'''\t// Allocate texture storage so we don't have to worry about it later.
+\tdataFormat = PixelDataFormatFromInternalFormat(internalFormat);
+#ifdef DARKWOLF_ANDROID_GLES
+\t{{
+\t\tint storageLevels = 1;
+\t\tint storageWidth = width;
+\t\tint storageHeight = height;
+
+\t\tif (mipmap)
+\t\t{{
+\t\t\twhile (storageWidth > 1 || storageHeight > 1)
+\t\t\t{{
+\t\t\t\tstorageWidth = MAX(1, storageWidth >> 1);
+\t\t\t\tstorageHeight = MAX(1, storageHeight >> 1);
+\t\t\t\tstorageLevels++;
+\t\t\t}}
+\t\t}}
+
+\t\t/*
+\t\t * {MARKER}: GLES3 immutable storage is the correct allocation primitive.
+\t\t * It accepts sized color/float/depth/compressed internal formats without
+\t\t * inventing an external format/type pair. The existing upload path then
+\t\t * uses TexSubImage2D/CompressedTexSubImage2D against valid storage.
+\t\t */
+\t\tGL_BindMultiTexture(GL_TEXTURE0, textureTarget, image->texnum);
+\t\tglTexStorage2D(textureTarget, storageLevels, internalFormat, width, height);
+\t\tGL_CheckErrors();
+\t}}
+#else
+\tmipWidth = width;
+\tmipHeight = height;
+\tmiplevel = 0;
+\tdo
+\t{{
+\t\tlastMip = !mipmap || (mipWidth == 1 && mipHeight == 1);
+\t\tif (cubemap)
+\t\t{{
+\t\t\tint i;
+
+\t\t\tfor (i = 0; i < 6; i++)
+\t\t\t\tqglTextureImage2DEXT(image->texnum, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, miplevel, internalFormat, mipWidth, mipHeight, 0, dataFormat, GL_UNSIGNED_BYTE, NULL);
+\t\t}}
+\t\telse
+\t\t{{
+\t\t\tqglTextureImage2DEXT(image->texnum, GL_TEXTURE_2D, miplevel, internalFormat, mipWidth, mipHeight, 0, dataFormat, GL_UNSIGNED_BYTE, NULL);
+\t\t}}
+
+\t\tmipWidth  = MAX(1, mipWidth >> 1);
+\t\tmipHeight = MAX(1, mipHeight >> 1);
+\t\tmiplevel++;
+\t}}
+\twhile (!lastMip);
+#endif
+'''
+    s = replace_once(s, alloc_anchor, alloc_new, "tr_image GLES3 immutable texture storage")
+    path.write_text(s)
+
 def patch_backend(path: Path) -> None:
     s = path.read_text()
     old = '''qglDisable( GL_FOG );'''
@@ -354,6 +518,7 @@ def main(root: Path) -> None:
     patch_qgl(sp / "rend2" / "qgl.h")
     patch_glimp(sp / "sdl" / "sdl_glimp.c")
     patch_glsl(sp / "rend2" / "tr_glsl.c")
+    patch_tr_image(sp / "rend2" / "tr_image.c")
     patch_backend(sp / "rend2" / "tr_backend.c")
     patch_tr_extensions(sp / "rend2" / "tr_extensions.c")
     print(f"{MARKER}: patched Android GLES3 bring-up layer")
