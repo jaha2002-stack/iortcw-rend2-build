@@ -37,7 +37,8 @@ adb exec-out screencap -p > "$OUT/bootstrap-frame.png" || true
 adb shell dumpsys package "$PKG" > "$OUT/package.txt" || true
 adb shell pidof "$PKG" > "$OUT/pid.txt" || true
 
-grep -E 'DarkWolfRTCW|A5_HOME=|A5_RETAIL_BASE=|A5_RETAIL_MAIN=|SDL|UnsatisfiedLinkError|dlopen failed|Fatal signal|FATAL EXCEPTION|FS_Startup|pak0|Couldn't load|couldn.t load'   "$OUT/logcat.txt" > "$OUT/high-signal-log.txt" || true
+grep -E "DarkWolfRTCW|A5_HOME=|A5_RETAIL_BASE=|A5_RETAIL_MAIN=|SDL|UnsatisfiedLinkError|dlopen failed|Fatal signal|FATAL EXCEPTION|FS_Startup|pak0|Couldn.t load|couldn.t load" \
+  "$OUT/logcat.txt" > "$OUT/high-signal-log.txt" || true
 
 grep -Fq 'A5_HOME=' "$OUT/high-signal-log.txt"
 grep -Fq 'A5_RETAIL_BASE=' "$OUT/high-signal-log.txt"
