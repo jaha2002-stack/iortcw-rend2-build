@@ -213,7 +213,13 @@ public final class DarkWolfActivity extends SDLActivity {
         return new String[] {
                 "+set", "fs_basepath", retailRoot.getAbsolutePath(),
                 "+set", "fs_homepath", homeRoot.getAbsolutePath(),
-                "+set", "fs_game", ""
+                "+set", "fs_game", "",
+                "+set", "com_introplayed", "1",
+                "+set", "r_fullscreen", "0",
+                "+set", "r_mode", "-1",
+                "+set", "r_customwidth", "640",
+                "+set", "r_customheight", "360",
+                "+spdevmap", "escape1"
         };
     }
 }
