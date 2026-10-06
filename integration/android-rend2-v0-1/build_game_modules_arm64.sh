@@ -12,7 +12,7 @@ rm -rf "$OUT"
 mkdir -p "$OUT"/{cgame,qagame,ui,bin,log}
 trap 'rc=$?; echo "GAME_MODULE_BUILD_FAILED=$rc"; for f in "$OUT"/log/*.log; do [ -f "$f" ] || continue; echo "===== $f ====="; tail -n 160 "$f"; done; exit $rc' ERR
 
-COMMON=(-std=gnu11 -fPIC -O2 -fno-strict-aliasing -fsigned-char -D__ANDROID__ -DANDROID -DARM64 -I"$SOURCE_DIR/SP/code")
+COMMON=(-std=gnu11 -fPIC -O2 -fno-strict-aliasing -fsigned-char -D__ANDROID__ -DANDROID -DARM64 -DARCH_STRING=\"arm64\" -I"$SOURCE_DIR/SP/code")
 QCOMMON=(SP/code/qcommon/q_math.c SP/code/qcommon/q_shared.c)
 BG_CGAME=(SP/code/game/bg_animation.c SP/code/game/bg_misc.c SP/code/game/bg_pmove.c SP/code/game/bg_slidemove.c SP/code/game/bg_lib.c)
 BG_UI=(SP/code/game/bg_misc.c SP/code/game/bg_lib.c)
