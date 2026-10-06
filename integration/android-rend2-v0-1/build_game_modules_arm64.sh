@@ -10,6 +10,7 @@ CC="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${A
 OUT="$WORKDIR/game-modules"
 rm -rf "$OUT"
 mkdir -p "$OUT"/{cgame,qagame,ui,bin,log}
+trap 'rc=$?; echo "GAME_MODULE_BUILD_FAILED=$rc"; for f in "$OUT"/log/*.log; do [ -f "$f" ] || continue; echo "===== $f ====="; tail -n 160 "$f"; done; exit $rc' ERR
 
 COMMON=(-std=gnu11 -fPIC -O2 -fno-strict-aliasing -fsigned-char -D__ANDROID__ -DANDROID -DARM64 -I"$SOURCE_DIR/SP/code")
 QCOMMON=(SP/code/qcommon/q_math.c SP/code/qcommon/q_shared.c)
