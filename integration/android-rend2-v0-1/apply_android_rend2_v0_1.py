@@ -323,59 +323,39 @@ def patch_glsl(path: Path) -> None:
 def patch_gles_shader_literals(path: Path) -> None:
     s = path.read_text()
 
-    old = '''\t// a negative frequency is for Z deformation based on normal
-\tfloat zDeformScale = 0;
-\tif (frequency < 0)
-\t{
-\t\tzDeformScale = 1;
-\t\tfrequency *= -1;
+    # GLSL ES 3.x (notably Qualcomm Adreno) rejects implicit int -> float
+    # conversions that desktop GLSL drivers commonly accept. Keep this patch
+    # idempotent because reconstructed v4.4.6 may already contain some fixes.
+    replacements = (
+        ("float zDeformScale = 0;", "float zDeformScale = 0.0;"),
+        ("if (frequency < 0)", "if (frequency < 0.0)"),
+        ("zDeformScale = 1;", "zDeformScale = 1.0;"),
+        ("frequency *= -1;", "frequency *= -1.0;"),
+        ("if (frequency > 999)", "if (frequency > 999.0)"),
+        ("frequency -= 999;", "frequency -= 999.0;"),
+        ("zDeformScale = -1;", "zDeformScale = -1.0;"),
+        ("if (zDeformScale != 0)", "if (zDeformScale != 0.0)"),
+        ("if (nDot * scale > 0)", "if (nDot * scale > 0.0)"),
+        ("color.a = 0;", "color.a = 0.0;"),
+    )
+    for old, new in replacements:
+        s = s.replace(old, new)
 
-\t\tif (frequency > 999)
-\t\t{
-\t\t\tfrequency -= 999;
-\t\t\tzDeformScale = -1;
-\t\t}
-\t}
-'''
-    new = f'''\t// a negative frequency is for Z deformation based on normal
-\t// {MARKER}: GLSL ES 3.x does not permit implicit int -> float conversion.
-\tfloat zDeformScale = 0.0;
-\tif (frequency < 0.0)
-\t{{
-\t\tzDeformScale = 1.0;
-\t\tfrequency *= -1.0;
-
-\t\tif (frequency > 999.0)
-\t\t{{
-\t\t\tfrequency -= 999.0;
-\t\t\tzDeformScale = -1.0;
-\t\t}}
-\t}}
-'''
-    s = replace_once(s, old, new, "generic_vp strict float literals")
-
-    old = '''\tif (zDeformScale != 0)
-\t{
-'''
-    new = '''\tif (zDeformScale != 0.0)
-\t{
-'''
-    s = replace_once(s, old, new, "generic_vp zDeformScale compare")
-
-    old = '''\t\tif (nDot * scale > 0)
-\t\t{
-'''
-    new = '''\t\tif (nDot * scale > 0.0)
-\t\t{
-'''
-    s = replace_once(s, old, new, "generic_vp deform scale compare")
-
-    zero_alpha = "\\t\\t\\tcolor.a = 0;\\n"
-    zero_alpha_fixed = "\\t\\t\\tcolor.a = 0.0;\\n"
-    count = s.count(zero_alpha)
-    if count != 2:
-        raise SystemExit(f"generic_vp expected 2 integer alpha zero assignments, found {count}")
-    s = s.replace(zero_alpha, zero_alpha_fixed)
+    forbidden = (
+        "float zDeformScale = 0;",
+        "if (frequency < 0)",
+        "zDeformScale = 1;",
+        "frequency *= -1;",
+        "if (frequency > 999)",
+        "frequency -= 999;",
+        "zDeformScale = -1;",
+        "if (zDeformScale != 0)",
+        "if (nDot * scale > 0)",
+        "color.a = 0;",
+    )
+    remaining = [token for token in forbidden if token in s]
+    if remaining:
+        raise SystemExit("generic_vp strict-float rewrite incomplete: " + ", ".join(remaining))
 
     path.write_text(s)
 
