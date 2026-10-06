@@ -115,6 +115,225 @@ android {
 }
 EOF
 
+cat > "$PROJECT/app/src/main/java/org/darkwolf/rend2/LauncherActivity.java" <<'EOF'
+package org.darkwolf.rend2;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.ContentResolver;
+import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
+import android.os.Bundle;
+import android.provider.DocumentsContract;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
+
+public final class LauncherActivity extends Activity {
+    private static final int PICK_RTCW_FOLDER = 4242;
+    private static final String[] REQUIRED = {
+            "pak0.pk3",
+            "sp_pak1.pk3",
+            "sp_pak2.pk3",
+            "sp_pak3.pk3",
+            "sp_pak4.pk3",
+            "sp_rend2_shaders0.pk3"
+    };
+
+    private File retailMain;
+
+    @Override
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        File external = getExternalFilesDir(null);
+        File root = external != null
+                ? new File(external, "DarkWolfRTCW")
+                : new File(getFilesDir(), "DarkWolfRTCW");
+        retailMain = new File(root, "main");
+        if (!retailMain.mkdirs() && !retailMain.isDirectory()) {
+            showFatal("Cannot create game data directory:\n" + retailMain);
+            return;
+        }
+
+        if (hasRequiredData()) {
+            launchGame();
+            return;
+        }
+
+        showImporter();
+    }
+
+    private void showImporter() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        int pad = (int)(24 * getResources().getDisplayMetrics().density);
+        box.setPadding(pad, pad, pad, pad);
+
+        TextView text = new TextView(this);
+        text.setText(
+                "DarkWolf RTCW Rend2\n\n" +
+                "Game data is required before first launch.\n" +
+                "Tap the button and select the folder containing:\n\n" +
+                "pak0.pk3\nsp_pak1.pk3\nsp_pak2.pk3\nsp_pak3.pk3\n" +
+                "sp_pak4.pk3\nsp_rend2_shaders0.pk3\n\n" +
+                "The files will be copied into the app's private game directory."
+        );
+        text.setTextSize(18f);
+
+        Button button = new Button(this);
+        button.setText("SELECT RTCW PK3 FOLDER");
+        button.setOnClickListener(v -> openFolderPicker());
+
+        box.addView(text);
+        box.addView(button);
+        setContentView(box);
+    }
+
+    private void openFolderPicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, PICK_RTCW_FOLDER);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != PICK_RTCW_FOLDER || resultCode != RESULT_OK || data == null) {
+            return;
+        }
+
+        Uri tree = data.getData();
+        if (tree == null) {
+            showFatal("No folder was selected.");
+            return;
+        }
+
+        try {
+            getContentResolver().takePersistableUriPermission(
+                    tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (SecurityException ignored) {
+        }
+
+        try {
+            importRequiredFiles(tree);
+        } catch (Exception e) {
+            showFatal("Failed to import RTCW data:\n" + e.getMessage());
+            return;
+        }
+
+        if (!hasRequiredData()) {
+            showFatal(
+                    "The selected folder does not contain the complete RTCW data set.\n\n" +
+                    "Required: pak0.pk3, sp_pak1.pk3, sp_pak2.pk3, sp_pak3.pk3, " +
+                    "sp_pak4.pk3, sp_rend2_shaders0.pk3"
+            );
+            return;
+        }
+
+        launchGame();
+    }
+
+    private void importRequiredFiles(Uri tree) throws IOException {
+        ContentResolver resolver = getContentResolver();
+        String treeId = DocumentsContract.getTreeDocumentId(tree);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, treeId);
+        Map<String, Uri> found = new HashMap<>();
+
+        try (Cursor cursor = resolver.query(
+                children,
+                new String[] {
+                        DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME
+                },
+                null, null, null)) {
+            if (cursor == null) {
+                throw new IOException("Cannot read selected folder.");
+            }
+
+            int idCol = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+            int nameCol = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+
+            while (cursor.moveToNext()) {
+                String name = cursor.getString(nameCol);
+                String docId = cursor.getString(idCol);
+                if (name != null && docId != null) {
+                    found.put(name.toLowerCase(Locale.ROOT),
+                            DocumentsContract.buildDocumentUriUsingTree(tree, docId));
+                }
+            }
+        }
+
+        byte[] buffer = new byte[256 * 1024];
+        for (String required : REQUIRED) {
+            Uri source = found.get(required.toLowerCase(Locale.ROOT));
+            if (source == null) {
+                continue;
+            }
+
+            File target = new File(retailMain, required);
+            File temp = new File(retailMain, required + ".importing");
+            try (InputStream in = resolver.openInputStream(source);
+                 FileOutputStream out = new FileOutputStream(temp, false)) {
+                if (in == null) {
+                    throw new IOException("Cannot open " + required);
+                }
+                int count;
+                while ((count = in.read(buffer)) > 0) {
+                    out.write(buffer, 0, count);
+                }
+                out.getFD().sync();
+            }
+
+            if (target.exists() && !target.delete()) {
+                throw new IOException("Cannot replace " + required);
+            }
+            if (!temp.renameTo(target)) {
+                throw new IOException("Cannot install " + required);
+            }
+        }
+    }
+
+    private boolean hasRequiredData() {
+        for (String name : REQUIRED) {
+            File file = new File(retailMain, name);
+            if (!file.isFile() || file.length() <= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void launchGame() {
+        Intent intent = new Intent(this, DarkWolfActivity.class);
+        startActivity(intent);
+        finish();
+    }
+
+    private void showFatal(String message) {
+        new AlertDialog.Builder(this)
+                .setTitle("DarkWolf RTCW Rend2")
+                .setMessage(message)
+                .setPositiveButton("OK", null)
+                .show();
+    }
+}
+EOF
+
 cat > "$PROJECT/app/src/main/java/org/darkwolf/rend2/DarkWolfActivity.java" <<'EOF'
 package org.darkwolf.rend2;
 
@@ -213,7 +432,11 @@ public final class DarkWolfActivity extends SDLActivity {
         return new String[] {
                 "+set", "fs_basepath", retailRoot.getAbsolutePath(),
                 "+set", "fs_homepath", homeRoot.getAbsolutePath(),
-                "+set", "fs_game", ""
+                "+set", "fs_game", "",
+                "+set", "com_introplayed", "1",
+                "+set", "r_ext_texture_filter_anisotropic", "0",
+                "+set", "r_fullscreen", "0",
+                "+spdevmap", "escape1"
         };
     }
 }
@@ -238,6 +461,17 @@ cat > "$PROJECT/app/src/main/AndroidManifest.xml" <<'EOF'
         android:largeHeap="true"
         android:theme="@style/AppTheme">
         <activity
+            android:name="org.darkwolf.rend2.LauncherActivity"
+            android:label="DarkWolf RTCW Rend2"
+            android:screenOrientation="sensorLandscape"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
             android:name="org.darkwolf.rend2.DarkWolfActivity"
             android:label="DarkWolf RTCW Rend2"
             android:alwaysRetainTaskState="true"
@@ -245,12 +479,7 @@ cat > "$PROJECT/app/src/main/AndroidManifest.xml" <<'EOF'
             android:screenOrientation="sensorLandscape"
             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:preferMinimalPostProcessing="true"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:exported="false" />
     </application>
 </manifest>
 EOF
@@ -318,7 +547,10 @@ GLES_REQUIRED=3.0
 SDL_MAIN_EXPORT=PASS
 REND2_NATIVE_RUNTIME=PACKAGED
 NATIVE_GAME_MODULES=PACKAGED_AS_A5_ASSETS
-A5_ACTIVITY=org.darkwolf.rend2.DarkWolfActivity
+A5_ACTIVITY=org.darkwolf.rend2.LauncherActivity
+A5_GAME_ACTIVITY=org.darkwolf.rend2.DarkWolfActivity
+PHONE_FIRST_DATA_IMPORTER=SAF_DOCUMENT_TREE
+PHONE_FIRST_AUTO_MAP=escape1
 A5_BASEGAME_CASE=main
 A5_FS_BASEPATH=APP_SCOPED_EXTERNAL_DARKWOLF_ROOT
 A5_FS_HOMEPATH=APP_PRIVATE_DARKWOLF_ROOT
