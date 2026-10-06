@@ -96,6 +96,14 @@ typedef double GLclampd;
 #ifndef GL_EXP
 # define GL_EXP 0x0800
 #endif
+#ifndef GL_DEPTH_TEXTURE_MODE
+/* Legacy desktop token, referenced only by the renderer's < GL3 fallback. */
+# define GL_DEPTH_TEXTURE_MODE 0x884B
+#endif
+#ifndef GL_COMPARE_R_TO_TEXTURE
+/* GLES3 renamed the desktop comparison mode token. */
+# define GL_COMPARE_R_TO_TEXTURE GL_COMPARE_REF_TO_TEXTURE
+#endif
 #ifndef GL_RGBA16
 # define GL_RGBA16 0x805B
 #endif
