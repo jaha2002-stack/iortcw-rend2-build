@@ -108,6 +108,49 @@ jobs:
           chmod +x integration/android-rend2-v0-1/build_android_apk_bootstrap.sh
           integration/android-rend2-v0-1/build_android_apk_bootstrap.sh
 
+      - name: "Install Android x86_64 emulator image"
+        id: emulator_sdk
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
+          echo no | avdmanager create avd -n darkwolf-a6 -k "system-images;android-35;google_apis;x86_64" --force
+
+      - name: "Build A6 CI-only x86_64 runtime and APK"
+        id: a6_x86_build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export PATH="$ANDROID_HOME/build-tools/35.0.0:$ANDROID_HOME/platform-tools:$PATH"
+          chmod +x integration/android-rend2-v0-1/build_game_modules_x86_64.sh
+          chmod +x integration/android-rend2-v0-1/build_native_runtime_x86_64.sh
+          chmod +x integration/android-rend2-v0-1/build_android_apk_x86_64_ci.sh
+          integration/android-rend2-v0-1/build_game_modules_x86_64.sh
+          integration/android-rend2-v0-1/build_native_runtime_x86_64.sh
+          integration/android-rend2-v0-1/build_android_apk_x86_64_ci.sh
+
+      - name: "Run A6 CI emulator bootstrap smoke"
+        id: a6_emulator
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          sudo chmod 666 /dev/kvm || true
+          nohup emulator -avd darkwolf-a6 -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > .android-rend2-work/a6-emulator-console.log 2>&1 &
+          adb wait-for-device
+          for i in $(seq 1 120); do
+            boot="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+            [ "$boot" = "1" ] && break
+            sleep 2
+          done
+          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+          chmod +x integration/android-rend2-v0-1/run_a6_ci_emulator_bootstrap.sh
+          integration/android-rend2-v0-1/run_a6_ci_emulator_bootstrap.sh             .android-rend2-work/android-apk/dist/DarkWolf-ioRTCW-Rend2-Android-v0.1-X86_64-CI-Debug.apk
+
       - name: "Upload probe evidence"
         if: always()
         uses: actions/upload-artifact@v4
@@ -135,6 +178,10 @@ jobs:
             .android-rend2-work/android-apk/apksigner.txt
             .android-rend2-work/android-apk/dist/*.apk
             .android-rend2-work/android-apk/dist/*.sha256
+            .android-rend2-work/game-modules-x86_64/bin/*.so
+            .android-rend2-work/native-runtime-x86_64/bin/*.so
+            .android-rend2-work/a6-ci-emulator/**
+            .android-rend2-work/a6-emulator-console.log
           if-no-files-found: warn
           retention-days: 30
 
@@ -149,3 +196,6 @@ jobs:
           test "${{ steps.game_modules.outcome }}" = "success"
           test "${{ steps.native_runtime.outcome }}" = "success"
           test "${{ steps.apk_bootstrap.outcome }}" = "success"
+          test "${{ steps.emulator_sdk.outcome }}" = "success"
+          test "${{ steps.a6_x86_build.outcome }}" = "success"
+          test "${{ steps.a6_emulator.outcome }}" = "success"
