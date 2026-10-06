@@ -18,7 +18,7 @@ rm -rf "$OUT"
 mkdir -p "$OBJ" "$LOG"
 
 COMMON=(
-  -std=gnu11 -fPIC -O0 -fno-strict-aliasing -fsigned-char
+  -std=gnu11 -fPIC -O0 -fno-strict-aliasing -fsigned-char -ferror-limit=0
   -D__ANDROID__ -DANDROID -DARM64
   -DUSE_LOCAL_HEADERS -DUSE_OPENGLES -DDARKWOLF_ANDROID_GLES
   -DNO_VM_COMPILED
@@ -33,7 +33,7 @@ COMMON=(
 mapfile -t FILES < <(
   {
     find "$SOURCE_DIR/SP/code/rend2" -maxdepth 1 -type f -name '*.c' -printf '%P\n' | sort | sed 's#^#SP/code/rend2/#'
-    printf '%s\n' "SP/code/sdl/sdl_glimp.c" "SP/code/renderer/sdl_gamma.c"
+    printf '%s\n' "SP/code/sdl/sdl_glimp.c"
   }
 )
 
