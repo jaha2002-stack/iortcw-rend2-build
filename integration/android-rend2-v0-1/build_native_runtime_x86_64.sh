@@ -85,6 +85,8 @@ ENGINE=(
   SP/code/server/sv_net_chan.c SP/code/server/sv_snapshot.c SP/code/server/sv_world.c
   SP/code/sdl/sdl_input.c SP/code/sdl/sdl_snd.c
   SP/code/sys/con_log.c SP/code/sys/con_passive.c SP/code/sys/sys_main.c SP/code/sys/sys_unix.c
+  # Upstream x86_64 Q3OBJ helpers required by q_math/vm conversion paths.
+  SP/code/asm/ftola.c SP/code/asm/snapvector.c
 )
 
 REND2=(
