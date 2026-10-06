@@ -243,10 +243,9 @@ def patch_glsl(path: Path) -> None:
 
 def patch_backend(path: Path) -> None:
     s = path.read_text()
-    old = '''\tqglDisable( GL_FOG ); //----(SA)        added
-'''
+    old = '''qglDisable( GL_FOG );'''
     new = f'''#ifndef DARKWOLF_ANDROID_GLES
-\tqglDisable( GL_FOG ); //----(SA)        added
+qglDisable( GL_FOG );
 #else
 \t/* {MARKER}: fixed-function fog state does not exist in GLES3. */
 #endif
