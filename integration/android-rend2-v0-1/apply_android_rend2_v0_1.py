@@ -558,14 +558,28 @@ def patch_depth_texture_mode(path: Path) -> None:
 
 def patch_backend(path: Path) -> None:
     s = path.read_text()
-    old = '''qglDisable( GL_FOG );'''
-    new = f'''#ifndef DARKWOLF_ANDROID_GLES
-qglDisable( GL_FOG );
-#else
-\t/* {MARKER}: fixed-function fog state does not exist in GLES3. */
-#endif
-'''
-    s = replace_once(s, old, new, "backend fixed-function fog")
+
+    # v4.4.6 contains more than one inherited fixed-function fog disable,
+    # including a legacy Wolf path with an inline //----(SA) comment.
+    # GLES3 has no GL_FOG token, so guard every occurrence.
+    import re
+    pattern = re.compile(r'(?m)^(?P<indent>[ \\t]*)qglDisable\\( GL_FOG \\);(?P<comment>[^\\n]*)$')
+    matches = list(pattern.finditer(s))
+    if not matches:
+        raise SystemExit("backend fixed-function fog: no GL_FOG disable sites found")
+
+    def repl(m):
+        indent = m.group("indent")
+        comment = m.group("comment")
+        return (
+            f"{indent}#ifndef DARKWOLF_ANDROID_GLES\\n"
+            f"{indent}qglDisable( GL_FOG );{comment}\\n"
+            f"{indent}#else\\n"
+            f"{indent}/* {MARKER}: fixed-function fog state does not exist in GLES3. */\\n"
+            f"{indent}#endif"
+        )
+
+    s = pattern.sub(repl, s)
     path.write_text(s)
 
 def patch_tr_extensions(path: Path) -> None:
