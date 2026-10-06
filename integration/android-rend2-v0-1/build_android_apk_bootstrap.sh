@@ -167,7 +167,7 @@ public final class LauncherActivity extends Activity {
         }
 
         if (hasRequiredData()) {
-            launchGame();
+            showReady();
             return;
         }
 
@@ -248,7 +248,44 @@ public final class LauncherActivity extends Activity {
             return;
         }
 
-        launchGame();
+        showReady();
+    }
+
+    private void showReady() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        int pad = (int)(24 * getResources().getDisplayMetrics().density);
+        box.setPadding(pad, pad, pad, pad);
+
+        TextView text = new TextView(this);
+        text.setText(
+                "DarkWolf RTCW Rend2\n\n" +
+                "RTCW game data: READY\n" +
+                "Runtime mode: QVM bytecode\n" +
+                "Test map: escape1\n\n" +
+                "Tap START GAME. If the game closes or remains black, reopen this launcher " +
+                "and tap SHOW LAST STARTUP LOG."
+        );
+        text.setTextSize(18f);
+
+        Button startButton = new Button(this);
+        startButton.setText("START GAME");
+        startButton.setOnClickListener(v -> launchGame());
+
+        Button importButton = new Button(this);
+        importButton.setText("REIMPORT RTCW PK3 FOLDER");
+        importButton.setOnClickListener(v -> openFolderPicker());
+
+        Button logButton = new Button(this);
+        logButton.setText("SHOW LAST STARTUP LOG");
+        logButton.setOnClickListener(v -> showLastLog());
+
+        box.addView(text);
+        box.addView(startButton);
+        box.addView(importButton);
+        box.addView(logButton);
+        setContentView(box);
     }
 
     private void importRequiredFiles(Uri tree) throws IOException {
@@ -590,6 +627,7 @@ PHONE_FIRST_VM_CGAME=1
 PHONE_FIRST_VM_GAME=1
 PHONE_FIRST_VM_UI=1
 PHONE_FIRST_LOGFILE=2
+PHONE_FIRST_READY_SCREEN=START_GAME_REIMPORT_LOG
 A5_BASEGAME_CASE=main
 A5_FS_BASEPATH=APP_SCOPED_EXTERNAL_DARKWOLF_ROOT
 A5_FS_HOMEPATH=APP_PRIVATE_DARKWOLF_ROOT
