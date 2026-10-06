@@ -10,6 +10,8 @@ trscene=root/"SP/code/rend2/tr_scene.c"
 svmain=root/"SP/code/server/sv_main.c"
 uimain=root/"SP/code/ui/ui_main.c"
 cgview=root/"SP/code/cgame/cg_view.c"
+cginfo=root/"SP/code/cgame/cg_info.c"
+cgserver=root/"SP/code/cgame/cg_servercmds.c"
 
 def once(s,a,b,label):
     n=s.count(a)
@@ -236,4 +238,53 @@ new="""\tif ( cg.infoScreenText[0] != 0 ) {
 """
 s=once(s,old,new,"cgame infoScreen bypass")
 cgview.write_text(s)
+
+# Reuse the already proven DarkWolf TestLab SP gameplay-start path used by Sun Performance.
+s=cginfo.read_text()
+old="""\t\ttrap_UI_Popup( "briefing" );
+
+\t\t//trap_UpdateScreen();"""
+new="""\t\t{
+\t\t\tchar testlabAutomation[16];
+\t\t\ttrap_Cvar_VariableStringBuffer( "dw_testAutomation", testlabAutomation, sizeof(testlabAutomation) );
+\t\t\tif ( !atoi( testlabAutomation ) ) {
+\t\t\t\ttrap_UI_Popup( "briefing" );
+\t\t\t} else {
+\t\t\t\tCG_Printf( "TESTLAB_BRIEFING_BYPASS active=1\\n" );
+\t\t\t}
+\t\t}
+
+\t\t//trap_UpdateScreen();"""
+s=once(s,old,new,"proven briefing bypass")
+cginfo.write_text(s)
+
+s=cgserver.read_text()
+old="""\tif ( !strcmp( cmd, "rockandroll" ) ) {   // map loaded, game is ready to begin.
+\t\tCG_Fade( 0, 0, 0, 255, cg.time, 0 );      // go black
+\t\ttrap_UI_Popup( "pregame" );                // start pregame menu
+\t\ttrap_Cvar_Set( "cg_norender", "1" );    // don't render the world until the player clicks in and the 'playerstart' func has been called (g_main in G_UpdateCvars() ~ilne 949)
+
+\t\ttrap_S_FadeAllSound( 1.0f, 1000 );    // fade sound up
+
+\t\treturn;
+\t}"""
+new="""\tif ( !strcmp( cmd, "rockandroll" ) ) {   // map loaded, game is ready to begin.
+\t\tchar testlabAutomation[16];
+\t\ttrap_Cvar_VariableStringBuffer( "dw_testAutomation", testlabAutomation, sizeof(testlabAutomation) );
+\t\tif ( atoi( testlabAutomation ) ) {
+\t\t\tCG_Fade( 0, 0, 0, 0, cg.time, 0 );
+\t\t\ttrap_Cvar_Set( "g_playerstart", "1" );
+\t\t\ttrap_S_FadeAllSound( 1.0f, 1000 );
+\t\t\tCG_Printf( "TESTLAB_GAMEPLAY_START requested=1\\n" );
+\t\t\treturn;
+\t\t}
+\t\tCG_Fade( 0, 0, 0, 255, cg.time, 0 );
+\t\ttrap_UI_Popup( "pregame" );
+\t\ttrap_Cvar_Set( "cg_norender", "1" );
+\t\ttrap_S_FadeAllSound( 1.0f, 1000 );
+\t\treturn;
+\t}"""
+s=once(s,old,new,"proven automatic gameplay start")
+cgserver.write_text(s)
+
 print("instrumented explosion/spotlight proof v1")
