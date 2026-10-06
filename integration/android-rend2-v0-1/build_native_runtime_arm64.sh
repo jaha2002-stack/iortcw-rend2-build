@@ -60,7 +60,7 @@ CXXFLAGS=(
   -DUSE_LOCAL_HEADERS -DUSE_OPENGLES -DDARKWOLF_ANDROID_GLES
   -DARCH_STRING=\"arm64\" -DDLL_EXT=\".so\"
   -DPRODUCT_VERSION=\"DarkWolf-Android-TestLab-v0.1\"
-  -I"$SRC/SP/code" -I"$SDL/include"
+  -I"$SRC/SP/code" -I"$SRC/SP/code/qcommon" -I"$SRC/SP/code/splines" -I"$SDL/include"
 )
 
 ENGINE=(
