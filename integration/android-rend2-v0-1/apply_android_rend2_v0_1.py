@@ -21,12 +21,15 @@ def patch_qgl(path: Path) -> None:
 '''
     new = f'''/* {MARKER}: Android Rend2 uses GLES3 headers, never desktop GL headers. */
 #if defined(DARKWOLF_ANDROID_GLES)
-# ifdef USE_LOCAL_HEADERS
-#  include "SDL_opengles2.h"
-# else
-#  include <SDL_opengles2.h>
-# endif
-/* Types used by the shared qgl ABI but absent from GLES headers. */
+# include <GLES3/gl3.h>
+# include <GLES3/gl3ext.h>
+/* Keep the shared desktop/GLES qgl ABI source-compatible on Android. */
+#ifndef APIENTRY
+# define APIENTRY GL_APIENTRY
+#endif
+#ifndef APIENTRYP
+# define APIENTRYP GL_APIENTRYP
+#endif
 typedef double GLdouble;
 typedef double GLclampd;
 #else
@@ -166,7 +169,6 @@ def patch_glsl(path: Path) -> None:
 \t\tQ_strcat(dest, size, "out vec4 out_Color;\\n");
 \t\tQ_strcat(dest, size, "#define gl_FragColor out_Color\\n");
 \t\tQ_strcat(dest, size, "#define texture2D texture\\n");
-\t\tQ_strcat(dest, size, "#define textureCube texture\\n");
 \t\tQ_strcat(dest, size, "#define textureCubeLod textureLod\\n");
 \t\tQ_strcat(dest, size, "#define shadow2D(a,b) texture(a,b)\\n");
 \t}}
