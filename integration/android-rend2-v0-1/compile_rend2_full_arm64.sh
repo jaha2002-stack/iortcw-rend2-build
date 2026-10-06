@@ -33,7 +33,7 @@ COMMON=(
 mapfile -t FILES < <(
   {
     find "$SOURCE_DIR/SP/code/rend2" -maxdepth 1 -type f -name '*.c' -printf '%P\n' | sort | sed 's#^#SP/code/rend2/#'
-    printf '%s\n' "SP/code/sdl/sdl_glimp.c"
+    printf '%s\n' "SP/code/sdl/sdl_glimp.c" "SP/code/sdl/sdl_gamma.c"
   }
 )
 
