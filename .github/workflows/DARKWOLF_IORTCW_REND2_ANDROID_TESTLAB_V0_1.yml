@@ -275,6 +275,14 @@ jobs:
           grep -Eqi '(pak0|sp_pak0|sp_pak1)\.pk3' "$out/remote-main.txt"
 
           timeout 30s adb logcat -c
+
+          # Stream logcat continuously to the host before renderer startup so
+          # evidence survives even if the emulator process itself crashes.
+          ( adb logcat -v threadtime > "$out/logcat-stream.txt" 2>&1 ) &
+          logcat_pid=$!
+          echo "$logcat_pid" > "$out/logcat-stream.pid"
+          sleep 1
+
           echo "A6_1_APP_START_BEGIN"
           timeout 60s adb shell am start -W -n "$pkg/$activity" | tee "$out/am-start.txt"
           echo "A6_1_APP_START_END"
@@ -284,11 +292,17 @@ jobs:
             if ! kill -0 "$emu_pid" 2>/dev/null; then
               echo "ERROR: Android emulator process exited during A6.1 rendering" >&2
               tail -n 240 .android-rend2-work/a6-emulator-console.log >&2 || true
+              echo "==== A6.1 PRE-CRASH LOGCAT ====" >&2
+              tail -n 400 "$out/logcat-stream.txt" >&2 || true
+              kill "$logcat_pid" 2>/dev/null || true
               exit 1
             fi
             if ! timeout 5s adb get-state >/dev/null 2>&1; then
               echo "ERROR: Android emulator lost adb during A6.1 rendering" >&2
               tail -n 240 .android-rend2-work/a6-emulator-console.log >&2 || true
+              echo "==== A6.1 PRE-CRASH LOGCAT ====" >&2
+              tail -n 400 "$out/logcat-stream.txt" >&2 || true
+              kill "$logcat_pid" 2>/dev/null || true
               exit 1
             fi
             timeout 10s adb logcat -d -v threadtime > "$out/logcat.txt" || true
@@ -301,6 +315,9 @@ jobs:
             sleep 2
           done
 
+          kill "$logcat_pid" 2>/dev/null || true
+          wait "$logcat_pid" 2>/dev/null || true
+          cp "$out/logcat-stream.txt" "$out/logcat-full.txt" || true
           adb exec-out screencap -p > "$out/first-frame.png" || true
           adb shell pidof "$pkg" > "$out/pid.txt" || true
 
