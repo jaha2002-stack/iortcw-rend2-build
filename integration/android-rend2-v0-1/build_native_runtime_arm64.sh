@@ -15,6 +15,7 @@ SDL_SHA="4c2d9014afda49553c76f7045529207bb593f9b5"
 
 rm -rf "$OUT"
 mkdir -p "$OUT"/{obj,gen,log,bin}
+trap 'rc=$?; echo "NATIVE_RUNTIME_BUILD_FAILED=$rc"; for f in "$OUT"/log/*.log; do [ -f "$f" ] || continue; echo "===== $f ====="; tail -n 200 "$f"; done; exit $rc' ERR
 
 if [ ! -d "$SDL/.git" ]; then
   git clone -q https://github.com/libsdl-org/SDL.git "$SDL"
