@@ -6,6 +6,7 @@ WORKDIR="${1:-$ROOT/.android-rend2-work}"
 SDL="$WORKDIR/SDL2"
 RUNTIME="$WORKDIR/native-runtime"
 MODULES="$WORKDIR/game-modules"
+QVMS="$WORKDIR/game-qvms"
 OUT="$WORKDIR/android-apk"
 PROJECT="$OUT/project"
 DIST="$OUT/dist"
@@ -18,6 +19,9 @@ test -s "$RUNTIME/bin/libSDL2.so"
 test -s "$MODULES/bin/cgame.sp.arm64.so"
 test -s "$MODULES/bin/qagame.sp.arm64.so"
 test -s "$MODULES/bin/ui.sp.arm64.so"
+test -s "$QVMS/bin/ui.sp.qvm"
+test -s "$QVMS/bin/cgame.sp.qvm"
+test -s "$QVMS/bin/qagame.sp.qvm"
 test -d "$SDL/android-project"
 
 # Do not use grep -q here under pipefail: llvm-nm can see SIGPIPE and return 74.
@@ -446,6 +450,18 @@ public final class DarkWolfActivity extends SDLActivity {
                     new File(homeMain, "qagame.sp.arm64.so"));
             copyAsset("darkwolf-runtime/main/ui.sp.arm64.so",
                     new File(homeMain, "ui.sp.arm64.so"));
+
+            File vmDir = new File(retailMain, "vm");
+            if (!vmDir.mkdirs() && !vmDir.isDirectory()) {
+                throw new IOException("Cannot create " + vmDir);
+            }
+            copyAsset("darkwolf-runtime/main/vm/ui.sp.qvm",
+                    new File(vmDir, "ui.sp.qvm"));
+            copyAsset("darkwolf-runtime/main/vm/cgame.sp.qvm",
+                    new File(vmDir, "cgame.sp.qvm"));
+            copyAsset("darkwolf-runtime/main/vm/qagame.sp.qvm",
+                    new File(vmDir, "qagame.sp.qvm"));
+            Log.i(TAG, "A6_QVM_DIR=" + vmDir.getAbsolutePath());
             writeInstallHint(retailRoot, retailMain);
         } catch (IOException e) {
             throw new IllegalStateException("DarkWolf Android filesystem bootstrap failed", e);
@@ -565,6 +581,10 @@ cp "$CXX_SHARED" "$PROJECT/app/src/main/jniLibs/arm64-v8a/libc++_shared.so"
 cp "$MODULES/bin/cgame.sp.arm64.so" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/"
 cp "$MODULES/bin/qagame.sp.arm64.so" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/"
 cp "$MODULES/bin/ui.sp.arm64.so" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/"
+mkdir -p "$PROJECT/app/src/main/assets/darkwolf-runtime/main/vm"
+cp "$QVMS/bin/ui.sp.qvm" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/vm/"
+cp "$QVMS/bin/cgame.sp.qvm" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/vm/"
+cp "$QVMS/bin/qagame.sp.qvm" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/vm/"
 
 cat > "$PROJECT/app/src/main/assets/darkwolf-runtime/PROVENANCE.txt" <<EOF
 BASE_RUN_ID=37266797451
@@ -576,6 +596,9 @@ RENDERER=Rend2
 GPU_API=OpenGL_ES_3.x
 A3_NATIVE_RUNTIME_SHA256=$(sha256sum "$RUNTIME/bin/libmain.so" | awk '{print $1}')
 A3_SDL2_SHA256=$(sha256sum "$RUNTIME/bin/libSDL2.so" | awk '{print $1}')
+A6_QVM_UI_SHA256=$(sha256sum "$QVMS/bin/ui.sp.qvm" | awk '{print $1}')
+A6_QVM_CGAME_SHA256=$(sha256sum "$QVMS/bin/cgame.sp.qvm" | awk '{print $1}')
+A6_QVM_QAGAME_SHA256=$(sha256sum "$QVMS/bin/qagame.sp.qvm" | awk '{print $1}')
 EOF
 
 (
@@ -594,6 +617,9 @@ grep -F 'lib/arm64-v8a/libc++_shared.so' "$OUT/apk-contents.txt" >/dev/null
 grep -F 'assets/darkwolf-runtime/main/cgame.sp.arm64.so' "$OUT/apk-contents.txt" >/dev/null
 grep -F 'assets/darkwolf-runtime/main/qagame.sp.arm64.so' "$OUT/apk-contents.txt" >/dev/null
 grep -F 'assets/darkwolf-runtime/main/ui.sp.arm64.so' "$OUT/apk-contents.txt" >/dev/null
+grep -F 'assets/darkwolf-runtime/main/vm/ui.sp.qvm' "$OUT/apk-contents.txt" >/dev/null
+grep -F 'assets/darkwolf-runtime/main/vm/cgame.sp.qvm' "$OUT/apk-contents.txt" >/dev/null
+grep -F 'assets/darkwolf-runtime/main/vm/qagame.sp.qvm' "$OUT/apk-contents.txt" >/dev/null
 if grep -E 'lib/(armeabi-v7a|x86|x86_64)/' "$OUT/apk-contents.txt" >/dev/null; then
   echo "Unexpected non-arm64 ABI in APK" >&2
   exit 1
@@ -623,6 +649,7 @@ A5_GAME_ACTIVITY=org.darkwolf.rend2.DarkWolfActivity
 PHONE_FIRST_DATA_IMPORTER=SAF_DOCUMENT_TREE
 PHONE_FIRST_AUTO_MAP=escape1
 PHONE_FIRST_VM_MODE=QVM_BYTECODE
+EXACT_SOURCE_SP_QVMS=PACKAGED_AND_EXTRACTED_TO_RETAIL_MAIN_VM
 PHONE_FIRST_VM_CGAME=1
 PHONE_FIRST_VM_GAME=1
 PHONE_FIRST_VM_UI=1
