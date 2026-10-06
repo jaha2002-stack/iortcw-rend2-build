@@ -98,7 +98,8 @@ REND2=(
 ZLIB=(adler32 crc32 inffast inflate inftrees zutil ioapi unzip)
 mapfile -t JPEG < <(find "$SRC/SP/code/jpeg-8c" -maxdepth 1 -type f -name '*.c' -printf '%f\n' | sort)
 mapfile -t BOTLIB < <(find "$SRC/SP/code/botlib" -maxdepth 1 -type f -name '*.c' -printf 'SP/code/botlib/%f\n' | sort)
-mapfile -t SPLINES < <(find "$SRC/SP/code/splines" -maxdepth 1 -type f -name '*.cpp' -printf 'SP/code/splines/%f\n' | sort)
+# Match upstream Q3OBJ: q_shared.cpp is a duplicate implementation and is not linked.
+mapfile -t SPLINES < <(find "$SRC/SP/code/splines" -maxdepth 1 -type f -name '*.cpp' ! -name 'q_shared.cpp' -printf 'SP/code/splines/%f\n' | sort)
 
 OBJS=()
 compile_c() {
