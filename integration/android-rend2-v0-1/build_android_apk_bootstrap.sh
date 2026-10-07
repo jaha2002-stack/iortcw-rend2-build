@@ -591,9 +591,7 @@ public final class DarkWolfActivity extends SDLActivity {
                 "+set", "developer", "1",
                 "+set", "r_ext_texture_filter_anisotropic", "0",
                 "+set", "r_fullscreen", "1",
-                "+set", "r_mode", "-1",
-                "+set", "r_customwidth", "1600",
-                "+set", "r_customheight", "720",
+                "+set", "r_mode", "-2",
                 "+set", "r_centerWindow", "0",
                 "+exec", "ANDROID_MOBILE_BALANCED.cfg",
                 "+vid_restart",
@@ -1047,10 +1045,7 @@ seta r_ext_texture_filter_anisotropic "0"
 seta r_picmip "1"
 seta r_picmip2 "1"
 seta r_fullscreen "1"
-seta r_mode "-1"
-seta r_customwidth "1600"
-seta r_customheight "720"
-seta r_customPixelAspect "1"
+seta r_mode "-2"
 seta r_centerWindow "0"
 seta com_maxfps "60"
 echo "DARKWOLF_ANDROID_MOBILE_BALANCED=APPLIED"
@@ -1138,7 +1133,7 @@ A5_NATIVE_MODULE_EXTRACTION=PASS_BY_JAVA_COMPILE_AND_APK_CONTENT
 WINDOWS_V446_UNIFIED_PRODUCTION_CFG=PACKAGED
 WINDOWS_V446_IGNITION_PK3=PACKAGED
 ANDROID_MOBILE_BALANCED_CFG=PACKAGED
-ANDROID_MOBILE_RENDER_TARGET=1600x720
+ANDROID_MOBILE_RENDER_TARGET=NATIVE_DISPLAY_NO_SDL_DOWNSCALE
 ANDROID_MOBILE_DLIGHT_SHADOW_MAP=1024
 RETAIL_GAME_DATA=NOT_BUNDLED
 EOF
