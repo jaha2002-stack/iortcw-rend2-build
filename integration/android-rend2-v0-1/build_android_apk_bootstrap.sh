@@ -7,6 +7,10 @@ SDL="$WORKDIR/SDL2"
 RUNTIME="$WORKDIR/native-runtime"
 MODULES="$WORKDIR/game-modules"
 QVMS="$WORKDIR/game-qvms"
+WINDOWS_RELEASE_ROOT="$(find "$WORKDIR/release" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+WINDOWS_MAIN="$WINDOWS_RELEASE_ROOT/Main"
+WINDOWS_UNIFIED_CFG="$WINDOWS_MAIN/UNIFIED_PRODUCTION.cfg"
+WINDOWS_IGNITION_PK3="$WINDOWS_MAIN/darkwolf_ignition_rc_v0_6.pk3"
 OUT="$WORKDIR/android-apk"
 PROJECT="$OUT/project"
 DIST="$OUT/dist"
@@ -22,6 +26,10 @@ test -s "$MODULES/bin/ui.sp.arm64.so"
 test -s "$QVMS/bin/ui.sp.qvm"
 test -s "$QVMS/bin/cgame.sp.qvm"
 test -s "$QVMS/bin/qagame.sp.qvm"
+test -s "$WINDOWS_UNIFIED_CFG"
+test -s "$WINDOWS_IGNITION_PK3"
+test "$(sha256sum "$WINDOWS_UNIFIED_CFG" | awk '{print $1}')" = "23539d9b23c30f616e433a59350613971b83fe2816cc40443440633007a3cc42"
+test "$(sha256sum "$WINDOWS_IGNITION_PK3" | awk '{print $1}')" = "63f468e4edcb1fc6f2059b153c165f66b2c0b1237e93ea3b9518ef76358af5ee"
 test -d "$SDL/android-project"
 
 # Do not use grep -q here under pipefail: llvm-nm can see SIGPIPE and return 74.
@@ -514,7 +522,14 @@ public final class DarkWolfActivity extends SDLActivity {
                     new File(vmDir, "cgame.sp.qvm"));
             copyAsset("darkwolf-runtime/main/vm/qagame.sp.qvm",
                     new File(vmDir, "qagame.sp.qvm"));
+            copyAsset("darkwolf-runtime/main/UNIFIED_PRODUCTION.cfg",
+                    new File(retailMain, "UNIFIED_PRODUCTION.cfg"));
+            copyAsset("darkwolf-runtime/main/ANDROID_MOBILE_BALANCED.cfg",
+                    new File(retailMain, "ANDROID_MOBILE_BALANCED.cfg"));
+            copyAsset("darkwolf-runtime/main/darkwolf_ignition_rc_v0_6.pk3",
+                    new File(retailMain, "darkwolf_ignition_rc_v0_6.pk3"));
             Log.i(TAG, "A6_QVM_DIR=" + vmDir.getAbsolutePath());
+            Log.i(TAG, "DARKWOLF_WINDOWS_RUNTIME_PARITY=INSTALLED");
             writeInstallHint(retailRoot, retailMain);
         } catch (IOException e) {
             throw new IllegalStateException("DarkWolf Android filesystem bootstrap failed", e);
@@ -576,8 +591,12 @@ public final class DarkWolfActivity extends SDLActivity {
                 "+set", "developer", "1",
                 "+set", "r_ext_texture_filter_anisotropic", "0",
                 "+set", "r_fullscreen", "1",
-                "+set", "r_mode", "-2",
+                "+set", "r_mode", "-1",
+                "+set", "r_customwidth", "1600",
+                "+set", "r_customheight", "720",
                 "+set", "r_centerWindow", "0",
+                "+exec", "ANDROID_MOBILE_BALANCED.cfg",
+                "+vid_restart",
                 "+spdevmap", "escape1"
         };
     }
@@ -986,6 +1005,56 @@ mkdir -p "$PROJECT/app/src/main/assets/darkwolf-runtime/main/vm"
 cp "$QVMS/bin/ui.sp.qvm" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/vm/"
 cp "$QVMS/bin/cgame.sp.qvm" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/vm/"
 cp "$QVMS/bin/qagame.sp.qvm" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/vm/"
+cp "$WINDOWS_UNIFIED_CFG" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/UNIFIED_PRODUCTION.cfg"
+cp "$WINDOWS_IGNITION_PK3" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/darkwolf_ignition_rc_v0_6.pk3"
+cat > "$PROJECT/app/src/main/assets/darkwolf-runtime/main/ANDROID_MOBILE_BALANCED.cfg" <<'EOF'
+// DarkWolf RTCW Rend2 Android - Mobile Balanced
+// Exact Windows v4.4.6 production visual contract with mobile GPU budgets.
+seta cl_renderer "rend2"
+seta r_pbr "0"
+seta r_normalMapping "1"
+seta r_specularMapping "1"
+seta r_cubeMapping "1"
+seta r_postProcess "1"
+seta r_hdr "1"
+seta r_toneMap "1"
+seta r_autoExposure "1"
+seta r_depthPrepass "1"
+seta r_sunlightMode "1"
+seta r_forceSun "0"
+seta r_sunShadows "1"
+seta r_shadowMapSize "1024"
+seta r_shadowFilter "2"
+seta r_dlightMode "2"
+seta r_dlightShadowMapSize "1024"
+seta r_dlightShadowMaxLights "3"
+seta r_dlightShadowFilter "1"
+seta r_staticPromote "1"
+seta r_staticPromoteMaxLights "32"
+seta r_volumetricLocal "1"
+seta r_volumetricLocalMode "5"
+seta r_volumetricLocalSamples "16"
+seta r_volumetricSun "1"
+seta r_volumetricSunSamples "24"
+seta r_volumetricFire "1"
+seta r_volumetricFireSamples "16"
+seta r_volumetricFireMaxActive "6"
+seta r_softParticles "1"
+seta r_fxStage9Enable "1"
+seta r_ext_framebuffer_multisample "0"
+seta r_msaaSelectiveSampleShading "0"
+seta r_ext_texture_filter_anisotropic "0"
+seta r_picmip "1"
+seta r_picmip2 "1"
+seta r_fullscreen "1"
+seta r_mode "-1"
+seta r_customwidth "1600"
+seta r_customheight "720"
+seta r_customPixelAspect "1"
+seta r_centerWindow "0"
+seta com_maxfps "60"
+echo "DARKWOLF_ANDROID_MOBILE_BALANCED=APPLIED"
+EOF
 
 cat > "$PROJECT/app/src/main/assets/darkwolf-runtime/PROVENANCE.txt" <<EOF
 BASE_RUN_ID=37266797451
@@ -1000,6 +1069,9 @@ A3_SDL2_SHA256=$(sha256sum "$RUNTIME/bin/libSDL2.so" | awk '{print $1}')
 A6_QVM_UI_SHA256=$(sha256sum "$QVMS/bin/ui.sp.qvm" | awk '{print $1}')
 A6_QVM_CGAME_SHA256=$(sha256sum "$QVMS/bin/cgame.sp.qvm" | awk '{print $1}')
 A6_QVM_QAGAME_SHA256=$(sha256sum "$QVMS/bin/qagame.sp.qvm" | awk '{print $1}')
+WINDOWS_UNIFIED_PRODUCTION_SHA256=$(sha256sum "$WINDOWS_UNIFIED_CFG" | awk '{print $1}')
+WINDOWS_IGNITION_PK3_SHA256=$(sha256sum "$WINDOWS_IGNITION_PK3" | awk '{print $1}')
+ANDROID_MOBILE_PROFILE=WINDOWS_V446_VISUALS_MOBILE_BALANCED
 EOF
 
 (
@@ -1021,6 +1093,9 @@ grep -F 'assets/darkwolf-runtime/main/ui.sp.arm64.so' "$OUT/apk-contents.txt" >/
 grep -F 'assets/darkwolf-runtime/main/vm/ui.sp.qvm' "$OUT/apk-contents.txt" >/dev/null
 grep -F 'assets/darkwolf-runtime/main/vm/cgame.sp.qvm' "$OUT/apk-contents.txt" >/dev/null
 grep -F 'assets/darkwolf-runtime/main/vm/qagame.sp.qvm' "$OUT/apk-contents.txt" >/dev/null
+grep -F 'assets/darkwolf-runtime/main/UNIFIED_PRODUCTION.cfg' "$OUT/apk-contents.txt" >/dev/null
+grep -F 'assets/darkwolf-runtime/main/ANDROID_MOBILE_BALANCED.cfg' "$OUT/apk-contents.txt" >/dev/null
+grep -F 'assets/darkwolf-runtime/main/darkwolf_ignition_rc_v0_6.pk3' "$OUT/apk-contents.txt" >/dev/null
 if grep -E 'lib/(armeabi-v7a|x86|x86_64)/' "$OUT/apk-contents.txt" >/dev/null; then
   echo "Unexpected non-arm64 ABI in APK" >&2
   exit 1
@@ -1060,6 +1135,11 @@ A5_BASEGAME_CASE=main
 A5_FS_BASEPATH=APP_SCOPED_EXTERNAL_DARKWOLF_ROOT
 A5_FS_HOMEPATH=APP_PRIVATE_DARKWOLF_ROOT
 A5_NATIVE_MODULE_EXTRACTION=PASS_BY_JAVA_COMPILE_AND_APK_CONTENT
+WINDOWS_V446_UNIFIED_PRODUCTION_CFG=PACKAGED
+WINDOWS_V446_IGNITION_PK3=PACKAGED
+ANDROID_MOBILE_BALANCED_CFG=PACKAGED
+ANDROID_MOBILE_RENDER_TARGET=1600x720
+ANDROID_MOBILE_DLIGHT_SHADOW_MAP=1024
 RETAIL_GAME_DATA=NOT_BUNDLED
 EOF
 
