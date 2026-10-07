@@ -575,13 +575,52 @@ public final class DarkWolfActivity extends SDLActivity {
                 "+set", "logfile", "2",
                 "+set", "developer", "1",
                 "+set", "cg_drawFPS", "1",
+
+                "+set", "r_hdr", "0",
+                "+set", "r_postProcess", "0",
+                "+set", "r_toneMap", "0",
+                "+set", "r_autoExposure", "0",
+                "+set", "r_depthPrepass", "0",
+                "+set", "r_ssao", "0",
+
+                "+set", "r_normalMapping", "0",
+                "+set", "r_specularMapping", "0",
+                "+set", "r_deluxeMapping", "0",
+                "+set", "r_parallaxMapping", "0",
+                "+set", "r_cubeMapping", "0",
+                "+set", "r_pbr", "0",
+
+                "+set", "r_dynamiclight", "1",
+                "+set", "r_dlightMode", "0",
+                "+set", "r_dlightShadowMaxLights", "0",
+                "+set", "r_dlightShadowMapSize", "256",
+                "+set", "r_sunShadows", "0",
+                "+set", "r_forceSun", "0",
+                "+set", "r_sunlightMode", "0",
+                "+set", "r_drawSun", "0",
+                "+set", "r_drawSunRays", "0",
+
+                "+set", "r_staticPromote", "0",
+                "+set", "r_staticPromoteMaxLights", "0",
+                "+set", "r_volumetricLocal", "0",
+                "+set", "r_volumetricSun", "0",
+                "+set", "r_volumetricFire", "0",
+                "+set", "r_softParticles", "0",
+                "+set", "r_fxStage9Enable", "0",
+
+                "+set", "r_flares", "0",
+                "+set", "r_detailtextures", "0",
+                "+set", "r_picmip", "3",
+                "+set", "r_picmip2", "3",
+                "+set", "r_subdivisions", "20",
+                "+set", "r_lodbias", "2",
+                "+set", "r_textureMode", "GL_LINEAR_MIPMAP_NEAREST",
                 "+set", "r_ext_texture_filter_anisotropic", "0",
-                "+set", "r_dlightShadowMapSize", "1024",
-                "+set", "r_dlightShadowMaxLights", "3",
-                "+set", "r_volumetricSunSamples", "20",
-                "+set", "r_volumetricLocalSamples", "16",
-                "+set", "r_volumetricFireSamples", "16",
                 "+set", "r_ext_framebuffer_multisample", "0",
+                "+set", "r_ext_multisample", "0",
+                "+set", "r_finish", "0",
+                "+set", "r_swapInterval", "0",
+
                 "+set", "r_fullscreen", "1",
                 "+set", "r_mode", "-2",
                 "+set", "r_centerWindow", "0",
@@ -1067,13 +1106,31 @@ A5_BASEGAME_CASE=main
 A5_FS_BASEPATH=APP_SCOPED_EXTERNAL_DARKWOLF_ROOT
 A5_FS_HOMEPATH=APP_PRIVATE_DARKWOLF_ROOT
 A5_NATIVE_MODULE_EXTRACTION=PASS_BY_JAVA_COMPILE_AND_APK_CONTENT
-ANDROID_PERF_PROFILE=V0_1_SHADOW_VOLUMETRIC_BUDGET
+ANDROID_PERF_PROFILE=V0_2_ULTRA_LOW_PLAYABILITY_FIRST
 ANDROID_NATIVE_SURFACE=UNCHANGED_R_MODE_MINUS_2
-ANDROID_DLIGHT_SHADOW_MAP=1024
-ANDROID_DLIGHT_SHADOW_MAX_LIGHTS=3
-ANDROID_VOLUMETRIC_SUN_SAMPLES=20
-ANDROID_VOLUMETRIC_LOCAL_SAMPLES=16
-ANDROID_VOLUMETRIC_FIRE_SAMPLES=16
+ANDROID_HDR=0
+ANDROID_POSTPROCESS=0
+ANDROID_TONEMAP=0
+ANDROID_AUTOEXPOSURE=0
+ANDROID_DEPTH_PREPASS=0
+ANDROID_NORMAL_MAPPING=0
+ANDROID_SPECULAR_MAPPING=0
+ANDROID_DELUXE_MAPPING=0
+ANDROID_DLIGHT_MODE=0_CLASSIC_FAKE_LIGHTING
+ANDROID_DLIGHT_SHADOW_MAX_LIGHTS=0
+ANDROID_DLIGHT_SHADOW_MAP=256_UNUSED
+ANDROID_SUN_SHADOWS=0
+ANDROID_STATIC_PROMOTE=0
+ANDROID_VOLUMETRIC_LOCAL=0
+ANDROID_VOLUMETRIC_SUN=0
+ANDROID_VOLUMETRIC_FIRE=0
+ANDROID_SOFT_PARTICLES=0
+ANDROID_FLARES=0
+ANDROID_DETAIL_TEXTURES=0
+ANDROID_PICMIP=3
+ANDROID_PICMIP2=3
+ANDROID_SUBDIVISIONS=20
+ANDROID_LODBIAS=2
 ANDROID_MSAA=0
 ANDROID_DRAW_FPS=1
 RETAIL_GAME_DATA=NOT_BUNDLED
