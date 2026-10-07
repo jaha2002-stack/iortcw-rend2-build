@@ -526,8 +526,7 @@ one(
 one(
     "SP/code/rend2/tr_backend.c",
     """	isShadowView = !!(backEnd.viewParms.flags & VPF_DEPTHSHADOW);
-
-	// clear the z buffer, set the modelview, etc""",
+""",
     """	isShadowView = !!(backEnd.viewParms.flags & VPF_DEPTHSHADOW);
 
 	if (isShadowView)
@@ -550,8 +549,7 @@ one(
 		}
 		DWPerfStageBegin(dwPerfShadowStage);
 	}
-
-	// clear the z buffer, set the modelview, etc""",
+""",
     "classify backend shadow views",
 )
 
