@@ -80,7 +80,8 @@ start /wait "" "ioWolfSP.x64.exe" ^
   +set cl_renderer rend2 ^
   +set r_renderer rend2 ^
   +exec UNIFIED_PRODUCTION.cfg ^
-  +exec DWPERF_HIGH_QUALITY.cfg
+  +exec DWPERF_HIGH_QUALITY.cfg ^
+  +vid_restart
 
 echo.
 echo Game closed. Collecting telemetry from isolated DWPerfHome...
