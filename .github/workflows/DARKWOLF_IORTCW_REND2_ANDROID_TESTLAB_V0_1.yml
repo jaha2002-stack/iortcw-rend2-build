@@ -412,9 +412,44 @@ jobs:
           adb exec-out screencap -p > "$out/objective-frame.png" || true
           adb shell input tap 320 240 || true
           adb shell input keyevent 66 || true
-          sleep 8
+
+          # escape1 performs another renderer restart after highVidhighCPU.cfg.
+          # The first Android GLES3 R_Init takes ~16s on SwiftShader, so a fixed
+          # 8s delay captured the second GLSL_InitGPUShaders rather than gameplay.
+          # Wait for the actual SP client VM boundary before accepting the frame.
+          gameplay_ready=NO
+          for i in $(seq 1 75); do
+            current_pid="$(adb shell pidof "$pkg" 2>/dev/null | tr -d '\r' || true)"
+            if [ -z "$current_pid" ]; then
+              echo "ERROR: DarkWolf exited while waiting for escape1 cgame" >&2
+              break
+            fi
+            app_pid="$current_pid"
+            timeout 10s adb logcat -d -v threadtime --pid="$app_pid" > "$out/logcat-app.txt" || true
+            read_qconsole
+
+            if grep -Eq 'Fatal signal|FATAL EXCEPTION|SIGSEGV|VM_Create on (UI|CGAME|GAME) failed|Hunk_Alloc failed|Com_Error' \
+              "$out/qconsole.log" "$out/logcat-app.txt"; then
+              break
+            fi
+            if grep -Eq 'cgame loaded in [0-9]+ bytes on the hunk' "$out/logcat-app.txt" "$out/qconsole.log"; then
+              gameplay_ready=YES
+              break
+            fi
+            sleep 2
+          done
+
+          # Give the first client snapshot/render a short settling window.
+          if [ "$gameplay_ready" = "YES" ]; then
+            sleep 6
+          fi
           timeout 10s adb logcat -d -v threadtime --pid="$app_pid" > "$out/logcat-app.txt" || true
           read_qconsole
+
+          # Hide Android IME only after the game VM is ready so the evidence
+          # frame is not obscured by SDL's hidden text-input helper.
+          adb shell input keyevent 4 || true
+          sleep 2
           adb exec-out screencap -p > "$out/gameplay-frame.png" || true
           cp "$out/gameplay-frame.png" "$out/first-frame.png" || true
 
@@ -431,7 +466,10 @@ jobs:
           grep -F 'qagame.sp.qvm' "$out/remote-vm.txt"
           grep -F 'DarkWolfEngine' "$out/logcat-app.txt"
           grep -F 'Loading vm file vm/ui.sp.qvm' "$out/logcat-app.txt"
-          ! grep -Eq 'VM_Create on UI failed|Fatal signal|FATAL EXCEPTION|SIGSEGV|Hunk_Alloc failed|Com_Error' "$out/qconsole.log" "$out/logcat-app.txt"
+          grep -E 'qagame loaded in [0-9]+ bytes on the hunk' "$out/logcat-app.txt"
+          grep -E 'cgame loaded in [0-9]+ bytes on the hunk' "$out/logcat-app.txt"
+          test "$gameplay_ready" = "YES"
+          ! grep -Eq 'VM_Create on (UI|CGAME|GAME) failed|Fatal signal|FATAL EXCEPTION|SIGSEGV|Hunk_Alloc failed|Com_Error' "$out/qconsole.log" "$out/logcat-app.txt"
 
           ui_vm="LOADING_SEEN"
           if grep -Eq 'ui loaded in [0-9]+ bytes on the hunk|UI_INIT' "$out/qconsole.log" "$out/logcat-app.txt"; then
@@ -450,6 +488,9 @@ jobs:
             echo "APP_PID=$app_pid"
             echo "PK3_VISIBLE=PASS"
             echo "QVM_UI=$ui_vm"
+            echo "QVM_QAGAME=LOADED"
+            echo "QVM_CGAME=LOADED"
+            echo "ESCAPE1_GAMEPLAY_READY=$gameplay_ready"
             echo "PROCESS_ALIVE=PASS"
             echo "OBJECTIVE_FRAME_CAPTURED=$(test -s "$out/objective-frame.png" && echo YES || echo NO)"
             echo "GAMEPLAY_FRAME_CAPTURED=$(test -s "$out/gameplay-frame.png" && echo YES || echo NO)"
