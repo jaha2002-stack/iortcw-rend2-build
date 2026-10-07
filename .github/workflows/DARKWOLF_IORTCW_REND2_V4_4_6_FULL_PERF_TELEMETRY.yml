@@ -47,6 +47,13 @@ jobs:
       V446_PATCH: "darkwolf-explosion-coverage-v4-4-6.patch"
       V446_SHA256: "909ee5782fe92480e1d0ffe983f7f617af7f30c2bd05f1b3f915af50075a5134"
 
+      SHADER_DONOR_RUN_ID: "35503262322"
+      SHADER_DONOR_ARTIFACT_ID: "10603017159"
+      SHADER_DONOR_ARTIFACT_NAME: "iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1"
+      SHADER_DONOR_INNER_SHA256: "efe9a4f3b33e5dd4b621ed3fa0d87abe677c85d09ca29088a380d813b5c082bb"
+      SHADER_DONOR_PATCH: "darkwolf-rend2-cumulative-dlight-fx-shadow-eligibility-loper-complete-electrical-pc-v0-3-sp.patch"
+      SHADER_DONOR_PATCH_SHA256: "cb8379d56e57ec83be75251756ecea781dc9d2c6d66620e17fb56538ba157d97"
+
       FIXER: "integration/perf-telemetry-v4-4-6/apply_darkwolf_perf_telemetry_v4_4_6.py"
       CAPTURE_BAT: "integration/perf-telemetry-v4-4-6/RUN_DWPERF_CAPTURE.bat"
       COLLECT_PS1: "integration/perf-telemetry-v4-4-6/Collect-DWPerf.ps1"
@@ -99,6 +106,18 @@ jobs:
           test "$(sha256sum "$base/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
           test "$(sha256sum "$base/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
 
+          rm -rf donor-artifact donor-release
+          mkdir -p donor-artifact donor-release
+          gh run download "$SHADER_DONOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$SHADER_DONOR_ARTIFACT_NAME" --dir donor-artifact
+          dz="donor-artifact/$SHADER_DONOR_ARTIFACT_NAME.zip"
+          test -s "$dz"
+          test "$(sha256sum "$dz" | awk '{print $1}')" = "$SHADER_DONOR_INNER_SHA256"
+          unzip -q "$dz" -d donor-release
+          donor_base="$(find donor-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$donor_base"
+          test "$(sha256sum "$donor_base/docs/$SHADER_DONOR_PATCH" | awk '{print $1}')" = "$SHADER_DONOR_PATCH_SHA256"
+          echo "$donor_base" > .donor_release
+
       - name: "Reconstruct exact v4.4.6 source"
         shell: bash
         run: |
@@ -121,6 +140,23 @@ jobs:
           for p in cumulative.patch sun.patch v445.patch v446.patch; do
             git -C source apply --check --binary --whitespace=nowarn "../$p"
             git -C source apply --binary --whitespace=nowarn "../$p"
+          done
+
+          donor_base="$(cat .donor_release)"
+          cp "$donor_base/docs/$SHADER_DONOR_PATCH" donor.patch
+          for p in \
+            SP/code/rend2/glsl/ssgi_fp.glsl \
+            SP/code/rend2/glsl/ssgi_vp.glsl \
+            SP/code/rend2/glsl/volumetriclocal_fp.glsl \
+            SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl \
+            SP/code/rend2/glsl/volumetriclocal_vp.glsl \
+            SP/code/rend2/glsl/volumetricsun_fp.glsl \
+            SP/code/rend2/glsl/volumetricsun_vp.glsl; do
+            if test ! -e "source/$p"; then
+              git -C source apply --check --binary --whitespace=nowarn --include="$p" ../donor.patch
+              git -C source apply --binary --whitespace=nowarn --include="$p" ../donor.patch
+            fi
+            test -s "source/$p"
           done
 
           grep -Fq "DARKWOLF_FORCE_SUN_CSM_SMART_PRODUCTION_V444" source/SP/code/rend2/tr_scene.c
