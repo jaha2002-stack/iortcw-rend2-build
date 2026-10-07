@@ -555,16 +555,14 @@ one(
 
 one(
     "SP/code/rend2/tr_backend.c",
-    """		backEnd.depthFill = qtrue;
-		qglColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
-		qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);""",
-    """		backEnd.depthFill = qtrue;
-		qglColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-		if (!isShadowView) DWPerfStageBegin(DWPERF_DEPTH_PREPASS);
+    """		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
+
+		// REND2_GI_2_V1_5_SCENE_ENTITY_WORLD_MASK""",
+    """		if (!isShadowView) DWPerfStageBegin(DWPERF_DEPTH_PREPASS);
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
 		if (!isShadowView) DWPerfStageEnd(DWPERF_DEPTH_PREPASS);
-		qglColorMask(!backEnd.colorMask[0], !backEnd.colorMask[1], !backEnd.colorMask[2], !backEnd.colorMask[3]);""",
+
+		// REND2_GI_2_V1_5_SCENE_ENTITY_WORLD_MASK""",
     "probe depth prepass",
 )
 
