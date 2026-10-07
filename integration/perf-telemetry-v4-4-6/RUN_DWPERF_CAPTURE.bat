@@ -72,7 +72,6 @@ echo.
 start /wait "" "ioWolfSP.x64.exe" ^
   +set fs_basepath "%DWPERF_ROOT%" ^
   +set fs_homepath "%DWPERF_HOME%" ^
-  +set com_homepath "%DWPERF_HOME%" ^
   +safe ^
   +set com_introplayed 1 ^
   +set logfile 2 ^
