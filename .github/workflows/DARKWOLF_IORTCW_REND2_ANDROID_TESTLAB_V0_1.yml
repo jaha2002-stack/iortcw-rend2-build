@@ -446,23 +446,26 @@ jobs:
           timeout 10s adb logcat -d -v threadtime --pid="$app_pid" > "$out/logcat-app.txt" || true
           read_qconsole
 
-          # Hide Android IME only after the game VM is ready so the evidence
-          # frame is not obscured by SDL's hidden text-input helper.
+          # CI x86_64 supplies dw_android_ci_playerstart=1. The engine hook
+          # closes UIMENU_BRIEFING through the actual UI VM, releases KEYCATCH_UI,
+          # unpauses, and triggers the stock g_playerstart path after CG_INIT.
+          ci_playerstart=NO
+          for i in $(seq 1 30); do
+            timeout 10s adb logcat -d -v threadtime --pid="$app_pid" > "$out/logcat-app.txt" || true
+            if grep -Fq 'DARKWOLF_ANDROID_CI_PLAYERSTART=PASS' "$out/logcat-app.txt"; then
+              ci_playerstart=YES
+              break
+            fi
+            sleep 1
+          done
+
+          # BACK is now only for dismissing any lingering Android IME.
           adb shell input keyevent 4 || true
-          sleep 2
-          adb exec-out screencap -p > "$out/post-ime-frame.png" || true
-
-          # Android BACK only dismisses the IME. Send an actual Escape key to
-          # RTCW after cgame is ready so the mission-objectives UI overlay can
-          # release KEYCATCH_UI and expose the live 3D view behind it.
-          adb shell input keyevent 111 || true
-          sleep 4
-          adb exec-out screencap -p > "$out/post-escape-frame.png" || true
-
-          # Enter is a harmless fallback for briefing/menu builds where the
-          # active default control is Continue/Resume rather than Escape.
-          adb shell input keyevent 66 || true
-          sleep 4
+          if [ "$ci_playerstart" = "YES" ]; then
+            sleep 8
+          else
+            sleep 2
+          fi
           timeout 10s adb logcat -d -v threadtime --pid="$app_pid" > "$out/logcat-app.txt" || true
           read_qconsole
           adb exec-out screencap -p > "$out/gameplay-frame.png" || true
@@ -483,7 +486,9 @@ jobs:
           grep -F 'Loading vm file vm/ui.sp.qvm' "$out/logcat-app.txt"
           grep -E 'qagame loaded in [0-9]+ bytes on the hunk' "$out/logcat-app.txt"
           grep -E 'cgame loaded in [0-9]+ bytes on the hunk' "$out/logcat-app.txt"
+          grep -F 'DARKWOLF_ANDROID_CI_PLAYERSTART=PASS' "$out/logcat-app.txt"
           test "$gameplay_ready" = "YES"
+          test "$ci_playerstart" = "YES"
           ! grep -Eq 'VM_Create on (UI|CGAME|GAME) failed|Fatal signal|FATAL EXCEPTION|SIGSEGV|Hunk_Alloc failed|Com_Error' "$out/qconsole.log" "$out/logcat-app.txt"
 
           ui_vm="LOADING_SEEN"
@@ -506,10 +511,9 @@ jobs:
             echo "QVM_QAGAME=LOADED"
             echo "QVM_CGAME=LOADED"
             echo "ESCAPE1_GAMEPLAY_READY=$gameplay_ready"
+            echo "CI_PLAYERSTART_HOOK=$ci_playerstart"
             echo "PROCESS_ALIVE=PASS"
             echo "OBJECTIVE_FRAME_CAPTURED=$(test -s "$out/objective-frame.png" && echo YES || echo NO)"
-            echo "POST_IME_FRAME_CAPTURED=$(test -s "$out/post-ime-frame.png" && echo YES || echo NO)"
-            echo "POST_ESCAPE_FRAME_CAPTURED=$(test -s "$out/post-escape-frame.png" && echo YES || echo NO)"
             echo "GAMEPLAY_FRAME_CAPTURED=$(test -s "$out/gameplay-frame.png" && echo YES || echo NO)"
             echo "SCREENSHOT_CAPTURED=$(test -s "$out/first-frame.png" && echo YES || echo NO)"
             echo "RENDERER_MARKER=$renderer"
