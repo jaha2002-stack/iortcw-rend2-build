@@ -233,6 +233,7 @@ public final class DarkWolfActivity extends SDLActivity {
                 "+set", "vm_cgame", "1",
                 "+set", "vm_game", "1",
                 "+set", "vm_ui", "1",
+                "+set", "dw_android_ci_playerstart", "1",
                 "+set", "com_introplayed", "1",
                 "+set", "r_fullscreen", "0",
                 "+set", "r_mode", "-1",
