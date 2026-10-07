@@ -427,6 +427,8 @@ public final class DarkWolfActivity extends SDLActivity {
 
     static native boolean nativeIsUiActive();
     static native void nativeQueueUiTap(int uiX, int uiY);
+    static native void nativeSetGameAction(int action, boolean down);
+    static native void nativeClearGameActions();
 
     private File homeRoot;
     private File retailRoot;
@@ -572,9 +574,11 @@ public final class DarkWolfActivity extends SDLActivity {
                 "+set", "vm_game", "1",
                 "+set", "vm_ui", "1",
                 "+set", "com_introplayed", "1",
-                "+set", "logfile", "2",
-                "+set", "developer", "1",
+                "+set", "logfile", "0",
+                "+set", "developer", "0",
                 "+set", "cg_drawFPS", "1",
+                "+set", "dw_android_ultralow", "1",
+                "+set", "dw_android_renderScale", "50",
 
                 "+set", "r_hdr", "0",
                 "+set", "r_postProcess", "0",
@@ -788,14 +792,15 @@ final class DarkWolfTouchOverlay extends View {
 
     private void setKeyState(int code, boolean wanted, int which) {
         boolean current;
+        int action;
         switch (which) {
-            case 0: current = wDown; break;
-            case 1: current = aDown; break;
-            case 2: current = sDown; break;
-            default: current = dDown; break;
+            case 0: current = wDown; action = 1; break;
+            case 1: current = aDown; action = 3; break;
+            case 2: current = sDown; action = 2; break;
+            default: current = dDown; action = 4; break;
         }
         if (current == wanted) return;
-        key(code, wanted);
+        DarkWolfActivity.nativeSetGameAction(action, wanted);
         switch (which) {
             case 0: wDown = wanted; break;
             case 1: aDown = wanted; break;
@@ -853,16 +858,11 @@ final class DarkWolfTouchOverlay extends View {
 
     private void pressTarget(int target, boolean down) {
         switch (target) {
-            case FIRE:
-                SDLActivity.onNativeMouse(
-                        down ? MotionEvent.BUTTON_PRIMARY : 0,
-                        down ? MotionEvent.ACTION_DOWN : MotionEvent.ACTION_UP,
-                        0.0f, 0.0f, false);
-                break;
-            case JUMP: key(KeyEvent.KEYCODE_SPACE, down); break;
-            case USE: key(KeyEvent.KEYCODE_E, down); break;
-            case RELOAD: key(KeyEvent.KEYCODE_R, down); break;
-            case CROUCH: key(KeyEvent.KEYCODE_C, down); break;
+            case FIRE: DarkWolfActivity.nativeSetGameAction(5, down); break;
+            case JUMP: DarkWolfActivity.nativeSetGameAction(6, down); break;
+            case USE: DarkWolfActivity.nativeSetGameAction(8, down); break;
+            case RELOAD: DarkWolfActivity.nativeSetGameAction(9, down); break;
+            case CROUCH: DarkWolfActivity.nativeSetGameAction(7, down); break;
             case MENU: key(KeyEvent.KEYCODE_ESCAPE, down); break;
             default: break;
         }
@@ -939,6 +939,7 @@ final class DarkWolfTouchOverlay extends View {
                 pressTarget(target, false);
             }
         }
+        DarkWolfActivity.nativeClearGameActions();
         targets.clear();
         lastX.clear();
         lastY.clear();
@@ -1106,8 +1107,11 @@ A5_BASEGAME_CASE=main
 A5_FS_BASEPATH=APP_SCOPED_EXTERNAL_DARKWOLF_ROOT
 A5_FS_HOMEPATH=APP_PRIVATE_DARKWOLF_ROOT
 A5_NATIVE_MODULE_EXTRACTION=PASS_BY_JAVA_COMPILE_AND_APK_CONTENT
-ANDROID_PERF_PROFILE=V0_2_ULTRA_LOW_PLAYABILITY_FIRST
+ANDROID_PERF_PROFILE=V0_3_PLAYABLE_INTERNAL_SCALE_DIRECT_INPUT
 ANDROID_NATIVE_SURFACE=UNCHANGED_R_MODE_MINUS_2
+ANDROID_INTERNAL_RENDER_SCALE=50_PERCENT
+ANDROID_DIRECT_GAME_ACTIONS=1
+ANDROID_SYNC_FILE_LOGGING=0
 ANDROID_HDR=0
 ANDROID_POSTPROCESS=0
 ANDROID_TONEMAP=0
