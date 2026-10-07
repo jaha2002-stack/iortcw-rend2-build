@@ -819,27 +819,21 @@ one(
     "probe final post blit",
 )
 
-# End the whole postprocess probe at the function's final return. Anchor includes
-# the following command function to avoid touching unrelated returns.
-one(
-    "SP/code/rend2/tr_backend.c",
-    """	return (const void *)(cmd + 1);
-}
-
-
-/*
-=============
-RB_ExportCubemaps""",
-    """	DWPerfStageEnd(DWPERF_POST_TOTAL);
-	return (const void *)(cmd + 1);
-}
-
-
-/*
-=============
-RB_ExportCubemaps""",
-    "end postprocess total probe",
-)
+# End at RB_PostProcess' own final return. v4.4.6 carries several DarkWolf
+# helpers around this function, so scope by function names rather than adjacency.
+_rel = "SP/code/rend2/tr_backend.c"
+_s = read(_rel)
+_a = _s.find("const void *RB_PostProcess(const void *data)")
+_b = _s.find("const void *RB_ExportCubemaps(const void *data)", _a)
+if _a < 0 or _b < 0:
+    raise SystemExit("ERROR end postprocess total probe: RB_PostProcess scope not found")
+_seg = _s[_a:_b]
+_ret = "\treturn (const void *)(cmd + 1);"
+_pos = _seg.rfind(_ret)
+if _pos < 0:
+    raise SystemExit("ERROR end postprocess total probe: final return not found")
+_seg = _seg[:_pos] + "\tDWPerfStageEnd(DWPERF_POST_TOTAL);\n" + _seg[_pos:]
+write(_rel, _s[:_a] + _seg + _s[_b:])
 
 for rel in [
     "SP/code/rend2/tr_local.h",
