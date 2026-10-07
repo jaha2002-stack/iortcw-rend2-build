@@ -649,6 +649,32 @@ def patch_ci_playerstart(path: Path) -> None:
 \t// reset any CVAR_CHEAT cvars registered by cgame
 '''
     s = replace_once(s, old, new, "CI playerstart hook")
+
+    popup_old = '''\tcase CG_INGAME_POPUP:
+\t\tif ( VMA( 1 ) && !Q_stricmp( VMA( 1 ), "briefing" ) ) {  //----(SA) added
+\t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_BRIEFING );
+\t\t\treturn 0;
+\t\t}
+'''
+    popup_new = f'''\tcase CG_INGAME_POPUP:
+\t\tif ( VMA( 1 ) && !Q_stricmp( VMA( 1 ), "briefing" ) ) {{  //----(SA) added
+#ifdef __ANDROID__
+\t\t\tif ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ) {{
+\t\t\t\t/* {MARKER}: cgame posts briefing after CG_INIT; suppress only
+\t\t\t\t * in the x86_64 TestLab opt-in so 3D evidence is deterministic. */
+\t\t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE );
+\t\t\t\tKey_SetCatcher( Key_GetCatcher() & ~KEYCATCH_UI );
+\t\t\t\tCvar_Set( "cl_paused", "0" );
+\t\t\t\tCvar_Set( "g_playerstart", "1" );
+\t\t\t\tCom_Printf( "DARKWOLF_ANDROID_CI_BRIEFING_SUPPRESSED=PASS\\n" );
+\t\t\t\treturn 0;
+\t\t\t}}
+#endif
+\t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_BRIEFING );
+\t\t\treturn 0;
+\t\t}}
+'''
+    s = replace_once(s, popup_old, popup_new, "CI briefing popup suppression")
     path.write_text(s)
 
 def patch_tr_extensions(path: Path) -> None:
