@@ -614,6 +614,43 @@ def patch_android_console(path: Path) -> None:
     s = replace_once(s, print_old, print_new, "Android console log forwarding")
     path.write_text(s)
 
+def patch_ci_playerstart(path: Path) -> None:
+    s = path.read_text()
+
+    old = '''\t// init for this gamestate
+\t// use the lastExecutedServerCommand instead of the serverCommandSequence
+\t// otherwise server commands sent just before a gamestate are dropped
+\tVM_Call( cgvm, CG_INIT, clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum );
+
+\t// reset any CVAR_CHEAT cvars registered by cgame
+'''
+    new = f'''\t// init for this gamestate
+\t// use the lastExecutedServerCommand instead of the serverCommandSequence
+\t// otherwise server commands sent just before a gamestate are dropped
+\tVM_Call( cgvm, CG_INIT, clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum );
+
+#ifdef __ANDROID__
+\t/*
+\t * {MARKER}: CI-only deterministic transition from SP briefing to live
+\t * gameplay. The hook is inert in the ARM64 phone APK unless the explicit
+\t * test cvar is supplied by the x86_64 TestLab launcher.
+\t */
+\tif ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ) {{
+\t\tif ( uivm ) {{
+\t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE );
+\t\t}}
+\t\tKey_SetCatcher( Key_GetCatcher() & ~KEYCATCH_UI );
+\t\tCvar_Set( "cl_paused", "0" );
+\t\tCvar_Set( "g_playerstart", "1" );
+\t\tCom_Printf( "DARKWOLF_ANDROID_CI_PLAYERSTART=PASS\\n" );
+\t}}
+#endif
+
+\t// reset any CVAR_CHEAT cvars registered by cgame
+'''
+    s = replace_once(s, old, new, "CI playerstart hook")
+    path.write_text(s)
+
 def patch_tr_extensions(path: Path) -> None:
     s = path.read_text()
     old = '''\tq_gl_version_at_least_3_0 = QGL_VERSION_ATLEAST( 3, 0 );
@@ -642,6 +679,7 @@ def main(root: Path) -> None:
     patch_backend(sp / "rend2" / "tr_backend.c")
     patch_tr_extensions(sp / "rend2" / "tr_extensions.c")
     patch_android_console(sp / "sys" / "con_passive.c")
+    patch_ci_playerstart(sp / "client" / "cl_cgame.c")
     print(f"{MARKER}: patched Android GLES3 bring-up layer")
 
 if __name__ == "__main__":
