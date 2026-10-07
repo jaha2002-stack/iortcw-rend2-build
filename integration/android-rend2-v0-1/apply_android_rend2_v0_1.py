@@ -580,6 +580,40 @@ def patch_backend(path: Path) -> None:
 
     path.write_text(s)
 
+def patch_android_console(path: Path) -> None:
+    s = path.read_text()
+
+    include_old = '#include <stdio.h>\n'
+    include_new = f'''#include <stdio.h>
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+'''
+    s = replace_once(s, include_old, include_new, "Android console log include")
+
+    print_old = '''void CON_Print( const char *msg )
+{
+\tif( com_ansiColor && com_ansiColor->integer )
+\t\tSys_AnsiColorPrint( msg );
+\telse
+\t\tfputs( msg, stderr );
+}
+'''
+    print_new = f'''void CON_Print( const char *msg )
+{{
+#ifdef __ANDROID__
+\t/* {MARKER}: make Com_Printf visible to pid-scoped Android logcat. */
+\t__android_log_write(ANDROID_LOG_INFO, "DarkWolfEngine", msg);
+#endif
+\tif( com_ansiColor && com_ansiColor->integer )
+\t\tSys_AnsiColorPrint( msg );
+\telse
+\t\tfputs( msg, stderr );
+}}
+'''
+    s = replace_once(s, print_old, print_new, "Android console log forwarding")
+    path.write_text(s)
+
 def patch_tr_extensions(path: Path) -> None:
     s = path.read_text()
     old = '''\tq_gl_version_at_least_3_0 = QGL_VERSION_ATLEAST( 3, 0 );
@@ -607,6 +641,7 @@ def main(root: Path) -> None:
     patch_depth_texture_mode(sp / "rend2" / "tr_image.c")
     patch_backend(sp / "rend2" / "tr_backend.c")
     patch_tr_extensions(sp / "rend2" / "tr_extensions.c")
+    patch_android_console(sp / "sys" / "con_passive.c")
     print(f"{MARKER}: patched Android GLES3 bring-up layer")
 
 if __name__ == "__main__":

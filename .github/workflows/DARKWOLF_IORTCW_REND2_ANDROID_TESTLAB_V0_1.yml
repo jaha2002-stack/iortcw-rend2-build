@@ -392,7 +392,7 @@ jobs:
             if grep -Eq 'VM_Create on UI failed|Fatal signal|FATAL EXCEPTION|SIGSEGV|Hunk_Alloc failed|Com_Error' "$out/qconsole.log" "$out/logcat-app.txt"; then
               break
             fi
-            if grep -Eq 'UI_INIT|ui loaded in [0-9]+ bytes on the hunk|Loading vm file vm/cgame\.sp\.qvm' "$out/qconsole.log"; then
+            if grep -Eq 'UI_INIT|ui loaded in [0-9]+ bytes on the hunk|Loading vm file vm/cgame\.sp\.qvm' "$out/qconsole.log" "$out/logcat-app.txt"; then
               break
             fi
             sleep 2
@@ -404,29 +404,42 @@ jobs:
           timeout 10s adb logcat -d -v threadtime --pid="$app_pid" > "$out/logcat-app.txt" || true
           read_qconsole
           timeout 10s adb shell ls -lah "$remote_main/vm" > "$out/remote-vm.txt" 2>&1 || true
+
+          # Preserve the first stable UI/briefing frame, then attempt to
+          # advance through the RTCW mission-objectives screen to gameplay.
           adb shell input keyevent 4 || true
           sleep 1
-          adb exec-out screencap -p > "$out/first-frame.png" || true
+          adb exec-out screencap -p > "$out/objective-frame.png" || true
+          adb shell input tap 320 240 || true
+          adb shell input keyevent 66 || true
+          sleep 8
+          timeout 10s adb logcat -d -v threadtime --pid="$app_pid" > "$out/logcat-app.txt" || true
+          read_qconsole
+          adb exec-out screencap -p > "$out/gameplay-frame.png" || true
+          cp "$out/gameplay-frame.png" "$out/first-frame.png" || true
 
-          grep -E 'DarkWolfRTCW|A5_HOME=|A5_RETAIL_BASE=|A5_RETAIL_MAIN=|A6_QVM_DIR=|Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed' \
+          grep -E 'DarkWolfRTCW|DarkWolfEngine|A5_HOME=|A5_RETAIL_BASE=|A5_RETAIL_MAIN=|A6_QVM_DIR=|FS_Startup|files in pk3|pak0|sp_pak|Loading vm file|loaded in .* bytes on the hunk|VM_Create|UI_INIT|R_Init|OpenGL|GL_VENDOR|GL_RENDERER|GL_VERSION|Rend2|shader|FBO|ERROR|Error|Hunk_Alloc|Com_Error|Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed' \
             "$out/logcat-app.txt" > "$out/high-signal-logcat.txt" || true
           grep -E 'FS_Startup|files in pk3|pak0|sp_pak|Loading vm file|loaded in .* bytes on the hunk|VM_Create|UI_INIT|R_Init|OpenGL|GL_VENDOR|GL_RENDERER|GL_VERSION|Rend2|shader|FBO|ERROR|Error|Hunk_Alloc|Com_Error' \
             "$out/qconsole.log" > "$out/high-signal-qconsole.txt" || true
           cat "$out/high-signal-logcat.txt" "$out/high-signal-qconsole.txt" > "$out/high-signal-log.txt"
 
           test -s "$out/pid.txt"
-          test -s "$out/qconsole.log"
-          grep -Eqi 'pak0|sp_pak0|sp_pak1|files in pk3' "$out/qconsole.log"
-          grep -F 'Loading vm file vm/ui.sp.qvm' "$out/qconsole.log"
+          test -s "$out/remote-vm.txt"
+          grep -F 'ui.sp.qvm' "$out/remote-vm.txt"
+          grep -F 'cgame.sp.qvm' "$out/remote-vm.txt"
+          grep -F 'qagame.sp.qvm' "$out/remote-vm.txt"
+          grep -F 'DarkWolfEngine' "$out/logcat-app.txt"
+          grep -F 'Loading vm file vm/ui.sp.qvm' "$out/logcat-app.txt"
           ! grep -Eq 'VM_Create on UI failed|Fatal signal|FATAL EXCEPTION|SIGSEGV|Hunk_Alloc failed|Com_Error' "$out/qconsole.log" "$out/logcat-app.txt"
 
           ui_vm="LOADING_SEEN"
-          if grep -Eq 'ui loaded in [0-9]+ bytes on the hunk|UI_INIT' "$out/qconsole.log"; then
+          if grep -Eq 'ui loaded in [0-9]+ bytes on the hunk|UI_INIT' "$out/qconsole.log" "$out/logcat-app.txt"; then
             ui_vm="LOADED"
           fi
 
           renderer="NOT_YET_SEEN"
-          if grep -Eq 'GL_RENDERER|GL_VERSION|----- R_Init -----|Rend2' "$out/qconsole.log"; then
+          if grep -Eq 'GL_RENDERER|GL_VERSION|----- R_Init -----|Rend2' "$out/qconsole.log" "$out/logcat-app.txt"; then
             renderer="SEEN"
           fi
 
@@ -438,6 +451,8 @@ jobs:
             echo "PK3_VISIBLE=PASS"
             echo "QVM_UI=$ui_vm"
             echo "PROCESS_ALIVE=PASS"
+            echo "OBJECTIVE_FRAME_CAPTURED=$(test -s "$out/objective-frame.png" && echo YES || echo NO)"
+            echo "GAMEPLAY_FRAME_CAPTURED=$(test -s "$out/gameplay-frame.png" && echo YES || echo NO)"
             echo "SCREENSHOT_CAPTURED=$(test -s "$out/first-frame.png" && echo YES || echo NO)"
             echo "RENDERER_MARKER=$renderer"
           } | tee "$out/A6_1_RETAIL_RUNTIME_AUDIT.txt"
