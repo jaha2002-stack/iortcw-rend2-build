@@ -393,7 +393,8 @@ one(
     """	R_StaticPromoteFrame(fd);
 
 	RE_BeginScene(fd);""",
-    """	{
+    """	// DARKWOLF_V446_FULL_PERF_TELEMETRY_V01
+	{
 		int dwPerfStart = ri.Milliseconds();
 		R_StaticPromoteFrame(fd);
 		dwPerfStaticPromoteMs += ri.Milliseconds() - dwPerfStart;
