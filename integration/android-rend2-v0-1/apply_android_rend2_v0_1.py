@@ -847,6 +847,272 @@ void CL_Frame( int msec ) {{
     s = replace_once(s, old, new, "Android UI tap frame consumer")
     path.write_text(s)
 
+def patch_android_perf_profile(path: Path) -> None:
+    s = path.read_text()
+
+    old = '''\tR_Register();
+
+\t// Ridah, init the virtual memory
+'''
+    new = f'''\tR_Register();
+
+#ifdef __ANDROID__
+\tif (ri.Cvar_VariableIntegerValue("dw_android_ultralow"))
+\t{{
+\t\t/* {MARKER}: force mobile profile after any cfg-driven vid_restart. */
+\t\tri.Cvar_Set("r_hdr", "0");
+\t\tri.Cvar_Set("r_postProcess", "0");
+\t\tri.Cvar_Set("r_toneMap", "0");
+\t\tri.Cvar_Set("r_autoExposure", "0");
+\t\tri.Cvar_Set("r_depthPrepass", "0");
+\t\tri.Cvar_Set("r_ssao", "0");
+\t\tri.Cvar_Set("r_normalMapping", "0");
+\t\tri.Cvar_Set("r_specularMapping", "0");
+\t\tri.Cvar_Set("r_deluxeMapping", "0");
+\t\tri.Cvar_Set("r_parallaxMapping", "0");
+\t\tri.Cvar_Set("r_cubeMapping", "0");
+\t\tri.Cvar_Set("r_pbr", "0");
+\t\tri.Cvar_Set("r_dynamiclight", "1");
+\t\tri.Cvar_Set("r_dlightMode", "0");
+\t\tri.Cvar_Set("r_dlightShadowMaxLights", "0");
+\t\tri.Cvar_Set("r_dlightShadowMapSize", "256");
+\t\tri.Cvar_Set("r_sunShadows", "0");
+\t\tri.Cvar_Set("r_forceSun", "0");
+\t\tri.Cvar_Set("r_sunlightMode", "0");
+\t\tri.Cvar_Set("r_drawSun", "0");
+\t\tri.Cvar_Set("r_drawSunRays", "0");
+\t\tri.Cvar_Set("r_staticPromote", "0");
+\t\tri.Cvar_Set("r_staticPromoteMaxLights", "0");
+\t\tri.Cvar_Set("r_volumetricLocal", "0");
+\t\tri.Cvar_Set("r_volumetricSun", "0");
+\t\tri.Cvar_Set("r_volumetricFire", "0");
+\t\tri.Cvar_Set("r_softParticles", "0");
+\t\tri.Cvar_Set("r_fxStage9Enable", "0");
+\t\tri.Cvar_Set("r_flares", "0");
+\t\tri.Cvar_Set("r_detailtextures", "0");
+\t\tri.Cvar_Set("r_picmip", "3");
+\t\tri.Cvar_Set("r_picmip2", "3");
+\t\tri.Cvar_Set("r_subdivisions", "20");
+\t\tri.Cvar_Set("r_lodbias", "2");
+\t\tri.Cvar_Set("r_fastsky", "1");
+\t\tri.Cvar_Set("r_textureMode", "GL_LINEAR_MIPMAP_NEAREST");
+\t\tri.Cvar_Set("r_ext_texture_filter_anisotropic", "0");
+\t\tri.Cvar_Set("r_ext_framebuffer_multisample", "0");
+\t\tri.Cvar_Set("r_ext_multisample", "0");
+\t\tri.Cvar_Set("r_finish", "0");
+\t\tri.Cvar_Set("r_swapInterval", "0");
+\t\tri.Printf(PRINT_ALL, "DARKWOLF_ANDROID_ULTRALOW_ENFORCED scale=%d\\n",
+\t\t\tri.Cvar_VariableIntegerValue("dw_android_renderScale"));
+\t}}
+#endif
+
+\t// Ridah, init the virtual memory
+'''
+    s = replace_once(s, old, new, "Android ultra-low profile enforcement")
+    path.write_text(s)
+
+def patch_android_internal_scale_image(path: Path) -> None:
+    s = path.read_text()
+    old = '''\t\twidth = glConfig.vidWidth;
+\t\theight = glConfig.vidHeight;
+
+\t\thdrFormat = GL_RGBA8;
+'''
+    new = f'''\t\twidth = glConfig.vidWidth;
+\t\theight = glConfig.vidHeight;
+#ifdef __ANDROID__
+\t\tif (ri.Cvar_VariableIntegerValue("dw_android_renderScale") >= 25 &&
+\t\t\tri.Cvar_VariableIntegerValue("dw_android_renderScale") < 100)
+\t\t{{
+\t\t\tint scale = ri.Cvar_VariableIntegerValue("dw_android_renderScale");
+\t\t\twidth = (width * scale) / 100;
+\t\t\theight = (height * scale) / 100;
+\t\t\twidth &= ~1;
+\t\t\theight &= ~1;
+\t\t\tif (width < 320) width = 320;
+\t\t\tif (height < 180) height = 180;
+\t\t\tri.Printf(PRINT_ALL,
+\t\t\t\t"DARKWOLF_ANDROID_INTERNAL_RENDER=%dx%d scale=%d native=%dx%d\\n",
+\t\t\t\twidth, height, scale, glConfig.vidWidth, glConfig.vidHeight);
+\t\t}}
+#endif
+
+\t\thdrFormat = GL_RGBA8;
+'''
+    s = replace_once(s, old, new, "Android internal render image scale")
+    path.write_text(s)
+
+def patch_android_internal_scale_fbo(path: Path) -> None:
+    s = path.read_text()
+    old = '''\telse if (r_hdr->integer)
+\t{
+\t\ttr.renderFbo = FBO_Create("_render", tr.renderDepthImage->width, tr.renderDepthImage->height);
+\t\tFBO_AttachImage(tr.renderFbo, tr.renderImage, GL_COLOR_ATTACHMENT0, 0);
+\t\tFBO_AttachImage(tr.renderFbo, tr.renderDepthImage, GL_DEPTH_ATTACHMENT, 0);
+\t\tR_CheckFBO(tr.renderFbo);
+\t}
+'''
+    new = f'''\telse if (r_hdr->integer
+#ifdef __ANDROID__
+\t\t|| (ri.Cvar_VariableIntegerValue("dw_android_renderScale") >= 25 &&
+\t\t\tri.Cvar_VariableIntegerValue("dw_android_renderScale") < 100)
+#endif
+\t)
+\t{{
+\t\ttr.renderFbo = FBO_Create("_render", tr.renderDepthImage->width, tr.renderDepthImage->height);
+\t\tFBO_AttachImage(tr.renderFbo, tr.renderImage, GL_COLOR_ATTACHMENT0, 0);
+\t\tFBO_AttachImage(tr.renderFbo, tr.renderDepthImage, GL_DEPTH_ATTACHMENT, 0);
+\t\tR_CheckFBO(tr.renderFbo);
+#ifdef __ANDROID__
+\t\tif (!r_hdr->integer)
+\t\t\tri.Printf(PRINT_ALL, "DARKWOLF_ANDROID_SCALE_FBO=PASS %dx%d\\n",
+\t\t\t\ttr.renderFbo->width, tr.renderFbo->height);
+#endif
+\t}}
+'''
+    s = replace_once(s, old, new, "Android scaled render FBO")
+    path.write_text(s)
+
+def patch_android_internal_scale_backend(path: Path) -> None:
+    s = path.read_text()
+
+    viewport_old = '''static void SetViewportAndScissor( void ) {
+\tGL_SetProjectionMatrix( backEnd.viewParms.projectionMatrix );
+
+\t// set the window clipping
+\tqglViewport( backEnd.viewParms.viewportX, backEnd.viewParms.viewportY, 
+\t\tbackEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight );
+// TODO: insert handling for widescreen?  (when looking through camera)
+\tqglScissor( backEnd.viewParms.viewportX, backEnd.viewParms.viewportY, 
+\t\tbackEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight );
+}
+'''
+    viewport_new = f'''static qboolean androidScaledScenePresented = qfalse;
+
+static qboolean RB_AndroidScaledRenderActive(void)
+{{
+#ifdef __ANDROID__
+\tint scale = ri.Cvar_VariableIntegerValue("dw_android_renderScale");
+\treturn (tr.renderFbo && scale >= 25 && scale < 100) ? qtrue : qfalse;
+#else
+\treturn qfalse;
+#endif
+}}
+
+static void SetViewportAndScissor( void ) {{
+\tGL_SetProjectionMatrix( backEnd.viewParms.projectionMatrix );
+
+#ifdef __ANDROID__
+\tif (RB_AndroidScaledRenderActive() && glState.currentFBO == tr.renderFbo)
+\t{{
+\t\tfloat sx = tr.renderFbo->width / (float)glConfig.vidWidth;
+\t\tfloat sy = tr.renderFbo->height / (float)glConfig.vidHeight;
+\t\tint x = (int)(backEnd.viewParms.viewportX * sx + 0.5f);
+\t\tint y = (int)(backEnd.viewParms.viewportY * sy + 0.5f);
+\t\tint w = (int)(backEnd.viewParms.viewportWidth * sx + 0.5f);
+\t\tint h = (int)(backEnd.viewParms.viewportHeight * sy + 0.5f);
+\t\tqglViewport(x, y, w, h);
+\t\tqglScissor(x, y, w, h);
+\t\treturn;
+\t}}
+#endif
+
+\t// set the window clipping
+\tqglViewport( backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
+\t\tbackEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight );
+// TODO: insert handling for widescreen?  (when looking through camera)
+\tqglScissor( backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
+\t\tbackEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight );
+}}
+'''
+    s = replace_once(s, viewport_old, viewport_new, "Android scaled 3D viewport")
+
+    gl2d_old = '''void\tRB_SetGL2D (void) {
+\tmat4_t matrix;
+\tint width, height;
+
+\tif (backEnd.projection2D && backEnd.last2DFBO == glState.currentFBO)
+\t\treturn;
+'''
+    gl2d_new = f'''void\tRB_SetGL2D (void) {{
+\tmat4_t matrix;
+\tint width, height;
+
+#ifdef __ANDROID__
+\tif (RB_AndroidScaledRenderActive() && glState.currentFBO == tr.renderFbo)
+\t{{
+\t\tif (!androidScaledScenePresented)
+\t\t{{
+\t\t\tFBO_FastBlit(tr.renderFbo, NULL, NULL, NULL,
+\t\t\t\tGL_COLOR_BUFFER_BIT, GL_LINEAR);
+\t\t\tandroidScaledScenePresented = qtrue;
+\t\t}}
+\t\tFBO_Bind(NULL);
+\t}}
+#endif
+
+\tif (backEnd.projection2D && backEnd.last2DFBO == glState.currentFBO)
+\t\treturn;
+'''
+    s = replace_once(s, gl2d_old, gl2d_new, "Android scaled scene present before 2D")
+
+    draw_old = '''\tcmd = (const drawBufferCommand_t *)data;
+
+\t// finish any 2D drawing if needed
+'''
+    draw_new = f'''\tcmd = (const drawBufferCommand_t *)data;
+
+#ifdef __ANDROID__
+\tandroidScaledScenePresented = qfalse;
+#endif
+
+\t// finish any 2D drawing if needed
+'''
+    s = replace_once(s, draw_old, draw_new, "Android scaled frame reset")
+
+    swap_old = '''\tif (glRefConfig.framebufferObject)
+\t{
+\t\tif (tr.msaaResolveFbo && r_hdr->integer)
+\t\t{
+\t\t\t// Resolving an RGB16F MSAA FBO to the screen messes with the brightness, so resolve to an RGB16F FBO first
+\t\t\tFBO_FastBlit(tr.renderFbo, NULL, tr.msaaResolveFbo, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+\t\t\tFBO_FastBlit(tr.msaaResolveFbo, NULL, NULL, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+\t\t}
+\t\telse if (tr.renderFbo)
+\t\t{
+\t\t\tFBO_FastBlit(tr.renderFbo, NULL, NULL, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+\t\t}
+\t}
+'''
+    swap_new = f'''\tif (glRefConfig.framebufferObject)
+\t{{
+#ifdef __ANDROID__
+\t\tif (RB_AndroidScaledRenderActive())
+\t\t{{
+\t\t\tif (!androidScaledScenePresented)
+\t\t\t{{
+\t\t\t\tFBO_FastBlit(tr.renderFbo, NULL, NULL, NULL,
+\t\t\t\t\tGL_COLOR_BUFFER_BIT, GL_LINEAR);
+\t\t\t\tandroidScaledScenePresented = qtrue;
+\t\t\t}}
+\t\t}}
+\t\telse
+#endif
+\t\tif (tr.msaaResolveFbo && r_hdr->integer)
+\t\t{{
+\t\t\t// Resolving an RGB16F MSAA FBO to the screen messes with the brightness, so resolve to an RGB16F FBO first
+\t\t\tFBO_FastBlit(tr.renderFbo, NULL, tr.msaaResolveFbo, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+\t\t\tFBO_FastBlit(tr.msaaResolveFbo, NULL, NULL, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+\t\t}}
+\t\telse if (tr.renderFbo)
+\t\t{{
+\t\t\tFBO_FastBlit(tr.renderFbo, NULL, NULL, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+\t\t}}
+\t}}
+'''
+    s = replace_once(s, swap_old, swap_new, "Android scaled scene swap")
+    path.write_text(s)
+
 def patch_ci_playerstart(path: Path) -> None:
     s = path.read_text()
 
@@ -936,6 +1202,10 @@ def main(root: Path) -> None:
     patch_tr_image(sp / "rend2" / "tr_image.c")
     patch_depth_texture_mode(sp / "rend2" / "tr_image.c")
     patch_backend(sp / "rend2" / "tr_backend.c")
+    patch_android_perf_profile(sp / "rend2" / "tr_init.c")
+    patch_android_internal_scale_image(sp / "rend2" / "tr_image.c")
+    patch_android_internal_scale_fbo(sp / "rend2" / "tr_fbo.c")
+    patch_android_internal_scale_backend(sp / "rend2" / "tr_backend.c")
     patch_tr_extensions(sp / "rend2" / "tr_extensions.c")
     patch_android_console(sp / "sys" / "con_passive.c")
     patch_android_ui_query(sp / "client" / "cl_ui.c")
