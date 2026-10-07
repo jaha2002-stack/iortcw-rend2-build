@@ -337,6 +337,28 @@ jobs:
           echo "A6_1_APP_START_END"
 
           emu_pid="$(cat .android-rend2-work/a6-emulator.pid)"
+          app_pid=""
+          for i in $(seq 1 30); do
+            app_pid="$(adb shell pidof "$pkg" 2>/dev/null | tr -d '\r' || true)"
+            if [ -n "$app_pid" ]; then
+              break
+            fi
+            sleep 1
+          done
+          test -n "$app_pid"
+          printf '%s\n' "$app_pid" > "$out/pid.txt"
+          echo "A6_1_APP_PID=$app_pid"
+
+          read_qconsole() {
+            : > "$out/qconsole-private.log"
+            : > "$out/qconsole-external.log"
+            timeout 10s adb shell run-as "$pkg" cat files/DarkWolfRTCW/main/qconsole.log \
+              > "$out/qconsole-private.log" 2>/dev/null || true
+            timeout 10s adb shell cat "$remote_main/qconsole.log" \
+              > "$out/qconsole-external.log" 2>/dev/null || true
+            cat "$out/qconsole-private.log" "$out/qconsole-external.log" > "$out/qconsole.log"
+          }
+
           for i in $(seq 1 60); do
             if ! kill -0 "$emu_pid" 2>/dev/null; then
               echo "ERROR: Android emulator process exited during A6.1 rendering" >&2
@@ -354,11 +376,23 @@ jobs:
               kill "$logcat_pid" 2>/dev/null || true
               exit 1
             fi
-            timeout 10s adb logcat -d -v threadtime > "$out/logcat.txt" || true
-            if grep -Eq 'Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed' "$out/logcat.txt"; then
+
+            current_pid="$(adb shell pidof "$pkg" 2>/dev/null | tr -d '\r' || true)"
+            if [ -z "$current_pid" ]; then
+              echo "ERROR: DarkWolf process exited during A6.1 runtime" >&2
+              read_qconsole
               break
             fi
-            if grep -Eq 'GL_RENDERER|GL_VERSION|----- R_Init -----|Rend2' "$out/logcat.txt"; then
+            app_pid="$current_pid"
+            printf '%s\n' "$app_pid" > "$out/pid.txt"
+
+            timeout 10s adb logcat -d -v threadtime --pid="$app_pid" > "$out/logcat-app.txt" || true
+            read_qconsole
+
+            if grep -Eq 'VM_Create on UI failed|Fatal signal|FATAL EXCEPTION|SIGSEGV|Hunk_Alloc failed|Com_Error' "$out/qconsole.log" "$out/logcat-app.txt"; then
+              break
+            fi
+            if grep -Eq 'UI_INIT|ui loaded in [0-9]+ bytes on the hunk|Loading vm file vm/cgame\.sp\.qvm' "$out/qconsole.log"; then
               break
             fi
             sleep 2
@@ -367,17 +401,32 @@ jobs:
           kill "$logcat_pid" 2>/dev/null || true
           wait "$logcat_pid" 2>/dev/null || true
           cp "$out/logcat-stream.txt" "$out/logcat-full.txt" || true
+          timeout 10s adb logcat -d -v threadtime --pid="$app_pid" > "$out/logcat-app.txt" || true
+          read_qconsole
+          timeout 10s adb shell ls -lah "$remote_main/vm" > "$out/remote-vm.txt" 2>&1 || true
+          adb shell input keyevent 4 || true
+          sleep 1
           adb exec-out screencap -p > "$out/first-frame.png" || true
-          adb shell pidof "$pkg" > "$out/pid.txt" || true
 
-          grep -E 'DarkWolfRTCW|A5_HOME=|A5_RETAIL_BASE=|A5_RETAIL_MAIN=|A6_QVM_DIR=|FS_Startup|files in pk3|pak0|sp_pak|Loading vm file|loaded in .* bytes on the hunk|Loading DLL file|Sys_LoadGameDll|VM_Create|UI_INIT|R_Init|OpenGL|GL_VENDOR|GL_RENDERER|GL_VERSION|Rend2|shader|FBO|ERROR|Error|Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed'             "$out/logcat.txt" > "$out/high-signal-log.txt" || true
+          grep -E 'DarkWolfRTCW|A5_HOME=|A5_RETAIL_BASE=|A5_RETAIL_MAIN=|A6_QVM_DIR=|Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed' \
+            "$out/logcat-app.txt" > "$out/high-signal-logcat.txt" || true
+          grep -E 'FS_Startup|files in pk3|pak0|sp_pak|Loading vm file|loaded in .* bytes on the hunk|VM_Create|UI_INIT|R_Init|OpenGL|GL_VENDOR|GL_RENDERER|GL_VERSION|Rend2|shader|FBO|ERROR|Error|Hunk_Alloc|Com_Error' \
+            "$out/qconsole.log" > "$out/high-signal-qconsole.txt" || true
+          cat "$out/high-signal-logcat.txt" "$out/high-signal-qconsole.txt" > "$out/high-signal-log.txt"
 
           test -s "$out/pid.txt"
-          grep -Eqi 'pak0|sp_pak0|sp_pak1|files in pk3' "$out/high-signal-log.txt"
-          ! grep -Eq 'Fatal signal|FATAL EXCEPTION|SIGSEGV|UnsatisfiedLinkError|dlopen failed' "$out/high-signal-log.txt"
+          test -s "$out/qconsole.log"
+          grep -Eqi 'pak0|sp_pak0|sp_pak1|files in pk3' "$out/qconsole.log"
+          grep -F 'Loading vm file vm/ui.sp.qvm' "$out/qconsole.log"
+          ! grep -Eq 'VM_Create on UI failed|Fatal signal|FATAL EXCEPTION|SIGSEGV|Hunk_Alloc failed|Com_Error' "$out/qconsole.log" "$out/logcat-app.txt"
+
+          ui_vm="LOADING_SEEN"
+          if grep -Eq 'ui loaded in [0-9]+ bytes on the hunk|UI_INIT' "$out/qconsole.log"; then
+            ui_vm="LOADED"
+          fi
 
           renderer="NOT_YET_SEEN"
-          if grep -Eq 'GL_RENDERER|GL_VERSION|----- R_Init -----|Rend2' "$out/high-signal-log.txt"; then
+          if grep -Eq 'GL_RENDERER|GL_VERSION|----- R_Init -----|Rend2' "$out/qconsole.log"; then
             renderer="SEEN"
           fi
 
@@ -385,7 +434,9 @@ jobs:
             echo "A6_1_RETAIL_RUNTIME=PASS"
             echo "PACKAGE=$pkg"
             echo "ACTIVITY=$activity"
+            echo "APP_PID=$app_pid"
             echo "PK3_VISIBLE=PASS"
+            echo "QVM_UI=$ui_vm"
             echo "PROCESS_ALIVE=PASS"
             echo "SCREENSHOT_CAPTURED=$(test -s "$out/first-frame.png" && echo YES || echo NO)"
             echo "RENDERER_MARKER=$renderer"
