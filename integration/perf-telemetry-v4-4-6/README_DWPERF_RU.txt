@@ -7,6 +7,26 @@ DARKWOLF RTCW — REND2 v4.4.6 FULL PERFORMANCE TELEMETRY
 который собирает данные, необходимые для принятия решения о финальной
 оптимизации без изменения визуального качества.
 
+
+ИЗОЛЯЦИЯ НАСТРОЕК
+-----------------
+RUN_DWPERF_CAPTURE.bat запускает игру с двойной защитой от старых пользовательских настроек:
+- отдельный fs_homepath/com_homepath: DWPerfHome;
+- команда +safe, при которой ioRTCW не выполняет wolfconfig.cfg и autoexec.cfg.
+
+Перед каждым тестом DWPerfHome создаётся заново. В нём создаются пустые wolfconfig.cfg и autoexec.cfg как дополнительная страховка.
+Обычная домашняя папка ioRTCW и её конфиги не читаются этим benchmark-запуском.
+
+После safe-start применяются только контролируемые настройки релиза:
+1. default.cfg движка;
+2. UNIFIED_PRODUCTION.cfg;
+3. DWPERF_HIGH_QUALITY.cfg.
+
+Профиль теста: HIGH QUALITY из native v4.4 profile contract.
+Ключевые параметры: 4x MSAA, SSGI=1, Local Volumetric=1, Volumetric Sun=1,
+2048 dynamic-light shadow maps, 3 persistent dlight shadow slots, StaticPromote max 32,
+PBR=0, fullscreen, native desktop resolution (r_mode -2), VSync=0, com_maxfps=0.
+
 КАК ЗАПУСТИТЬ
 -------------
 1. Распакуйте релиз в отдельную копию вашей рабочей папки RTCW с retail pak*.pk3.
