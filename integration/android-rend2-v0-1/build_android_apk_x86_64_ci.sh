@@ -122,8 +122,14 @@ EOF
 cat > "$PROJECT/app/src/main/java/org/darkwolf/rend2/DarkWolfActivity.java" <<'EOF'
 package org.darkwolf.rend2;
 
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.view.WindowManager;
+import android.widget.RelativeLayout;
 import org.libsdl.app.SDLActivity;
 
 import java.io.File;
@@ -140,6 +146,49 @@ public final class DarkWolfActivity extends SDLActivity {
     protected void onCreate(Bundle savedInstanceState) {
         prepareFilesystem();
         super.onCreate(savedInstanceState);
+        applyImmersiveMode();
+        installTouchControls();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            applyImmersiveMode();
+        }
+    }
+
+    private void applyImmersiveMode() {
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN |
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (Build.VERSION.SDK_INT >= 30) {
+            getWindow().setDecorFitsSystemWindows(false);
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                controller.hide(WindowInsets.Type.statusBars() |
+                        WindowInsets.Type.navigationBars());
+                controller.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
+                    View.SYSTEM_UI_FLAG_FULLSCREEN |
+                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        }
+    }
+
+    private void installTouchControls() {
+        DarkWolfTouchOverlay overlay = new DarkWolfTouchOverlay(this);
+        RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(
+                RelativeLayout.LayoutParams.MATCH_PARENT,
+                RelativeLayout.LayoutParams.MATCH_PARENT);
+        mLayout.addView(overlay, params);
+        mLayout.bringChildToFront(overlay);
+        Log.i(TAG, "DARKWOLF_ANDROID_TOUCH_HUD=INSTALLED");
     }
 
     private void prepareFilesystem() {
@@ -235,12 +284,318 @@ public final class DarkWolfActivity extends SDLActivity {
                 "+set", "vm_ui", "1",
                 "+set", "dw_android_ci_playerstart", "1",
                 "+set", "com_introplayed", "1",
-                "+set", "r_fullscreen", "0",
-                "+set", "r_mode", "-1",
-                "+set", "r_customwidth", "640",
-                "+set", "r_customheight", "360",
+                "+set", "r_fullscreen", "1",
+                "+set", "r_mode", "-2",
+                "+set", "r_centerWindow", "0",
                 "+spdevmap", "escape1"
         };
+    }
+}
+EOF
+
+
+cat > "$PROJECT/app/src/main/java/org/darkwolf/rend2/DarkWolfTouchOverlay.java" <<'EOF'
+package org.darkwolf.rend2;
+
+import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.RectF;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.View;
+
+import org.libsdl.app.SDLActivity;
+
+import java.util.HashMap;
+import java.util.Map;
+
+final class DarkWolfTouchOverlay extends View {
+    private static final int NONE = 0;
+    private static final int MOVE = 1;
+    private static final int LOOK = 2;
+    private static final int FIRE = 3;
+    private static final int JUMP = 4;
+    private static final int USE = 5;
+    private static final int RELOAD = 6;
+    private static final int CROUCH = 7;
+    private static final int MENU = 8;
+
+    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    private final RectF fireRect = new RectF();
+    private final RectF jumpRect = new RectF();
+    private final RectF useRect = new RectF();
+    private final RectF reloadRect = new RectF();
+    private final RectF crouchRect = new RectF();
+    private final RectF menuRect = new RectF();
+
+    private final Map<Integer, Integer> targets = new HashMap<>();
+    private final Map<Integer, Float> lastX = new HashMap<>();
+    private final Map<Integer, Float> lastY = new HashMap<>();
+
+    private float moveCx;
+    private float moveCy;
+    private float moveRadius;
+    private int movePointer = -1;
+
+    private boolean wDown;
+    private boolean aDown;
+    private boolean sDown;
+    private boolean dDown;
+
+    DarkWolfTouchOverlay(Context context) {
+        super(context);
+        setWillNotDraw(false);
+        setFocusable(false);
+        setClickable(true);
+
+        fill.setStyle(Paint.Style.FILL);
+        fill.setColor(0x55303030);
+
+        stroke.setStyle(Paint.Style.STROKE);
+        stroke.setStrokeWidth(dp(2));
+        stroke.setColor(0xAAFFFFFF);
+
+        text.setTextAlign(Paint.Align.CENTER);
+        text.setColor(0xDDFFFFFF);
+        text.setFakeBoldText(true);
+    }
+
+    private float dp(float value) {
+        return value * getResources().getDisplayMetrics().density;
+    }
+
+    private void updateGeometry() {
+        float w = getWidth();
+        float h = getHeight();
+        moveCx = w * 0.16f;
+        moveCy = h * 0.76f;
+        moveRadius = Math.min(w, h) * 0.145f;
+
+        float big = h * 0.105f;
+        float med = h * 0.080f;
+        setCircle(fireRect, w * 0.89f, h * 0.70f, big);
+        setCircle(jumpRect, w * 0.76f, h * 0.83f, med);
+        setCircle(useRect, w * 0.89f, h * 0.48f, med);
+        setCircle(reloadRect, w * 0.75f, h * 0.58f, med * 0.90f);
+        setCircle(crouchRect, w * 0.64f, h * 0.78f, med * 0.90f);
+        setCircle(menuRect, w * 0.94f, h * 0.12f, med * 0.72f);
+        text.setTextSize(Math.max(dp(12), h * 0.032f));
+    }
+
+    private static void setCircle(RectF out, float cx, float cy, float r) {
+        out.set(cx - r, cy - r, cx + r, cy + r);
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+        updateGeometry();
+
+        canvas.drawCircle(moveCx, moveCy, moveRadius, fill);
+        canvas.drawCircle(moveCx, moveCy, moveRadius, stroke);
+        drawLabel(canvas, "W", moveCx, moveCy - moveRadius * 0.55f);
+        drawLabel(canvas, "S", moveCx, moveCy + moveRadius * 0.62f);
+        drawLabel(canvas, "A", moveCx - moveRadius * 0.58f, moveCy + text.getTextSize() * 0.35f);
+        drawLabel(canvas, "D", moveCx + moveRadius * 0.58f, moveCy + text.getTextSize() * 0.35f);
+
+        drawButton(canvas, fireRect, "FIRE");
+        drawButton(canvas, jumpRect, "JUMP");
+        drawButton(canvas, useRect, "USE");
+        drawButton(canvas, reloadRect, "R");
+        drawButton(canvas, crouchRect, "C");
+        drawButton(canvas, menuRect, "ESC");
+    }
+
+    private void drawButton(Canvas canvas, RectF r, String label) {
+        canvas.drawOval(r, fill);
+        canvas.drawOval(r, stroke);
+        float y = r.centerY() - (text.ascent() + text.descent()) * 0.5f;
+        canvas.drawText(label, r.centerX(), y, text);
+    }
+
+    private void drawLabel(Canvas canvas, String label, float x, float y) {
+        canvas.drawText(label, x, y - (text.ascent() + text.descent()) * 0.5f, text);
+    }
+
+    private int hit(float x, float y) {
+        if (fireRect.contains(x, y)) return FIRE;
+        if (jumpRect.contains(x, y)) return JUMP;
+        if (useRect.contains(x, y)) return USE;
+        if (reloadRect.contains(x, y)) return RELOAD;
+        if (crouchRect.contains(x, y)) return CROUCH;
+        if (menuRect.contains(x, y)) return MENU;
+
+        float dx = x - moveCx;
+        float dy = y - moveCy;
+        if (dx * dx + dy * dy <= moveRadius * moveRadius * 1.8f) return MOVE;
+        if (x >= getWidth() * 0.42f) return LOOK;
+        return NONE;
+    }
+
+    private static void key(int code, boolean down) {
+        if (down) {
+            SDLActivity.onNativeKeyDown(code);
+        } else {
+            SDLActivity.onNativeKeyUp(code);
+        }
+    }
+
+    private void setKeyState(int code, boolean wanted, int which) {
+        boolean current;
+        switch (which) {
+            case 0: current = wDown; break;
+            case 1: current = aDown; break;
+            case 2: current = sDown; break;
+            default: current = dDown; break;
+        }
+        if (current == wanted) return;
+        key(code, wanted);
+        switch (which) {
+            case 0: wDown = wanted; break;
+            case 1: aDown = wanted; break;
+            case 2: sDown = wanted; break;
+            default: dDown = wanted; break;
+        }
+    }
+
+    private void updateMove(float x, float y) {
+        float dx = (x - moveCx) / moveRadius;
+        float dy = (y - moveCy) / moveRadius;
+        final float threshold = 0.24f;
+        setKeyState(KeyEvent.KEYCODE_W, dy < -threshold, 0);
+        setKeyState(KeyEvent.KEYCODE_A, dx < -threshold, 1);
+        setKeyState(KeyEvent.KEYCODE_S, dy > threshold, 2);
+        setKeyState(KeyEvent.KEYCODE_D, dx > threshold, 3);
+        invalidate();
+    }
+
+    private void releaseMove() {
+        setKeyState(KeyEvent.KEYCODE_W, false, 0);
+        setKeyState(KeyEvent.KEYCODE_A, false, 1);
+        setKeyState(KeyEvent.KEYCODE_S, false, 2);
+        setKeyState(KeyEvent.KEYCODE_D, false, 3);
+        movePointer = -1;
+        invalidate();
+    }
+
+    private void pressTarget(int target, boolean down) {
+        switch (target) {
+            case FIRE:
+                SDLActivity.onNativeMouse(
+                        down ? MotionEvent.BUTTON_PRIMARY : 0,
+                        down ? MotionEvent.ACTION_DOWN : MotionEvent.ACTION_UP,
+                        0.0f, 0.0f, false);
+                break;
+            case JUMP: key(KeyEvent.KEYCODE_SPACE, down); break;
+            case USE: key(KeyEvent.KEYCODE_E, down); break;
+            case RELOAD: key(KeyEvent.KEYCODE_R, down); break;
+            case CROUCH: key(KeyEvent.KEYCODE_C, down); break;
+            case MENU: key(KeyEvent.KEYCODE_ESCAPE, down); break;
+            default: break;
+        }
+    }
+
+    private void beginPointer(int index, MotionEvent event) {
+        int id = event.getPointerId(index);
+        float x = event.getX(index);
+        float y = event.getY(index);
+        int target = hit(x, y);
+
+        if (target == MOVE && movePointer != -1) {
+            target = LOOK;
+        }
+        targets.put(id, target);
+        lastX.put(id, x);
+        lastY.put(id, y);
+
+        if (target == MOVE) {
+            movePointer = id;
+            updateMove(x, y);
+        } else if (target != LOOK && target != NONE) {
+            pressTarget(target, true);
+        }
+    }
+
+    private void movePointers(MotionEvent event) {
+        for (int i = 0; i < event.getPointerCount(); i++) {
+            int id = event.getPointerId(i);
+            Integer targetObj = targets.get(id);
+            if (targetObj == null) continue;
+            int target = targetObj;
+            float x = event.getX(i);
+            float y = event.getY(i);
+
+            if (target == MOVE && id == movePointer) {
+                updateMove(x, y);
+            } else if (target == LOOK) {
+                Float ox = lastX.get(id);
+                Float oy = lastY.get(id);
+                if (ox != null && oy != null) {
+                    float dx = (x - ox) * 1.35f;
+                    float dy = (y - oy) * 1.35f;
+                    if (Math.abs(dx) >= 0.5f || Math.abs(dy) >= 0.5f) {
+                        SDLActivity.onNativeMouse(
+                                0, MotionEvent.ACTION_MOVE, dx, dy, true);
+                    }
+                }
+            }
+            lastX.put(id, x);
+            lastY.put(id, y);
+        }
+    }
+
+    private void endPointer(int index, MotionEvent event) {
+        int id = event.getPointerId(index);
+        Integer targetObj = targets.remove(id);
+        lastX.remove(id);
+        lastY.remove(id);
+        if (targetObj == null) return;
+
+        int target = targetObj;
+        if (target == MOVE && id == movePointer) {
+            releaseMove();
+        } else if (target != LOOK && target != NONE) {
+            pressTarget(target, false);
+        }
+    }
+
+    private void cancelAll() {
+        releaseMove();
+        for (Integer target : targets.values()) {
+            if (target != MOVE && target != LOOK && target != NONE) {
+                pressTarget(target, false);
+            }
+        }
+        targets.clear();
+        lastX.clear();
+        lastY.clear();
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        updateGeometry();
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_POINTER_DOWN:
+                beginPointer(event.getActionIndex(), event);
+                return true;
+            case MotionEvent.ACTION_MOVE:
+                movePointers(event);
+                return true;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_POINTER_UP:
+                endPointer(event.getActionIndex(), event);
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                cancelAll();
+                return true;
+            default:
+                return true;
+        }
     }
 }
 EOF
