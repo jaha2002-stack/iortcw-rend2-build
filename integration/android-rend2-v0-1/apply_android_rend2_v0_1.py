@@ -631,9 +631,13 @@ def patch_android_ui_query(path: Path) -> None:
     vm_new = f'''vm_t *uivm;
 
 #ifdef __ANDROID__
+static volatile int androidUiTapPending;
+static volatile int androidUiTapX;
+static volatile int androidUiTapY;
+
 /*
- * {MARKER}: Java touch overlay only reads whether RTCW currently routes
- * input to UI. Mouse/key events themselves still enter through SDL's queue.
+ * {MARKER}: Java may query whether RTCW currently routes input to UI.
+ * The actual QVM call must stay on the engine thread.
  */
 JNIEXPORT jboolean JNICALL
 Java_org_darkwolf_rend2_DarkWolfActivity_nativeIsUiActive(JNIEnv *env, jclass clazz)
@@ -642,11 +646,104 @@ Java_org_darkwolf_rend2_DarkWolfActivity_nativeIsUiActive(JNIEnv *env, jclass cl
     (void)clazz;
     return (Key_GetCatcher() & KEYCATCH_UI) ? JNI_TRUE : JNI_FALSE;
 }}
+
+/*
+ * Android UI thread only publishes a virtual 640x480 tap. CL_Frame consumes
+ * it and enters the UI QVM from the normal engine thread on the next frame.
+ */
+JNIEXPORT void JNICALL
+Java_org_darkwolf_rend2_DarkWolfActivity_nativeQueueUiTap(
+        JNIEnv *env, jclass clazz, jint x, jint y)
+{{
+    (void)env;
+    (void)clazz;
+
+    if (x < 0) x = 0;
+    if (x > 640) x = 640;
+    if (y < 0) y = 0;
+    if (y > 480) y = 480;
+
+    androidUiTapX = (int)x;
+    androidUiTapY = (int)y;
+    __sync_synchronize();
+    androidUiTapPending = 1;
+}}
+
+void CL_AndroidConsumeUiTap(void)
+{{
+    int x;
+    int y;
+
+    if (!androidUiTapPending)
+        return;
+
+    __sync_synchronize();
+    x = androidUiTapX;
+    y = androidUiTapY;
+    androidUiTapPending = 0;
+
+    if (!uivm || !(Key_GetCatcher() & KEYCATCH_UI))
+    {{
+        Com_Printf("DARKWOLF_ANDROID_UI_TAP_DROPPED=%d,%d\\n", x, y);
+        return;
+    }}
+
+    /*
+     * RTCW UI owns a virtual 640x480 relative cursor. Reset it deterministically
+     * to the top-left, move to the requested absolute virtual coordinate, then
+     * deliver the same K_MOUSE1 down/up events used by the desktop client.
+     */
+    VM_Call(uivm, UI_MOUSE_EVENT, -640, -480);
+    VM_Call(uivm, UI_MOUSE_EVENT, x, y);
+    VM_Call(uivm, UI_KEY_EVENT, K_MOUSE1, qtrue);
+    VM_Call(uivm, UI_KEY_EVENT, K_MOUSE1, qfalse);
+
+    Com_Printf("DARKWOLF_ANDROID_UI_TAP_CONSUMED=%d,%d\\n", x, y);
+}}
 #endif
 
 extern char cl_cdkey[34];
 '''
     s = replace_once(s, vm_old, vm_new, "Android UI catcher JNI query")
+    path.write_text(s)
+
+def patch_android_ui_frame(path: Path) -> None:
+    s = path.read_text()
+
+    old = '''/*
+==================
+CL_Frame
+
+==================
+*/
+void CL_Frame( int msec ) {
+
+\tif ( !com_cl_running->integer ) {
+\t\treturn;
+\t}
+'''
+    new = f'''#ifdef __ANDROID__
+extern void CL_AndroidConsumeUiTap( void );
+#endif
+
+/*
+==================
+CL_Frame
+
+==================
+*/
+void CL_Frame( int msec ) {{
+
+\tif ( !com_cl_running->integer ) {{
+\t\treturn;
+\t}}
+
+#ifdef __ANDROID__
+\t/* {MARKER}: consume Java-published UI taps on the engine thread. */
+\tCL_AndroidConsumeUiTap();
+#endif
+'''
+    s = replace_once(s, old, new, "Android UI tap frame consumer")
     path.write_text(s)
 
 def patch_ci_playerstart(path: Path) -> None:
@@ -741,6 +838,7 @@ def main(root: Path) -> None:
     patch_tr_extensions(sp / "rend2" / "tr_extensions.c")
     patch_android_console(sp / "sys" / "con_passive.c")
     patch_android_ui_query(sp / "client" / "cl_ui.c")
+    patch_android_ui_frame(sp / "client" / "cl_main.c")
     patch_ci_playerstart(sp / "client" / "cl_cgame.c")
     print(f"{MARKER}: patched Android GLES3 bring-up layer")
 

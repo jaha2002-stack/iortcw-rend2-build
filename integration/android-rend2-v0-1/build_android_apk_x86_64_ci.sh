@@ -141,6 +141,7 @@ public final class DarkWolfActivity extends SDLActivity {
     private static final String TAG = "DarkWolfRTCW";
 
     static native boolean nativeIsUiActive();
+    static native void nativeQueueUiTap(int uiX, int uiY);
 
     private File homeRoot;
     private File retailRoot;
@@ -396,6 +397,10 @@ final class DarkWolfTouchOverlay extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+        if (DarkWolfActivity.nativeIsUiActive()) {
+            postInvalidateDelayed(100);
+            return;
+        }
         updateGeometry();
 
         canvas.drawCircle(moveCx, moveCy, moveRadius, fill);
@@ -411,6 +416,7 @@ final class DarkWolfTouchOverlay extends View {
         drawButton(canvas, reloadRect, "R");
         drawButton(canvas, crouchRect, "C");
         drawButton(canvas, menuRect, "ESC");
+        postInvalidateDelayed(100);
     }
 
     private void drawButton(Canvas canvas, RectF r, String label) {
@@ -485,53 +491,29 @@ final class DarkWolfTouchOverlay extends View {
         invalidate();
     }
 
-    private void moveRtcwUiPointer(float x, float y) {
+    private void queueRtcwUiTap(float x, float y) {
         float width = Math.max(1.0f, getWidth());
         float height = Math.max(1.0f, getHeight());
-        float uiX = Math.max(0.0f, Math.min(640.0f, (x / width) * 640.0f));
-        float uiY = Math.max(0.0f, Math.min(480.0f, (y / height) * 480.0f));
-
-        // RTCW UI consumes relative mouse deltas. First clamp its virtual
-        // cursor to 0,0, then move deterministically to the tapped 640x480
-        // coordinate. SDL queues these events onto the engine thread.
-        SDLActivity.onNativeMouse(
-                0, MotionEvent.ACTION_MOVE, -10000.0f, -10000.0f, true);
-        SDLActivity.onNativeMouse(
-                0, MotionEvent.ACTION_MOVE, uiX, uiY, true);
-    }
-
-    private void clickRtcwUi(float x, float y) {
-        moveRtcwUiPointer(x, y);
-        SDLActivity.onNativeMouse(
-                MotionEvent.BUTTON_PRIMARY, MotionEvent.ACTION_DOWN,
-                0.0f, 0.0f, true);
-        SDLActivity.onNativeMouse(
-                0, MotionEvent.ACTION_UP, 0.0f, 0.0f, true);
+        int uiX = Math.round(Math.max(0.0f,
+                Math.min(640.0f, (x / width) * 640.0f)));
+        int uiY = Math.round(Math.max(0.0f,
+                Math.min(480.0f, (y / height) * 480.0f)));
+        DarkWolfActivity.nativeQueueUiTap(uiX, uiY);
     }
 
     private boolean handleRtcwUiTouch(MotionEvent event) {
         switch (event.getActionMasked()) {
-            case MotionEvent.ACTION_DOWN:
-            case MotionEvent.ACTION_POINTER_DOWN: {
-                int i = event.getActionIndex();
-                moveRtcwUiPointer(event.getX(i), event.getY(i));
-                return true;
-            }
-            case MotionEvent.ACTION_MOVE: {
-                int i = event.findPointerIndex(event.getPointerId(0));
-                if (i < 0) i = 0;
-                moveRtcwUiPointer(event.getX(i), event.getY(i));
-                return true;
-            }
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_POINTER_UP: {
                 int i = event.getActionIndex();
-                clickRtcwUi(event.getX(i), event.getY(i));
+                queueRtcwUiTap(event.getX(i), event.getY(i));
                 return true;
             }
             case MotionEvent.ACTION_CANCEL:
                 return true;
             default:
+                // Deliberately do not synthesize hover/mouse motion. A tap is
+                // converted atomically to move+MOUSE1 on the engine thread.
                 return true;
         }
     }
