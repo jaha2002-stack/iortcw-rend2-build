@@ -634,6 +634,18 @@ def patch_android_ui_query(path: Path) -> None:
 static volatile int androidUiTapPending;
 static volatile int androidUiTapX;
 static volatile int androidUiTapY;
+static volatile unsigned int androidGameDesiredMask;
+static unsigned int androidGameAppliedMask;
+
+#define DW_ACT_FORWARD   (1u << 0)
+#define DW_ACT_BACK      (1u << 1)
+#define DW_ACT_LEFT      (1u << 2)
+#define DW_ACT_RIGHT     (1u << 3)
+#define DW_ACT_ATTACK    (1u << 4)
+#define DW_ACT_JUMP      (1u << 5)
+#define DW_ACT_CROUCH    (1u << 6)
+#define DW_ACT_ACTIVATE  (1u << 7)
+#define DW_ACT_RELOAD    (1u << 8)
 
 /*
  * {MARKER}: Java may query whether RTCW currently routes input to UI.
@@ -667,6 +679,93 @@ Java_org_darkwolf_rend2_DarkWolfActivity_nativeQueueUiTap(
     androidUiTapY = (int)y;
     __sync_synchronize();
     androidUiTapPending = 1;
+}}
+
+static unsigned int CL_AndroidActionBit(int action)
+{{
+    switch (action)
+    {{
+        case 1: return DW_ACT_FORWARD;
+        case 2: return DW_ACT_BACK;
+        case 3: return DW_ACT_LEFT;
+        case 4: return DW_ACT_RIGHT;
+        case 5: return DW_ACT_ATTACK;
+        case 6: return DW_ACT_JUMP;
+        case 7: return DW_ACT_CROUCH;
+        case 8: return DW_ACT_ACTIVATE;
+        case 9: return DW_ACT_RELOAD;
+        default: return 0;
+    }}
+}}
+
+JNIEXPORT void JNICALL
+Java_org_darkwolf_rend2_DarkWolfActivity_nativeSetGameAction(
+        JNIEnv *env, jclass clazz, jint action, jboolean down)
+{{
+    unsigned int bit = CL_AndroidActionBit((int)action);
+    (void)env;
+    (void)clazz;
+
+    if (!bit)
+        return;
+
+    if (down)
+        __sync_fetch_and_or(&androidGameDesiredMask, bit);
+    else
+        __sync_fetch_and_and(&androidGameDesiredMask, ~bit);
+}}
+
+JNIEXPORT void JNICALL
+Java_org_darkwolf_rend2_DarkWolfActivity_nativeClearGameActions(
+        JNIEnv *env, jclass clazz)
+{{
+    (void)env;
+    (void)clazz;
+    __sync_lock_test_and_set(&androidGameDesiredMask, 0);
+}}
+
+static void CL_AndroidEmitGameAction(unsigned int bit, qboolean down)
+{{
+    const char *cmd = NULL;
+
+    switch (bit)
+    {{
+        case DW_ACT_FORWARD:  cmd = down ? "+forward\\n"  : "-forward\\n"; break;
+        case DW_ACT_BACK:     cmd = down ? "+back\\n"     : "-back\\n"; break;
+        case DW_ACT_LEFT:     cmd = down ? "+moveleft\\n" : "-moveleft\\n"; break;
+        case DW_ACT_RIGHT:    cmd = down ? "+moveright\\n": "-moveright\\n"; break;
+        case DW_ACT_ATTACK:   cmd = down ? "+attack\\n"   : "-attack\\n"; break;
+        case DW_ACT_JUMP:     cmd = down ? "+moveup\\n"   : "-moveup\\n"; break;
+        case DW_ACT_CROUCH:   cmd = down ? "+movedown\\n" : "-movedown\\n"; break;
+        case DW_ACT_ACTIVATE: cmd = down ? "+activate\\n" : "-activate\\n"; break;
+        case DW_ACT_RELOAD:   cmd = down ? "+reload\\n"   : "-reload\\n"; break;
+        default: break;
+    }}
+
+    if (cmd)
+        Cbuf_ExecuteText(EXEC_APPEND, cmd);
+}}
+
+void CL_AndroidConsumeGameActions(void)
+{{
+    unsigned int desired;
+    unsigned int changed;
+    unsigned int bit;
+
+    if (Key_GetCatcher() & KEYCATCH_UI)
+        __sync_lock_test_and_set(&androidGameDesiredMask, 0);
+
+    __sync_synchronize();
+    desired = androidGameDesiredMask;
+    changed = desired ^ androidGameAppliedMask;
+
+    for (bit = 1u; bit <= DW_ACT_RELOAD; bit <<= 1)
+    {{
+        if (changed & bit)
+            CL_AndroidEmitGameAction(bit, (desired & bit) ? qtrue : qfalse);
+    }}
+
+    androidGameAppliedMask = desired;
 }}
 
 void CL_AndroidConsumeUiTap(void)
@@ -724,6 +823,7 @@ void CL_Frame( int msec ) {
 '''
     new = f'''#ifdef __ANDROID__
 extern void CL_AndroidConsumeUiTap( void );
+extern void CL_AndroidConsumeGameActions( void );
 #endif
 
 /*
@@ -739,8 +839,9 @@ void CL_Frame( int msec ) {{
 \t}}
 
 #ifdef __ANDROID__
-\t/* {MARKER}: consume Java-published UI taps on the engine thread. */
+\t/* {MARKER}: consume UI taps and direct gameplay actions on the engine thread. */
 \tCL_AndroidConsumeUiTap();
+\tCL_AndroidConsumeGameActions();
 #endif
 '''
     s = replace_once(s, old, new, "Android UI tap frame consumer")
