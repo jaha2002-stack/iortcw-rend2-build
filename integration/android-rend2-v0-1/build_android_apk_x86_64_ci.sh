@@ -142,6 +142,8 @@ public final class DarkWolfActivity extends SDLActivity {
 
     static native boolean nativeIsUiActive();
     static native void nativeQueueUiTap(int uiX, int uiY);
+    static native void nativeSetGameAction(int action, boolean down);
+    static native void nativeClearGameActions();
 
     private File homeRoot;
     private File retailRoot;
@@ -287,6 +289,8 @@ public final class DarkWolfActivity extends SDLActivity {
                 "+set", "vm_game", "1",
                 "+set", "vm_ui", "1",
                 "+set", "dw_android_ci_playerstart", "1",
+                "+set", "dw_android_ultralow", "1",
+                "+set", "dw_android_renderScale", "50",
                 "+set", "com_introplayed", "1",
                 "+set", "r_fullscreen", "1",
                 "+set", "r_mode", "-2",
@@ -455,14 +459,15 @@ final class DarkWolfTouchOverlay extends View {
 
     private void setKeyState(int code, boolean wanted, int which) {
         boolean current;
+        int action;
         switch (which) {
-            case 0: current = wDown; break;
-            case 1: current = aDown; break;
-            case 2: current = sDown; break;
-            default: current = dDown; break;
+            case 0: current = wDown; action = 1; break;
+            case 1: current = aDown; action = 3; break;
+            case 2: current = sDown; action = 2; break;
+            default: current = dDown; action = 4; break;
         }
         if (current == wanted) return;
-        key(code, wanted);
+        DarkWolfActivity.nativeSetGameAction(action, wanted);
         switch (which) {
             case 0: wDown = wanted; break;
             case 1: aDown = wanted; break;
@@ -520,16 +525,11 @@ final class DarkWolfTouchOverlay extends View {
 
     private void pressTarget(int target, boolean down) {
         switch (target) {
-            case FIRE:
-                SDLActivity.onNativeMouse(
-                        down ? MotionEvent.BUTTON_PRIMARY : 0,
-                        down ? MotionEvent.ACTION_DOWN : MotionEvent.ACTION_UP,
-                        0.0f, 0.0f, false);
-                break;
-            case JUMP: key(KeyEvent.KEYCODE_SPACE, down); break;
-            case USE: key(KeyEvent.KEYCODE_E, down); break;
-            case RELOAD: key(KeyEvent.KEYCODE_R, down); break;
-            case CROUCH: key(KeyEvent.KEYCODE_C, down); break;
+            case FIRE: DarkWolfActivity.nativeSetGameAction(5, down); break;
+            case JUMP: DarkWolfActivity.nativeSetGameAction(6, down); break;
+            case USE: DarkWolfActivity.nativeSetGameAction(8, down); break;
+            case RELOAD: DarkWolfActivity.nativeSetGameAction(9, down); break;
+            case CROUCH: DarkWolfActivity.nativeSetGameAction(7, down); break;
             case MENU: key(KeyEvent.KEYCODE_ESCAPE, down); break;
             default: break;
         }
@@ -606,6 +606,7 @@ final class DarkWolfTouchOverlay extends View {
                 pressTarget(target, false);
             }
         }
+        DarkWolfActivity.nativeClearGameActions();
         targets.clear();
         lastX.clear();
         lastY.clear();
