@@ -424,6 +424,9 @@ import java.io.InputStream;
 
 public final class DarkWolfActivity extends SDLActivity {
     private static final String TAG = "DarkWolfRTCW";
+
+    static native boolean nativeIsUiActive();
+
     private File homeRoot;
     private File retailRoot;
 
@@ -769,6 +772,57 @@ final class DarkWolfTouchOverlay extends View {
         invalidate();
     }
 
+    private void moveRtcwUiPointer(float x, float y) {
+        float width = Math.max(1.0f, getWidth());
+        float height = Math.max(1.0f, getHeight());
+        float uiX = Math.max(0.0f, Math.min(640.0f, (x / width) * 640.0f));
+        float uiY = Math.max(0.0f, Math.min(480.0f, (y / height) * 480.0f));
+
+        // RTCW UI consumes relative mouse deltas. First clamp its virtual
+        // cursor to 0,0, then move deterministically to the tapped 640x480
+        // coordinate. SDL queues these events onto the engine thread.
+        SDLActivity.onNativeMouse(
+                0, MotionEvent.ACTION_MOVE, -10000.0f, -10000.0f, true);
+        SDLActivity.onNativeMouse(
+                0, MotionEvent.ACTION_MOVE, uiX, uiY, true);
+    }
+
+    private void clickRtcwUi(float x, float y) {
+        moveRtcwUiPointer(x, y);
+        SDLActivity.onNativeMouse(
+                MotionEvent.BUTTON_PRIMARY, MotionEvent.ACTION_DOWN,
+                0.0f, 0.0f, true);
+        SDLActivity.onNativeMouse(
+                0, MotionEvent.ACTION_UP, 0.0f, 0.0f, true);
+    }
+
+    private boolean handleRtcwUiTouch(MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_POINTER_DOWN: {
+                int i = event.getActionIndex();
+                moveRtcwUiPointer(event.getX(i), event.getY(i));
+                return true;
+            }
+            case MotionEvent.ACTION_MOVE: {
+                int i = event.findPointerIndex(event.getPointerId(0));
+                if (i < 0) i = 0;
+                moveRtcwUiPointer(event.getX(i), event.getY(i));
+                return true;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_POINTER_UP: {
+                int i = event.getActionIndex();
+                clickRtcwUi(event.getX(i), event.getY(i));
+                return true;
+            }
+            case MotionEvent.ACTION_CANCEL:
+                return true;
+            default:
+                return true;
+        }
+    }
+
     private void pressTarget(int target, boolean down) {
         switch (target) {
             case FIRE:
@@ -864,6 +918,13 @@ final class DarkWolfTouchOverlay extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        if (DarkWolfActivity.nativeIsUiActive()) {
+            if (!targets.isEmpty() || movePointer != -1) {
+                cancelAll();
+            }
+            return handleRtcwUiTouch(event);
+        }
+
         updateGeometry();
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:

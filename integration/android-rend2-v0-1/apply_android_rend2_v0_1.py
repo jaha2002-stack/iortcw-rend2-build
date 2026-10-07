@@ -614,6 +614,41 @@ def patch_android_console(path: Path) -> None:
     s = replace_once(s, print_old, print_new, "Android console log forwarding")
     path.write_text(s)
 
+def patch_android_ui_query(path: Path) -> None:
+    s = path.read_text()
+
+    include_old = '#include "client.h"\n\n#include "../botlib/botlib.h"\n'
+    include_new = f'''#include "client.h"
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
+
+#include "../botlib/botlib.h"
+'''
+    s = replace_once(s, include_old, include_new, "Android UI query JNI include")
+
+    vm_old = 'vm_t *uivm;\n\nextern char cl_cdkey[34];\n'
+    vm_new = f'''vm_t *uivm;
+
+#ifdef __ANDROID__
+/*
+ * {MARKER}: Java touch overlay only reads whether RTCW currently routes
+ * input to UI. Mouse/key events themselves still enter through SDL's queue.
+ */
+JNIEXPORT jboolean JNICALL
+Java_org_darkwolf_rend2_DarkWolfActivity_nativeIsUiActive(JNIEnv *env, jclass clazz)
+{{
+    (void)env;
+    (void)clazz;
+    return (Key_GetCatcher() & KEYCATCH_UI) ? JNI_TRUE : JNI_FALSE;
+}}
+#endif
+
+extern char cl_cdkey[34];
+'''
+    s = replace_once(s, vm_old, vm_new, "Android UI catcher JNI query")
+    path.write_text(s)
+
 def patch_ci_playerstart(path: Path) -> None:
     s = path.read_text()
 
@@ -705,6 +740,7 @@ def main(root: Path) -> None:
     patch_backend(sp / "rend2" / "tr_backend.c")
     patch_tr_extensions(sp / "rend2" / "tr_extensions.c")
     patch_android_console(sp / "sys" / "con_passive.c")
+    patch_android_ui_query(sp / "client" / "cl_ui.c")
     patch_ci_playerstart(sp / "client" / "cl_cgame.c")
     print(f"{MARKER}: patched Android GLES3 bring-up layer")
 
