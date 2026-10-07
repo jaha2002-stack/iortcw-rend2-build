@@ -1,13 +1,19 @@
-param()
+param(
+    [string]$HomePath = ""
+)
 
 $ErrorActionPreference = "Continue"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+if ([string]::IsNullOrWhiteSpace($HomePath)) {
+    $HomePath = Join-Path $Root "DWPerfHome"
+}
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $Out = Join-Path $Root ("DWPerfTelemetry_" + $Stamp)
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 
-$Main = Join-Path $Root "Main"
-$Qconsole = Join-Path $Main "qconsole.log"
+$BaseMain = Join-Path $Root "Main"
+$HomeMain = Join-Path $HomePath "Main"
+$Qconsole = Join-Path $HomeMain "qconsole.log"
 
 function Copy-IfExists([string]$Path, [string]$DestName) {
     if (Test-Path $Path) {
@@ -16,9 +22,11 @@ function Copy-IfExists([string]$Path, [string]$DestName) {
 }
 
 Copy-IfExists $Qconsole "qconsole.log"
-Copy-IfExists (Join-Path $Main "wolfconfig.cfg") "wolfconfig_after_test.cfg"
-Copy-IfExists (Join-Path $Main "wolfconfig.dwperf_backup.cfg") "wolfconfig_before_test.cfg"
-Copy-IfExists (Join-Path $Main "UNIFIED_PRODUCTION.cfg") "UNIFIED_PRODUCTION.cfg"
+Copy-IfExists (Join-Path $HomeMain "wolfconfig.cfg") "isolated_wolfconfig_after_test.cfg"
+Copy-IfExists (Join-Path $HomeMain "autoexec.cfg") "isolated_autoexec.cfg"
+Copy-IfExists (Join-Path $BaseMain "UNIFIED_PRODUCTION.cfg") "UNIFIED_PRODUCTION.cfg"
+Copy-IfExists (Join-Path $BaseMain "DWPERF_HIGH_QUALITY.cfg") "DWPERF_HIGH_QUALITY.cfg"
+Copy-IfExists (Join-Path $HomePath "DWPERF_SESSION.txt") "DWPERF_SESSION.txt"
 Copy-IfExists (Join-Path $Root "README_DWPERF_RU.txt") "README_DWPERF_RU.txt"
 
 try {
