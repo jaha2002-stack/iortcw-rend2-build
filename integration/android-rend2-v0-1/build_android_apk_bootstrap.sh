@@ -574,7 +574,14 @@ public final class DarkWolfActivity extends SDLActivity {
                 "+set", "com_introplayed", "1",
                 "+set", "logfile", "2",
                 "+set", "developer", "1",
+                "+set", "cg_drawFPS", "1",
                 "+set", "r_ext_texture_filter_anisotropic", "0",
+                "+set", "r_dlightShadowMapSize", "1024",
+                "+set", "r_dlightShadowMaxLights", "3",
+                "+set", "r_volumetricSunSamples", "20",
+                "+set", "r_volumetricLocalSamples", "16",
+                "+set", "r_volumetricFireSamples", "16",
+                "+set", "r_ext_framebuffer_multisample", "0",
                 "+set", "r_fullscreen", "1",
                 "+set", "r_mode", "-2",
                 "+set", "r_centerWindow", "0",
@@ -1060,6 +1067,15 @@ A5_BASEGAME_CASE=main
 A5_FS_BASEPATH=APP_SCOPED_EXTERNAL_DARKWOLF_ROOT
 A5_FS_HOMEPATH=APP_PRIVATE_DARKWOLF_ROOT
 A5_NATIVE_MODULE_EXTRACTION=PASS_BY_JAVA_COMPILE_AND_APK_CONTENT
+ANDROID_PERF_PROFILE=V0_1_SHADOW_VOLUMETRIC_BUDGET
+ANDROID_NATIVE_SURFACE=UNCHANGED_R_MODE_MINUS_2
+ANDROID_DLIGHT_SHADOW_MAP=1024
+ANDROID_DLIGHT_SHADOW_MAX_LIGHTS=3
+ANDROID_VOLUMETRIC_SUN_SAMPLES=20
+ANDROID_VOLUMETRIC_LOCAL_SAMPLES=16
+ANDROID_VOLUMETRIC_FIRE_SAMPLES=16
+ANDROID_MSAA=0
+ANDROID_DRAW_FPS=1
 RETAIL_GAME_DATA=NOT_BUNDLED
 EOF
 
