@@ -380,10 +380,10 @@ one(
 
 one(
     "SP/code/rend2/tr_main.c",
-    """			tr.refdef.dlightDiagFacesIssued += 6;
+    """		tr.refdef.dlightDiagFacesIssued += 6;
 """,
-    """			tr.refdef.dlightDiagFacesIssued += 6;
-			dwPerfDlightShadowFaces += 6; // DARKWOLF_V446_FULL_PERF_TELEMETRY_V01
+    """		tr.refdef.dlightDiagFacesIssued += 6;
+		dwPerfDlightShadowFaces += 6; // DARKWOLF_V446_FULL_PERF_TELEMETRY_V01
 """,
     "count point-light shadow faces",
 )
