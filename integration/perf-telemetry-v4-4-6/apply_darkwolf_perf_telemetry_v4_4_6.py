@@ -626,25 +626,22 @@ one(
     "begin shadow capture probe",
 )
 
-one(
-    "SP/code/rend2/tr_backend.c",
-    """	return (const void *)(cmd + 1);
-}
-
-
-/*
-=============
-RB_PostProcess""",
-    """	DWPerfStageEnd(DWPERF_SHADOW_CAPTURE);
-	return (const void *)(cmd + 1);
-}
-
-
-/*
-=============
-RB_PostProcess""",
-    "end shadow capture probe",
-)
+# End the capture probe at RB_CapShadowMap's own return. v4.4.6 has a
+# large DarkWolf diagnostic block between this function and RB_PostProcess,
+# so do not depend on the neighboring function text.
+_rel = "SP/code/rend2/tr_backend.c"
+_s = read(_rel)
+_a = _s.find("const void *RB_CapShadowMap(const void *data)")
+_b = _s.find("// REND2_DLIGHT_DIAGNOSTIC_V2", _a)
+if _a < 0 or _b < 0:
+    raise SystemExit("ERROR end shadow capture probe: RB_CapShadowMap scope not found")
+_seg = _s[_a:_b]
+_ret = "\treturn (const void *)(cmd + 1);"
+_pos = _seg.rfind(_ret)
+if _pos < 0:
+    raise SystemExit("ERROR end shadow capture probe: function return not found")
+_seg = _seg[:_pos] + "\tDWPerfStageEnd(DWPERF_SHADOW_CAPTURE);\n" + _seg[_pos:]
+write(_rel, _s[:_a] + _seg + _s[_b:])
 
 # Whole postprocess probe after the early disabled return.
 one(
