@@ -47,12 +47,9 @@ jobs:
       V446_PATCH: "darkwolf-explosion-coverage-v4-4-6.patch"
       V446_SHA256: "909ee5782fe92480e1d0ffe983f7f617af7f30c2bd05f1b3f915af50075a5134"
 
-      SHADER_DONOR_RUN_ID: "35503262322"
-      SHADER_DONOR_ARTIFACT_ID: "10603017159"
-      SHADER_DONOR_ARTIFACT_NAME: "iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1"
-      SHADER_DONOR_INNER_SHA256: "efe9a4f3b33e5dd4b621ed3fa0d87abe677c85d09ca29088a380d813b5c082bb"
-      SHADER_DONOR_PATCH: "darkwolf-rend2-cumulative-dlight-fx-shadow-eligibility-loper-complete-electrical-pc-v0-3-sp.patch"
-      SHADER_DONOR_PATCH_SHA256: "cb8379d56e57ec83be75251756ecea781dc9d2c6d66620e17fb56538ba157d97"
+      SHADER_DONOR_B64: "integration/perf-telemetry-v4-4-6/shader-donor-minimal.patch.gz.b64"
+      SHADER_DONOR_B64_SHA256: "616c3facbb3eedd2fb27c531eb7f43b3bdb925f7c12a1d9a24437cddc78fe083"
+      SHADER_DONOR_PATCH_SHA256: "077ec8f8ba38cf0595bfd205d4dadca507add33af92a30be84a4ae9e63cddfad"
 
       FIXER: "integration/perf-telemetry-v4-4-6/apply_darkwolf_perf_telemetry_v4_4_6.py"
       CAPTURE_BAT: "integration/perf-telemetry-v4-4-6/RUN_DWPERF_CAPTURE.bat"
@@ -67,11 +64,19 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          command -v gh git python3 unzip zip jq file
+          command -v gh git python3 unzip zip jq file base64 gzip
           python3 -m py_compile "$FIXER"
           test -s "$CAPTURE_BAT"
           test -s "$COLLECT_PS1"
           test -s "$README_PERF"
+          test -s "$SHADER_DONOR_B64"
+          test "$(sha256sum "$SHADER_DONOR_B64" | awk '{print $1}')" = "$SHADER_DONOR_B64_SHA256"
+          if command -v pwsh >/dev/null 2>&1; then
+            pwsh -NoProfile -NonInteractive -Command "[void][scriptblock]::Create((Get-Content -Raw '$COLLECT_PS1'))"
+          fi
+          grep -Fq 'ioWolfSP.x64.exe' "$CAPTURE_BAT"
+          grep -Fq 'Collect-DWPerf.ps1' "$CAPTURE_BAT"
+          grep -Fq 'DWPerfTelemetry_' "$COLLECT_PS1"
 
       - name: "Verify exact v4.4.6 baseline artifact"
         shell: bash
@@ -106,17 +111,6 @@ jobs:
           test "$(sha256sum "$base/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
           test "$(sha256sum "$base/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
 
-          rm -rf donor-artifact donor-release
-          mkdir -p donor-artifact donor-release
-          gh run download "$SHADER_DONOR_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$SHADER_DONOR_ARTIFACT_NAME" --dir donor-artifact
-          dz="donor-artifact/$SHADER_DONOR_ARTIFACT_NAME.zip"
-          test -s "$dz"
-          test "$(sha256sum "$dz" | awk '{print $1}')" = "$SHADER_DONOR_INNER_SHA256"
-          unzip -q "$dz" -d donor-release
-          donor_base="$(find donor-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
-          test -n "$donor_base"
-          test "$(sha256sum "$donor_base/docs/$SHADER_DONOR_PATCH" | awk '{print $1}')" = "$SHADER_DONOR_PATCH_SHA256"
-          echo "$donor_base" > .donor_release
 
       - name: "Reconstruct exact v4.4.6 source"
         shell: bash
@@ -142,8 +136,11 @@ jobs:
             git -C source apply --binary --whitespace=nowarn "../$p"
           done
 
-          donor_base="$(cat .donor_release)"
-          cp "$donor_base/docs/$SHADER_DONOR_PATCH" donor.patch
+          test "$(sha256sum "$SHADER_DONOR_B64" | awk '{print $1}')" = "$SHADER_DONOR_B64_SHA256"
+          base64 -d "$SHADER_DONOR_B64" | gzip -dc > shader-donor-minimal.patch
+          test "$(sha256sum shader-donor-minimal.patch | awk '{print $1}')" = "$SHADER_DONOR_PATCH_SHA256"
+          git -C source apply --check --binary --whitespace=nowarn ../shader-donor-minimal.patch
+          git -C source apply --binary --whitespace=nowarn ../shader-donor-minimal.patch
           for p in \
             SP/code/rend2/glsl/ssgi_fp.glsl \
             SP/code/rend2/glsl/ssgi_vp.glsl \
@@ -152,10 +149,6 @@ jobs:
             SP/code/rend2/glsl/volumetriclocal_vp.glsl \
             SP/code/rend2/glsl/volumetricsun_fp.glsl \
             SP/code/rend2/glsl/volumetricsun_vp.glsl; do
-            if test ! -e "source/$p"; then
-              git -C source apply --check --binary --whitespace=nowarn --include="$p" ../donor.patch
-              git -C source apply --binary --whitespace=nowarn --include="$p" ../donor.patch
-            fi
             test -s "source/$p"
           done
 
@@ -196,30 +189,80 @@ jobs:
           test -s darkwolf-v446-full-perf-telemetry-v01.patch
           git -C source apply --reverse --check --binary ../darkwolf-v446-full-perf-telemetry-v01.patch
 
-      - name: "Install Win64 MinGW toolchain"
+      - name: "Install minimal Win64 MinGW toolchain"
         shell: bash
         run: |
           set -Eeuo pipefail
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources || true
-          timeout 600s sudo apt-get -o Acquire::Retries=3 update
-          timeout 600s sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
-            binutils-mingw-w64-x86-64 g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64
+          export DEBIAN_FRONTEND=noninteractive
+
+          if command -v x86_64-w64-mingw32-gcc-posix >/dev/null 2>&1 && \
+             command -v x86_64-w64-mingw32-g++-posix >/dev/null 2>&1 && \
+             command -v x86_64-w64-mingw32-windres >/dev/null 2>&1; then
+            echo "MinGW already available on runner"
+          else
+            sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 update
+
+            installed=0
+            for attempt in 1 2 3; do
+              echo "MinGW install attempt $attempt/3"
+              if sudo apt-get \
+                  -o Acquire::Retries=5 \
+                  -o Acquire::http::Timeout=90 \
+                  -o Acquire::https::Timeout=90 \
+                  install -y --no-install-recommends \
+                  binutils-mingw-w64-x86-64 \
+                  gcc-mingw-w64-x86-64-posix \
+                  g++-mingw-w64-x86-64-posix; then
+                installed=1
+                break
+              fi
+              sudo apt-get clean || true
+              sleep $((attempt * 10))
+            done
+
+            if [ "$installed" -ne 1 ]; then
+              echo "::error::Unable to install minimal Win64 MinGW toolchain after 3 attempts"
+              exit 1
+            fi
+          fi
+
+          command -v x86_64-w64-mingw32-gcc-posix
+          command -v x86_64-w64-mingw32-g++-posix
+          command -v x86_64-w64-mingw32-windres
+          x86_64-w64-mingw32-gcc-posix --version | head -1
 
       - name: "Build Windows x64 SP Rend2 telemetry renderer"
         shell: bash
         run: |
           set -Eeuo pipefail
           cd source/SP
-          ./cross-make-mingw64.sh -j2             BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0             BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          export CC=x86_64-w64-mingw32-gcc-posix
+          export CXX=x86_64-w64-mingw32-g++-posix
+          export WINDRES=x86_64-w64-mingw32-windres
+          export PLATFORM=mingw32
+          export ARCH=x86_64
+
+          make -j2 release \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=0 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=0 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            CC="$CC" CXX="$CXX" WINDRES="$WINDRES"
           cd ../..
 
           root="source/SP/build/release-mingw32-x86_64"
-          renderer="$(find "$root" -maxdepth 1 -type f -name 'renderer_sp_rend2_x64.dll' -print -quit)"
+          renderer="$root/renderer_sp_rend2_x64.dll"
           test -s "$renderer"
           file "$renderer" | grep -Eiq 'PE32\+|x86-64'
-          grep -aFq "DWPERF_FRAME" "$renderer"
-          grep -aFq "DWPERF_PROBE" "$renderer"
-          grep -aFq "DWPERF_CFG" "$renderer"
+
+          python3 - "$renderer" <<'PY'
+          from pathlib import Path
+          import sys
+          data = Path(sys.argv[1]).read_bytes()
+          missing = [m for m in (b"DWPERF_FRAME", b"DWPERF_PROBE", b"DWPERF_CFG") if m not in data]
+          if missing:
+              raise SystemExit("missing runtime telemetry markers in renderer: " + ", ".join(x.decode() for x in missing))
+          print("telemetry binary markers: PASS")
+          PY
+
           echo "$renderer" > .renderer
 
       - name: "Package one-click telemetry release"
@@ -272,7 +315,10 @@ jobs:
           (cd "$stage" && find . -type f ! -path "./docs/SHA256SUMS.txt" -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
 
           (cd dist && zip -q -X -r "$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          test -s "dist/$RELEASE_BASENAME.zip"
+          unzip -tq "dist/$RELEASE_BASENAME.zip"
           sha256sum "dist/$RELEASE_BASENAME.zip" > "dist/$RELEASE_BASENAME.zip.sha256"
+          test -s "dist/$RELEASE_BASENAME.zip.sha256"
 
       - name: "Upload telemetry release"
         uses: actions/upload-artifact@v4
