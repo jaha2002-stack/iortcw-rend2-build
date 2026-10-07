@@ -1,0 +1,241 @@
+name: "DarkWolf ioRTCW Rend2 v4.4.6 Full Performance Telemetry"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "rend2-v4-4-6-perf-telemetry-v0.1"
+    paths:
+      - ".github/workflows/DARKWOLF_IORTCW_REND2_V4_4_6_FULL_PERF_TELEMETRY.yml"
+      - "integration/perf-telemetry-v4-4-6/**"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-v446-full-perf-telemetry
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+
+      BASE_RUN_ID: "37266797451"
+      BASE_HEAD_SHA: "e410db87b5704fb1518740f1cfc760e9ea67d34f"
+      BASE_ARTIFACT_ID: "11326603946"
+      BASE_ARTIFACT_NAME: "DarkWolf-ioRTCW-Rend2-v4.4.6-Explosion-Coverage-Candidate-Win64"
+      BASE_ARTIFACT_DIGEST: "sha256:51a49587a0c4e7ad9c7ad651d5a4fcc34c7774d89ed9366dd659ed7efa97154b"
+      BASE_INNER_SHA256: "10ca3d568fdca89569912835d110fa9f365d531ec83982927fb5c1fe590f7aea"
+
+      BASE_RENDERER_SHA256: "fe840163dad9f16f8d4a88464988ab341290d9397bd7992977771d98b3729b37"
+      BASE_CGAME_SHA256: "f73515c890b0ae65320dc39de9a2aa75b55a36d45e53409614c3f3207108ee44"
+      BASE_QAGAME_SHA256: "530078eb448f11886208ad66f1af6f27775b09fa19da813e67b6e23040070c92"
+      BASE_UI_SHA256: "54ae87dbef7426e2d439adf01e2be415aec2eb05501e5d3d1029d42378886959"
+      BASE_EXE_SHA256: "d5fad5fa49d6dca642b3509900785cb4078d233480a387189c8a94bf4c9c561d"
+
+      CUMULATIVE_PATCH: "darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch"
+      CUMULATIVE_SHA256: "2c1da09485d489bca253eef8c7626d7417d5493fee493c2d83ffb7c6b7048d0c"
+      SUN_PATCH: "darkwolf-force-sun-csm-smart-v4-4-4-production.patch"
+      SUN_SHA256: "e59d16b008044a71e9ebb1988a5aea3c2d1cd12e4a329eda762a4a08a2d3bb6e"
+      V445_PATCH: "darkwolf-dam-spotlight-halo-v4-4-5.patch"
+      V445_SHA256: "35b84ef6e4db0681a0e16ad78f1cde3079091c2540fa5ff54a7de6e21d9c7a25"
+      V446_PATCH: "darkwolf-explosion-coverage-v4-4-6.patch"
+      V446_SHA256: "909ee5782fe92480e1d0ffe983f7f617af7f30c2bd05f1b3f915af50075a5134"
+
+      FIXER: "integration/perf-telemetry-v4-4-6/apply_darkwolf_perf_telemetry_v4_4_6.py"
+      CAPTURE_BAT: "integration/perf-telemetry-v4-4-6/RUN_DWPERF_CAPTURE.bat"
+      COLLECT_PS1: "integration/perf-telemetry-v4-4-6/Collect-DWPerf.ps1"
+      README_PERF: "integration/perf-telemetry-v4-4-6/README_DWPERF_RU.txt"
+      RELEASE_BASENAME: "DarkWolf-ioRTCW-Rend2-v4.4.6-Full-Performance-Telemetry-Win64"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Install dependencies"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             binutils-mingw-w64-x86-64 build-essential ca-certificates             g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git make             mingw-w64 python3 unzip zip jq file
+          python3 -m py_compile "$FIXER"
+          test -s "$CAPTURE_BAT"
+          test -s "$COLLECT_PS1"
+          test -s "$README_PERF"
+
+      - name: "Verify exact v4.4.6 baseline artifact"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run_json")" = "$BASE_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run_json")" = "success"
+
+          art_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${BASE_ARTIFACT_ID}")"
+          test "$(jq -r .name <<<"$art_json")" = "$BASE_ARTIFACT_NAME"
+          test "$(jq -r .expired <<<"$art_json")" = "false"
+          test "$(jq -r .digest <<<"$art_json")" = "$BASE_ARTIFACT_DIGEST"
+
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/$BASE_ARTIFACT_NAME.zip"
+          test -s "$z"
+          test "$(sha256sum "$z" | awk '{print $1}')" = "$BASE_INNER_SHA256"
+          unzip -q "$z" -d base-release
+          base="$(find base-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$base"
+          echo "$base" > .base_release
+
+          (cd "$base" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$base/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$base/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$base/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$base/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+
+      - name: "Reconstruct exact v4.4.6 source"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_release)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+
+          cp "$base/docs/$CUMULATIVE_PATCH" cumulative.patch
+          cp "$base/docs/$SUN_PATCH" sun.patch
+          cp "$base/docs/$V445_PATCH" v445.patch
+          cp "$base/docs/$V446_PATCH" v446.patch
+
+          test "$(sha256sum cumulative.patch | awk '{print $1}')" = "$CUMULATIVE_SHA256"
+          test "$(sha256sum sun.patch | awk '{print $1}')" = "$SUN_SHA256"
+          test "$(sha256sum v445.patch | awk '{print $1}')" = "$V445_SHA256"
+          test "$(sha256sum v446.patch | awk '{print $1}')" = "$V446_SHA256"
+
+          for p in cumulative.patch sun.patch v445.patch v446.patch; do
+            git -C source apply --check --binary --whitespace=nowarn "../$p"
+            git -C source apply --binary --whitespace=nowarn "../$p"
+          done
+
+          grep -Fq "DARKWOLF_FORCE_SUN_CSM_SMART_PRODUCTION_V444" source/SP/code/rend2/tr_scene.c
+          grep -Fq "DARKWOLF_SPOTLIGHT_DEATH_LOCALVOL_SYNC_V445" source/SP/code/cgame/cg_ents.c
+          grep -Fq "DARKWOLF_EXPLOSION_COVERAGE_V446" source/SP/code/cgame/cg_event.c
+
+          git -C source config user.name "DarkWolf Performance TestLab"
+          git -C source config user.email "ci@example.invalid"
+          git -C source add -A
+          git -C source commit -q -m "Exact v4.4.6 source"
+          git -C source rev-parse HEAD > .v446_source_commit
+
+      - name: "Apply telemetry-only instrumentation"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          basecommit="$(cat .v446_source_commit)"
+          python3 "$FIXER" source
+          git -C source diff --check "$basecommit" --
+
+          mapfile -t changed < <(git -C source diff --name-only "$basecommit" -- | LC_ALL=C sort)
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 6
+          printf '%s\n' "${changed[@]}" | grep -Fxq "SP/code/rend2/tr_backend.c"
+          printf '%s\n' "${changed[@]}" | grep -Fxq "SP/code/rend2/tr_cmds.c"
+          printf '%s\n' "${changed[@]}" | grep -Fxq "SP/code/rend2/tr_fbo.c"
+          printf '%s\n' "${changed[@]}" | grep -Fxq "SP/code/rend2/tr_local.h"
+          printf '%s\n' "${changed[@]}" | grep -Fxq "SP/code/rend2/tr_main.c"
+          printf '%s\n' "${changed[@]}" | grep -Fxq "SP/code/rend2/tr_scene.c"
+
+          grep -R -Fq "DARKWOLF_V446_FULL_PERF_TELEMETRY_V01" source/SP/code/rend2
+          grep -Fq "DWPERF_FRAME" source/SP/code/rend2/tr_cmds.c
+          grep -Fq "DWPERF_PROBE" source/SP/code/rend2/tr_cmds.c
+          grep -Fq "DWPERF_CFG" source/SP/code/rend2/tr_cmds.c
+
+          git -C source diff --binary "$basecommit" -- > darkwolf-v446-full-perf-telemetry-v01.patch
+          test -s darkwolf-v446-full-perf-telemetry-v01.patch
+          git -C source apply --reverse --check --binary ../darkwolf-v446-full-perf-telemetry-v01.patch
+
+      - name: "Build Windows x64 SP Rend2 telemetry renderer"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd source/SP
+          ./cross-make-mingw64.sh -j2             BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0             BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          cd ../..
+
+          root="source/SP/build/release-mingw32-x86_64"
+          renderer="$(find "$root" -maxdepth 1 -type f -name 'renderer_sp_rend2_x64.dll' -print -quit)"
+          test -s "$renderer"
+          file "$renderer" | grep -Eiq 'PE32\+|x86-64'
+          strings "$renderer" | grep -Fq "DARKWOLF_V446_FULL_PERF_TELEMETRY_V01"
+          strings "$renderer" | grep -Fq "DWPERF_FRAME"
+          echo "$renderer" > .renderer
+
+      - name: "Package one-click telemetry release"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_release)"
+          renderer="$(cat .renderer)"
+          rm -rf dist
+          stage="dist/$RELEASE_BASENAME"
+          mkdir -p "$stage"
+          cp -a "$base/." "$stage/"
+          cp "$renderer" "$stage/renderer_sp_rend2_x64.dll"
+
+          cp "$CAPTURE_BAT" "$stage/RUN_DWPERF_CAPTURE.bat"
+          cp "$COLLECT_PS1" "$stage/Collect-DWPerf.ps1"
+          cp "$README_PERF" "$stage/README_DWPERF_RU.txt"
+          cp darkwolf-v446-full-perf-telemetry-v01.patch "$stage/docs/"
+
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" != "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+
+          cat > "$stage/docs/DARKWOLF_V446_FULL_PERF_TELEMETRY_AUDIT.txt" <<EOF
+BASE_RUN=$BASE_RUN_ID
+BASE_SHA=$BASE_HEAD_SHA
+BASE_ARTIFACT_ID=$BASE_ARTIFACT_ID
+BASE_ARTIFACT_DIGEST=$BASE_ARTIFACT_DIGEST
+UPSTREAM_SHA=$UPSTREAM_SHA
+MODE=TELEMETRY_ONLY_NO_PERFORMANCE_OPTIMIZATIONS
+QUALITY_SETTINGS=UNCHANGED_FROM_V446
+SUN_CSM_V444_OPTIMIZATION=PRESERVED
+STATIC_PROMOTE_MAX_LIGHTS=32
+PERSISTENT_DLIGHT_SHADOW_SLOTS=3
+PBR=0
+NORMAL_FRAME_LOG_SAMPLE=EVERY_8_FRAMES
+SERIALIZED_GPU_PROBE=EVERY_240_FRAMES
+PROBE_FRAMES_MARKED=1
+PROBE_FRAMES_EXCLUDED_FROM_NORMAL_SUMMARY=1
+TELEMETRY=FRAME_FRONTEND_BACKEND_VIEWGEN_SORT_STATICPROMOTE_DLIGHT_SHADOWS_DRAW_COUNTERS_FBO_BLITS
+GPU_PROBES=SHADOWS_DEPTH_MAIN_MSAA_SSAO_SSGI_VOLUMETRICS_TONEMAP_SUNRAYS_BOKEH_POSTPROCESS
+ONE_CLICK_LAUNCH=RUN_DWPERF_CAPTURE.bat
+AUTO_PACKAGE=DWPerfTelemetry_TIMESTAMP.zip
+PRODUCTION_PROMOTION=FORBIDDEN
+EOF
+
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path "./docs/SHA256SUMS.txt" -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+
+          (cd dist && zip -q -X -r "$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/$RELEASE_BASENAME.zip" > "dist/$RELEASE_BASENAME.zip.sha256"
+
+      - name: "Upload telemetry release"
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
