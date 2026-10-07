@@ -207,7 +207,9 @@ one(
 		const char *mapName = (tr.world && tr.world->baseName[0]) ? tr.world->baseName : "none";
 		dwLastEndMs = nowMs;
 
-		ri.Printf(PRINT_ALL,
+		if ((tr.frameCount & 7) == 0 || dwPerfProbeFrame)
+		{
+			ri.Printf(PRINT_ALL,
 			"DWPERF_FRAME frame=%d map=%s probe=%d wall_ms=%d frontend_ms=%d backend_ms=%d "
 			"views=%d main_views=%d shadow_views=%d dshadow_views=%d sunshadow_views=%d fireshadow_views=%d othershadow_views=%d "
 			"viewgen_ms=%d sort_ms=%d staticpromote_ms=%d dshadow_front_ms=%d dshadow_faces=%d "
@@ -226,6 +228,7 @@ one(
 			backEnd.pc.c_glslShaderBinds, backEnd.pc.c_genericDraws, backEnd.pc.c_lightallDraws,
 			backEnd.pc.c_fogDraws, backEnd.pc.c_dlightDraws,
 			dwPerfFboBindCalls, dwPerfFboBindChanges, dwPerfBlitCalls, dwPerfFastBlitCalls);
+		}
 
 		if (dwPerfProbeFrame)
 		{
