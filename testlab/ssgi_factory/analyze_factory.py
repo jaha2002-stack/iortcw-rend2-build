@@ -31,7 +31,7 @@ for capture in m["screenshots"]:
  if case == "off":
   if not any("active=0" in x for x in traces_window):raise SystemExit(f"OFF_TRACE_MISSING view={capture['view']}")
  else:
-  if not any("active=1" in x and f"brightfix={5 if case=='edge5' else 2 if case=='fix2' else 3}" in x for x in traces_window):
+  if not any("active=1" in x and f"brightfix={6 if case in ('donor6','debug_donor_depth') else 3}" in x for x in traces_window):
    raise SystemExit(f"ACTIVE_TRACE_MISSING view={capture['view']} case={case}")
 summary={}
 for name,f in files.items():
@@ -43,10 +43,10 @@ byview={}
 for shot in m["screenshots"]:
  byview.setdefault(shot["view"],{})[shot["case"]]=shot["name"]
 for i,cases in byview.items():
- if set(cases)!={"off","fix2","fix3","edge5","debug_gi","debug_accepted","debug_entity_guard","debug_edge"}:raise SystemExit(f"MISSING_VIEW_CASES {i}")
+ if set(cases)!={"off","fix3","donor6","fix3_repeat","debug_donor_depth"}:raise SystemExit(f"MISSING_VIEW_CASES {i}")
  diffs={}
  base=Image.open(files[cases["off"]]).convert("RGB")
- for case in ("fix2","fix3","edge5","debug_gi","debug_accepted","debug_entity_guard","debug_edge"):
+ for case in ("fix3","donor6","fix3_repeat","debug_donor_depth"):
   candidate=Image.open(files[cases[case]]).convert("RGB")
   d=ImageStat.Stat(ImageChops.difference(base,candidate))
   diffs[case]=round(sum(d.mean)/3,3)
