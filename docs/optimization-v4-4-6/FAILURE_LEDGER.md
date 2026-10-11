@@ -7,4 +7,6 @@
 | Baseline source audit | telemetry workflow omits v4.4.3 AA + UI deltas | Historical release assembled from separate module builds | Component-specific versioned reconstruction, source-tree gate |
 | Workflow launch capability | No connector workflow-dispatch endpoint exposed | Tool capability limitation | One branch-and-path-scoped push trigger, no recursive commits |
 
+| Run 38150934190 native smoke | Both Win64 builds/package PASS; 4/6 baseline captures black or pre-READY | `wait 180` also advances during loading/briefing; command-line screenshot/quit raced gameplay | Diagnostic-only capture now waits for playerstart and 32 rendered gameplay scenes; production binaries untouched. Re-run required. |
+
 No historical 37678074243/37682884950 downloads are needed. No production branch changes are authorized or performed.

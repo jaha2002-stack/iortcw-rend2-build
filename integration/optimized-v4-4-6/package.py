@@ -29,13 +29,16 @@ for path,digest in lock['payload'].items():
  assert sha(p)==digest;shutil.copy2(p,stage/path)
 for f in ['RUN_DARKWOLF_OPTIMIZED_CLEAN.bat','README_INSTALL_RU.md']:
  shutil.copy2(root/f,stage/f)
+ if f.endswith('.bat'):
+  target=stage/f;target.write_bytes(target.read_bytes().replace(b'\r\n',b'\n').replace(b'\n',b'\r\n'))
 shutil.copy2(root/'PRODUCTION_HIGH_QUALITY.cfg',stage/'Main/PRODUCTION_HIGH_QUALITY.cfg')
 shutil.copy2(src/'SP/COPYING.txt',stage/'COPYING.txt')
 shutil.copy2(src/'LICENCE.md',stage/'LICENCE.md')
+shutil.copy2(src/'SP/code/SDL2/include/SDL_copying.h',stage/'docs/SDL_COPYING.txt')
 # Upstream ships SDL/OpenAL licensing with these runtime dependencies.
 for p in (src/'SP/code/libs/win64').iterdir():
  if p.is_file() and p.suffix.lower() in ['.txt','.md']:shutil.copy2(p,stage/'docs'/p.name)
-provenance={'status':'CANDIDATE_FOR_LOCAL_VERIFICATION','builder_sha':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),'baseline_source_tree':lock['baseline_source_tree'],'upstream_sha':lock['upstream_sha'],'patches':lock['patches'],'optimized_patch_sha256':sha(root/'optimized.patch'),'binary_comparison':comparison,'GPU_PERFORMANCE':'NOT_RUN','WINDOWS_RUNTIME':'NOT_RUN','VISUAL_ACCEPTANCE':'NOT_RUN','source_url':'https://github.com/jaha2002-stack/iortcw-rend2-build/tree/rend2-v4-4-6-clean-optimization','compile_flags':'see evidence build.log; baseline Makefile flags, no new optimization flags'}
+provenance={'status':'CANDIDATE_FOR_LOCAL_VERIFICATION','builder_sha':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),'baseline_source_tree':lock['baseline_source_tree'],'upstream_sha':lock['upstream_sha'],'patches':lock['patches'],'optimized_patch_sha256':sha(root/'optimized.patch'),'modified_source_sha256':{n:sha(src/n) for n in ['SP/code/rend2/tr_main.c','SP/code/rend2/tr_scene.c']},'binary_comparison':comparison,'GPU_PERFORMANCE':'NOT_RUN','WINDOWS_RUNTIME':'NOT_RUN','VISUAL_ACCEPTANCE':'NOT_RUN','source_url':'https://github.com/jaha2002-stack/iortcw-rend2-build/tree/rend2-v4-4-6-clean-optimization','compile_flags':'see evidence build.log; baseline Makefile flags, no new optimization flags'}
 (stage/'docs/BUILD_PROVENANCE.json').write_text(json.dumps(provenance,indent=2)+'\n')
 shutil.copy2(repo/'docs/optimization-v4-4-6/OPTIMIZATION_DECISIONS.md',stage/'CHANGELOG_OPTIMIZATION_RU.md')
 paths=sorted(p for p in stage.rglob('*') if p.is_file())

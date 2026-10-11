@@ -25,3 +25,5 @@ Scope: reconstructed SP source, builder reconstruction, selected hot paths acros
 Frame order: game/cgame → scene lights/StaticPromote → light and sun shadow view submission → main BSP/entity view/sort → queued backend draws/depth/entity mask → MSAA resolve → SSAO/SSGI → volumetric composition → tone map/final presentation. Ownership and ordering preserved; no new threads, GPU state or temporal shadow cache.
 
 Existing profiling collector was reviewed: probe frames use qglFinish and must be excluded from ordinary FPS. No such captures were supplied for this task. CPU-, GPU-, driver- and bandwidth-bound hypotheses cannot be distinguished from source inspection alone.
+
+Compiler audit: upstream Win64 Makefile already uses -O3 -ffast-math. These inherited flags are preserved for baseline parity, not introduced or advertised as an optimization. Harness tests use UBSan separately from production.
