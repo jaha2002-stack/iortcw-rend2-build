@@ -12,6 +12,87 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - name: Install game build and software GL
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential ca-certificates gh git jq python3 python3-pil zip unzip file xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev libsdl2-dev libopenal-dev libcurl4-openssl-dev
+      - name: Reconstruct game source from release provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash testlab/ssgi_factory/restore_v446.sh
+      - name: Build native SP + Rend2
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          exe="$(find source/SP/build -type f -name 'iowolfsp*' -perm -111 -print -quit)"
+          test -x "$exe"
+          mkdir -p runtime/main home evidence/screenshots
+          cp -a "$(dirname "$exe")/." runtime/
+      - name: Retail game assets
+        id: assets
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          if [ -z "$GH_TOKEN" ]; then
+            echo BLOCKED_MISSING_RETAIL_ASSET_TOKEN > evidence/status.txt
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          dir="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -n "$dir"
+          find "$dir" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+          echo "available=true" >> "$GITHUB_OUTPUT"
+      - name: Discover Factory player origin and lamp candidates
+        if: steps.assets.outputs.available == 'true'
+        run: |
+          set -Eeuo pipefail
+          cat > runtime/main/factory_probe.cfg <<'EOF'
+          set developer 1
+          set logfile 2
+          wait 240
+          dw_testViewState 800
+          wait 8
+          echo FACTORY_SPAWN_PROBE_COMPLETE
+          wait 5
+          quit
+          EOF
+          exe="$(find runtime -maxdepth 1 -iname 'iowolfsp*' -type f -print -quit)"
+          chmod +x "$exe"
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 160s "$exe" +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" +set com_introplayed 1 +set logfile 2 +set r_fullscreen 0 +set dw_testAutomation 1 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1024 +set r_customheight 768 +set r_depthPrepass 1 +set r_ssao 1 +set r_ssgi 0 +spdevmap factory +wait 250 +exec factory_probe.cfg
+          qlog="$(find home -type f -name qconsole.log -print -quit)"
+          test -n "$qlog"
+          cp "$qlog" evidence/probe-qconsole.log
+          grep -Fq FACTORY_SPAWN_PROBE_COMPLETE evidence/probe-qconsole.log
+          grep -Fq 'TESTLAB_VIEW_STATE index=800' evidence/probe-qconsole.log
+          python3 testlab/ssgi_factory/make_factory_cfg.py --log evidence/probe-qconsole.log --main runtime/main --out runtime/main/factory_ssgi_ab.cfg --manifest evidence/capture-manifest.json
+      - name: Capture Factory SSGI comparisons
+        if: steps.assets.outputs.available == 'true'
+        run: |
+          set -Eeuo pipefail
+          exe="$(find runtime -maxdepth 1 -name 'iowolfsp*' -type f -print -quit)"
+          rm -f home/main/qconsole.log
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 900s "$exe" +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" +set com_introplayed 1 +set logfile 2 +set r_fullscreen 0 +set dw_testAutomation 1 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1024 +set r_customheight 768 +set r_depthPrepass 1 +set r_ssao 1 +set r_ssgi 0 +set r_staticPromoteMaxLights 32 +set r_dlightShadowMaxLights 3 +spdevmap factory +wait 300 +exec factory_ssgi_ab.cfg
+          qlog="$(find home -type f -name qconsole.log -print -quit)"
+          test -n "$qlog"
+          cp "$qlog" evidence/capture-qconsole.log
+          find home -type f -path '*/screenshots/factory_ssgi_*.tga' -exec cp {} evidence/screenshots/ \;
+          python3 testlab/ssgi_factory/analyze_factory.py --manifest evidence/capture-manifest.json --log evidence/capture-qconsole.log --screenshots evidence/screenshots --out evidence/analysis.json
+          echo CAPTURE_COMPLETE_PENDING_VISUAL_ACCEPTANCE > evidence/status.txt
+      - name: Archive evidence on success or failure
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence out
+          echo "WORKFLOW_SHA=$GITHUB_SHA" >> evidence/provenance.txt
+          (cd evidence && zip -q -r ../out/Factory-SSGI-Evidence.zip .)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Factory-SSGI-Evidence
+          path: out/Factory-SSGI-Evidence.zip
+          retention-days: 90
       - name: TestLab Python checks
         shell: bash
         run: |
