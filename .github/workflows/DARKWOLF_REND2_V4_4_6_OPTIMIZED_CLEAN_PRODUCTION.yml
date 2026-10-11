@@ -1,0 +1,108 @@
+name: DarkWolf v4.4.6 Optimized Clean Production
+on:
+  workflow_dispatch:
+  # The connector has no dispatch endpoint; this exact branch/path trigger is the
+  # deliberate launch mechanism. No workflow commits or writes back to the repo.
+  push:
+    branches: [rend2-v4-4-6-clean-optimization]
+    paths: ['integration/optimized-v4-4-6/**', '.github/workflows/DARKWOLF_REND2_V4_4_6_OPTIMIZED_CLEAN_PRODUCTION.yml']
+permissions:
+  contents: read
+concurrency:
+  group: darkwolf-v446-clean-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      KIT: integration/optimized-v4-4-6
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Preflight and toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/baseline evidence/optimized
+          python3 -m py_compile "$KIT"/*.py
+          bash -n "$KIT/build.sh"
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 python3-pil xvfb xauth libsdl2-dev libgl1-mesa-dev libopenal-dev
+      - name: Reconstruct and verify component-correct baseline
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 "$KIT/reconstruct.py" baseline-source 2>&1 | tee evidence/reconstruction.log
+          git clone -q --shared baseline-source source
+          git -C source apply --check "$GITHUB_WORKSPACE/$KIT/optimized.patch"
+          git -C source apply "$GITHUB_WORKSPACE/$KIT/optimized.patch"
+          git -C source diff --check
+          python3 "$KIT/test_equivalence.py" source baseline-source evidence
+          python3 "$KIT/validate_source.py" source baseline-source evidence
+      - name: Build baseline Windows x64 SP
+        shell: bash
+        run: bash "$KIT/build.sh" baseline-source evidence/baseline
+      - name: Build optimized Windows x64 SP
+        shell: bash
+        run: bash "$KIT/build.sh" source evidence/optimized
+      - name: Package and verify one clean candidate
+        shell: bash
+        run: python3 "$KIT/package.py" source baseline-source evidence dist
+      - name: Protected TestLab assets
+        id: retail
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo 'NOT_RUN: missing protected retail asset token' > evidence/runtime-status.txt
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+          else
+            bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > protected-assets-path.log
+            tail -1 protected-assets-path.log > .retail_main
+            test -d "$(cat .retail_main)"
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build and run existing TestLab automation on both variants
+        if: steps.retail.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for variant in baseline-source source; do
+            python3 testlab/scripts/apply_testlab_instrumentation.py "$variant"
+            make -C "$variant/SP" -j2 release BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 2>&1 | tee "evidence/${variant}-linux-build.log"
+            python3 "$KIT/runtime.py" "$variant" "$(cat .retail_main)" "evidence/${variant}-runtime"
+          done
+      - name: Upload clean release only after mandatory gates
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-v446-Optimized-Clean-Candidate-Win64-SP
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            dist/BUILD_PROVENANCE.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## v4.4.6 validation'
+            echo "Builder: $GITHUB_SHA"
+            echo "Run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo 'GPU FPS / Windows runtime / full visual acceptance: NOT_RUN'
+            echo 'Linux/Mesa smoke is separate from target Windows performance.'
+            if test -f evidence/runtime-status.txt; then cat evidence/runtime-status.txt; fi
+            if test -f evidence/algorithm-equivalence.json; then cat evidence/algorithm-equivalence.json; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload validation evidence including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-v446-validation-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30

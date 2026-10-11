@@ -1,0 +1,328 @@
+diff --git a/SP/code/rend2/tr_main.c b/SP/code/rend2/tr_main.c
+index 08593109..c67ca49f 100644
+--- a/SP/code/rend2/tr_main.c
++++ b/SP/code/rend2/tr_main.c
+@@ -2979,6 +2979,10 @@ static qboolean R_DarkWolfStaticPromoteShadowCompanionEquivalent(const dlight_t
+ // Connected-component grouping makes the equivalence transitive and deterministic even if
+ // three learned points form a short chain.  MAX_DLIGHTS is only 32, so this is tiny compared
+ // with six-face cubemap rendering and avoids any map-specific identity assumptions.
++// v4.4.6 clean optimization: invocation-scoped labels, never a temporal shadow cache.
++static qboolean s_dwShadowGroupLabelsActive = qfalse;
++static int s_dwShadowGroupLabels[MAX_DLIGHTS];
++
+ static int R_DarkWolfStaticPromoteShadowGroupCanonicalId(int startIndex)
+ {
+     int queue[MAX_DLIGHTS], visited[MAX_DLIGHTS];
+@@ -2989,6 +2993,8 @@ static int R_DarkWolfStaticPromoteShadowGroupCanonicalId(int startIndex)
+     R_DarkWolfEnsurePhysicalShadowGroupCvars();
+     if (!s_rStaticPromotePhysicalShadowGroup || !s_rStaticPromotePhysicalShadowGroup->integer)
+         return tr.refdef.dlights[startIndex].staticPromoteFixtureId;
++    if (s_dwShadowGroupLabelsActive && s_dwShadowGroupLabels[startIndex] != -2)
++        return s_dwShadowGroupLabels[startIndex];
+     Com_Memset(visited, 0, sizeof(visited));
+     visited[startIndex] = 1;
+     queue[tail++] = startIndex;
+@@ -3010,6 +3016,9 @@ static int R_DarkWolfStaticPromoteShadowGroupCanonicalId(int startIndex)
+             }
+         }
+     }
++    if (s_dwShadowGroupLabelsActive)
++        for (i = 0; i < tail; ++i)
++            s_dwShadowGroupLabels[queue[i]] = canonical;
+     return canonical;
+ }
+ 
+@@ -3295,6 +3304,12 @@ void R_RenderDlightCubemaps(const refdef_t *fd)
+ 	if (maxShadowLights == 0)
+ 		return;
+ 
++	// Reset for every scene invocation, including same-frame secondary views.
++	// Origins, radii, colors and eligibility remain immutable until this call returns.
++	for (historyInitIndex = 0; historyInitIndex < MAX_DLIGHTS; ++historyInitIndex)
++		s_dwShadowGroupLabels[historyInitIndex] = -2;
++	s_dwShadowGroupLabelsActive = qtrue;
++
+ 	allLightsMask = tr.refdef.num_dlights >= 32 ? 0xFFFFFFFFu : ((1u << tr.refdef.num_dlights) - 1u);
+ 	savedDlightMask = tr.refdef.dlightMask;
+ 	visibleLightsMask = allLightsMask & ~savedDlightMask;
+@@ -3877,6 +3892,7 @@ void R_RenderDlightCubemaps(const refdef_t *fd)
+ 	// Shadow views update dlightMask while traversing the world. Restore the
+ 	// main-view visibility result so later front-end work is deterministic.
+ 	tr.refdef.dlightMask = savedDlightMask;
++	s_dwShadowGroupLabelsActive = qfalse;
+ }
+ 
+ 
+diff --git a/SP/code/rend2/tr_scene.c b/SP/code/rend2/tr_scene.c
+index 04bc9039..f7358edf 100644
+--- a/SP/code/rend2/tr_scene.c
++++ b/SP/code/rend2/tr_scene.c
+@@ -5048,8 +5048,7 @@ void R_StaticPromoteClearMap_f(void)
+ 		tr.world->baseName, removed, STATIC_PROMOTE_USER_OVERRIDE_FILE);
+ }
+ 
+-static qboolean R_StaticPromoteAddCandidate(int slot, staticPromoteCandidate_t *candidate,
+-	const char *sourceName, int sourceIndex, char *report, int reportSize, int *reportLength)
++static qboolean R_StaticPromoteAddCandidate(staticPromoteCandidate_t *candidate)
+ {
+ 	vec3_t baseColor;
+ 	vec3_t color;
+@@ -5062,7 +5061,6 @@ static qboolean R_StaticPromoteAddCandidate(int slot, staticPromoteCandidate_t *
+ 	float radius;
+ 	float maxColor;
+ 	float colorScale;
+-	char line[768];
+ 	int before;
+ 
+ 	if (!candidate)
+@@ -5097,116 +5095,17 @@ static qboolean R_StaticPromoteAddCandidate(int slot, staticPromoteCandidate_t *
+ 	if (r_numdlights > before)
+ 		backEndData->dlights[r_numdlights - 1].forced = qtrue;
+ 
+-	Com_sprintf(line, sizeof(line),
+-		"slot=%d source=%s sourceIndex=%d entity=%d origin=%.2f,%.2f,%.2f baseLight=%.2f baseColor=%.3f,%.3f,%.3f directGain=%.3f maxColor=%.3f runtimeRadius=%.2f runtimeColor=%.3f,%.3f,%.3f added=%d\n",
+-		slot, sourceName ? sourceName : "<none>", sourceIndex, candidate->entityOrdinal,
+-		candidate->origin[0], candidate->origin[1], candidate->origin[2], candidate->intensity,
+-		baseColor[0], baseColor[1], baseColor[2], directGain, maxColorLimit, radius,
+-		color[0], color[1], color[2], r_numdlights > before ? 1 : 0);
+-	R_StaticPromoteAppend(report, reportSize, reportLength, line);
+ 	return r_numdlights > before ? qtrue : qfalse;
+ }
+ 
+-static qboolean R_StaticPromoteAddSlot(int slot, int index, char *report, int reportSize, int *reportLength)
++static qboolean R_StaticPromoteAddSlot(int index)
+ {
+ 	staticPromoteCandidate_t *candidate;
+ 	if (!R_StaticPromoteResolve(index, &candidate))
+ 		return qfalse;
+-	return R_StaticPromoteAddCandidate(slot, candidate, "manual-nearest32", index,
+-		report, reportSize, reportLength);
++	return R_StaticPromoteAddCandidate(candidate);
+ }
+ 
+-static void R_StaticPromoteReportIfChanged(int enable, int manualOverride, int maxLights,
+-	int activeCount, int selectionSignature, int index0, int index1,
+-	int autoMapLights, int pvsEnabled, int pvsHoldMs, int viewCluster,
+-	int visibleCount, int heldCount, int overflowCount,
+-	int classifierAccepted, int classifierRejected,
+-	const char *report, int reportLength)
+-{
+-	// DARKWOLF_USLRD_CLEAN_PRODUCTION_V1: production package does not write periodic StaticPromote telemetry/status files.
+-	return;
+-	float gain = r_staticPromoteGain ? r_staticPromoteGain->value : 0.35f;
+-	float directGain = r_staticPromoteDirectGain ? r_staticPromoteDirectGain->value : 1.10f;
+-	float radiusScale = r_staticPromoteRadiusScale ? r_staticPromoteRadiusScale->value : 0.70f;
+-	float minRadius = r_staticPromoteMinRadius ? r_staticPromoteMinRadius->value : 192.0f;
+-	float maxRadius = r_staticPromoteMaxRadius ? r_staticPromoteMaxRadius->value : 320.0f;
+-	float maxColor = r_staticPromoteMaxColor ? r_staticPromoteMaxColor->value : 0.50f;
+-	int dlightMode = r_dlightMode ? r_dlightMode->integer : 0;
+-	int shadowBudget = r_dlightShadowMaxLights ? r_dlightShadowMaxLights->integer : 3;
+-
+-	if (s_staticPromoteLastReportWorld == tr.world &&
+-		s_staticPromoteLastEnable == enable &&
+-		s_staticPromoteLastManualOverride == manualOverride &&
+-		s_staticPromoteLastMaxLights == maxLights &&
+-		s_staticPromoteLastActiveCount == activeCount &&
+-		s_staticPromoteLastSelectionSignature == selectionSignature &&
+-		s_staticPromoteLastIndex0 == index0 &&
+-		s_staticPromoteLastIndex1 == index1 &&
+-		s_staticPromoteLastAutoMapLights == autoMapLights &&
+-		s_staticPromoteLastPVS == pvsEnabled &&
+-		s_staticPromoteLastPVSHoldMs == pvsHoldMs &&
+-		s_staticPromoteLastViewCluster == viewCluster &&
+-		s_staticPromoteLastVisibleCount == visibleCount &&
+-		s_staticPromoteLastHeldCount == heldCount &&
+-		s_staticPromoteLastRegistryCount == s_staticPromotePersistentCount &&
+-		s_staticPromoteLastRawLightCount == s_staticPromotePersistentRawLightCount &&
+-		s_staticPromoteLastOverflowCount == overflowCount &&
+-		s_staticPromoteLastClassifierAccepted == classifierAccepted &&
+-		s_staticPromoteLastClassifierRejected == classifierRejected &&
+-		s_staticPromoteLastInfluenceVisible == visibleCount &&
+-		s_staticPromoteLastShadowBudget == shadowBudget &&
+-		fabs(s_staticPromoteLastGain - gain) < 0.0001f &&
+-		fabs(s_staticPromoteLastDirectGain - directGain) < 0.0001f &&
+-		fabs(s_staticPromoteLastRadiusScale - radiusScale) < 0.0001f &&
+-		fabs(s_staticPromoteLastMinRadius - minRadius) < 0.0001f &&
+-		fabs(s_staticPromoteLastMaxRadius - maxRadius) < 0.0001f &&
+-		fabs(s_staticPromoteLastMaxColor - maxColor) < 0.0001f &&
+-		s_staticPromoteLastDlightMode == dlightMode)
+-		return;
+-
+-	s_staticPromoteLastReportWorld = tr.world;
+-	s_staticPromoteLastEnable = enable;
+-	s_staticPromoteLastManualOverride = manualOverride;
+-	s_staticPromoteLastMaxLights = maxLights;
+-	s_staticPromoteLastActiveCount = activeCount;
+-	s_staticPromoteLastSelectionSignature = selectionSignature;
+-	s_staticPromoteLastIndex0 = index0;
+-	s_staticPromoteLastIndex1 = index1;
+-	s_staticPromoteLastAutoMapLights = autoMapLights;
+-	s_staticPromoteLastPVS = pvsEnabled;
+-	s_staticPromoteLastPVSHoldMs = pvsHoldMs;
+-	s_staticPromoteLastViewCluster = viewCluster;
+-	s_staticPromoteLastVisibleCount = visibleCount;
+-	s_staticPromoteLastHeldCount = heldCount;
+-	s_staticPromoteLastRegistryCount = s_staticPromotePersistentCount;
+-	s_staticPromoteLastRawLightCount = s_staticPromotePersistentRawLightCount;
+-	s_staticPromoteLastOverflowCount = overflowCount;
+-	s_staticPromoteLastClassifierAccepted = classifierAccepted;
+-	s_staticPromoteLastClassifierRejected = classifierRejected;
+-	s_staticPromoteLastInfluenceVisible = visibleCount;
+-	s_staticPromoteLastShadowBudget = shadowBudget;
+-	s_staticPromoteLastGain = gain;
+-	s_staticPromoteLastDirectGain = directGain;
+-	s_staticPromoteLastRadiusScale = radiusScale;
+-	s_staticPromoteLastMinRadius = minRadius;
+-	s_staticPromoteLastMaxRadius = maxRadius;
+-	s_staticPromoteLastMaxColor = maxColor;
+-	s_staticPromoteLastDlightMode = dlightMode;
+-	ri.FS_WriteFile("static_promote_v12_fix_v5_1_status.txt", report, reportLength);
+-	ri.Printf(PRINT_ALL,
+-		"STATIC_PROMOTE_V12_FIX_V5_1_STATUS map=%s enable=%d autoMap=%d pvs=%d cluster=%d influenceVisible=%d held=%d active=%d maxLights=%d overflow=%d classifierAccepted=%d classifierRejected=%d fixtures=%d raw=%d learnedOn=%d learnedOff=%d synthetic=%d mode=%d shadowBudget=%d shadowMap=%d\n",
+-		tr.world ? tr.world->baseName : "<none>", enable, autoMapLights, pvsEnabled,
+-		viewCluster, visibleCount, heldCount, activeCount, maxLights, overflowCount,
+-		classifierAccepted, classifierRejected, s_staticPromotePersistentCount,
+-		s_staticPromotePersistentRawLightCount,
+-		R_StaticPromoteUserOverrideCountForMap(tr.world ? tr.world->baseName : "", 1),
+-		R_StaticPromoteUserOverrideCountForMap(tr.world ? tr.world->baseName : "", -1),
+-		R_StaticPromoteSyntheticCountForMap(tr.world ? tr.world->baseName : ""),
+-		dlightMode, shadowBudget,
+-		r_dlightShadowMapSize ? r_dlightShadowMapSize->integer : -1);
+-}
+-
+-
+ // DARKWOLF_PHYSICAL_LIGHT_DELIVERY_RESIDENCY_DIAG_V0_1
+ static const int s_dwFactoryWatchEntities[] = {
+ 	245, 300, 109, 134, 162, 110, 279, 178, 37, 207,
+@@ -6212,8 +6111,6 @@ static void R_StaticPromoteFrame(const refdef_t *fd)
+ 	int pvsHoldMs;
+ 	int maxLights;
+ 	int selectedCount;
+-	int activeCount;
+-	int selectionSignature;
+ 	int index0;
+ 	int index1;
+ 	int viewCluster;
+@@ -6223,9 +6120,6 @@ static void R_StaticPromoteFrame(const refdef_t *fd)
+ 	int classifierAccepted;
+ 	int classifierRejected;
+ 	int i;
+-	int reportLength;
+-	char report[16384];
+-	char header[3072];
+ 
+ 	// DARKWOLF_PCRB_E2E_V0_7_VISIBLE_SURFACE_INFLUENCE_AUDIT
+ 	R_DarkWolfPCRBE2E07ResetFrame();
+@@ -6262,96 +6156,37 @@ static void R_StaticPromoteFrame(const refdef_t *fd)
+ 	index0 = r_staticPromoteIndex0 ? r_staticPromoteIndex0->integer : -1;
+ 	index1 = r_staticPromoteIndex1 ? r_staticPromoteIndex1->integer : -1;
+ 	selectedCount = 0;
+-	activeCount = 0;
+-	selectionSignature = 5381;
+ 	viewCluster = -1;
+ 	visibleCount = 0;
+ 	heldCount = 0;
+ 	overflowCount = 0;
+ 	classifierAccepted = 0;
+ 	classifierRejected = 0;
+-	reportLength = 0;
+-	report[0] = '\0';
+ 
+ 	if (!manualOverride)
+ 		selectedCount = R_StaticPromoteSelectPersistentInfluence(fd, selected, maxLights,
+ 			&viewCluster, &visibleCount, &heldCount, &overflowCount,
+ 			&classifierAccepted, &classifierRejected);
+ 
+-	Com_sprintf(header, sizeof(header),
+-		"REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V5_1_V12_0\nmap=%s lightmapPreserved=1 allMaps=1 persistentLogicalRegistry=1 rawBspLights=%d fixtureCount=%d mergedCompanions=%d autoMapLights=%d approvedFallbackFixtures=%d classifierAccepted=%d classifierRejected=%d requestedMaxLights=%d selectedCount=%d influenceVisible=%d heldResident=%d overflow=%d selection=user_override_synthetic_physical_priority_influence_pvs_no_distance pvsEnabled=%d viewCluster=%d residencyHoldMs=%d influenceRadius=%.1f fixtureMerge=xy2_z96_plausiblePrimary classifier=physical_evidence_conservative registryGeneration=%d minFixtureMembers=%d learnedOn=%d learnedOff=%d syntheticDefined=%d syntheticOnMap=%d shadowBudget=%d shadowMap=%d startupNativeEXE=1 persistentLearn=1 wideSearch=1 syntheticLearn=1\nenable=%d manualOverride=%d index0=%d index1=%d dlightMode=%d gain=%.3f directGain=%.3f radiusScale=%.3f minRadius=%.1f maxRadius=%.1f maxColor=%.3f classifierEnabled=%d classMinIntensity=%.1f classMaxIntensity=%.1f classMinColorRatio=%.2f minFixtureMembers=%d allowScripted=%d\n",
+-		tr.world->baseName, s_staticPromotePersistentRawLightCount,
+-		s_staticPromotePersistentCount, s_staticPromotePersistentMergedCount,
+-		autoMapLights, s_staticPromotePersistentApprovedCount,
+-		classifierAccepted, classifierRejected, maxLights, selectedCount,
+-		visibleCount, heldCount, overflowCount, pvsEnabled, viewCluster, pvsHoldMs,
+-		r_staticPromoteInfluenceRadius ? r_staticPromoteInfluenceRadius->value : 320.0f,
+-		s_staticPromotePersistentBuildGeneration,
+-		r_staticPromoteClassifierMinFixtureMembers ? r_staticPromoteClassifierMinFixtureMembers->integer : 2,
+-		R_StaticPromoteUserOverrideCountForMap(tr.world->baseName, 1),
+-		R_StaticPromoteUserOverrideCountForMap(tr.world->baseName, -1),
+-		s_staticPromoteSyntheticCount,
+-		R_StaticPromoteSyntheticCountForMap(tr.world->baseName),
+-		r_dlightShadowMaxLights ? r_dlightShadowMaxLights->integer : 3,
+-		r_dlightShadowMapSize ? r_dlightShadowMapSize->integer : 2048,
+-		enable, manualOverride, index0, index1,
+-		r_dlightMode ? r_dlightMode->integer : 0,
+-		r_staticPromoteGain ? r_staticPromoteGain->value : 0.35f,
+-		r_staticPromoteDirectGain ? r_staticPromoteDirectGain->value : 1.10f,
+-		r_staticPromoteRadiusScale ? r_staticPromoteRadiusScale->value : 0.70f,
+-		r_staticPromoteMinRadius ? r_staticPromoteMinRadius->value : 192.0f,
+-		r_staticPromoteMaxRadius ? r_staticPromoteMaxRadius->value : 320.0f,
+-		r_staticPromoteMaxColor ? r_staticPromoteMaxColor->value : 0.50f,
+-		r_staticPromoteClassifier ? r_staticPromoteClassifier->integer : 1,
+-		r_staticPromoteClassifierMinIntensity ? r_staticPromoteClassifierMinIntensity->value : 30.0f,
+-		r_staticPromoteClassifierMaxIntensity ? r_staticPromoteClassifierMaxIntensity->value : 350.0f,
+-		r_staticPromoteClassifierMinColorRatio ? r_staticPromoteClassifierMinColorRatio->value : 0.60f,
+-		r_staticPromoteClassifierMinFixtureMembers ? r_staticPromoteClassifierMinFixtureMembers->integer : 2,
+-		r_staticPromoteClassifierAllowScripted ? r_staticPromoteClassifierAllowScripted->integer : 0);
+-	R_StaticPromoteAppend(report, sizeof(report), &reportLength, header);
+ 
+ 	if (enable)
+ 	{
+ 		if (manualOverride)
+ 		{
+-			if (R_StaticPromoteAddSlot(0, index0, report, sizeof(report), &reportLength))
+-			{
+-				activeCount++;
+-				selectionSignature = selectionSignature * 33 + index0;
+-			}
+-			if (index1 != index0 && maxLights > 1 &&
+-				R_StaticPromoteAddSlot(1, index1, report, sizeof(report), &reportLength))
+-			{
+-				activeCount++;
+-				selectionSignature = selectionSignature * 33 + index1;
+-			}
++			R_StaticPromoteAddSlot(index0);
++			if (index1 != index0 && maxLights > 1)
++				R_StaticPromoteAddSlot(index1);
+ 		}
+ 		else
+ 		{
+ 			for (i = 0; i < selectedCount; ++i)
+ 			{
+ 				staticPromotePersistentLight_t *light = selected[i];
+-				int fixtureIndex = (int)(light - s_staticPromotePersistentLights);
+-				char residencyLine[320];
+-				Com_sprintf(residencyLine, sizeof(residencyLine),
+-					"residentSlot=%d fixtureIndex=%d entity=%d priority=%d override=%d synthetic=%d syntheticId=%d influenceLeaves=%d influenceVisible=%d surfaceSignal=%d surfaceResidency=%d held=%d rawMembers=%d scripted=%d approved=%d\n",
+-					i, fixtureIndex, light->candidate.entityOrdinal, R_StaticPromotePhysicalPriority(light),
+-					R_StaticPromoteUserOverrideState(tr.world->baseName, light->candidate.entityOrdinal),
+-					light->synthetic ? 1 : 0, light->syntheticId, light->influenceCount,
+-					light->influenceVisibleNow ? 1 : 0,
+-					s_staticPromoteVisibleSurfaceSignalNow[fixtureIndex] ? 1 : 0,
+-					s_staticPromoteVisibleSurfaceResidencyNow[fixtureIndex] ? 1 : 0,
+-					light->heldResident ? 1 : 0,
+-					light->rawMembers, light->scripted ? 1 : 0, light->approvedFallback ? 1 : 0);
+-				R_StaticPromoteAppend(report, sizeof(report), &reportLength, residencyLine);
+-				if (R_StaticPromoteAddCandidate(i, &light->candidate,
+-					autoMapLights ? "learned-override-physical-priority-auto" : "persistent-approved",
+-					fixtureIndex, report, sizeof(report), &reportLength))
++
++				if (R_StaticPromoteAddCandidate(&light->candidate))
+ 				{
+-					activeCount++;
+ 					R_StaticPromoteUSLRDTagPromotedDlight(light);
+ 				}
+-				selectionSignature = selectionSignature * 33 + light->candidate.entityOrdinal;
+ 			}
+ 		}
+ 	}
+@@ -6369,10 +6204,6 @@ static void R_StaticPromoteFrame(const refdef_t *fd)
+ 	// Snapshot the already-final production decision before the main-view surface walk.
+ 	R_DarkWolfPCRBE2E07Prepare(fd, selected, selectedCount);
+ 
+-	R_StaticPromoteReportIfChanged(enable, manualOverride, maxLights, activeCount,
+-		selectionSignature, index0, index1, autoMapLights, pvsEnabled, pvsHoldMs,
+-		viewCluster, visibleCount, heldCount, overflowCount,
+-		classifierAccepted, classifierRejected, report, reportLength);
+ }
+ 
+ 
