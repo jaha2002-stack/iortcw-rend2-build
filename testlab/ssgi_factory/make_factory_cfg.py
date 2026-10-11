@@ -95,7 +95,7 @@ def main():
     # against accidental camera movement or an invalid screenshot.
     entries = [
         (f"lamp_close_{i:02d}", (origin[0] + step, origin[1], origin[2]), (-4.0, -6.0), None)
-        for i, step in enumerate((252.0,))
+        for i, step in enumerate((190.0,252.0))
     ]
     manifest["status"] = "PENDING_CLOSEUP_VISUAL_REVIEW"
     manifest["notes"] = (
@@ -115,7 +115,8 @@ def main():
         ("off", ["set r_ssgi 0", "set r_ssgiGeometryVisibility 0", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
         ("baseline", ["set r_ssgi 1", "set r_ssgiGeometryVisibility 0", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
         ("ray1", ["set r_ssgi 1", "set r_ssgiGeometryVisibility 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
-        ("normal2", ["set r_ssgi 1", "set r_ssgiGeometryVisibility 2", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
+        ("hemisphere2", ["set r_ssgi 1", "set r_ssgiGeometryVisibility 2", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
+        ("strict3", ["set r_ssgi 1", "set r_ssgiGeometryVisibility 3", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
         ("baseline_repeat", ["set r_ssgi 1", "set r_ssgiGeometryVisibility 0", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
     ]
     for idx, (entry_name, pos, (pitch, yaw), eid) in enumerate(entries):
