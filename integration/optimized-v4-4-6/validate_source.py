@@ -3,7 +3,13 @@ import hashlib,json,subprocess,sys
 root,baseline,out=map(Path,sys.argv[1:]);changed=[]
 for p in (root/'SP/code').rglob('*'):
  if p.is_file() and p.read_bytes()!=(baseline/p.relative_to(root)).read_bytes():changed.append(p.relative_to(root).as_posix())
-assert sorted(changed)==['SP/code/rend2/tr_main.c','SP/code/rend2/tr_scene.c'],changed
+assert sorted(changed)==[
+ 'SP/code/rend2/glsl/ssgi_fp.glsl',
+ 'SP/code/rend2/glsl/volumetriclocal_fp.glsl',
+ 'SP/code/rend2/glsl/volumetricsun_fp.glsl',
+ 'SP/code/rend2/tr_main.c',
+ 'SP/code/rend2/tr_scene.c',
+],changed
 for p in (root/'SP/code/rend2').rglob('*'):
  if p.is_file():
   b=p.read_bytes()
@@ -16,6 +22,12 @@ assert main.count('s_dwShadowGroupLabelsActive = qfalse;')==2
 start=main.index('s_dwShadowGroupLabelsActive = qtrue;');end=main.index('s_dwShadowGroupLabelsActive = qfalse;',start)
 assert 'return;' not in main[start:end] # Cache always deactivated before leaving invocation.
 assert 'DARKWOLF_VOLUMETRIC_COVERAGE_AA_FINAL_V1' in (root/'SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl').read_text()
+assert 'DARKWOLF_V446_OPT09_SHARED_RAW_DEPTH' in (root/'SP/code/rend2/glsl/ssgi_fp.glsl').read_text()
+assert 'DARKWOLF_V446_OPT04_LOCALVOL_LOOP_INVARIANTS' in (root/'SP/code/rend2/glsl/volumetriclocal_fp.glsl').read_text()
+assert 'DARKWOLF_V446_OPT06_FIRE_GAUSSIAN_SQRT_ELIMINATION' in (root/'SP/code/rend2/glsl/volumetriclocal_fp.glsl').read_text()
+assert 'DARKWOLF_V446_OPT02_SUN_TRANSMITTANCE_RECURRENCE' in (root/'SP/code/rend2/glsl/volumetricsun_fp.glsl').read_text()
+assert (root/'SP/code/rend2/glsl/ssgi_fp.glsl').read_text().count('SsgiAccumulate(vec2(')==12
+assert 'qglFinish()' not in (root/'SP/code/rend2/tr_backend.c').read_text()
 assert 'DarkWolf_InjectIngameSystemRend2Tab' in (root/'SP/code/ui/ui_shared.c').read_text()
 assert '+safe' in (Path(__file__).parent/'RUN_DARKWOLF_OPTIMIZED_CLEAN.bat').read_text()
 result={'status':'PASS','changed':changed,'all_other_source_files_byte_identical':True,'shaders_byte_identical':True,'changed_sha256':{n:hashlib.sha256((root/n).read_bytes()).hexdigest() for n in changed}}

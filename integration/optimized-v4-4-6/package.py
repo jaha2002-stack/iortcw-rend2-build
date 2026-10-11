@@ -24,6 +24,10 @@ for name0 in files:
  comparison[target]={'baseline_rebuild_sha256':sha(baseline/name0),'optimized_sha256':sha(p),'historical_binary_sha256':lock['baseline_binaries'][target]}
  if 'renderer_sp_rend2' not in name0:assert sha(p)==sha(baseline/name0),('unchanged component differs',name0)
 assert b'DARKWOLF_VOLUMETRIC_COVERAGE_AA_FINAL_V1' in (stage/'renderer_sp_rend2_x64.dll').read_bytes()
+renderer_bytes=(stage/'renderer_sp_rend2_x64.dll').read_bytes()
+for mark in [b'DARKWOLF_V446_OPT09_SHARED_RAW_DEPTH',b'DARKWOLF_V446_OPT06_FIRE_GAUSSIAN_SQRT_ELIMINATION',
+             b'DARKWOLF_V446_OPT04_LOCALVOL_LOOP_INVARIANTS',b'DARKWOLF_V446_OPT02_SUN_TRANSMITTANCE_RECURRENCE']:
+ assert mark in renderer_bytes,('compiled shader marker missing',mark)
 for path,digest in lock['payload'].items():
  p=(src/'SP/code/libs/win64'/path) if path.endswith('.dll') else (root/'payload'/path)
  assert sha(p)==digest;shutil.copy2(p,stage/path)
@@ -38,9 +42,11 @@ shutil.copy2(src/'SP/code/SDL2/include/SDL_copying.h',stage/'docs/SDL_COPYING.tx
 # Upstream ships SDL/OpenAL licensing with these runtime dependencies.
 for p in (src/'SP/code/libs/win64').iterdir():
  if p.is_file() and p.suffix.lower() in ['.txt','.md']:shutil.copy2(p,stage/'docs'/p.name)
-provenance={'status':'CANDIDATE_FOR_LOCAL_VERIFICATION','builder_sha':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),'baseline_source_tree':lock['baseline_source_tree'],'upstream_sha':lock['upstream_sha'],'patches':lock['patches'],'optimized_patch_sha256':sha(root/'optimized.patch'),'modified_source_sha256':{n:sha(src/n) for n in ['SP/code/rend2/tr_main.c','SP/code/rend2/tr_scene.c']},'binary_comparison':comparison,'GPU_PERFORMANCE':'NOT_RUN','WINDOWS_RUNTIME':'NOT_RUN','VISUAL_ACCEPTANCE':'NOT_RUN','source_url':'https://github.com/jaha2002-stack/iortcw-rend2-build/tree/rend2-v4-4-6-clean-optimization','compile_flags':'see evidence build.log; baseline Makefile flags, no new optimization flags'}
+provenance={'status':'CANDIDATE_FOR_LOCAL_VERIFICATION','builder_sha':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),'baseline_source_tree':lock['baseline_source_tree'],'upstream_sha':lock['upstream_sha'],'patches':lock['patches'],'optimized_patch_sha256':sha(root/'optimized.patch'),'modified_source_sha256':{n:sha(src/n) for n in ['SP/code/rend2/tr_main.c','SP/code/rend2/tr_scene.c','SP/code/rend2/glsl/ssgi_fp.glsl','SP/code/rend2/glsl/volumetriclocal_fp.glsl','SP/code/rend2/glsl/volumetricsun_fp.glsl']},'binary_comparison':comparison,'GPU_PERFORMANCE':'NOT_RUN','WINDOWS_RUNTIME':'NOT_RUN','VISUAL_ACCEPTANCE':'NOT_RUN','source_url':'https://github.com/jaha2002-stack/iortcw-rend2-build/tree/rend2-v4-4-6-clean-optimization','compile_flags':'see evidence build.log; baseline Makefile flags, no new optimization flags'}
 (stage/'docs/BUILD_PROVENANCE.json').write_text(json.dumps(provenance,indent=2)+'\n')
 shutil.copy2(repo/'docs/optimization-v4-4-6/OPTIMIZATION_DECISIONS.md',stage/'CHANGELOG_OPTIMIZATION_RU.md')
+shutil.copy2(evidence/'v446-clean-targeted-delta.patch',stage/'docs/v446-clean-targeted-delta.patch')
+shutil.copy2(evidence/'shader-source-audit.json',stage/'docs/shader-source-audit.json')
 paths=sorted(p for p in stage.rglob('*') if p.is_file())
 assert not any(p.name.lower().startswith('pak') and p.suffix.lower()=='.pk3' for p in paths)
 hashes={p.relative_to(stage).as_posix():sha(p) for p in paths}
