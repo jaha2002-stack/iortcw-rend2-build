@@ -10,3 +10,5 @@
 | Run 38150934190 native smoke | Both Win64 builds/package PASS; 4/6 baseline captures black or pre-READY | `wait 180` also advances during loading/briefing; command-line screenshot/quit raced gameplay | Diagnostic-only capture now waits for playerstart and 32 rendered gameplay scenes; production binaries untouched. Re-run required. |
 
 No historical 37678074243/37682884950 downloads are needed. No production branch changes are authorized or performed.
+
+Diagnostic compatibility review found TestLab still referenced `activeCount` removed with the dead production report. The diagnostic-only adapter now calculates the emission delta on both variants; early native syntax checks cover both fully instrumented source copies.

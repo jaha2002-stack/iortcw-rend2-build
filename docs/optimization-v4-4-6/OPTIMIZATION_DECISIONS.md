@@ -7,3 +7,5 @@
 3. **CI/provenance**: восстановлены AA v4.4.3 и UI, отсутствующие в сокращённой telemetry-реконструкции. Патчи, shader donor и non-retail payload закреплены хэшами и больше не скачиваются из истекающих Actions artifacts. Полностью пересобираются EXE, renderer, cgame, qagame, UI.
 
 Решение: ограниченный кандидат для проверки. Алгоритмические тесты подтверждены; окончательное визуальное/Windows GPU acceptance пока не получено. Все GLSL, tr_backend/FBO/world/game/cgame/UI относительно исправленной базы побитово сохранены. Значения качества, cadence CSM, 32 лампы и 3 persistent slots не менялись.
+
+Follow-up cleanup: removed now-unreferenced report-only globals, map-count helpers and local report cvar reads. One-time user/synthetic rule loading remains explicit. Diagnostic TestLab adapters derive the emitted-light count themselves; both adapters are syntax-checked before CI builds. No warning suppression flags were added.
