@@ -95,11 +95,11 @@ def main():
     # against accidental camera movement or an invalid screenshot.
     entries = [
         (f"lamp_close_{i:02d}", (origin[0] + step, origin[1], origin[2]), (-4.0, -6.0), None)
-        for i, step in enumerate((252.0, 267.0, 278.0))
+        for i, step in enumerate((252.0,))
     ]
     manifest["status"] = "PENDING_CLOSEUP_VISUAL_REVIEW"
     manifest["notes"] = (
-        "Move +252, +267 and +278 units from Factory spawn toward the pipe lamp; "
+        "Lock camera +252 units from Factory spawn beside pipe lamp; "
         "unchanged yaw -6 and pitch -4 from accepted run 38126229305. "
         "Lamp prominence and visual SSGI defect must be checked on actual frames."
     )
