@@ -17,12 +17,15 @@ if not traces or not any("reason=active" in row for row in traces):raise SystemE
 # Per-capture case gating: timestamped capture windows must show SSGI active
 # in each ON mode and disabled when OFF. The run cannot pass merely because
 # one unrelated trace happened earlier in the map.
+previous_cut=0
 for capture in m["screenshots"]:
  tag=f'FACTORY_CAPTURE_READY view={capture["view"]} case={capture["case"]}'
  # The trace occurs while the mode is settled *before* this marker.
  begin=f'FACTORY_VIEW_BEGIN index={capture["view"]}'
  assert begin in log and tag in log,(begin,tag)
- window=log[log.index(begin):log.index(tag)+len(tag)]
+ end=log.index(tag,previous_cut)+len(tag)
+ window=log[previous_cut:end]
+ previous_cut=end
  case=capture["case"]
  traces_window=re.findall(r"SSGITRACE[^\\n]+",window)
  if case == "off":
