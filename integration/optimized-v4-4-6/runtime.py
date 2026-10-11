@@ -22,12 +22,31 @@ quality=(root/'PRODUCTION_HIGH_QUALITY.cfg').read_text()+'\n'+''.join(f'seta {k}
 (runtime/'main/TESTLAB_QUALITY.cfg').write_text(quality)
 (out/'TESTLAB_QUALITY.cfg').write_text(quality)
 rows=[]
+# SWF stock player start is (2240,152,1728), a near-black establishing location.
+# Keep the black-frame gate. Instead, inspect the mapped ceiling-light cluster
+# around BSP fixture 256 at (1600,-1824,364), in the diagnostic TestLab binary.
+# This scenario is never included in the Windows production build.
+swf_scenario='TESTLAB_SWF_LIT_SMOKE.cfg'
+swf_camera_needle='TESTLAB_VIEW 1456.000 -1824.000 280.000'
+(runtime/'main'/swf_scenario).write_text('\n'.join([
+    'set cg_draw2D 0',
+    'dw_testView 1456 -1824 280 -28 0 0',
+    'wait 80',
+    'viewpos',
+    'set r_testlabCaptureIndex 0',
+    'wait 5',
+    'screenshot swf',
+    'wait 8',
+    'quit',
+])+'\n')
 # Existing TestLab automation bypasses briefing/startcam only in this diagnostic copy.
 for mapname,profile in [(m,'high') for m in ['escape1','swf','dam','crypt1','assault','forest']]+[('escape1','quality')]:
  tag=mapname if profile=='high' else mapname+'-'+profile
  cfg='PRODUCTION_HIGH_QUALITY.cfg' if profile=='high' else 'TESTLAB_QUALITY.cfg'
  home=runtime/(tag+'-home');home.mkdir(exist_ok=True)
  command=[str(runtime/exe.name),'+set','fs_basepath',str(runtime),'+set','fs_homepath',str(home),'+safe','+set','com_introplayed','1','+set','com_recommendedSet','1','+set','logfile','2','+set','dw_testAutomation','1','+set','r_renderer','rend2','+set','cl_renderer','rend2','+exec',cfg,'+set','r_mode','-1','+set','r_customwidth','640','+set','r_customheight','480','+set','r_fullscreen','0','+set','r_forceSun','1','+set','s_initsound','0','+vid_restart','+set','dw_testlabSmokeCapture',tag,'+spdevmap',mapname]
+ if mapname=='swf':
+  command[-2:-2]=['+set','dw_testlabScenario',swf_scenario]
  started=time.time()
  with (out/(tag+'-stdout.log')).open('w') as log:
   proc=subprocess.Popen(['xvfb-run','-a',*command],env={**os.environ,'LIBGL_ALWAYS_SOFTWARE':'1'},stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
@@ -44,11 +63,12 @@ for mapname,profile in [(m,'high') for m in ['escape1','swf','dam','crypt1','ass
   text='\n'.join(p.read_text(errors='replace') for p in logs)
   ready=(f'TESTLAB_FRAME_STATE stage=READY map={mapname}' in text and bool(re.search(r'TESTLAB_CAPTURE_READY frames=\d+ fadeRate=0',text)) and 'TESTLAB_GAMEPLAY_START requested=1' in text)
   row['gameplay_ready']=ready
+  row['targeted_camera_ready']=(swf_camera_needle in text) if mapname=='swf' else None
   expected=dict(re.findall(r'seta ([^ ]+) "([^" ]+)"',(runtime/'main'/cfg).read_text()));expected['r_forceSun']='1'
   actual=dict(re.findall(r'TESTLAB_CVAR name=(\w+) value=([^\s]+)',text))
   keys=['r_picmip','r_staticPromoteMaxLights','r_dlightShadowMaxLights','r_ext_framebuffer_multisample','r_shadowMapSize','r_forceSun','r_ssgi','r_volumetricLocal','r_volumetricSun','r_volumetricFire','r_pbr']
   row['actual_cvars']=actual;row['cvar_mismatches']={k:{'expected':expected[k],'actual':actual.get(k)} for k in keys if actual.get(k)!=expected[k]}
-  if rc==0 and ready and black<0.9 and white<0.9 and not row['cvar_mismatches']:row['status']='SMOKE_PASS' 
+  if rc==0 and ready and black<0.9 and white<0.9 and not row['cvar_mismatches'] and (mapname!='swf' or row['targeted_camera_ready']):row['status']='SMOKE_PASS' 
  rows.append(row);(out/'runtime-results.json').write_text(json.dumps(rows,indent=2)+'\n')
 # A rendered but mostly-white/black scene, shader failure, timeout or missing READY is a real failure.
 if any(r['status']!='SMOKE_PASS' for r in rows):raise SystemExit('Runtime smoke failed; see per-map logs')
