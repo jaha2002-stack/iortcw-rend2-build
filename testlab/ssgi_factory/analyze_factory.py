@@ -24,10 +24,10 @@ byview={}
 for shot in m["screenshots"]:
  byview.setdefault(shot["view"],{})[shot["case"]]=shot["name"]
 for i,cases in byview.items():
- if set(cases)!={"off","on","requested","bilateral"}:raise SystemExit(f"MISSING_VIEW_CASES {i}")
+ if set(cases)!={"off","on","requested","bilateral","experimental"}:raise SystemExit(f"MISSING_VIEW_CASES {i}")
  diffs={}
  base=Image.open(files[cases["off"]]).convert("RGB")
- for case in ("on","requested","bilateral"):
+ for case in ("on","requested","bilateral","experimental"):
   candidate=Image.open(files[cases[case]]).convert("RGB")
   d=ImageStat.Stat(ImageChops.difference(base,candidate))
   diffs[case]=round(sum(d.mean)/3,3)
