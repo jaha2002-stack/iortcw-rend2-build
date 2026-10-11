@@ -90,17 +90,17 @@ def main():
                 "notes": "BSP light entity coordinates are candidate aim points, not optical/visibility confirmation."}
     # VISUAL CALIBRATION V3: in the prior real screenshots the pipe lamp
     # was at x~570 / 1024, y~520 / 768 in a yaw=0 pitch=-18 view.
-    # Advance inside the tunnel and center on the visible lamp; keep camera
+    # Bring the camera almost alongside the lamp, keeping approved camera angles; keep camera
     # identical for each SSGI variant. Noclip and render-state logging guard
     # against accidental camera movement or an invalid screenshot.
     entries = [
         (f"lamp_close_{i:02d}", (origin[0] + step, origin[1], origin[2]), (-4.0, -6.0), None)
-        for i, step in enumerate((96.0, 152.0))
+        for i, step in enumerate((190.0, 214.0, 230.0))
     ]
     manifest["status"] = "PENDING_CLOSEUP_VISUAL_REVIEW"
     manifest["notes"] = (
-        "Move +96 and +152 world units along the Factory spawn tunnel; "
-        "yaw -6, pitch -4, calibrated from real run 38122028993. "
+        "Move +190, +214 and +230 units from Factory spawn toward the pipe lamp; "
+        "unchanged yaw -6 and pitch -4 from accepted run 38126229305. "
         "Lamp prominence and visual SSGI defect must be checked on actual frames."
     )
     lines = [
