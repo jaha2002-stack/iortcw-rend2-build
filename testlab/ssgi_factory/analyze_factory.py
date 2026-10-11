@@ -14,6 +14,22 @@ if missing or extra:raise SystemExit(f"CAPTURE_MISMATCH missing={missing[:12]} e
 if "FACTORY_SSGI_REAL_GAMEPLAY_CAPTURE_COMPLETE" not in log:raise SystemExit("NO_COMPLETE_MARKER")
 traces=re.findall(r"SSGITRACE[^\n]+",log)
 if not traces or not any("reason=active" in row for row in traces):raise SystemExit("SSGI_NEVER_ACTIVE")
+# Per-capture case gating: timestamped capture windows must show SSGI active
+# in each ON mode and disabled when OFF. The run cannot pass merely because
+# one unrelated trace happened earlier in the map.
+for capture in m["screenshots"]:
+ tag=f'FACTORY_CAPTURE_READY view={capture["view"]} case={capture["case"]}'
+ # The trace occurs while the mode is settled *before* this marker.
+ begin=f'FACTORY_VIEW_BEGIN index={capture["view"]}'
+ assert begin in log and tag in log,(begin,tag)
+ window=log[log.index(begin):log.index(tag)+len(tag)]
+ case=capture["case"]
+ traces_window=re.findall(r"SSGITRACE[^\\n]+",window)
+ if case == "off":
+  if not any("active=0" in x for x in traces_window):raise SystemExit(f"OFF_TRACE_MISSING view={capture['view']}")
+ else:
+  if not any("active=1" in x and f"brightfix={3 if case=='experimental' else 2}" in x for x in traces_window):
+   raise SystemExit(f"ACTIVE_TRACE_MISSING view={capture['view']} case={case}")
 summary={}
 for name,f in files.items():
  im=Image.open(f).convert("RGB")
