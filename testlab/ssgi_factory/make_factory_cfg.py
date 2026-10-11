@@ -119,6 +119,10 @@ def main():
         ("native7", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 7", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
         ("lamp8", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 8", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
         ("lamp_mask8", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 8", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 8"]),
+        ("bright9", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 9", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
+        ("nonbright10", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 10", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
+        ("wall11", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 11", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
+        ("bright_mask9", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 9", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 9"]),
         ("fix3_repeat", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
         ("debug_donor_depth", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 6", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 7"]),
     ]
