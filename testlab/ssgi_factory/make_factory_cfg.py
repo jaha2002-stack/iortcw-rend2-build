@@ -118,6 +118,7 @@ def main():
         ("experimental", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
         ("gentle", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 4", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
         ("experimental_repeat", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
+        ("hard_edge", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 5", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
     ]
     for idx, (entry_name, pos, (pitch, yaw), eid) in enumerate(entries):
         px, py, pz = pos
