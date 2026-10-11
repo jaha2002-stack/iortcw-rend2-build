@@ -14,3 +14,5 @@ No historical 37678074243/37682884950 downloads are needed. No production branch
 Diagnostic compatibility review found TestLab still referenced `activeCount` removed with the dead production report. The diagnostic-only adapter now calculates the emission delta on both variants; early native syntax checks cover both fully instrumented source copies.
 
 Run 38152560928: both Win64 builds/package PASS. Five baseline map captures now SMOKE_PASS. SWF reached real gameplay but screenshot at game time 3509 was 94.43% near-black; retained FAIL. Diagnostic capture now additionally waits at least 6 seconds of gameplay and zero cgame fadeRate. The image threshold remains unchanged.
+
+Runtime log review exposed startup preset contamination: fresh homes queue `highVidhighCPU.cfg` through `Com_SetRecommended`, even under +safe. The launcher and diagnostic command now set `com_recommendedSet=1` as a startup variable, before Com_Init schedules recommendations. Runtime capture validates actual quality cvars against the selected preset; no quality downgrade is accepted.

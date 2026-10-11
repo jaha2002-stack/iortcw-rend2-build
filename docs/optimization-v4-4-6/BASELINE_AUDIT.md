@@ -27,3 +27,13 @@ Frame order: game/cgame → scene lights/StaticPromote → light and sun shadow 
 Existing profiling collector was reviewed: probe frames use qglFinish and must be excluded from ordinary FPS. No such captures were supplied for this task. CPU-, GPU-, driver- and bandwidth-bound hypotheses cannot be distinguished from source inspection alone.
 
 Compiler audit: upstream Win64 Makefile already uses -O3 -ffast-math. These inherited flags are preserved for baseline parity, not introduced or advertised as an optimization. Harness tests use UBSan separately from production.
+
+Additional source review:
+- `tr_cmds.c:R_GetCommandBufferReserved`: padded fixed command arena, reserved swap tail, rejects oversized commands and drops commands on exhaustion. `R_IssueRenderCommands` executes the backend synchronously; the new grouping labels are frontend-only. No worker-thread access or per-frame heap allocation was added.
+- `tr_backend.c:GL_BindToTMU`, `tr_fbo.c:FBO_Bind` and `tr_glsl.c:GLSL_SetUniformFloat/Mat4`: existing image/FBO/uniform caches already suppress redundant GL state updates. An extra generic cache would require profiling and complete state ownership analysis.
+- `cg_localents.c:CG_AllocLocalEntity/CG_AddLocalEntities`: fixed pool, oldest-entity reclamation, backwards traversal preserves effects spawned during iteration. `cg_event.c:CG_CheckEvents` tracks event sequence to avoid repeated emissions. Changing scheduling risks trails/explosion timing; no measured reason to change it.
+- `tr_image.c`: temporary image resample/compression buffers belong to load/upload operations; skin/model material registration and GLSL permutation compilation remain possible load hitch sources, not measured frame bottlenecks.
+- `common.c:Com_Frame`: configured frame caps use NET_Sleep, with optional busy wait. Do not alter timing or savegame behavior as a speculative renderer fix.
+- `common.c:Com_Init/Com_SetRecommended`: +safe alone does not prevent queued first-run hardware recommendation CFG. Startup `com_recommendedSet=1` is necessary for an authoritative custom preset; captured actual cvars are now validated.
+
+Warning review: initial production baseline emitted 60 compiler warnings, including upstream networking macros, codec diagnostics and const qualifiers in historical renderer code. Removing the dead report initially exposed 31 unused declarations/helpers; those are removed without suppression. Existing upstream warnings are not claimed fixed, and UBSan coverage is limited to the changed algorithm harness.

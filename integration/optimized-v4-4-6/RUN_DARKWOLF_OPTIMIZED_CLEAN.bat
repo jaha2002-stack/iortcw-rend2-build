@@ -10,5 +10,5 @@ if not exist "%DW_RELEASE_HOME%\Main" exit /b 1
 rem Copy only the controlled preset; never delete saves or the normal user profile.
 copy /y "Main\PRODUCTION_HIGH_QUALITY.cfg" "%DW_RELEASE_HOME%\Main\PRODUCTION_HIGH_QUALITY.cfg" >nul
 if errorlevel 1 exit /b 1
-"%DW_RELEASE_ROOT%\ioWolfSP.x64.exe" +set fs_basepath "%DW_RELEASE_ROOT%" +set fs_homepath "%DW_RELEASE_HOME%" +safe +set com_introplayed 1 +set cl_renderer rend2 +set r_renderer rend2 +exec PRODUCTION_HIGH_QUALITY.cfg +vid_restart
+"%DW_RELEASE_ROOT%\ioWolfSP.x64.exe" +set fs_basepath "%DW_RELEASE_ROOT%" +set fs_homepath "%DW_RELEASE_HOME%" +safe +set com_introplayed 1 +set com_recommendedSet 1 +set cl_renderer rend2 +set r_renderer rend2 +exec PRODUCTION_HIGH_QUALITY.cfg +vid_restart
 exit /b %errorlevel%

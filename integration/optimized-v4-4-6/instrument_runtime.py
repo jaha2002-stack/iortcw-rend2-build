@@ -27,6 +27,15 @@ replace(src/'cg_view.c','\tCG_DrawActive( stereoView );',r'''	CG_DrawActive( ste
 				CG_Printf("TESTLAB_CAPTURE_WAIT time=%d viewFade=%.4f scriptFade=%.4f fadeRate=%.4f\n", cg.time, cg.viewFade, cgs.scrFadeAlphaCurrent, cg.fadeRate);
 			if ( testlabRenderedFrames >= 32 && cg.time - testlabFirstTime >= 6000 && !cg.fadeRate && cg.viewFade <= 0.001f && cgs.scrFadeAlphaCurrent <= 0.001f ) {
 				testlabCaptureQueued = qtrue;
+				{
+					static const char *names[] = {"r_picmip", "r_staticPromoteMaxLights", "r_dlightShadowMaxLights", "r_ext_framebuffer_multisample", "r_shadowMapSize", "r_forceSun", "r_ssgi", "r_volumetricLocal", "r_volumetricSun", "r_volumetricFire", "r_pbr"};
+					int i;
+					for (i = 0; i < sizeof(names)/sizeof(names[0]); ++i) {
+						char value[32];
+						trap_Cvar_VariableStringBuffer(names[i], value, sizeof(value));
+						CG_Printf("TESTLAB_CVAR name=%s value=%s\n", names[i], value);
+					}
+				}
 				CG_Printf( "TESTLAB_CAPTURE_READY frames=%d fadeRate=0 viewFade=0 scriptFade=0 time=%d origin=%.3f,%.3f,%.3f\n",
 					testlabRenderedFrames, cg.time, cg.refdef.vieworg[0], cg.refdef.vieworg[1], cg.refdef.vieworg[2] );
 				if (testlabScenario[0])
