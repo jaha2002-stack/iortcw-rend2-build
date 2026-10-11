@@ -110,14 +110,13 @@ def main():
         "set r_ssgiTrace 1",
         "echo FACTORY_SSGI_REAL_GAMEPLAY_CAPTURE_BEGIN",
     ]
+    # ONE ROOT-CAUSE A/B RUN. Unchanged camera and SSGI settings except geometry visibility.
     cases = [
-        ("off", ["set r_ssgi 0", "set r_ssgiResolveMode 0", "set r_ssgiRadius 32"]),
-        ("on", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 2", "set r_ssgiResolveMode 0", "set r_ssgiRadius 32"]),
-        ("requested", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 2", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
-        ("bilateral", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 2", "set r_ssgiResolveMode 2", "set r_ssgiRadius 16"]),
-        ("experimental", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
-        ("gentle", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 4", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
-        ("experimental_repeat", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
+        ("off", ["set r_ssgi 0", "set r_ssgiGeometryVisibility 0", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
+        ("baseline", ["set r_ssgi 1", "set r_ssgiGeometryVisibility 0", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
+        ("ray1", ["set r_ssgi 1", "set r_ssgiGeometryVisibility 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
+        ("normal2", ["set r_ssgi 1", "set r_ssgiGeometryVisibility 2", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
+        ("baseline_repeat", ["set r_ssgi 1", "set r_ssgiGeometryVisibility 0", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
     ]
     for idx, (entry_name, pos, (pitch, yaw), eid) in enumerate(entries):
         px, py, pz = pos
