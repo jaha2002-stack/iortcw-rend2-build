@@ -114,13 +114,10 @@ def main():
     # Only diagnostic cvars vary; camera and world lighting are unchanged.
     cases = [
         ("off", ["set r_ssgi 0", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
-        ("fix2", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 2", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
         ("fix3", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
-        ("edge5", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 5", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
-        ("debug_gi", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 2"]),
-        ("debug_accepted", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 3"]),
-        ("debug_entity_guard", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 5"]),
-        ("debug_edge", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 6"]),
+        ("donor6", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 6", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
+        ("fix3_repeat", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
+        ("debug_donor_depth", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 6", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 7"]),
     ]
     for idx, (entry_name, pos, (pitch, yaw), eid) in enumerate(entries):
         px, py, pz = pos
