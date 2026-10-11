@@ -27,7 +27,10 @@ for capture in m["screenshots"]:
  window=log[previous_cut:end]
  previous_cut=end
  case=capture["case"]
- traces_window=re.findall(r"SSGITRACE[^\n]+",window)
+ traces_window=re.findall(r"SSGITRACE[^\\n]+",window)
+ required_geom={"baseline":0,"ray1":1,"hemisphere2":2,"strict3":3,"baseline_repeat":0}.get(case)
+ if required_geom is not None and not any(f"geom={required_geom} " in x for x in traces_window):
+  raise SystemExit(f"GEOMETRY_MODE_TRACE_MISSING view={capture['view']} case={case} geom={required_geom}")
  if case == "off":
   if not any("active=0" in x for x in traces_window):raise SystemExit(f"OFF_TRACE_MISSING view={capture['view']}")
  else:
@@ -43,10 +46,10 @@ byview={}
 for shot in m["screenshots"]:
  byview.setdefault(shot["view"],{})[shot["case"]]=shot["name"]
 for i,cases in byview.items():
- if set(cases)!={"off","baseline","ray1","normal2","baseline_repeat"}:raise SystemExit(f"MISSING_VIEW_CASES {i}")
+ if set(cases)!={"off","baseline","ray1","hemisphere2","strict3","baseline_repeat"}:raise SystemExit(f"MISSING_VIEW_CASES {i}")
  diffs={}
  base=Image.open(files[cases["off"]]).convert("RGB")
- for case in ("baseline","ray1","normal2","baseline_repeat"):
+ for case in ("baseline","ray1","hemisphere2","strict3","baseline_repeat"):
   candidate=Image.open(files[cases[case]]).convert("RGB")
   d=ImageStat.Stat(ImageChops.difference(base,candidate))
   diffs[case]=round(sum(d.mean)/3,3)
