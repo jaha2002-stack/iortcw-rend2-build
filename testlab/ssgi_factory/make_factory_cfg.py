@@ -110,15 +110,17 @@ def main():
         "set r_ssgiTrace 1",
         "echo FACTORY_SSGI_REAL_GAMEPLAY_CAPTURE_BEGIN",
     ]
+    # V0.5 diagnosis isolates the generation stage and the receiver silhouette mask.
+    # Only diagnostic cvars vary; camera and world lighting are unchanged.
     cases = [
-        ("off", ["set r_ssgi 0", "set r_ssgiResolveMode 0", "set r_ssgiRadius 32"]),
-        ("on", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 2", "set r_ssgiResolveMode 0", "set r_ssgiRadius 32"]),
-        ("requested", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 2", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
-        ("bilateral", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 2", "set r_ssgiResolveMode 2", "set r_ssgiRadius 16"]),
-        ("experimental", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
-        ("gentle", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 4", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
-        ("experimental_repeat", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
-        ("hard_edge", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 5", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16"]),
+        ("off", ["set r_ssgi 0", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
+        ("fix2", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 2", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
+        ("fix3", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
+        ("edge5", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 5", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 0"]),
+        ("debug_gi", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 2"]),
+        ("debug_accepted", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 3"]),
+        ("debug_entity_guard", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 5"]),
+        ("debug_edge", ["set r_ssgi 1", "set r_ssgiBrightSourceFix 3", "set r_ssgiResolveMode 1", "set r_ssgiRadius 16", "set r_ssgiDebug 6"]),
     ]
     for idx, (entry_name, pos, (pitch, yaw), eid) in enumerate(entries):
         px, py, pz = pos
