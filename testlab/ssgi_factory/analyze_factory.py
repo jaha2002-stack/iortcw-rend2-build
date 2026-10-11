@@ -27,7 +27,7 @@ for capture in m["screenshots"]:
  window=log[previous_cut:end]
  previous_cut=end
  case=capture["case"]
- traces_window=re.findall(r"SSGITRACE[^\\n]+",window)
+ traces_window=re.findall(r"SSGITRACE[^\n]+",window)
  if case == "off":
   if not any("active=0" in x for x in traces_window):raise SystemExit(f"OFF_TRACE_MISSING view={capture['view']}")
  else:
