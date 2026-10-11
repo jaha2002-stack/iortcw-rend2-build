@@ -52,7 +52,7 @@ def bsp_entities(main: Path):
             return rows
     raise SystemExit("FACTORY_BSP_NOT_FOUND: maps/factory.bsp absent from protected assets")
 
-def candidate_lamps(spawn, entities, limit=8):
+def candidate_lamps(spawn, entities, limit=2):
     x, y, z = spawn
     rows = []
     for e in entities:
@@ -100,7 +100,7 @@ def main():
             pitch, yaw = view_toward(origin, target)
             # Two camera viewpoints at the same origin. Both aim at the SAME candidate lamp.
             entries.append((f"lamp_{i:02d}_center", origin, (pitch, yaw), lamp["entity"]))
-            entries.append((f"lamp_{i:02d}_low", origin, (pitch + 8.0, yaw), lamp["entity"]))
+            # Quick pilot: one camera for each lamp. Wider search follows visual calibration.
         manifest["status"] = "PENDING_VISUAL_REVIEW"
     lines = [
         "set developer 1", "set logfile 2",
@@ -120,13 +120,13 @@ def main():
         lines += [
             f"echo FACTORY_VIEW_BEGIN index={idx} name={entry_name} lampEntity={eid}",
             f"dw_testView {px:.3f} {py:.3f} {pz:.3f} {pitch:.3f} {yaw:.3f} 0",
-            "wait 30",
+            "wait 10",
             f"dw_testViewState {idx}",
             "wait 4",
         ]
         for case, cv in cases:
             lines += cv
-            lines += ["wait 25", f"echo FACTORY_CAPTURE_READY view={idx} case={case}"]
+            lines += ["wait 12", f"echo FACTORY_CAPTURE_READY view={idx} case={case}"]
             shot = f"factory_ssgi_{idx:02d}_{case}"
             lines += [f"screenshot {shot}", "wait 5"]
             manifest["screenshots"].append({"name": shot + ".tga", "case": case,
