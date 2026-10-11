@@ -88,18 +88,20 @@ def main():
     manifest = {"schema": 1, "map": "factory", "spawn_origin": origin, "spawn_angles": angles,
                 "lighting_candidates": lamps, "screenshots": [], "verified_lamp_visual": False,
                 "notes": "BSP light entity coordinates are candidate aim points, not optical/visibility confirmation."}
-    # VISUAL CALIBRATION V2: the earlier BSP light targets were off screen.
-    # Scan three stable directions centered on the actual tunnel axis. BSP light
-    # entity coordinates are retained for provenance but are not assumed visible.
+    # VISUAL CALIBRATION V3: in the prior real screenshots the pipe lamp
+    # was at x~570 / 1024, y~520 / 768 in a yaw=0 pitch=-18 view.
+    # Advance inside the tunnel and center on the visible lamp; keep camera
+    # identical for each SSGI variant. Noclip and render-state logging guard
+    # against accidental camera movement or an invalid screenshot.
     entries = [
-        (f"tunnel_axis_{i:02d}", origin, (-18.0, yaw), None)
-        for i, yaw in enumerate((-24.0, 0.0, 24.0))
+        (f"lamp_close_{i:02d}", (origin[0] + step, origin[1], origin[2]), (-4.0, -6.0), None)
+        for i, step in enumerate((96.0, 152.0))
     ]
-    manifest["status"] = "PENDING_TUNNEL_AXIS_VISUAL_REVIEW"
+    manifest["status"] = "PENDING_CLOSEUP_VISUAL_REVIEW"
     manifest["notes"] = (
-        "Scan along Factory spawn tunnel using yaw -24/0/+24. "
-        "Camera orientation is calibrated from the two real pilot screenshots; "
-        "visual lamp presence must be verified before accepting any SSGI fix."
+        "Move +96 and +152 world units along the Factory spawn tunnel; "
+        "yaw -6, pitch -4, calibrated from real run 38122028993. "
+        "Lamp prominence and visual SSGI defect must be checked on actual frames."
     )
     lines = [
         "set developer 1", "set logfile 2",
