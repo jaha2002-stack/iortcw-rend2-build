@@ -12,19 +12,22 @@ replace(src/'cg_servercmds.c',
  'trap_Cvar_Set( "dw_testlabGameplayStarted", "1" );\n\t\t\tCG_Printf( "TESTLAB_GAMEPLAY_START requested=1\\n" );')
 replace(src/'cg_view.c','\tCG_DrawActive( stereoView );',r'''	CG_DrawActive( stereoView );
 	/* Diagnostic copy only. Loading/briefing redraws do not reach this point.
-	 * Wait for stock playerstart AND 32 complete gameplay scenes. */
+	 * Wait for stock playerstart, 32 gameplay scenes, warmup and completed fades. */
 	{
-		static int testlabRenderedFrames;
+		static int testlabRenderedFrames, testlabFirstTime;
 		static qboolean testlabCaptureQueued;
 		char testlabStarted[16], testlabCapture[64], testlabScenario[64];
 		trap_Cvar_VariableStringBuffer( "dw_testlabGameplayStarted", testlabStarted, sizeof(testlabStarted) );
 		trap_Cvar_VariableStringBuffer( "dw_testlabSmokeCapture", testlabCapture, sizeof(testlabCapture) );
 		trap_Cvar_VariableStringBuffer( "dw_testlabScenario", testlabScenario, sizeof(testlabScenario) );
 		if ( atoi(testlabStarted) && testlabCapture[0] && !testlabCaptureQueued && stereoView != STEREO_RIGHT ) {
+			if (!testlabRenderedFrames) testlabFirstTime = cg.time;
 			testlabRenderedFrames++;
-			if ( testlabRenderedFrames == 32 ) {
+			if (testlabRenderedFrames == 32)
+				CG_Printf("TESTLAB_CAPTURE_WAIT time=%d viewFade=%.4f scriptFade=%.4f fadeRate=%.4f\n", cg.time, cg.viewFade, cgs.scrFadeAlphaCurrent, cg.fadeRate);
+			if ( testlabRenderedFrames >= 32 && cg.time - testlabFirstTime >= 6000 && !cg.fadeRate && cg.viewFade <= 0.001f && cgs.scrFadeAlphaCurrent <= 0.001f ) {
 				testlabCaptureQueued = qtrue;
-				CG_Printf( "TESTLAB_CAPTURE_READY frames=%d time=%d origin=%.3f,%.3f,%.3f\n",
+				CG_Printf( "TESTLAB_CAPTURE_READY frames=%d fadeRate=0 viewFade=0 scriptFade=0 time=%d origin=%.3f,%.3f,%.3f\n",
 					testlabRenderedFrames, cg.time, cg.refdef.vieworg[0], cg.refdef.vieworg[1], cg.refdef.vieworg[2] );
 				if (testlabScenario[0])
 					trap_SendConsoleCommand( va("exec %s\n", testlabScenario) );

@@ -34,7 +34,7 @@ for scenario in ['ring','table-baseline','table-exclude742','table-exclude744']:
   shutil.copy2(shot,dest/'screenshots'/shot.name)
   Image.open(shot).convert('RGB').save(dest/'screenshots'/(shot.stem+'.png'))
  expected=128 if scenario=='ring' else 16
- row={'scenario':scenario,'exit_code':rc,'screenshots':len(shots),'expected':expected,'elapsed_seconds':time.time()-started,'capture_ready':'TESTLAB_CAPTURE_READY frames=32' in text,'status':'CAPTURED' if rc==0 and len(shots)==expected else 'FAIL','command':command,'preset_sha256':smoke_row['preset_sha256'],'binary_sha256':smoke_row['binary_sha256'],'hardware':smoke_row['hardware'],'resolution':smoke_row['resolution']}
+ row={'scenario':scenario,'exit_code':rc,'screenshots':len(shots),'expected':expected,'elapsed_seconds':time.time()-started,'capture_ready':'TESTLAB_CAPTURE_READY frames=' in text,'status':'CAPTURED' if rc==0 and len(shots)==expected else 'FAIL','command':command,'preset_sha256':smoke_row['preset_sha256'],'binary_sha256':smoke_row['binary_sha256'],'hardware':smoke_row['hardware'],'resolution':smoke_row['resolution']}
  if scenario=='ring':
   with (dest/'analyzer-stdout.log').open('w') as log:
    analyzed=subprocess.run([sys.executable,str(repo/'testlab/scripts/analyze_runtime.py'),str(dest/'qconsole.log'),str(repo/'testlab/scenarios/escape1_staticpromote.json'),str(dest/'analysis.json')],stdout=log,stderr=subprocess.STDOUT)
