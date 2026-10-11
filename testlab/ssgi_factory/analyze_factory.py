@@ -31,7 +31,7 @@ for capture in m["screenshots"]:
  if case == "off":
   if not any("active=0" in x for x in traces_window):raise SystemExit(f"OFF_TRACE_MISSING view={capture['view']}")
  else:
-  if not any("active=1" in x and f"brightfix={7 if case=='native7' else 6 if case in ('donor6','debug_donor_depth') else 3}" in x for x in traces_window):
+  if not any("active=1" in x and f"brightfix={8 if case in ('lamp8','lamp_mask8') else 7 if case=='native7' else 6 if case in ('donor6','debug_donor_depth') else 3}" in x for x in traces_window):
    raise SystemExit(f"ACTIVE_TRACE_MISSING view={capture['view']} case={case}")
 summary={}
 for name,f in files.items():
@@ -43,14 +43,25 @@ byview={}
 for shot in m["screenshots"]:
  byview.setdefault(shot["view"],{})[shot["case"]]=shot["name"]
 for i,cases in byview.items():
- if set(cases)!={"off","fix3","donor6","native7","fix3_repeat","debug_donor_depth"}:raise SystemExit(f"MISSING_VIEW_CASES {i}")
+ if set(cases)!={"off","fix3","donor6","native7","lamp8","lamp_mask8","fix3_repeat","debug_donor_depth"}:raise SystemExit(f"MISSING_VIEW_CASES {i}")
  diffs={}
  base=Image.open(files[cases["off"]]).convert("RGB")
- for case in ("fix3","donor6","native7","fix3_repeat","debug_donor_depth"):
+ for case in ("fix3","donor6","native7","lamp8","lamp_mask8","fix3_repeat","debug_donor_depth"):
   candidate=Image.open(files[cases[case]]).convert("RGB")
   d=ImageStat.Stat(ImageChops.difference(base,candidate))
   diffs[case]=round(sum(d.mean)/3,3)
  summary[f"view_{i}_comparison"]=diffs
+# Diagnostic ROI mask must visibly occupy a LIMITED, nonzero part of the screen.
+# This prevents passing screenshots where debug8 was clamped to debug7.
+for i, cases in byview.items():
+ mask=Image.open(files[cases["lamp_mask8"]]).convert("L")
+ mask_pixels=list(mask.getdata())
+ white_fraction=sum(v>=240 for v in mask_pixels)/len(mask_pixels)
+ if not (0.01 < white_fraction < 0.20):
+  raise SystemExit(f"LAMP_DONOR_ROI_MASK_INVALID view={i} white_fraction={white_fraction:.4f}")
+ summary[f"view_{i}_roi_white_fraction"]=round(white_fraction,4)
+if "FACTORY_SSGI_GEN_TARGET mode=8" not in log:
+ raise SystemExit("LAMP_DONOR_MODE8_NOT_RENDERED")
 data={"status":"CAPTURE_COMPLETE_PENDING_VISUAL_ACCEPTANCE","notes":"SSGI active confirmed by trace; pixel metrics alone cannot prove lamp artifact resolved.","total":len(names),"views":len(byview),"traces":traces[-16:],"images":summary,"manifest":m}
 a.out.write_text(json.dumps(data,indent=2)+"\n")
 print("FACTORY_SSGI_CAPTURE_ANALYSIS",data["status"],"shots",len(names),"views",len(byview))
