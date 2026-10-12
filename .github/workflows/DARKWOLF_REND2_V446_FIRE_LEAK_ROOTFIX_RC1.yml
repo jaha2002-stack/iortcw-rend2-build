@@ -65,6 +65,17 @@ jobs:
           set -Eeuo pipefail
           python3 "$KIT/package.py" source baseline-source evidence dist
           python3 "$FIX/finalize.py" dist evidence source
+      - name: Publish compiled and packaged Win64 RC (visual TestLab pending)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-v446-Fire-Leak-Rootfix-RC1-Win64-SP-BuildPASS-VisualPending
+          path: |
+            dist/*Fire-Light-Leak-Rootfix-RC1*.zip
+            dist/*Fire-Light-Leak-Rootfix-RC1*.sha256
+            dist/ROOTFIX_BUILD_PROVENANCE.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
       - name: Optional protected retail TestLab assets
         id: retail
         env:
@@ -86,25 +97,29 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          echo "TESTLAB_START $(date -u '+%Y-%m-%dT%H:%M:%SZ'): full CPU Mesa smoke and calibrated regressions on two builds"
+          # Both runtime scripts redirect game stdout to per-map files. Emit a periodic
+          # heartbeat to the Actions log so an extended llvmpipe run is not opaque.
+          (
+            while sleep 90; do
+              echo "::notice title=TestLab CPU-only heartbeat::$(date -u '+%Y-%m-%dT%H:%M:%SZ') - software renderer still active"
+              ps -eo pid,etimes,pcpu,args | grep -E '[i]owolfsp|[i]oWolfSP|[r]untime.py|[r]egression_runtime.py' | head -n 15 || true
+            done
+          ) &
+          heartbeat_pid=$!
+          trap 'kill "$heartbeat_pid" 2>/dev/null || true' EXIT
           for variant in baseline-source source; do
+            echo "TESTLAB_VARIANT_START $(date -u '+%FT%TZ') $variant"
             python3 testlab/scripts/apply_testlab_instrumentation.py "$variant"
             python3 "$KIT/instrument_runtime.py" "$variant"
             make -C "$variant/SP" -j2 release BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 2>&1 | tee "evidence/${variant}-linux-build.log"
+            echo "TESTLAB_MESA_SMOKE_START $(date -u '+%FT%TZ') $variant"
             python3 "$KIT/runtime.py" "$variant" "$(cat .retail_main)" "evidence/${variant}-runtime"
+            echo "TESTLAB_REGRESSION_START $(date -u '+%FT%TZ') $variant"
             python3 "$KIT/regression_runtime.py" "$variant" "evidence/${variant}-runtime" "evidence/${variant}-regression"
+            echo "TESTLAB_VARIANT_END $(date -u '+%FT%TZ') $variant"
           done
           python3 "$KIT/compare_regressions.py" evidence
-      - name: Upload Windows x64 rootfix RC only after all gates
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: DarkWolf-v446-Fire-Leak-Rootfix-RC1-Win64-SP
-          path: |
-            dist/*Fire-Light-Leak-Rootfix-RC1*.zip
-            dist/*Fire-Light-Leak-Rootfix-RC1*.sha256
-            dist/ROOTFIX_BUILD_PROVENANCE.json
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 90
       - name: Summary
         if: always()
         shell: bash
