@@ -1,0 +1,65 @@
+name: DarkWolf escape1 Stove Entity Discovery V2
+on:
+  push:
+    branches: [rend2-v446-fire-direct-occlusion-v2-20261013]
+    paths: ['.github/workflows/DARKWOLF_ESCAPE1_STOVE_DISCOVERY_V2.yml']
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  locate-stove:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Obtain licensed game geometry with existing protected TestLab credentials
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}" || { echo 'NO_PROTECTED_GAME_ASSET_TOKEN'; exit 1; }
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets >retail_path.log
+          tail -1 retail_path.log > .retail_main
+      - name: Read only BSP entity metadata, identify stove/fire sources
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence
+          python3 - <<'PY'
+          import zipfile,json,re,struct,pathlib,math
+          root=pathlib.Path(open('.retail_main').read().strip())
+          found=[]
+          for pk3 in sorted(root.glob('*')):
+              if pk3.suffix.lower()!='.pk3': continue
+              with zipfile.ZipFile(pk3) as z:
+                  for fn in z.namelist():
+                      if fn.lower().endswith('/escape1.bsp'):
+                          data=z.read(fn)
+                          magic,version=struct.unpack_from('<4si',data,0)
+                          off,size=struct.unpack_from('<ii',data,8)
+                          entities=data[off:off+size].decode('latin1','replace')
+                          rows=[]
+                          for order,raw in enumerate(re.findall(r'\{([^{}]*)\}',entities)):
+                              fields=dict(re.findall(r'"([^"]+)"\s+"([^"]*)"',raw))
+                              if fields: fields['_ordinal']=order;rows.append(fields)
+                          def pos(e):
+                              try:return [float(x) for x in e['origin'].split()]
+                              except:return None
+                          lights=[e for e in rows if ('light' in e.get('classname','').lower() or 'dlight' in e.get('classname','').lower())]
+                          fires=[e for e in rows if re.search(r'fire|torch|flame|stove|oven|heater|furnace|brasier|brazier|burn',str(e),re.I)]
+                          models=[e for e in rows if re.search(r'stove|oven|heater|furnace|brasier|brazier|fireplace',str(e),re.I)]
+                          def compact(e):return {k:v for k,v in e.items() if k in ('_ordinal','classname','origin','model','noise','target','targetname','shader','spawnflags','light','_color','color','scriptname')}
+                          result={'pk3':pk3.name,'bsp':fn,'magic':magic.decode('latin1'),'version':version,'entities':len(rows),'fires':[compact(e) for e in fires[:200]],'stove_models':[compact(e) for e in models[:200]],'lights':[compact(e) for e in lights[:150]]}
+                          (pathlib.Path('evidence')/'escape1-stove-fire-entity-audit.json').write_text(json.dumps(result,indent=2)+'\n')
+                          print(json.dumps({'pk3':pk3.name,'bsp':fn,'total':len(rows),'fires':len(fires),'models':len(models),'lights':len(lights),'fire_examples':[compact(e) for e in fires[:30]]},indent=2))
+                          found.append(pk3.name)
+          if not found:raise SystemExit('escape1.bsp not found among protected retail assets')
+          PY
+      - name: Evidence only, never upload copyrighted game packs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-escape1-Stove-Fire-Entity-Discovery-V2
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 14
