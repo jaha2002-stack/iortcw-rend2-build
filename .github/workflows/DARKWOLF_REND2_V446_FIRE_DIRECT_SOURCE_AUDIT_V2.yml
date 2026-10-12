@@ -1,0 +1,40 @@
+name: DarkWolf v4.4.6 Fire Direct Light Source Audit V2
+on:
+  push:
+    branches: [rend2-v446-fire-direct-occlusion-v2-20261013]
+    paths:
+      - '.github/workflows/DARKWOLF_REND2_V446_FIRE_DIRECT_SOURCE_AUDIT_V2.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reconstruct-for-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Rebuild source exact optimized v4.4.6 before RC1
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          KIT=integration/optimized-v4-4-6
+          mkdir -p evidence
+          python3 "$KIT/reconstruct.py" baseline-source
+          git clone -q --shared baseline-source source
+          git -C source apply --check "$GITHUB_WORKSPACE/$KIT/optimized.patch"
+          git -C source apply "$GITHUB_WORKSPACE/$KIT/optimized.patch"
+          python3 "$KIT/apply_targeted_shader_optimizations.py" source evidence
+          python3 "$KIT/test_targeted_shader_math.py" evidence/shader-math.json
+          python3 "$KIT/validate_source.py" source baseline-source evidence
+          git -C source diff --binary > evidence/optimized-only.diff
+          grep -R -n -E 'DWSHADOW_SOURCE_PERSISTENT_FIRE|dlightShadowSlot|shadowCubemaps|DARKWOLF_MAP_LIGHTING_OVERRIDE|StaticPromote|DlightShadow' source/SP/code/rend2 > evidence/direct-shadow-index.txt || :
+          tar czf evidence/rend2-v446-optimized-pre-rootfix.tar.gz -C source SP/code/rend2 SP/code/cgame/cg_effects.c SP/code/cgame/cg_ents.c SP/code/cgame/cg_weapons.c SP/code/qcommon/cm_trace.c SP/code/qcommon/cm_public.h
+          sha256sum evidence/rend2-v446-optimized-pre-rootfix.tar.gz > evidence/source-sha256.txt
+      - name: Publish source audit package
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-v446-Fire-Direct-Light-Source-Audit-V2
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
