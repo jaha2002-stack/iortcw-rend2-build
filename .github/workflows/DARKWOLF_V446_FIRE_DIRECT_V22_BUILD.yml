@@ -31,6 +31,17 @@ jobs:
           python3 "$KIT/test_targeted_shader_math.py" evidence/shader-math.json
           python3 "$KIT/validate_source.py" source baseline-source evidence
           git -C source diff --binary > evidence/v446-clean-targeted-delta.patch
+          # Fingerprint the already-optimized renderer before V22. The fire
+          # volumetric shaders and existing lamp receiver must stay byte-for-byte
+          # identical in the V22 delta, not merely identical to unoptimized v4.4.6.
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          src=pathlib.Path('source/SP/code/rend2')
+          untouched=('glsl/volumetriclocal_fp.glsl','glsl/volumetricsun_fp.glsl','tr_shade.c')
+          pathlib.Path('evidence/v22-preserved-hashes.json').write_text(json.dumps(
+              {p:hashlib.sha256((src/p).read_bytes()).hexdigest() for p in untouched},
+              indent=2)+'\n')
+          PY
           python3 - <<'PY'
           import gzip,base64,pathlib,hashlib
           blob=pathlib.Path('integration/fire-direct-v22/patch.gz.b64').read_text().strip()
@@ -47,8 +58,10 @@ jobs:
           src=Path('source/SP/code/rend2')
           base=Path('baseline-source/SP/code/rend2')
           assert src.joinpath('tr_main.c').read_bytes()!=base.joinpath('tr_main.c').read_bytes()
-          for name in ('glsl/volumetriclocal_fp.glsl','glsl/volumetricsun_fp.glsl','glsl/volumetricfire_fp.glsl','tr_shade.c'):
-              assert src.joinpath(name).read_bytes()==base.joinpath(name).read_bytes() or name.startswith('glsl/volumetric'),name
+          import json,hashlib
+          expected=json.loads(Path('evidence/v22-preserved-hashes.json').read_text())
+          for name,sha in expected.items():
+              assert hashlib.sha256((src/name).read_bytes()).hexdigest()==sha, ('V22 modified protected renderer file',name)
           a=src.joinpath('tr_scene.c').read_text()
           assert 'PLR_V01_FIRE_PAIR_MAX_DIST 128.0f' in a
           assert 'R_DWFireDirectOcclusionSourceMatch' in a
