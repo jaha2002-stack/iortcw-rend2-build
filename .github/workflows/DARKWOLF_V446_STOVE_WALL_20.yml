@@ -1,0 +1,86 @@
+name: DarkWolf v446 escape1 Exterior Wall 20 Real Frames
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-v446-fire-direct-occlusion-v2-20261013]
+    paths:
+      - '.github/workflows/DARKWOLF_V446_STOVE_WALL_20.yml'
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install native Linux Mesa TestLab dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+            build-essential ca-certificates curl gh git jq python3 python3-pil \
+            libgl1-mesa-dri libgl1-mesa-dev libegl1-mesa-dev \
+            xvfb xauth libsdl2-dev libopenal-dev libcurl4-openssl-dev zip unzip
+      - name: Restore licensed game assets with existing protected TestLab credentials
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$GH_TOKEN" || { echo 'MISSING_RETAIL_TOKEN'; exit 2; }
+          mkdir -p evidence
+          bash testlab/scripts/fetch_private_release_assets.sh \
+            jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 \
+            protected-assets > evidence/asset-path.log
+          tail -1 evidence/asset-path.log > .retail-main
+          test -d "$(cat .retail-main)"
+      - name: Reconstruct V22 and instrument an isolated TestLab image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          KIT=integration/optimized-v4-4-6
+          python3 "$KIT/reconstruct.py" baseline-source
+          git clone -q --shared baseline-source source
+          git -C source apply --check "$GITHUB_WORKSPACE/$KIT/optimized.patch"
+          git -C source apply "$GITHUB_WORKSPACE/$KIT/optimized.patch"
+          python3 "$KIT/apply_targeted_shader_optimizations.py" source evidence
+          python3 - <<'PY'
+          import gzip,base64,hashlib,pathlib
+          blob=pathlib.Path('integration/fire-direct-v22/patch.gz.b64').read_text().strip()
+          patch=gzip.decompress(base64.b64decode(blob))
+          assert hashlib.sha256(patch).hexdigest()=='0db6fce73cc3e5f2f0e6c355665a13d5ab3d1ab0569a43d98ee35fcd16818bce'
+          pathlib.Path('evidence/v22.patch').write_bytes(patch)
+          PY
+          git -C source apply --check "$GITHUB_WORKSPACE/evidence/v22.patch"
+          git -C source apply "$GITHUB_WORKSPACE/evidence/v22.patch"
+          python3 testlab/scripts/apply_testlab_instrumentation.py source
+          python3 "$KIT/instrument_runtime.py" source
+      - name: Build native diagnostic-only Rend2
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            > evidence/linux-build.log 2>&1 || { tail -120 evidence/linux-build.log; exit 1; }
+          ls -l source/SP/build/release-linux-x86_64
+      - name: Real escape1 furnace camera ring capture
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          RETAIL="$(cat .retail-main)"
+          python3 integration/fire-direct-v22/stove_wall_20.py source "$RETAIL" evidence/stove-wall-v22 v22
+      - name: Publish real screenshots and camera evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-v446-Fire-V22-escape1-Exterior-Wall-20-RealFrames
+          path: |
+            evidence/stove-wall-v22/wall-camera-manifest.json
+            evidence/stove-wall-v22/wall-results.json
+            evidence/stove-wall-v22/screenshots/*.png
+            evidence/stove-wall-v22/qconsole.log
+            evidence/stove-wall-v22/stdout.log
+            evidence/linux-build.log
+          retention-days: 20
+          if-no-files-found: warn
