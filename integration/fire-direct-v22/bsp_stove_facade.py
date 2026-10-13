@@ -30,6 +30,10 @@ raw_brushes=[struct.unpack('<iii',b) for b in lump(8,12)]
 solid=[]
 for bi,(first,num,shader) in enumerate(raw_brushes):
     if shader<0 or shader>=len(shaders) or not(shaders[shader][2]&1):continue
+    # Weapon-only collision brushes are not opaque visual walls and often
+    # enclose the stove entity. Exclude them from architectural BSP traces.
+    name=shaders[shader][0].split(b'\\0')[0].decode('latin1').lower()
+    if name.startswith('textures/common/') and any(k in name for k in ('clip', 'trigger', 'nodraw', 'hint', 'skip', 'origin')):continue
     sides=[planes[brushsides[k][0]] for k in range(first,first+num)]
     if not sides:continue
     minimum=[-1e12]*3; maximum=[1e12]*3
@@ -100,6 +104,7 @@ for i in range(32):
             floor=trace([xx,yy,300.],[xx,yy,-400.])
             if floor is None or floor.get('start_solid'):continue
             ground_z=floor['hit'][2]
+            if not (-500<ground_z<200):continue
             eye=[round(xx,2),round(yy,2),round(ground_z+58,2)]
             check=trace(eye,hit)
             ground_below=trace([xx,yy,ground_z+58],[xx,yy,ground_z-10])
