@@ -1,0 +1,100 @@
+name: DarkWolf v4.4.6 Fire Direct V22 Clean Candidate
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-v446-fire-direct-occlusion-v2-20261013]
+    paths:
+      - 'integration/fire-direct-v22/finalize.py'
+      - '.github/workflows/DARKWOLF_V446_FIRE_DIRECT_V22_CLEAN_CANDIDATE.yml'
+permissions:
+  contents: read
+jobs:
+  clean-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install pinned Windows x64 cross-toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends gcc-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 g++-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 binutils-mingw-w64-x86-64=2.41.90.20240122-1ubuntu1+11.4
+      - name: Reconstruct independently verified sources and apply V22
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          KIT=integration/optimized-v4-4-6
+          mkdir -p evidence
+          python3 "$KIT/reconstruct.py" baseline-source
+          git clone -q --shared baseline-source source
+          git -C source apply --check "$GITHUB_WORKSPACE/$KIT/optimized.patch"
+          git -C source apply "$GITHUB_WORKSPACE/$KIT/optimized.patch"
+          python3 "$KIT/apply_targeted_shader_optimizations.py" source evidence
+          python3 "$KIT/test_targeted_shader_math.py" evidence/shader-math.json
+          python3 "$KIT/validate_source.py" source baseline-source evidence
+          git -C source diff --binary > evidence/v446-clean-targeted-delta.patch
+          python3 - <<'PY'
+          import gzip,base64,pathlib,hashlib,json
+          src=pathlib.Path('source/SP/code/rend2')
+          protected=('glsl/volumetriclocal_fp.glsl','glsl/volumetricsun_fp.glsl','tr_shade.c')
+          (pathlib.Path('evidence')/'v22-preserved-hashes.json').write_text(json.dumps(
+              {p:hashlib.sha256((src/p).read_bytes()).hexdigest() for p in protected},indent=2)+'\n')
+          blob=pathlib.Path('integration/fire-direct-v22/patch.gz.b64').read_text().strip()
+          patch=gzip.decompress(base64.b64decode(blob))
+          digest=hashlib.sha256(patch).hexdigest()
+          assert digest=='0db6fce73cc3e5f2f0e6c355665a13d5ab3d1ab0569a43d98ee35fcd16818bce',digest
+          pathlib.Path('evidence/v22.patch').write_bytes(patch)
+          PY
+          git -C source apply --check "$GITHUB_WORKSPACE/evidence/v22.patch"
+          git -C source apply "$GITHUB_WORKSPACE/evidence/v22.patch"
+          git -C source diff --check
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,hashlib
+          src=Path('source/SP/code/rend2')
+          protected=json.loads(Path('evidence/v22-preserved-hashes.json').read_text())
+          for name,sha in protected.items():
+              assert hashlib.sha256((src/name).read_bytes()).hexdigest()==sha,name
+          scene=(src/'tr_scene.c').read_text()
+          assert 'R_DWFireDirectOcclusionSourceMatch' in scene
+          assert 'fireDirectOcclusionSource' in (src/'tr_world.c').read_text()
+          PY
+          python3 "$KIT/test_equivalence.py" source baseline-source evidence
+          python3 "$KIT/check_diagnostics.py" baseline-source
+      - name: Build unmodified baseline SP Windows x64
+        shell: bash
+        run: bash integration/optimized-v4-4-6/build.sh baseline-source evidence/baseline
+      - name: Build V22 SP Windows x64
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash integration/optimized-v4-4-6/build.sh source evidence/v22
+          cp source/SP/build/release-mingw32-x86_64/renderer_sp_rend2_x64.dll evidence/renderer_sp_rend2_x64.dll
+      - name: Verify all component hashes and build installable candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 integration/optimized-v4-4-6/package.py source baseline-source evidence dist
+          python3 integration/fire-direct-v22/finalize.py dist evidence source
+          test -s dist/DarkWolf-ioRTCW-Rend2-v4.4.6-Fire-Direct-V2.2-Clean-RC-Win64-SP.zip
+      - name: Publish candidate (NOT visual acceptance)
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-v446-Fire-Direct-V22-Win64-Clean-BuildCandidate-VisualPending
+          path: |
+            dist/*Fire-Direct-V2.2-Clean-RC*.zip
+            dist/*Fire-Direct-V2.2-Clean-RC*.sha256
+            dist/FIRE_V22_BUILD_PROVENANCE.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-v446-Fire-Direct-V22-Candidate-Evidence
+          path: evidence/
+          retention-days: 20
+          if-no-files-found: warn
