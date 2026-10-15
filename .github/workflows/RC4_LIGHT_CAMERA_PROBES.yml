@@ -1,0 +1,69 @@
+name: RC4 Light Camera Point Probes
+on:
+  push:
+    branches: [rend2-rc4-fire-tesla-containment-20261015]
+    paths: ['.github/workflows/RC4_LIGHT_CAMERA_PROBES.yml']
+permissions:
+  contents: read
+jobs:
+  probes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Protected map point probes only
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > private-assets-path.log
+          export RETAIL_MAIN="$(tail -1 private-assets-path.log)"
+          mkdir -p evidence
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,struct,json,os
+          retail=Path(os.environ['RETAIL_MAIN']);b=None
+          for p in sorted(retail.iterdir()):
+            if p.suffix.lower()=='.pk3':
+              with zipfile.ZipFile(p) as z:
+                for n in z.namelist():
+                  if n.lower()=='maps/escape1.bsp':b=z.read(n)
+          assert b is not None
+          def lump(i):
+            o,n=struct.unpack_from('<ii',b,8+i*8);assert 0<=o<=o+n<=len(b);return b[o:o+n]
+          shaders=list(struct.iter_unpack('<64sii',lump(1)));planes=list(struct.iter_unpack('<4f',lump(2)));brushes=list(struct.iter_unpack('<3i',lump(8)));sides=list(struct.iter_unpack('<2i',lump(9)))
+          model=struct.unpack_from('<6f4i',lump(7));bs=[]
+          for bi in range(model[8],model[8]+model[9]):
+            first,count,sh=brushes[bi]
+            if shaders[sh][2]&1:bs.append([planes[sides[j][0]] for j in range(first,first+count)])
+          def ray(p,d,limit=1024):
+            best=limit;inside=False
+            for ps in bs:
+              lo,hi=0.,limit;strict=True
+              for pl in ps:
+                a=sum(pl[k]*p[k] for k in range(3))-pl[3];v=sum(pl[k]*d[k] for k in range(3))
+                if a>=-0.01:strict=False
+                if abs(v)<1e-8:
+                  if a>0.01:hi=-1.;break
+                elif v>0:hi=min(hi,-a/v)
+                else:lo=max(lo,-a/v)
+                if lo>hi+0.01:break
+              if strict:inside=True
+              if hi>=lo and hi>=0:best=min(best,max(0,lo))
+            return {'distance':round(best,3),'end':[round(p[k]+d[k]*best,3) for k in range(3)],'start_solid':inside}
+          points={'fire_source':[-1340,692,-36],'furnace':[-1226,602,-32],'fire_inside_old':[-1460,520,-26],'fire_inside_a':[-1340,760,0],'fire_inside_b':[-1240,740,0],'fire_outside_a':[-1100,692,-50],'fire_outside_b':[-1120,602,-50],'blue_source':[328,448,-532],'tesla_source':[184,448,-476]}
+          for x,y in [(120,560),(328,448),(328,580),(440,480),(480,600),(580,560),(328,680),(160,680),(540,800),(360,800),(100,800)]:
+            for z in [-550,-420,-310,-210]:points[f'probe_{x}_{y}_{z}']=[x,y,z]
+          result={}
+          for name,p in points.items():
+            result[name]={'eye':p,'rays':{label:ray(p,d) for label,d in [('down',[0,0,-1]),('up',[0,0,1]),('west',[-1,0,0]),('east',[1,0,0]),('south',[0,-1,0]),('north',[0,1,0])]}}
+          Path('evidence/escape1-point-probes.json').write_text(json.dumps(result,indent=2))
+          print('POINT_PROBES_EXPORTED',len(result))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: RC4-Escape1-Camera-Point-Probes
+          path: evidence/*.json
+          if-no-files-found: error
+          retention-days: 30
