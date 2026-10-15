@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [rend2-rc4-fire-tesla-containment-20261015]
-    paths: ['integration/rc4-light-containment/**', '.github/workflows/RC4_LIGHT_CONTAINMENT_CANDIDATE.yml', 'testlab/scripts/rc4_v2_*.py']
+    paths: ['integration/rc4-light-containment/**', '.github/workflows/RC4_LIGHT_CONTAINMENT_CANDIDATE.yml', 'testlab/scripts/rc4_v2_*.py', 'testlab/scripts/rc4_v3_*.py']
 permissions:
   contents: read
 concurrency:
@@ -26,8 +26,8 @@ jobs:
           python3 "$KIT/rc3/bootstrap.py"
           python3 "$KIT/rc4/bootstrap.py"
           python3 "$FIX/bootstrap.py"
-          cp "$FIX"/*.py "$FIX"/*.md testlab/scripts/rc4_v2_*.py evidence/review-tools/
-          python3 -m py_compile "$FIX"/*.py testlab/scripts/rc4_v2_*.py
+          cp "$FIX"/*.py "$FIX"/*.md testlab/scripts/rc4_v2_*.py testlab/scripts/rc4_v3_*.py evidence/review-tools/
+          python3 -m py_compile "$FIX"/*.py testlab/scripts/rc4_v2_*.py testlab/scripts/rc4_v3_*.py
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends gcc-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 g++-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 binutils-mingw-w64-x86-64=2.41.90.20240122-1ubuntu1+11.4 clang python3-pil python3-numpy xvfb xauth libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev
       - name: Restore exact cumulative RC4 and apply bounded delta
@@ -67,6 +67,7 @@ jobs:
           bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > private-assets-path.log
           tail -1 private-assets-path.log > .retail_main
           python3 "$FIX/inspect_escape1.py" "$(cat .retail_main)" evidence/map-metadata
+          python3 testlab/scripts/rc4_floor_candidates.py "$(cat .retail_main)" evidence/map-metadata/escape1-rendered-floor-cameras.json
       - name: Build separate diagnostic Linux copy after pristine staging
         shell: bash
         run: |
@@ -76,20 +77,21 @@ jobs:
           python3 "$KIT/instrument_runtime.py" linux-test
           python3 "$FIX/instrument.py" linux-test
           python3 testlab/scripts/rc4_v2_diagnostics.py linux-test "$FIX/runtime.py"
+          python3 testlab/scripts/rc4_v3_diagnostics.py linux-test "$FIX/runtime.py"
           cp "$FIX/runtime.py" evidence/review-tools/runtime-refined.py
           git -C linux-test diff > evidence/diagnostic-only.patch
           git -C linux-test diff --check
           make -C linux-test/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-Clean-RC4 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 2>&1 | tee evidence/linux-build.log
-      - name: Real map target-family A-B at authored peak and valid BSP leaves
+      - name: Real map target-family A-B at actual Tesla-on phase and rendered floors
         shell: bash
         run: |
           set -Eeuo pipefail
           python3 -u "$FIX/runtime.py" linux-test "$(cat .retail_main)" evidence/escape1-ab 2>&1 | tee evidence/runtime-progress.log
-      - name: Require valid leaf, actual emitter signal, delivered masks and exact repeats
+      - name: Require live attached Tesla emitters, original cadence and exact replay
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 testlab/scripts/rc4_v2_capture_gate.py evidence/escape1-ab | tee evidence/capture-gate.log
+          python3 testlab/scripts/rc4_v3_capture_gate.py evidence/escape1-ab | tee evidence/capture-gate.log
       - name: Publish clean candidate separately from diagnostic evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -110,7 +112,7 @@ jobs:
             echo 'Baseline: RC4 run 38704499119, exact source tree 74049eab929ec9271459634e143dda9fd7d700c1.'
             echo 'Windows runtime and gaming-GPU performance: NOT_RUN.'
             echo 'Source-off is attribution, not the fix. A capture gate is not visual acceptance.'
-            echo 'Diagnostic A-B samples a maximum authored lightstyle phase with stable random arcs; production cadence is unchanged.'
+            echo 'Diagnostic A-B samples a maximum authored lightstyle phase and original Tesla-on clock; replays actual pre-frame trails. Production cadence is unchanged.'
             if test -f evidence/escape1-ab/validated-views.json; then cat evidence/escape1-ab/validated-views.json; fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve all evidence including failed tests - no retail assets
