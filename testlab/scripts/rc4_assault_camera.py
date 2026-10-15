@@ -134,12 +134,13 @@ def select_views(retail: Path):
             tested+=1
             if world.solid(eye) or any(world.solid([eye[0]+a,eye[1]+b,eye[2]+c]) for a,b,c in [(16,0,0),(-16,0,0),(0,16,0),(0,-16,0),(0,0,-16)]):continue
             if not exposed(eye):continue
-            for heading in (yaw+180,yaw+90):
+            # Face toward / obliquely toward the authored sun. Do not boost it.
+            for heading in (yaw,yaw+45):
                 angle=math.radians(heading);fwd=[math.cos(angle),math.sin(angle),0]
                 right=[math.sin(angle),-math.cos(angle),0]
                 gun=[eye[k]+fwd[k]*32+right[k]*8 for k in range(3)];gun[2]-=8
                 if world.solid(gun) or not exposed(gun):continue
-                valid.append({'eye':eye,'angles':[8.0,heading%360,0.0],
+                valid.append({'eye':eye,'angles':[-5.0,heading%360,0.0],
                               'floor':floor['position'],'leaf_cluster':world.leaf(eye)[0],
                               'weapon_probe':gun,'camera_and_weapon_sun_ray_hit_sky':True})
             if len(valid)>=2:break
