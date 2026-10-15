@@ -72,8 +72,11 @@ assert found==set(changes)
 for a,b,v in sorted(edits,reverse=True):t=t[:a]+v+t[b:]
 assert "cmd=['set con_notifytime -1'" in t
 t=t.replace("cmd=['set con_notifytime -1'","cmd=['set dw_abTeslaRandom 5','set con_notifytime -1'")
-t=t.replace("'set dw_abFreeze 1','wait 4'","'set dw_abFreeze 1','wait 16'")
+# A 100-ms grid can permanently miss a modulo phase. The 50-ms approach
+# visits every quotient residue (period <=9 frames for the authored random=5).
+t=t.replace("'set dw_abFreeze 1','wait 4'","'set com_fixedtime 50','set dw_abFreeze 1','wait 16'")
+t=t.replace("'set dw_abFreeze 0','set dw_abStep 0'","'set com_fixedtime 100','set dw_abFreeze 0','set dw_abStep 0'")
 t=t.replace('authored peak phase and fixed random arcs','authored peak phase, actual Tesla-on predicate, and replayed pre-frame trail state')
 ast.parse(t);runtime.write_text(t)
-Path('evidence/v3-diagnostic-corrections.json').write_text(json.dumps({'scope':'TEST COPY ONLY','tesla_phase':'Wait for original predicate (time/50) % (5+time%5)==0; actual metadata random=5. No added light or forced radius.','trails':'Restore entire actual pre-frame pool plus list roots/count for same-time replay; no cumulative fresh bolt trails.','floor_probe_run':38730165594,'floor_surface_ids':[5682,8586,8588],'new_cameras':list(changes.values())},indent=2))
+Path('evidence/v3-diagnostic-corrections.json').write_text(json.dumps({'scope':'TEST COPY ONLY','tesla_phase':'Wait for original predicate (time/50) % (5+time%5)==0 on a 50-ms approach grid; actual metadata random=5. No added light or forced radius.','trails':'Restore entire actual pre-frame pool plus list roots/count for same-time replay; no cumulative fresh bolt trails.','floor_probe_run':38730165594,'floor_surface_ids':[5682,8586,8588],'new_cameras':list(changes.values())},indent=2))
 print('ACTUAL_TESLA_PHASE_FLOOR_AND_TRAIL_REPLAY_INSTRUMENTED')
