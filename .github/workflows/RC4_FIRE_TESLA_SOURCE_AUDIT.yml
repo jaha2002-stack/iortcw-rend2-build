@@ -1,0 +1,44 @@
+name: RC4 Fire Tesla Source Audit
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-rc4-fire-tesla-containment-20261015]
+    paths: ['.github/workflows/RC4_FIRE_TESLA_SOURCE_AUDIT.yml']
+permissions:
+  contents: read
+jobs:
+  reconstruct-exact-rc4:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Restore and verify cumulative release source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence audit-export
+          python3 integration/optimized-v4-4-6/rc3/bootstrap.py
+          python3 integration/optimized-v4-4-6/rc4/bootstrap.py
+          python3 integration/optimized-v4-4-6/rc3/pipeline.py prepare 2>&1 | tee evidence/reconstruct-parent.log
+          python3 integration/optimized-v4-4-6/rc3/pipeline.py apply 2>&1 | tee evidence/reconstruct-rc3.log
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = '921a3d2a339d3a670c098a777c4c7896d987efe8'
+          python3 integration/optimized-v4-4-6/rc4/pipeline.py apply 2>&1 | tee evidence/reconstruct-rc4.log
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = '74049eab929ec9271459634e143dda9fd7d700c1'
+          git -C source status --porcelain > evidence/source-status.txt
+          test ! -s evidence/source-status.txt
+          git -C source rev-parse HEAD 'HEAD^{tree}' > evidence/source-identity.txt
+          git -C source archive --format=tar HEAD | gzip -9 > audit-export/exact-rc4-source.tar.gz
+          tar -czf audit-export/reconstruction-tools.tar.gz integration/optimized-v4-4-6 testlab/scripts
+          cp evidence/source-identity.txt audit-export/
+          cp evidence/rc4-lock.json audit-export/ 2>/dev/null || true
+          sha256sum audit-export/*.tar.gz > audit-export/SHA256SUMS
+      - name: Export source and audit tools only - no retail assets
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: RC4-exact-source-for-fire-tesla-audit
+          path: |
+            audit-export/
+            evidence/reconstruct-*.log
+          if-no-files-found: error
+          retention-days: 30
