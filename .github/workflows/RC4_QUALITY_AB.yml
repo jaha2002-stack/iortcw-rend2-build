@@ -1,0 +1,100 @@
+name: RC4 Quality Factory Controlled AB
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-rc4-ssgi-volumetric-quality-20261015]
+    paths: ['.github/workflows/RC4_QUALITY_AB.yml','integration/rc4-quality/**']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  comparison:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Baseline build from locked run 38733120730
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml,subprocess
+          d=yaml.safe_load(Path('.github/workflows/RC4_QUALITY_TUNNEL_INPUTS.yml').read_text())
+          script=d['jobs']['capture']['steps'][1]['run']
+          try:subprocess.run(['bash','-e'],input=script,text=True,check=True)
+          except subprocess.CalledProcessError:
+            p=Path('evidence/build.log')
+            if p.exists():print(p.read_text(errors='replace')[-16000:])
+            raise
+          PY
+      - name: Existing authorized runtime test input
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml,subprocess
+          d=yaml.safe_load(Path('.github/workflows/RC4_QUALITY_TUNNEL_INPUTS.yml').read_text())
+          subprocess.run(['bash','-e'],input=d['jobs']['capture']['steps'][2]['run'],text=True,check=True)
+          PY
+      - name: Baseline then candidate under identical frozen views
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml,subprocess,shutil,json
+          import numpy as np
+          from PIL import Image
+          ab=Path('ab');ab.mkdir(exist_ok=True)
+          original=yaml.safe_load(Path('.github/workflows/RC4_QUALITY_TUNNEL_INPUTS.yml').read_text())['jobs']['capture']['steps'][3]['run']
+          # Preserve the original four controls and add isolated-effects parity frames.
+          old="('repeat',1,0)]:"
+          assert original.count(old)==1
+          capture=original.replace(old,"('repeat',1,0),('alloff',0,0),('ssgionly',1,0),('volumeonly',0,0)]:")
+          anchor='      cmds += [f\'set r_qualityDump'
+          assert capture.count(anchor)==1
+          capture=capture.replace(anchor,"      vol=0 if mode in ('alloff','ssgionly') else 1\n      cmds += [f'set r_volumetricLocal {vol}',f'set r_volumetricSun {vol}',f'set r_volumetricFire {vol}']\n"+anchor)
+          capture=capture.replace('len(views)*4','len(views)*7')
+          capture=capture.replace("'+set','r_shadowBlur','1'","'+set','r_shadowBlur','0'")
+          capture=capture.replace("{'r_shadowBlur':1}","{'r_shadowBlur':0}")
+          Path('ab/capture-script.sh').write_text(capture)
+          subprocess.run(['bash','-e'],input=capture,text=True,check=True)
+          shutil.move('evidence',ab/'base')
+          shutil.rmtree('source');shutil.rmtree('parent');shutil.rmtree('runtime')
+          prep=yaml.safe_load(Path('.github/workflows/RC4_QUALITY_FACTORY_PROBE.yml').read_text())['jobs']['probe']['steps'][1]['run']
+          anchor='python3 testlab/scripts/apply_testlab_instrumentation.py source'
+          assert prep.count(anchor)==1
+          patch='python3 integration/rc4-quality/apply_quality_fix.py source --manifest evidence/source-delta.json\ngit -C source diff --check\ngit -C source diff > ab/quality-production.patch\ntar --exclude=.git -czf ab/quality-production-source.tar.gz -C source .\ngit -C source add .\ngit -C source write-tree > ab/quality-source-tree.txt\n'
+          adapters='\npython3 integration/optimized-v4-4-6/instrument_runtime.py source\npython3 testlab/scripts/rc4_quality_dump_instrument.py source'
+          prep=prep.replace(anchor,patch+anchor+adapters)
+          try:subprocess.run(['bash','-e'],input=prep,text=True,check=True)
+          except subprocess.CalledProcessError:
+            p=Path('evidence/build.log')
+            if p.exists():print(p.read_text(errors='replace')[-16000:])
+            raise
+          subprocess.run(['bash','-e'],input=capture,text=True,check=True)
+          shutil.move('evidence',ab/'candidate')
+          rows=[]
+          for n in range(3):
+            def image(v,k):return np.array(Image.open(ab/v/f'tunnel{n}_{k}.png')).astype(float)
+            b=image('base','alloff');c=image('candidate','alloff')
+            y,x=np.mgrid[:b.shape[0],:b.shape[1]];roi=(x-480)**2+(y-355)**2<90**2
+            bg=np.maximum(image('base','ssgionly')-b,0);cg=np.maximum(image('candidate','ssgionly')-c,0)
+            rows.append({'view':n,'disabled_effects_max_delta':float(abs(b-c).max()),'base_ssgi_roi_sum':float(bg[roi].sum()),'candidate_ssgi_roi_sum':float(cg[roi].sum()),'candidate_ssgi_active_pixels':int(np.any(cg>0,axis=2).sum())})
+          report={'base_run':38733120730,'diagnostic_reference':'base arithmetic with missing SSGI depth resource provisioned; no production quality settings lowered','rows':rows,'visual_acceptance':'PENDING_REVIEW','production_package':'NOT_PUBLISHED_BY_THIS_WORKFLOW'}
+          (ab/'comparison.json').write_text(json.dumps(report,indent=2));print(json.dumps(report,indent=2))
+          assert all(r['disabled_effects_max_delta']==0 for r in rows),'Unrelated scene drift with affected effects disabled'
+          assert all(r['candidate_ssgi_active_pixels']>10 for r in rows),'SSGI must remain active'
+          PY
+      - name: Preserve only code and rendered diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: RC4-Quality-Factory-Controlled-AB
+          path: |
+            ab/
+            evidence/
+          if-no-files-found: error
+          retention-days: 30
