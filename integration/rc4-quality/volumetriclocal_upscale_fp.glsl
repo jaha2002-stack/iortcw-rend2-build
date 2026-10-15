@@ -25,15 +25,50 @@ float depthWeight(float c,float d,float r)
  float q=abs(d-c)/max(min(c,d),0.0005);
  return exp(-q*max(r,0.0));
 }
-void addReconstructionTap(vec2 uv,float spatial,float cd,vec2 lo,vec2 hi,
+void addReconstructionTap(vec2 uv,float sd,float spatial,float cd,vec2 lo,vec2 hi,
                           inout vec3 sum,inout float weight)
 {
  uv=clamp(uv,lo,hi);
- float sd=getLinearDepth(u_ScreenDepthMap,uv,u_ViewInfo.x);
  float w=spatial*depthWeight(cd,sd,max(u_Color.x,32.0));
  // Exact texel centres prevent implicit linear mixing across a silhouette.
  sum+=texture2D(u_DiffuseMap,uv).rgb*w;
  weight+=w;
+}
+// Retain accepted coverage AA on radiance/shadow edges inside one surface.
+// AA taps stay inside the classified same-surface cell. No extra pass/history.
+vec3 coverageAA(vec2 uv,vec2 texel,vec2 lo,vec2 hi)
+{
+ uv=clamp(uv,lo,hi);
+  vec2 p=texel*0.5;
+  vec3 cM=texture2D(u_DiffuseMap,uv).rgb;
+  vec3 cNW=texture2D(u_DiffuseMap,clamp(uv+vec2(-p.x,-p.y),lo,hi)).rgb;
+  vec3 cNE=texture2D(u_DiffuseMap,clamp(uv+vec2( p.x,-p.y),lo,hi)).rgb;
+  vec3 cSW=texture2D(u_DiffuseMap,clamp(uv+vec2(-p.x, p.y),lo,hi)).rgb;
+  vec3 cSE=texture2D(u_DiffuseMap,clamp(uv+vec2( p.x, p.y),lo,hi)).rgb;
+  float lM=dot(cM,vec3(0.299,0.587,0.114));
+  float lNW=dot(cNW,vec3(0.299,0.587,0.114)), lNE=dot(cNE,vec3(0.299,0.587,0.114));
+  float lSW=dot(cSW,vec3(0.299,0.587,0.114)), lSE=dot(cSE,vec3(0.299,0.587,0.114));
+  float lMin=min(lM,min(min(lNW,lNE),min(lSW,lSE)));
+  float lMax=max(lM,max(max(lNW,lNE),max(lSW,lSE)));
+  float lRange=lMax-lMin;
+  float lumaEdge=smoothstep(0.0020,0.028,lRange);
+  float blend=lumaEdge*0.65*0.88;
+  if (blend == 0.0)
+  {
+   return max(cM,vec3(0.0));
+  }
+  vec2 dir=vec2(-((lNW+lNE)-(lSW+lSE)),((lNW+lSW)-(lNE+lSE)));
+  float dirReduce=max((lNW+lNE+lSW+lSE)*0.03125,0.0078125);
+  float invMin=1.0/(min(abs(dir.x),abs(dir.y))+dirReduce);
+  dir=clamp(dir*invMin,vec2(-4.0),vec2(4.0))*p;
+  vec3 rgbA=0.5*(texture2D(u_DiffuseMap,clamp(uv+dir*(1.0/3.0-0.5),lo,hi)).rgb+
+                 texture2D(u_DiffuseMap,clamp(uv+dir*(2.0/3.0-0.5),lo,hi)).rgb);
+  vec3 rgbB=rgbA*0.5+0.25*(texture2D(u_DiffuseMap,clamp(uv+dir*(-0.5),lo,hi)).rgb+
+                           texture2D(u_DiffuseMap,clamp(uv+dir*( 0.5),lo,hi)).rgb);
+  float lB=dot(rgbB,vec3(0.299,0.587,0.114));
+  vec3 aa=(lB<lMin || lB>lMax)?rgbA:rgbB;
+
+  return max(mix(cM,aa,blend),vec3(0.0));
 }
 void main()
 {
@@ -46,10 +81,21 @@ void main()
  {
   vec2 p=uv/texel-vec2(0.5),base=floor(p),f=fract(p);
   vec2 a=(base+vec2(0.5))*texel;
-  addReconstructionTap(a,(1.0-f.x)*(1.0-f.y),cd,lo,hi,sum,sumW);
-  addReconstructionTap(a+vec2(texel.x,0.0),f.x*(1.0-f.y),cd,lo,hi,sum,sumW);
-  addReconstructionTap(a+vec2(0.0,texel.y),(1.0-f.x)*f.y,cd,lo,hi,sum,sumW);
-  addReconstructionTap(a+texel,f.x*f.y,cd,lo,hi,sum,sumW);
+  vec2 b=clamp(a+vec2(texel.x,0.0),lo,hi),c=clamp(a+vec2(0.0,texel.y),lo,hi),d=clamp(a+texel,lo,hi);
+  a=clamp(a,lo,hi);
+  float da=getLinearDepth(u_ScreenDepthMap,a,u_ViewInfo.x),db=getLinearDepth(u_ScreenDepthMap,b,u_ViewInfo.x);
+  float dc=getLinearDepth(u_ScreenDepthMap,c,u_ViewInfo.x),dd=getLinearDepth(u_ScreenDepthMap,d,u_ViewInfo.x);
+  vec4 zs=vec4(da,db,dc,dd);
+  vec4 rel=abs(zs-vec4(cd))/max(min(zs,vec4(cd)),vec4(0.0005));
+  if(max(max(rel.x,rel.y),max(rel.z,rel.w))<0.06)
+  {
+   gl_FragColor=vec4(coverageAA(uv,texel,a,d),0.0);
+   return;
+  }
+  addReconstructionTap(a,da,(1.0-f.x)*(1.0-f.y),cd,lo,hi,sum,sumW);
+  addReconstructionTap(b,db,f.x*(1.0-f.y),cd,lo,hi,sum,sumW);
+  addReconstructionTap(c,dc,(1.0-f.x)*f.y,cd,lo,hi,sum,sumW);
+  addReconstructionTap(d,dd,f.x*f.y,cd,lo,hi,sum,sumW);
   // Unsupported thin foreground pixels must not inherit background radiance.
   gl_FragColor=vec4(sumW>0.00001 ? max(sum/sumW,vec3(0.0)) : vec3(0.0),0.0);
   return;
