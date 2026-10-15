@@ -1,0 +1,105 @@
+name: RC4 Requested Factory Assault Visual Proof
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-rc4-ssgi-volumetric-quality-20261015]
+    paths: ['.github/workflows/RC4_REQUESTED_VISUAL_PROOF.yml', 'testlab/scripts/rc4_requested_views.py']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: rc4-requested-visual-proof
+  cancel-in-progress: false
+jobs:
+  screenshots:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Restore immutable public source and release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p inputs/base inputs/quality source-base source-candidate release evidence
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/11971637900/zip > inputs/base.zip
+          echo 'ced7b601d4fa069682b258486e16db3d86e9a03b91ef5d7cad8cf03e52d3de0f  inputs/base.zip' | sha256sum -c -
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/11989425549/zip > inputs/quality.zip
+          echo '31564c09e12fe05fb6d2ebead4f864438981f9a09bd87007c29303ba3b54947d  inputs/quality.zip' | sha256sum -c -
+          unzip -q inputs/base.zip -d inputs/base
+          unzip -q inputs/quality.zip -d inputs/quality
+          tar -xzf inputs/base/clean-candidate-source.tar.gz -C source-base
+          tar -xzf inputs/quality/quality-production-source.tar.gz -C source-candidate
+          unzip -q inputs/quality/DarkWolf-v446-RC4-Quality-Candidate-Win64-SP.zip -d release
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess,json
+          expected={'base':'c652eaed9cbcf1df4eb7d7d5187b9bea63dce60b','candidate':'6ff7c01cca9dcee88fd39e436c13ae5fbedbfc2b'}
+          actual={}
+          for variant,tree in expected.items():
+              root=Path('source-'+variant)
+              subprocess.run(['git','-C',str(root),'init','-q'],check=True)
+              subprocess.run(['git','-C',str(root),'add','.'],check=True)
+              actual[variant]=subprocess.check_output(['git','-C',str(root),'write-tree'],text=True).strip()
+              assert actual[variant]==tree,(variant,actual[variant],tree)
+          Path('evidence/source-lock.json').write_text(json.dumps({'source_trees':actual,'base_run':38733120730,'candidate_run':38765428993},indent=2))
+          # Reference only: exercise the OLD SSGI algorithm rather than compare
+          # enabled candidate against a baseline whose required input is absent.
+          p=Path('source-base/SP/code/rend2/tr_image.c');s=p.read_text()
+          a='if (r_shadowBlur->integer || r_ssao->integer)\n\t\t\ttr.hdrDepthImage'
+          assert s.count(a)==1
+          p.write_text(s.replace(a,'if (r_shadowBlur->integer || r_ssao->integer || r_ssgi->integer)\n\t\t\ttr.hdrDepthImage'))
+          PY
+      - name: Install runtime build dependencies
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev xvfb xauth python3-pil python3-numpy
+      - name: Build isolated camera helpers with unchanged candidate renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile testlab/scripts/rc4_requested_views.py
+          for variant in base candidate; do
+            python3 testlab/scripts/rc4_requested_views.py instrument source-${variant}
+            git -C source-${variant} diff --check
+            git -C source-${variant} diff > evidence/${variant}-camera-only.patch
+            if ! make -C source-${variant}/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-Clean-RC4 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/${variant}-build.log 2>&1; then
+              tail -n 120 evidence/${variant}-build.log
+              exit 1
+            fi
+          done
+      - name: Read existing authorized game input for runtime only
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > private-assets-path.log
+          tail -1 private-assets-path.log > .retail_main
+      - name: Render requested views and paired enabled-effect controls
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+          for variant in base candidate; do
+            for map in factory assault; do
+              python3 -u testlab/scripts/rc4_requested_views.py capture source-${variant} "$(cat .retail_main)" release evidence/${variant}-${map} ${variant} ${map} || status=1
+            done
+          done
+          exit "$status"
+      - name: Publish rendered views and validation records only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: RC4-Requested-Factory-Assault-Views
+          path: |
+            evidence/**/*.png
+            evidence/**/*.json
+            evidence/**/*.cfg
+            evidence/**/*.log
+            evidence/*-camera-only.patch
+          if-no-files-found: error
+          retention-days: 30
