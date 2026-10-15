@@ -1,0 +1,60 @@
+name: RC4 Movie Route Geometry Check
+on:
+  push:
+    branches: [rend2-rc4-fire-tesla-video-20261015]
+    paths: ['.github/workflows/RC4_MOVIE_ROUTE_CHECK.yml']
+permissions:
+  contents: read
+jobs:
+  route:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify route against private map only
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > private-assets-path.log
+          export RETAIL="$(tail -1 private-assets-path.log)"
+          python3 - <<'PY'
+          import importlib.util,os,struct,zipfile,json
+          from pathlib import Path
+          spec=importlib.util.spec_from_file_location('movie','testlab/scripts/rc4_noclip_movies.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+          b=None
+          for p in sorted(Path(os.environ['RETAIL']).iterdir()):
+            if p.suffix.lower()=='.pk3':
+              with zipfile.ZipFile(p) as z:
+                for n in z.namelist():
+                  if n.lower()=='maps/escape1.bsp':b=z.read(n)
+          assert b is not None
+          def lump(i):
+            o,n=struct.unpack_from('<ii',b,8+i*8);return b[o:o+n]
+          planes=list(struct.iter_unpack('<4f',lump(2)));nodes=list(struct.iter_unpack('<9i',lump(3)));leaves=list(struct.iter_unpack('<12i',lump(4)))
+          def cluster(p):
+            n=0
+            while n>=0:
+              row=nodes[n];pl=planes[row[0]];n=row[1 if sum(pl[k]*p[k] for k in range(3))>=pl[3] else 2]
+            return leaves[-1-n][0]
+          result={'routes':{},'door_sweeps':{}}
+          for name,keys in m.ROUTES.items():
+            rows=[];j=0
+            for i in range(int(keys[-1][0]*25)):
+              t=i/25
+              while j<len(keys)-2 and t>keys[j+1][0]:j+=1
+              a,c=keys[j:j+2];u=(t-a[0])/(c[0]-a[0]);p=[a[k]+u*(c[k]-a[k]) for k in range(1,4)]
+              cl=cluster(p)
+              if cl<0:rows.append({'frame':i,'time':t,'eye':p,'cluster':cl})
+            result['routes'][name]={'invalid':rows,'frames':int(keys[-1][0]*25)}
+          for x in [-200,-224,-240,-256,-288,-320,-360,-384]:
+            result['door_sweeps'][str(x)]=[y for y in range(448,801,8) if cluster([x,y,-336])>=0]
+          Path('movie-evidence/route-geometry.json').write_text(json.dumps(result,indent=2))
+          print({n:len(d['invalid']) for n,d in result['routes'].items()})
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: RC4-Movie-Route-Geometry
+          path: movie-evidence/route-geometry.json
+          if-no-files-found: error
