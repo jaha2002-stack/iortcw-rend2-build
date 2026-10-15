@@ -10,12 +10,13 @@ concurrency:
   group: darkwolf-v446-clean-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  build-verify-rc2-complete:
+  build-verify-rc3:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     env:
       KIT: integration/optimized-v4-4-6
       FULL: integration/optimized-v4-4-6/complete
+      RC3: integration/optimized-v4-4-6/rc3
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Preflight and pinned toolchain
@@ -23,35 +24,42 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p evidence
-          python3 -m py_compile "$FULL/pipeline.py"
-          bash -n "$FULL/build.sh"
+          python3 "$RC3/bootstrap.py"
+          python3 -m py_compile "$RC3"/*.py
+          bash -n "$RC3/build.sh"
           sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends gcc-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 g++-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 binutils-mingw-w64-x86-64=2.41.90.20240122-1ubuntu1+11.4 python3-pil python3-numpy xvfb xauth libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev
-          cp "$FULL/complete-lock.json" "$FULL/README.md" evidence/
-      - name: Reconstruct exact RC2 and integrate pending renderer fixes
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends gcc-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 g++-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 binutils-mingw-w64-x86-64=2.41.90.20240122-1ubuntu1+11.4 clang python3-pil python3-numpy xvfb xauth libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev
+          cp "$RC3/rc3-lock.json" "$RC3/AUDIT_RC3.md" evidence/
+      - name: Restore exact RC2 Complete cumulative source
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 "$FULL/pipeline.py" prepare 2>&1 | tee evidence/complete-reconstruction.log
-      - name: Recheck retained RC2 C and arithmetic tests
+          python3 "$RC3/pipeline.py" prepare 2>&1 | tee evidence/parent-reconstruction.log
+      - name: Revalidate all retained RC2 and Complete changes
         shell: bash
         run: |
           set -Eeuo pipefail
           python3 "$KIT/rc2/test_rc2.py" rc1-source rc2-source evidence/rc2-existing-unit 2>&1 | tee evidence/retained-rc2-unit.log
-      - name: Actual-source native and synthetic GLSL differential tests
+          python3 -u "$FULL/pipeline.py" tests 2>&1 | tee evidence/retained-complete-unit.log
+      - name: Apply exactly ten RC3 correction groups
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 -u "$FULL/pipeline.py" tests 2>&1 | tee evidence/complete-unit.log
-      - name: Build RC2 control Windows x64 SP
+          python3 "$RC3/pipeline.py" apply 2>&1 | tee evidence/rc3-apply.log
+      - name: Actual-source ASan UBSan and production-flags differential tests
         shell: bash
-        run: bash "$FULL/build.sh" rc2-source evidence/rc2-build
-      - name: Build RC2 Complete Windows x64 SP
+        run: |
+          set -Eeuo pipefail
+          python3 -u "$RC3/test_rc3.py" complete-source source evidence/rc3-tests 2>&1 | tee evidence/rc3-tests.log
+      - name: Build RC2 Complete control Win64 SP
         shell: bash
-        run: bash "$FULL/build.sh" source evidence/complete-build
-      - name: Verify and stage pristine production binaries
+        run: bash "$RC3/build.sh" complete-source evidence/parent-build
+      - name: Build RC3 clean Win64 SP
         shell: bash
-        run: python3 "$FULL/pipeline.py" stage
+        run: bash "$RC3/build.sh" source evidence/rc3-build
+      - name: Verify pristine Windows components and retained quality
+        shell: bash
+        run: python3 "$RC3/pipeline.py" stage
       - name: Protected retail assets for smoke only
         id: retail
         env:
@@ -73,22 +81,28 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          for pair in 'rc2-source rc2' 'source complete'; do
+          for pair in 'complete-source complete' 'source rc3'; do
             read -r original variant <<< "$pair"
             target="linux-$variant"
             git clone -q --shared "$original" "$target"
             python3 testlab/scripts/apply_testlab_instrumentation.py "$target"
             python3 "$KIT/instrument_runtime.py" "$target"
-            make -C "$target/SP" -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-Clean-RC2-Complete BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 2>&1 | tee "evidence/$variant-linux-build.log"
+            make -C "$target/SP" -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-Clean-RC3 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 2>&1 | tee "evidence/$variant-linux-build.log"
             python3 -u "$KIT/rc2/run_smoke.py" "$target" "$(cat .retail_main)" "evidence/$variant-runtime" 2>&1 | tee "evidence/$variant-smoke-progress.log"
           done
-      - name: Final integrity gates and one clean candidate
+      - name: Real game same-frame screenshot regression
+        if: steps.retail.outputs.available == 'true'
         shell: bash
-        run: python3 "$FULL/pipeline.py" finish
-      - name: Publish Clean Production RC2 Complete
+        run: |
+          set -Eeuo pipefail
+          python3 -u "$RC3/capture_burst.py" 2>&1 | tee evidence/screenshot-queue.log
+      - name: Final acceptance and clean RC3 packaging
+        shell: bash
+        run: python3 "$RC3/pipeline.py" finish
+      - name: Publish one Clean Production RC3
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DarkWolf-v446-Clean-Production-RC2-Complete-Win64-SP
+          name: DarkWolf-v446-Clean-Production-RC3-Win64-SP
           path: |
             dist/*.zip
             dist/*.sha256
@@ -101,19 +115,20 @@ jobs:
         shell: bash
         run: |
           {
-            echo '## Clean Production RC2 Complete'
+            echo '## Clean Production RC3'
             echo "Builder: $GITHUB_SHA"
             echo "Run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-            echo 'All released RC2 changes retained; pending R2 sorting overlaps and is not counted twice.'
-            echo 'Windows runtime / gaming GPU FPS / full temporal visual acceptance: NOT_RUN.'
-            if test -f evidence/complete-acceptance.json; then cat evidence/complete-acceptance.json; fi
+            echo 'Ten new safety/redundant-work fixes over exact RC2 Complete. Quality and GLSL unchanged.'
+            echo 'Windows gaming runtime, FPS and full temporal visual acceptance: NOT_RUN.'
+            echo 'Known parent SWF white band is tracked separately; smoke does not mean full visual acceptance.'
+            if test -f evidence/rc3-acceptance.json; then cat evidence/rc3-acceptance.json; fi
             if test -f evidence/runtime-status.txt; then cat evidence/runtime-status.txt; fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve diagnostics on success or failure
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DarkWolf-v446-RC2-Complete-validation-evidence
+          name: DarkWolf-v446-RC3-validation-evidence
           path: evidence/
           if-no-files-found: error
           retention-days: 30
