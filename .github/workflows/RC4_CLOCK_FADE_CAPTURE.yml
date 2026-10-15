@@ -1,0 +1,88 @@
+name: RC4 Clock-Verified Real Gameplay Videos
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-rc4-fire-tesla-video-20261015]
+    paths: ['testlab/scripts/rc4_capture_clock_fade.py', '.github/workflows/RC4_CLOCK_FADE_CAPTURE.yml']
+permissions:
+  contents: read
+  actions: write
+jobs:
+  capture:
+    strategy:
+      fail-fast: false
+      matrix:
+        route: [tesla, furnace]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      DW_MOVIE_ONLY: ${{ matrix.route }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Stop superseded fade-blocked capture
+        if: matrix.route == 'tesla'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          status=$(gh api repos/jaha2002-stack/iortcw-rend2-build/actions/runs/38740136650 --jq .status)
+          if test "$status" != completed; then
+            gh api --method POST repos/jaha2002-stack/iortcw-rend2-build/actions/runs/38740136650/cancel
+          fi
+      - name: Install capture dependencies and preflight generated scripts
+        run: |
+          set -Eeuo pipefail
+          mkdir -p movie-evidence accepted-source
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev xvfb xauth ffmpeg python3-pil fonts-dejavu-core
+          python3 - <<'PY'
+          import importlib.util,py_compile
+          from pathlib import Path
+          p=Path('testlab/scripts/rc4_capture_clock_fade.py')
+          spec=importlib.util.spec_from_file_location('preflight',p);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+          for p in Path('testlab/scripts').glob('rc4_*clock_fade.py'):py_compile.compile(str(p),doraise=True)
+          print('CLOCK_FADE_GENERATED_SCRIPTS_PASS')
+          PY
+      - name: Restore exact accepted source and recording-only instrumentation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          gh api repos/jaha2002-stack/iortcw-rend2-build/actions/artifacts/11971637900/zip > accepted-evidence.zip
+          echo 'ced7b601d4fa069682b258486e16db3d86e9a03b91ef5d7cad8cf03e52d3de0f  accepted-evidence.zip' | sha256sum -c -
+          unzip -q accepted-evidence.zip -d accepted-source
+          mkdir linux-test
+          tar -xzf accepted-source/clean-candidate-source.tar.gz -C linux-test
+          git -C linux-test init -q
+          git -C linux-test add -f .
+          test "$(git -C linux-test write-tree)" = 'c652eaed9cbcf1df4eb7d7d5187b9bea63dce60b'
+          git -C linux-test -c user.name=TestLab -c user.email=ci@invalid.local commit -qm 'Exact accepted source'
+          git -C linux-test apply --check "$PWD/accepted-source/diagnostic-only.patch"
+          git -C linux-test apply "$PWD/accepted-source/diagnostic-only.patch"
+          python3 testlab/scripts/rc4_capture_clock_fade.py patch linux-test
+          cp accepted-source/source-lock.json movie-evidence/production-source-lock.json
+          cp testlab/scripts/rc4_*clock_fade.py movie-evidence/
+      - name: Build disposable game recording copy
+        run: |
+          set -Eeuo pipefail
+          make -C linux-test/SP -j4 release PLATFORM=linux ARCH=x86_64 VERSION=1.51d-SP_DarkWolf-v4.4.6-Clean-RC4 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > movie-evidence/build.log 2>&1
+      - name: Protected game input for recording only
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > private-assets-path.log
+          tail -1 private-assets-path.log > .retail_main
+      - name: Full-length native demo and paired actual video capture
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/rc4_capture_clock_fade.py run linux-test "$(cat .retail_main)" 2>&1 | tee movie-evidence/capture-progress.log
+      - name: Publish recorded video and recoverable own recordings only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: RC4-Recorded-${{ matrix.route }}-Video
+          path: movie-evidence/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
