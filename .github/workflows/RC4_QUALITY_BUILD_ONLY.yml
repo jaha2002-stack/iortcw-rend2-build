@@ -1,0 +1,95 @@
+name: RC4 Quality Clean Win64 Build Only
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-rc4-ssgi-volumetric-quality-20261015]
+    paths: ['.github/workflows/RC4_QUALITY_BUILD_ONLY.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  clean-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Restore checksum-locked public build artifacts only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p source parent evidence dist
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/11971637900/zip > base-source.zip
+          echo 'ced7b601d4fa069682b258486e16db3d86e9a03b91ef5d7cad8cf03e52d3de0f  base-source.zip' | sha256sum -c -
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/11970614060/zip > base-clean.zip
+          echo 'b45a2d5f443f05fcb41a54ffde61c3781ee050bd99daba4bbe2512476977578a  base-clean.zip' | sha256sum -c -
+          unzip -q base-source.zip clean-candidate-source.tar.gz -d parent
+          tar -xzf parent/clean-candidate-source.tar.gz -C source
+          git -C source init -q
+          git -C source add .
+          test "$(git -C source write-tree)" = c652eaed9cbcf1df4eb7d7d5187b9bea63dce60b
+          git -C source -c user.name=RC4Builder -c user.email=builder@example.invalid commit -qm 'Exact source from run 38733120730'
+      - name: Apply only the independently tested six-file production delta
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/rc4-quality/apply_quality_fix.py integration/rc4-quality/package_clean.py
+          python3 integration/rc4-quality/apply_quality_fix.py source --manifest evidence/source-delta.json
+          git -C source diff --check
+          git -C source diff --binary > dist/quality-production.patch
+          python3 - <<'PY'
+          import subprocess,json
+          from pathlib import Path
+          expected={'SP/code/rend2/tr_local.h','SP/code/rend2/tr_shader.c','SP/code/rend2/tr_backend.c','SP/code/rend2/glsl/volumetriclocal_fp.glsl','SP/code/rend2/glsl/volumetricsun_fp.glsl','SP/code/rend2/glsl/volumetriclocal_upscale_fp.glsl'}
+          actual=set(subprocess.check_output(['git','-C','source','diff','--name-only'],text=True).splitlines())
+          assert actual==expected,(actual,expected)
+          Path('evidence/source-scope.json').write_text(json.dumps({'changed_files':sorted(actual),'all_other_tracked_source_unchanged':True,'new_cvar_registration_files_changed':False},indent=2))
+          PY
+          git -C source add .
+          git -C source write-tree > evidence/quality-source-tree.txt
+          test "$(cat evidence/quality-source-tree.txt)" = 6ff7c01cca9dcee88fd39e436c13ae5fbedbfc2b
+          git -C source -c user.name=RC4Builder -c user.email=builder@example.invalid commit -qm 'Bounded RC4 quality candidate'
+          git -C source archive --format=tar HEAD | gzip -9 > dist/quality-production-source.tar.gz
+      - name: Install the original pinned Windows compiler
+        run: |
+          set -Eeuo pipefail
+          python3 integration/optimized-v4-4-6/rc3/bootstrap.py
+          python3 integration/optimized-v4-4-6/rc4/bootstrap.py
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends gcc-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 g++-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 binutils-mingw-w64-x86-64=2.41.90.20240122-1ubuntu1+11.4
+      - name: Compile pristine source with the original RC4 release flags
+        run: |
+          set -Eeuo pipefail
+          if ! bash integration/optimized-v4-4-6/rc4/build.sh source evidence/windows-build; then
+            if test -f evidence/windows-build/build.log; then tail -160 evidence/windows-build/build.log; fi
+            exit 1
+          fi
+      - name: Verify clean PE and preserve every other baseline payload byte
+        run: |
+          set -Eeuo pipefail
+          python3 integration/rc4-quality/package_clean.py | tee evidence/package-check.log
+          sha256sum dist/quality-production.patch dist/quality-production-source.tar.gz > dist/SOURCE_SHA256SUMS.txt
+      - name: Publish clean candidate and complete source separately from runtime tests
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: RC4-Quality-Clean-Win64-Candidate
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish source and build verification
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: RC4-Quality-Build-Only-Evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record unambiguous acceptance limits
+        if: always()
+        run: |
+          {
+            echo '## Clean RC4 quality candidate, not a visually accepted final release'
+            echo 'Baseline: run 38733120730; six renderer source files only.'
+            echo 'This workflow does not obtain or run retail game assets.'
+            echo 'Corrected Factory gameplay A/B: NOT_RUN.'
+            echo 'Windows game runtime and gaming-GPU frame time: NOT_RUN / NOT_MEASURED.'
+          } >> "$GITHUB_STEP_SUMMARY"
