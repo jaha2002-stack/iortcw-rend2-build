@@ -1,0 +1,106 @@
+name: RC4 Verified Requested Factory Assault Views
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-rc4-ssgi-volumetric-quality-20261015]
+    paths: ['.github/workflows/RC4_REQUESTED_VIEWS_VERIFIED.yml', 'testlab/scripts/rc4_requested_views_verified.py']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: rc4-requested-views-verified
+  cancel-in-progress: false
+jobs:
+  capture:
+    name: ${{ matrix.variant }}-${{ matrix.map }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        variant: [base, candidate]
+        map: [factory, assault]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Restore immutable source and the unchanged quality profile
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VARIANT: ${{ matrix.variant }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p inputs/quality source release evidence
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/11989425549/zip > inputs/quality.zip
+          echo '31564c09e12fe05fb6d2ebead4f864438981f9a09bd87007c29303ba3b54947d  inputs/quality.zip' | sha256sum -c -
+          unzip -q inputs/quality.zip -d inputs/quality
+          unzip -q inputs/quality/DarkWolf-v446-RC4-Quality-Candidate-Win64-SP.zip -d release
+          if [ "$VARIANT" = base ]; then
+            mkdir -p inputs/base
+            gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/11971637900/zip > inputs/base.zip
+            echo 'ced7b601d4fa069682b258486e16db3d86e9a03b91ef5d7cad8cf03e52d3de0f  inputs/base.zip' | sha256sum -c -
+            unzip -q inputs/base.zip -d inputs/base
+            tar -xzf inputs/base/clean-candidate-source.tar.gz -C source
+          else
+            tar -xzf inputs/quality/quality-production-source.tar.gz -C source
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess,json,os
+          variant=os.environ['VARIANT'];root=Path('source')
+          expected={'base':'c652eaed9cbcf1df4eb7d7d5187b9bea63dce60b','candidate':'6ff7c01cca9dcee88fd39e436c13ae5fbedbfc2b'}
+          subprocess.run(['git','-C',str(root),'init','-q'],check=True)
+          subprocess.run(['git','-C',str(root),'add','.'],check=True)
+          tree=subprocess.check_output(['git','-C',str(root),'write-tree'],text=True).strip()
+          assert tree==expected[variant],(variant,tree,expected[variant])
+          Path('evidence/source-lock.json').write_text(json.dumps({'variant':variant,'source_tree':tree,'base_run':38733120730,'candidate_run':38765428993},indent=2))
+          if variant=='base':
+              p=root/'SP/code/rend2/tr_image.c';s=p.read_text()
+              old='if (r_shadowBlur->integer || r_ssao->integer)\n\t\t\ttr.hdrDepthImage'
+              assert s.count(old)==1
+              p.write_text(s.replace(old,'if (r_shadowBlur->integer || r_ssao->integer || r_ssgi->integer)\n\t\t\ttr.hdrDepthImage'))
+          PY
+      - name: Install runtime build dependencies
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev xvfb xauth python3-pil python3-numpy
+      - name: Build photo-mode helpers with identical renderer source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile testlab/scripts/rc4_requested_views.py testlab/scripts/rc4_requested_views_verified.py
+          python3 testlab/scripts/rc4_requested_views_verified.py instrument source
+          git -C source diff --check
+          git -C source diff > evidence/photo-mode-only.patch
+          if ! make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-Clean-RC4 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/build.log 2>&1; then
+            tail -n 100 evidence/build.log
+            exit 1
+          fi
+      - name: Existing authorized runtime input stays on this runner
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > private-assets-path.log
+          tail -1 private-assets-path.log > .retail_main
+      - name: Capture real enabled-effect frames and live-uniform controls
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/rc4_requested_views_verified.py capture source "$(cat .retail_main)" release evidence/${{ matrix.variant }}-${{ matrix.map }} ${{ matrix.variant }} ${{ matrix.map }}
+      - name: Upload rendered PNGs and validation records immediately per view set
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: RC4-Requested-Views-V2-${{ matrix.variant }}-${{ matrix.map }}
+          path: |
+            evidence/**/*.png
+            evidence/**/*.json
+            evidence/**/*.cfg
+            evidence/**/*.log
+            evidence/photo-mode-only.patch
+          if-no-files-found: error
+          retention-days: 30
