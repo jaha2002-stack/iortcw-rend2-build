@@ -1,8 +1,6 @@
 name: DarkWolf v4.4.6 Optimized Clean Production
 on:
   workflow_dispatch:
-  # The connector has no dispatch endpoint; this exact branch/path trigger is the
-  # deliberate launch mechanism. No workflow commits or writes back to the repo.
   push:
     branches: [rend2-v4-4-6-clean-optimization]
     paths: ['integration/optimized-v4-4-6/**', '.github/workflows/DARKWOLF_REND2_V4_4_6_OPTIMIZED_CLEAN_PRODUCTION.yml']
@@ -11,113 +9,62 @@ permissions:
 concurrency:
   group: darkwolf-v446-clean-${{ github.ref }}
   cancel-in-progress: false
+# Deliberate source-only audit checkpoint for the requested RC2 work.
+# This does not build or publish a release. No gameplay assets are accessed.
 jobs:
-  build-and-validate:
+  reconstruct-rc1-for-comprehensive-audit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 15
     env:
       KIT: integration/optimized-v4-4-6
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Preflight and toolchain
+      - name: Recover exact RC1 source and validate provenance
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p evidence/baseline evidence/optimized
-          python3 -m py_compile "$KIT"/*.py
-          bash -n "$KIT/build.sh"
-          sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends gcc-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 g++-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 binutils-mingw-w64-x86-64=2.41.90.20240122-1ubuntu1+11.4 python3-pil xvfb xauth libsdl2-dev libgl1-mesa-dev libopenal-dev
-          python3 "$KIT/test_validation_guards.py" 2>&1 | tee evidence/validation-guards-unit.log
-          python3 -O "$KIT/test_validation_guards.py" 2>&1 | tee evidence/validation-guards-python-O.log
-      - name: Reconstruct and verify component-correct baseline
-        shell: bash
-        run: |
-          set -Eeuo pipefail
+          mkdir -p evidence export
           python3 "$KIT/reconstruct.py" baseline-source 2>&1 | tee evidence/reconstruction.log
           git clone -q --shared baseline-source source
           git -C source apply --check "$GITHUB_WORKSPACE/$KIT/optimized.patch"
           git -C source apply "$GITHUB_WORKSPACE/$KIT/optimized.patch"
           python3 "$KIT/apply_targeted_shader_optimizations.py" source evidence
-          python3 "$KIT/test_targeted_shader_math.py" evidence/shader-math.json
-          git -C source diff --check
-          git -C source diff --binary > evidence/v446-clean-targeted-delta.patch
-          test -s evidence/v446-clean-targeted-delta.patch
-          git -C source apply --reverse --check "$GITHUB_WORKSPACE/evidence/v446-clean-targeted-delta.patch"
           python3 "$KIT/test_equivalence.py" source baseline-source evidence
+          python3 "$KIT/test_targeted_shader_math.py" evidence/shader-math.json
           python3 "$KIT/validate_source.py" source baseline-source evidence
-          python3 "$KIT/check_diagnostics.py" baseline-source 2>&1 | tee evidence/diagnostic-preflight.log
-      - name: Build baseline Windows x64 SP
-        shell: bash
-        run: bash "$KIT/build.sh" baseline-source evidence/baseline
-      - name: Build optimized Windows x64 SP
-        shell: bash
-        run: bash "$KIT/build.sh" source evidence/optimized
-      - name: Package and verify one clean candidate
-        shell: bash
-        run: python3 "$KIT/package.py" source baseline-source evidence dist
-      - name: Protected TestLab assets
-        id: retail
-        env:
-          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo 'NOT_RUN: missing protected retail asset token' > evidence/runtime-status.txt
-            echo 'available=false' >> "$GITHUB_OUTPUT"
-          else
-            bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > protected-assets-path.log
-            tail -1 protected-assets-path.log > .retail_main
-            test -d "$(cat .retail_main)"
-            echo 'available=true' >> "$GITHUB_OUTPUT"
-          fi
-      - name: Build and run existing TestLab automation on both variants
-        if: steps.retail.outputs.available == 'true'
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          for variant in baseline-source source; do
-            python3 testlab/scripts/apply_testlab_instrumentation.py "$variant"
-            python3 "$KIT/instrument_runtime.py" "$variant"
-            make -C "$variant/SP" -j2 release BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 2>&1 | tee "evidence/${variant}-linux-build.log"
-            python3 "$KIT/runtime.py" "$variant" "$(cat .retail_main)" "evidence/${variant}-runtime"
-            python3 "$KIT/regression_runtime.py" "$variant" "evidence/${variant}-runtime" "evidence/${variant}-regression"
-          done
-          python3 "$KIT/compare_regressions.py" evidence
-      - name: Upload clean release only after mandatory gates
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          expected = {
+            'tr_main.c':'ab5bb21b7a0b88db39c264ec1c2bc95806a6d50fcc3cedfb6f9c0347cbce2b25',
+            'tr_scene.c':'9425f52eb3e5e08662a907b33af9efc7751704b5bb59039f70cfaff9c91b6647',
+            'glsl/ssgi_fp.glsl':'51520409b68872ce243d8baa7d0665829c03f7891aa05100120141fe38057ca7',
+            'glsl/volumetriclocal_fp.glsl':'857dcba6df9d77a924ac337d4f7a6c312b07ac2870c9c09dad462a2cbe7b9f70',
+            'glsl/volumetricsun_fp.glsl':'860b09c86b4e24d3fb5263af871f0222461e65f8484bf55cafe53999b265f1cf',
+          }
+          for name,digest in expected.items():
+              actual=hashlib.sha256((Path('source/SP/code/rend2')/name).read_bytes()).hexdigest()
+              if actual!=digest: raise SystemExit('RC1 source mismatch: '+name)
+          Path('evidence/rc1-identity.json').write_text(json.dumps({'package_sha256':'d005ca823debf7b5bfab025a11d360752ed1033c258fc9d22797e5291306014f','modified_files':expected},indent=2))
+          PY
+          git -C source add -A
+          git -C source write-tree > evidence/rc1-source-tree.txt
+          tar --exclude='./.git' -czf export/rc1-source.tar.gz -C source .
+          git archive --format=tar.gz -o export/builder.tar.gz HEAD
+          cp -r evidence export/evidence
+          (cd export && sha256sum rc1-source.tar.gz builder.tar.gz > SHA256SUMS.txt)
+      - name: Publish source-only audit input
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DarkWolf-v446-Optimized-Clean-Candidate-Win64-SP
-          path: |
-            dist/*.zip
-            dist/*.sha256
-            dist/BUILD_PROVENANCE.json
+          name: DarkWolf-v446-RC1-source-audit-input
+          path: export/
           if-no-files-found: error
           compression-level: 0
-          retention-days: 90
-      - name: Summary
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo '## v4.4.6 validation'
-            echo "Builder: $GITHUB_SHA"
-            echo "Run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-            echo 'GPU FPS / Windows runtime / full visual acceptance: NOT_RUN'
-            echo 'Linux/Mesa smoke is separate from target Windows performance.'
-            if test -f evidence/runtime-status.txt; then cat evidence/runtime-status.txt; fi
-            if test -f evidence/algorithm-equivalence.json; then cat evidence/algorithm-equivalence.json; fi
-            if test -f evidence/source-policy.json; then cat evidence/source-policy.json; fi
-            if test -f evidence/regression-comparison.json; then
-              python3 -c 'import json; p=json.load(open("evidence/regression-comparison.json")); p.pop("images",None); print(json.dumps(p,indent=2))'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload validation evidence including failures
-        if: always()
+          retention-days: 30
+      - name: Preserve failed reconstruction diagnostics
+        if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DarkWolf-v446-validation-evidence
+          name: DarkWolf-v446-RC2-audit-failure
           path: evidence/
           if-no-files-found: error
-          retention-days: 30
