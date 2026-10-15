@@ -1,0 +1,92 @@
+name: RC4 Factory Tunnel Active SSGI Inputs
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-rc4-ssgi-volumetric-quality-20261015]
+    paths: ['.github/workflows/RC4_QUALITY_TUNNEL_INPUTS.yml','testlab/scripts/rc4_quality_dump_instrument.py']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Exact source and separate read-only capture instrumentation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import yaml,subprocess
+          from pathlib import Path
+          d=yaml.safe_load(Path('.github/workflows/RC4_QUALITY_FACTORY_PROBE.yml').read_text())
+          s=d['jobs']['probe']['steps'][1]['run']
+          a='python3 testlab/scripts/apply_testlab_instrumentation.py source'
+          assert s.count(a)==1
+          s=s.replace(a,a+'\npython3 integration/optimized-v4-4-6/instrument_runtime.py source\npython3 testlab/scripts/rc4_quality_dump_instrument.py source')
+          subprocess.run(['bash','-e'],input=s,text=True,check=True)
+          PY
+      - name: Protected test input only
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > private-assets-path.log
+          tail -1 private-assets-path.log > .retail_main
+      - name: Near and oblique tunnel views with verified active SSGI
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil,subprocess,os,signal,json
+          import numpy as np
+          from PIL import Image
+          out=Path('evidence');retail=Path(Path('.retail_main').read_text().strip()).resolve()
+          rt=Path('runtime').resolve();main=rt/'main';main.mkdir(parents=True,exist_ok=True);build=Path('source/SP/build/release-linux-x86_64')
+          for p in build.iterdir():
+            if p.is_file():shutil.copy2(p,rt/p.name)
+          for p in (build/'main').glob('*.so'):shutil.copy2(p,main/p.name)
+          for p in retail.iterdir():
+            if p.suffix.lower()=='.pk3':(main/p.name.lower()).symlink_to(p)
+          kit=Path('integration/optimized-v4-4-6')
+          for p in [kit/'PRODUCTION_HIGH_QUALITY.cfg',kit/'payload/Main/darkwolf_ignition_rc_v0_6.pk3']:
+            if p.exists():shutil.copy2(p,main/p.name)
+          # xyz is player origin; eyes are 40 units above it. Lamps are z=-180.
+          views=[[-368,-1055,-272,-34,180,0],[464,-225,-272,-34,180,0],[448,-161,-272,-30,-135,0]]
+          cmds=['set developer 0','set con_notifytime 0','set cg_draw2D 0','set cg_drawGun 1','set cg_bobup 0','set cg_bobpitch 0','set cg_bobroll 0','set r_autoExposure 0','set r_forceAutoExposure 0','set com_fixedtime 100','set r_forceSunPause 1','give all','wait 10','weapon 3','wait 28','set r_ssgiTrace 1']
+          for n,v in enumerate(views):
+            cmds+=['set dw_abFreeze 0','set r_ssgiDebug 0','set r_ssgi 1','dw_testView '+' '.join(map(str,v)),'wait 24','set dw_abFreeze 1','wait 3']
+            for mode,ssgi,debug in [('off',0,0),('on',1,0),('gi',1,2),('repeat',1,0)]:
+              cmds += [f'set r_qualityDump {n+1 if mode=="on" else 0}',f'set r_ssgi {ssgi}',f'set r_ssgiDebug {debug}','wait 3',f'screenshot tunnel{n}_{mode}','wait 2']
+          cmds+=['set dw_abFreeze 0','quit'];scenario='QUALITY_TUNNEL.cfg';(main/scenario).write_text('\n'.join(cmds)+'\n');shutil.copy2(main/scenario,out/scenario)
+          exe=next(p for p in rt.iterdir() if p.name.lower().startswith('iowolfsp'));home=rt/'home';home.mkdir(exist_ok=True)
+          # Base HQ accidentally has neither hdrDepth allocation owner enabled.
+          # Explicit shadowBlur=1 activates that existing resource in BOTH controls.
+          cmd=['xvfb-run','-a',str(exe),'+safe','+set','fs_basepath',str(rt),'+set','fs_homepath',str(home),'+set','com_introplayed','1','+set','com_recommendedSet','1','+set','logfile','2','+set','dw_testAutomation','1','+set','r_renderer','rend2','+set','cl_renderer','rend2','+exec','PRODUCTION_HIGH_QUALITY.cfg','+set','r_shadowBlur','1','+set','r_mode','-1','+set','r_customwidth','960','+set','r_customheight','720','+set','r_fullscreen','0','+set','s_initsound','0','+vid_restart','+set','dw_testlabSmokeCapture','quality-tunnel','+set','dw_testlabScenario',scenario,'+spdevmap','factory']
+          with (out/'stdout.log').open('w') as log:
+            proc=subprocess.Popen(cmd,stdout=log,stderr=subprocess.STDOUT,env={**os.environ,'LIBGL_ALWAYS_SOFTWARE':'1'},start_new_session=True)
+            try:rc=proc.wait(timeout=1100)
+            except subprocess.TimeoutExpired:os.killpg(proc.pid,signal.SIGKILL);proc.wait();rc=124
+          logs=[]
+          for i,p in enumerate(home.rglob('*console*.log')):shutil.copy2(p,out/f'console-{i}.log');logs.append(p.read_text(errors='replace'))
+          shots=[]
+          for p in home.rglob('*.tga'):Image.open(p).convert('RGB').save(out/(p.stem+'.png'));shots.append(p.stem)
+          for p in home.rglob('quality/*'):
+            if p.is_file() and p.suffix in ('.dwfp','.txt'):(out/'float-inputs').mkdir(exist_ok=True);shutil.copy2(p,out/'float-inputs'/p.name)
+          checks=[]
+          for n in range(len(views)):
+            def a(mode):return np.array(Image.open(out/f'tunnel{n}_{mode}.png')).astype(int)
+            delta=np.abs(a('on')-a('off'));repeat=np.abs(a('on')-a('repeat'));gi=a('gi')
+            checks.append({'view':n,'changed_ssgi_pixels':int(np.any(delta>0,axis=2).sum()),'max_delta':int(delta.max()),'repeat_max':int(repeat.max()),'gi_mean':float(gi.mean())})
+          active=any('SSGITRACE active=1 reason=active' in x for x in logs)
+          (out/'capture-status.json').write_text(json.dumps({'exit':rc,'images':shots,'views':views,'active_ssgi':active,'explicit_test_profile_delta':{'r_shadowBlur':1},'checks':checks},indent=2));print(checks,flush=True)
+          assert rc==0 and len(shots)==len(views)*4 and active
+          assert all(c['changed_ssgi_pixels']>10 for c in checks),'SSGI contribution was not exercised at every target'
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: RC4-Factory-Tunnel-Active-Inputs
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
