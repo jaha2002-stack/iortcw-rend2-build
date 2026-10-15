@@ -1,0 +1,81 @@
+name: RC4 Assault In-World Sunlit MP40 Proof
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-rc4-ssgi-volumetric-quality-20261015]
+    paths: ['.github/workflows/RC4_ASSAULT_SUNLIT_PROOF.yml','testlab/scripts/rc4_assault_camera.py','testlab/scripts/rc4_assault_sun_capture.py']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: rc4-assault-in-world-sunlit-proof
+  cancel-in-progress: false
+jobs:
+  capture:
+    name: ${{ matrix.variant }}-assault-sunlit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [base, candidate]
+    env:
+      VARIANT: ${{ matrix.variant }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Restore original verified public source and release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess,yaml
+          workflow=yaml.safe_load(Path('.github/workflows/RC4_REQUESTED_VIEWS_VERIFIED.yml').read_text())
+          script=workflow['jobs']['capture']['steps'][1]['run']
+          subprocess.run(['bash','-e'],input=script,text=True,check=True)
+          PY
+      - name: Install the same runtime dependencies
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess,yaml
+          workflow=yaml.safe_load(Path('.github/workflows/RC4_REQUESTED_VIEWS_VERIFIED.yml').read_text())
+          subprocess.run(['bash','-e'],input=workflow['jobs']['capture']['steps'][2]['run'],text=True,check=True)
+          PY
+      - name: Build the same renderer and stable photo-mode helpers
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess,yaml
+          workflow=yaml.safe_load(Path('.github/workflows/RC4_REQUESTED_VIEWS_VERIFIED.yml').read_text())
+          subprocess.run(['bash','-e'],input=workflow['jobs']['capture']['steps'][3]['run'],text=True,check=True)
+          PY
+          python3 -m py_compile testlab/scripts/rc4_assault_camera.py testlab/scripts/rc4_assault_sun_capture.py
+      - name: Read authorized map input on the runner only
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > private-assets-path.log
+          tail -1 private-assets-path.log > .retail_main
+      - name: Prove camera validity and render two directly sunlit MP40 views
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/rc4_assault_sun_capture.py source "$(cat .retail_main)" release evidence/${VARIANT}-assault ${VARIANT}
+      - name: Publish only rendered images and camera validation records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: RC4-Assault-Sunlit-MP40-${{ matrix.variant }}
+          path: |
+            evidence/**/*.png
+            evidence/**/*.json
+            evidence/**/*.cfg
+            evidence/**/*.log
+            evidence/photo-mode-only.patch
+          if-no-files-found: error
+          retention-days: 30
