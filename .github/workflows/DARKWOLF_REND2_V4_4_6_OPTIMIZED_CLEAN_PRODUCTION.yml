@@ -11,6 +11,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   build-verify-rc3:
+    if: ${{ !contains(github.event.head_commit.message, '[swf-capture]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     env:
@@ -132,3 +133,72 @@ jobs:
           path: evidence/
           if-no-files-found: error
           retention-days: 30
+  capture-swf-rc3:
+    if: ${{ contains(github.event.head_commit.message, '[swf-capture]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      KIT: integration/optimized-v4-4-6
+      RC3: integration/optimized-v4-4-6/rc3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Capture-only preflight
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/swf-other-views
+          python3 -m py_compile testlab/scripts/rc3_swf_other_views.py
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends clang python3-pil python3-numpy xvfb xauth libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev
+          python3 "$RC3/bootstrap.py"
+      - name: Restore exact released RC3 source without new fixes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 "$RC3/pipeline.py" prepare 2>&1 | tee evidence/swf-parent-reconstruction.log
+          python3 "$RC3/pipeline.py" apply 2>&1 | tee evidence/swf-rc3-reconstruction.log
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = '921a3d2a339d3a670c098a777c4c7896d987efe8'
+          git -C source diff --exit-code
+      - name: Build isolated RC3 Linux camera capture binary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone -q --shared source linux-swf-rc3
+          python3 testlab/scripts/apply_testlab_instrumentation.py linux-swf-rc3
+          python3 "$KIT/instrument_runtime.py" linux-swf-rc3
+          git -C linux-swf-rc3 diff > evidence/swf-testlab-only.patch
+          make -C linux-swf-rc3/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-Clean-RC3 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 2>&1 | tee evidence/swf-linux-build.log
+      - name: Private retail assets used only inside runner
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}" || { echo 'BLOCKED: protected retail asset token unavailable'; exit 1; }
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > protected-assets-path.log
+          tail -1 protected-assets-path.log > .retail_main
+          test -d "$(cat .retail_main)"
+      - name: Real SWF captures at separated gameplay locations and original control
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/rc3_swf_other_views.py linux-swf-rc3 "$(cat .retail_main)" evidence/swf-other-views 2>&1 | tee evidence/swf-capture-progress.log
+          git -C source diff --exit-code
+      - name: Publish screenshots and evidence only - no new game release
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-RC3-SWF-Other-Locations
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Capture outcome
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## RC3 SWF other-location captures'
+            echo 'No production code or quality changes. No new Windows release.'
+            echo 'Original RC3 source tree: 921a3d2a339d3a670c098a777c4c7896d987efe8'
+            if test -f evidence/swf-other-views/capture-results.json; then cat evidence/swf-other-views/capture-results.json; fi
+          } >> "$GITHUB_STEP_SUMMARY"
