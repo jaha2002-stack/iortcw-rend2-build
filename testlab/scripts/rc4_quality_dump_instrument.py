@@ -7,6 +7,11 @@ def edit(path,old,new):
     p=root/path;s=p.read_text();assert s.count(old)==1,(path,old[:100],s.count(old));p.write_text(s.replace(old,new))
 for name in ('r_ssgiDebug','r_ssgiTrace'):
     edit(Path('rend2/tr_init.c'),f'{name} = &s_darkwolfProductionDiagOffCvar;',f'{name} = ri.Cvar_Get("{name}", "0", 0);')
+# Diagnostic baseline provision: leave the old SSGI arithmetic unchanged, but
+# allocate its input when SSGI is requested. The shipping fix will reuse the
+# existing independent depth snapshot rather than add a duplicate copy.
+edit(Path('rend2/tr_image.c'),'if (r_shadowBlur->integer || r_ssao->integer)\n\t\t\ttr.hdrDepthImage',
+     'if (r_shadowBlur->integer || r_ssao->integer || r_ssgi->integer)\n\t\t\ttr.hdrDepthImage')
 # Silence the old hard-enabled diagnostic text without touching production logic.
 edit(Path('rend2/tr_scene.c'),'// DARKWOLF_TESTLAB_V0_1: enable existing read-only production residency telemetry.','// DARKWOLF_TESTLAB_V0_1: enable existing read-only production residency telemetry.\n\treturn;')
 helper=r'''
@@ -36,7 +41,7 @@ edit(Path('rend2/tr_backend.c'),anchor,r'''
   static cvar_t *dump; int id;
   if(!dump) dump=ri.Cvar_Get("r_qualityDump", "0", 0);
   id=dump->integer;s_qualityDumpActive=0;
-  if(id>0 && id!=s_qualityDumpId && srcFbo && !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL))
+  if(id>0 && id!=s_qualityDumpId && srcFbo && !(backEnd.refdef.rdflags & (RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL)))
   {
    char data[512],name[128];
    s_qualityDumpId=id;s_qualityDumpActive=1;s_qualityDumpLocal=0;
@@ -58,4 +63,4 @@ anchor='FBO_Blit(srcFbo, giSrcBox, giTexScale, tr.quarterFbo[0], giBox, &tr.ssgi
 edit(Path('rend2/tr_backend.c'),anchor,anchor+'\n\t\t\t\tRB_QualityDump(tr.quarterFbo[0],GL_RGBA,"ssgi");')
 anchor='\t\tRB_VolumetricFire(srcFbo, srcBox);'
 edit(Path('rend2/tr_backend.c'),anchor,anchor+'\n\t\ts_qualityDumpActive=0;')
-print('QUALITY_FLOAT_CAPTURE_INSTRUMENTED diagnostic-only')
+print('QUALITY_FLOAT_CAPTURE_INSTRUMENTED diagnostic-only; SSGI input provisioned; skybox rejected')
