@@ -1,0 +1,123 @@
+name: RC4 Factory SSGI Source Probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-rc4-ssgi-volumetric-quality-20261015]
+    paths: ['.github/workflows/RC4_QUALITY_FACTORY_PROBE.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Restore exact source and install runtime dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence parent source
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/11971637900/zip > parent.zip
+          echo 'ced7b601d4fa069682b258486e16db3d86e9a03b91ef5d7cad8cf03e52d3de0f  parent.zip' | sha256sum -c -
+          unzip -q parent.zip -d parent
+          tar -xzf parent/clean-candidate-source.tar.gz -C source
+          git -C source init -q
+          git -C source add .
+          test "$(git -C source write-tree)" = c652eaed9cbcf1df4eb7d7d5187b9bea63dce60b
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev xvfb xauth python3-pil python3-numpy
+          python3 testlab/scripts/apply_testlab_instrumentation.py source
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('source/SP/code/client/cl_cgame.c');s=p.read_text();a='\t// allow pause in single player';assert s.count(a)==1;p.write_text(s.replace(a,'\tif (Cvar_VariableIntegerValue("dw_abFreeze")) return;\n'+a))
+          PY
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-Clean-RC4 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/build.log 2>&1
+      - name: Fetch protected test input
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > private-assets-path.log
+          tail -1 private-assets-path.log > .retail_main
+      - name: Capture Factory baseline and inspect authored sources
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,struct,re,json,math,shutil,subprocess,os,signal
+          from PIL import Image
+          retail=Path('.retail_main').read_text().strip();retail=Path(retail).resolve();out=Path('evidence');b=None
+          for p in sorted(retail.iterdir()):
+            if p.suffix.lower()=='.pk3':
+              with zipfile.ZipFile(p) as z:
+                for n in z.namelist():
+                  if n.lower()=='maps/factory.bsp':b=z.read(n)
+          assert b
+          def lump(i):
+            offset,size=struct.unpack_from('<ii',b,8+i*8);return b[offset:offset+size]
+          es=[dict(re.findall(r'"([^"\n]+)"\s*"([^"\n]*)"',s)) for s in re.findall(r'\{([^{}]*)\}',lump(0).decode('latin1'))]
+          shaders=list(struct.iter_unpack('<64sii',lump(1)));planes=list(struct.iter_unpack('<4f',lump(2)));nodes=list(struct.iter_unpack('<9i',lump(3)));leaves=list(struct.iter_unpack('<12i',lump(4)));lb=list(struct.iter_unpack('<i',lump(6)));brushes=list(struct.iter_unpack('<3i',lump(8)));sides=list(struct.iter_unpack('<2i',lump(9)))
+          def solid(p):
+            n=0
+            while n>=0:
+              row=nodes[n];plane=planes[row[0]];d=sum(p[k]*plane[k] for k in range(3))-plane[3];n=row[1 if d>=0 else 2]
+            leaf=leaves[-1-n]
+            for j in range(leaf[10],leaf[10]+leaf[11]):
+              first,count,shader=brushes[lb[j][0]]
+              if shaders[shader][2]&1 and all(sum(planes[sides[k][0]][a]*p[a] for a in range(3))-planes[sides[k][0]][3]<-0.2 for k in range(first,first+count)):return True
+            return False
+          def pos(e):
+            try:p=list(map(float,e.get('origin','').split()));return p if len(p)==3 else None
+            except ValueError:return None
+          starts=[pos(e) for e in es if e.get('classname','').startswith('info_player') and pos(e)];start=starts[0] if starts else [0,0,0]
+          lamps=[(i,e) for i,e in enumerate(es) if pos(e) and ('corona' in e.get('classname','').lower() or e.get('classname')=='dlight')];lamps.sort(key=lambda t:sum((a-c)**2 for a,c in zip(pos(t[1]),start)))
+          views=[]
+          for i,e in lamps:
+            target=pos(e)
+            if any(sum((a-c)**2 for a,c in zip(target,v['target']))<10000 for v in views):continue
+            for dx,dy in [(160,0),(-160,0),(0,160),(0,-160),(110,110),(-110,110)]:
+              eye=[target[0]+dx,target[1]+dy,target[2]-64]
+              if solid(eye) or any(solid([eye[k]+(target[k]-eye[k])*t/12 for k in range(3)]) for t in range(1,11)):continue
+              d=[target[k]-eye[k] for k in range(3)];pitch=-math.degrees(math.atan2(d[2],math.hypot(d[0],d[1])));yaw=math.degrees(math.atan2(d[1],d[0]))
+              views.append({'index':i,'entity':e,'target':target,'camera':[eye[0],eye[1],eye[2]-40,pitch,yaw,0]});break
+            if len(views)>=6:break
+          assert views
+          (out/'factory-metadata.json').write_text(json.dumps({'start':start,'views':views,'lamps':[{'index':i,**e} for i,e in lamps],'materials':[s[0].split(b'\0')[0].decode('latin1') for s in shaders if any(t in s[0].lower() for t in [b'light',b'lamp',b'flare'])]},indent=2))
+          rt=Path('quality-runtime').resolve();main=rt/'main';main.mkdir(parents=True,exist_ok=True);build=Path('source/SP/build/release-linux-x86_64')
+          for p in build.iterdir():
+            if p.is_file():shutil.copy2(p,rt/p.name)
+          for p in (build/'main').glob('*.so'):shutil.copy2(p,main/p.name)
+          for p in retail.iterdir():
+            if p.suffix.lower()=='.pk3':(main/p.name.lower()).symlink_to(p)
+          kit=Path('integration/optimized-v4-4-6')
+          for p in [kit/'PRODUCTION_HIGH_QUALITY.cfg',kit/'payload/Main/darkwolf_ignition_rc_v0_6.pk3']:
+            if p.exists():shutil.copy2(p,main/p.name)
+          cmds=['set cg_draw2D 0','set cg_drawGun 1','set cg_bobup 0','set cg_bobpitch 0','set cg_bobroll 0','set r_autoExposure 0','set r_forceAutoExposure 0','set com_fixedtime 100','give all','weapon 3','wait 12']
+          for n,v in enumerate(views):
+            cmds+=['set dw_abFreeze 0','set r_ssgiDebug 0','set r_ssgi 1','dw_testView '+' '.join(map(str,v['camera'])),'wait 14','set dw_abFreeze 1','wait 3']
+            for mode,ssgi,debug in [('off',0,0),('on',1,0),('gi',1,2),('on_repeat',1,0)]:cmds += [f'set r_ssgi {ssgi}',f'set r_ssgiDebug {debug}','wait 3',f'screenshot factory_lamp{n}_{mode}','wait 2']
+          cmds+=['set dw_abFreeze 0','quit'];scenario='QUALITY_FACTORY_PROBE.cfg';(main/scenario).write_text('\n'.join(cmds)+'\n');shutil.copy2(main/scenario,out/scenario)
+          exe=next(p for p in rt.iterdir() if p.name.lower().startswith('iowolfsp'));home=rt/'home';home.mkdir(exist_ok=True)
+          cmd=['xvfb-run','-a',str(exe),'+safe','+set','fs_basepath',str(rt),'+set','fs_homepath',str(home),'+set','com_introplayed','1','+set','com_recommendedSet','1','+set','logfile','2','+set','dw_testAutomation','1','+set','r_renderer','rend2','+set','cl_renderer','rend2','+exec','PRODUCTION_HIGH_QUALITY.cfg','+set','r_mode','-1','+set','r_customwidth','640','+set','r_customheight','480','+set','r_fullscreen','0','+set','s_initsound','0','+vid_restart','+set','dw_testlabSmokeCapture','quality-factory','+set','dw_testlabScenario',scenario,'+spdevmap','factory']
+          with (out/'stdout.log').open('w') as log:
+            proc=subprocess.Popen(cmd,stdout=log,stderr=subprocess.STDOUT,env={**os.environ,'LIBGL_ALWAYS_SOFTWARE':'1'},start_new_session=True)
+            try:rc=proc.wait(timeout=660)
+            except subprocess.TimeoutExpired:os.killpg(proc.pid,signal.SIGKILL);proc.wait();rc=124
+          for i,p in enumerate(home.rglob('*console*.log')):shutil.copy2(p,out/f'console-{i}.log')
+          shots=[]
+          for p in home.rglob('*.tga'):Image.open(p).convert('RGB').save(out/(p.stem+'.png'));shots.append(p.stem)
+          (out/'capture-status.json').write_text(json.dumps({'exit':rc,'images':shots,'count':len(shots)},indent=2));print('CAPTURE',rc,len(shots));assert rc==0 and len(shots)==len(views)*4
+          PY
+      - name: Preserve diagnostic evidence without retail assets
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: RC4-Factory-SSGI-Source-Probe
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
