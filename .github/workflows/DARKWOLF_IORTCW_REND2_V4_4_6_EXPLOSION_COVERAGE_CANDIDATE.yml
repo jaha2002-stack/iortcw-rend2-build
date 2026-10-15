@@ -1,0 +1,209 @@
+name: "DarkWolf ioRTCW Rend2 v4.4.6 Explosion Coverage Candidate"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "rend2-explosion-coverage-v4-4-6-candidate"
+    paths:
+      - ".github/workflows/DARKWOLF_IORTCW_REND2_V4_4_6_EXPLOSION_COVERAGE_CANDIDATE.yml"
+      - "integration/explosion-coverage-v4-4-6-candidate/**"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UPSTREAM_REPO: "https://github.com/iortcw/iortcw.git"
+      UPSTREAM_SHA: "438e7d413b5f7277187c35b032eb0ef9093ae778"
+      BASE_RUN_ID: "37251837354"
+      BASE_HEAD_SHA: "b4573cba51c654214972c30b9d5e51a8db5d04f5"
+      BASE_ARTIFACT_ID: "11321490590"
+      BASE_ARTIFACT_NAME: "DarkWolf-ioRTCW-Rend2-v4.4.5-Dam-Spotlight-Halo-Candidate-Win64"
+      BASE_ARTIFACT_DIGEST: "sha256:67802fa0933b32ec874aedec4eb686aa8637975afa7d6e83d4c94b86e6dd9eac"
+      BASE_INNER_SHA256: "758ab573ceafc7de8c91ccb46d90feec23a8cdc4de695f08cb0e02967b52a21c"
+      BASE_RENDERER_SHA256: "fe840163dad9f16f8d4a88464988ab341290d9397bd7992977771d98b3729b37"
+      BASE_CGAME_SHA256: "2987f8ab8abff3ee4cc77dcd3308217ff8bafcbd8d5942165679bb992d376c83"
+      BASE_QAGAME_SHA256: "04f91be7a666245441415758e68d2a194d1585fb6ff5672750a20702f908f74c"
+      BASE_UI_SHA256: "54ae87dbef7426e2d439adf01e2be415aec2eb05501e5d3d1029d42378886959"
+      BASE_EXE_SHA256: "d5fad5fa49d6dca642b3509900785cb4078d233480a387189c8a94bf4c9c561d"
+      BASE_IGNITION_SHA256: "63f468e4edcb1fc6f2059b153c165f66b2c0b1237e93ea3b9518ef76358af5ee"
+      BASE_CUMULATIVE_NAME: "darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch"
+      BASE_CUMULATIVE_SHA256: "2c1da09485d489bca253eef8c7626d7417d5493fee493c2d83ffb7c6b7048d0c"
+      BASE_SUN_PATCH_NAME: "darkwolf-force-sun-csm-smart-v4-4-4-production.patch"
+      BASE_SUN_PATCH_SHA256: "e59d16b008044a71e9ebb1988a5aea3c2d1cd12e4a329eda762a4a08a2d3bb6e"
+      BASE_V445_PATCH_NAME: "darkwolf-dam-spotlight-halo-v4-4-5.patch"
+      BASE_V445_PATCH_SHA256: "35b84ef6e4db0681a0e16ad78f1cde3079091c2540fa5ff54a7de6e21d9c7a25"
+      FIXER: "integration/explosion-coverage-v4-4-6-candidate/apply_darkwolf_explosion_coverage_v4_4_6.py"
+      RELEASE_BASENAME: "DarkWolf-ioRTCW-Rend2-v4.4.6-Explosion-Coverage-Candidate-Win64"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Install dependencies"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64 build-essential ca-certificates g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git make mingw-w64 python3 unzip zip jq file
+          python3 -m py_compile "$FIXER"
+
+      - name: "Verify v4.4.5 base"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run_json")" = "$BASE_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run_json")" = "success"
+          art_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${BASE_ARTIFACT_ID}")"
+          test "$(jq -r .name <<<"$art_json")" = "$BASE_ARTIFACT_NAME"
+          test "$(jq -r .digest <<<"$art_json")" = "$BASE_ARTIFACT_DIGEST"
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/$BASE_ARTIFACT_NAME.zip"
+          test "$(sha256sum "$z" | awk '{print $1}')" = "$BASE_INNER_SHA256"
+          unzip -q "$z" -d base-release
+          base="$(find base-release -mindepth 1 -maxdepth 1 -type d | head -1)"
+          test -n "$base"
+          echo "$base" > .base_release
+          (cd "$base" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$base/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$base/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$base/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$base/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$base/Main/darkwolf_ignition_rc_v0_6.pk3" | awk '{print $1}')" = "$BASE_IGNITION_SHA256"
+
+      - name: "Reconstruct source"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_release)"
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" cumulative.patch
+          cp "$base/docs/$BASE_SUN_PATCH_NAME" sun.patch
+          cp "$base/docs/$BASE_V445_PATCH_NAME" v445.patch
+          test "$(sha256sum cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(sha256sum sun.patch | awk '{print $1}')" = "$BASE_SUN_PATCH_SHA256"
+          test "$(sha256sum v445.patch | awk '{print $1}')" = "$BASE_V445_PATCH_SHA256"
+          git -C source apply --check --binary --whitespace=nowarn ../cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../sun.patch
+          git -C source apply --binary --whitespace=nowarn ../sun.patch
+          git -C source apply --check --binary --whitespace=nowarn ../v445.patch
+          git -C source apply --binary --whitespace=nowarn ../v445.patch
+          grep -Fq "DARKWOLF_SPOTLIGHT_DEATH_LOCALVOL_SYNC_V445" source/SP/code/cgame/cg_ents.c
+          grep -Fq "DARKWOLF_FORCE_SUN_CSM_SMART_PRODUCTION_V444" source/SP/code/rend2/tr_scene.c
+          grep -Fq "#define DARKWOLF_BARREL_BLAST_EVENT_MARKER 0x4457424C" source/SP/code/cgame/cg_event.c
+          grep -Fq "#define DARKWOLF_DAMAGE_PROP_BLAST_MARKER  0x44575046" source/SP/code/cgame/cg_event.c
+          grep -Fq "#define DARKWOLF_PROP_BLAST_PROFILE_SCRIPT_FIRE 3" source/SP/code/cgame/cg_event.c
+          git -C source config user.name "DarkWolf Candidate CI"
+          git -C source config user.email "ci@example.invalid"
+          git -C source add -A
+          git -C source commit -q -m "Exact v4.4.5 source"
+          git -C source rev-parse HEAD > .base_source_commit
+
+      - name: "Apply v4.4.6 fix and regression gates"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          basecommit="$(cat .base_source_commit)"
+          python3 "$FIXER" source
+          git -C source diff --check "$basecommit" --
+          changed="$(git -C source diff --name-only "$basecommit" -- | LC_ALL=C sort)"
+          printf "%s\n" "$changed"
+          test "$(printf "%s\n" "$changed" | wc -l)" -eq 5
+          grep -Fxq "SP/code/cgame/cg_event.c" <<<"$changed"
+          grep -Fxq "SP/code/game/g_alarm.c" <<<"$changed"
+          grep -Fxq "SP/code/game/g_mover.c" <<<"$changed"
+          grep -Fxq "SP/code/game/g_props.c" <<<"$changed"
+          grep -Fxq "SP/code/game/g_target.c" <<<"$changed"
+          grep -Fq "#define DARKWOLF_BARREL_BLAST_EVENT_MARKER 0x4457424C" source/SP/code/cgame/cg_event.c
+          grep -Fq "#define DARKWOLF_DAMAGE_PROP_BLAST_MARKER  0x44575046" source/SP/code/cgame/cg_event.c
+          grep -Fq "#define DARKWOLF_PROP_BLAST_PROFILE_SCRIPT_FIRE 3" source/SP/code/cgame/cg_event.c
+          grep -Fq "peak = 500.0f; floorRadius = 150.0f; holdMs = 120; totalMs = 900;" source/SP/code/cgame/cg_event.c
+          grep -Fq "peak = 520.0f; floorRadius = 160.0f; holdMs = 130; totalMs = 950;" source/SP/code/cgame/cg_event.c
+          grep -Fq "peak = 420.0f; floorRadius = 140.0f; holdMs = 100; totalMs = 800;" source/SP/code/cgame/cg_event.c
+          grep -Fq "REF_FORCE_DLIGHT | DARKWOLF_REF_TRANSIENT_BLAST_DLIGHT" source/SP/code/cgame/cg_localents.c
+          grep -Fq "self->s.time2 = 0x44575046" source/SP/code/game/g_mover.c
+          grep -Fq "blastEvent->s.time2 = 0x4457424C" source/SP/code/game/g_props.c
+          grep -Fq 'self->target, "v2_rocket"' source/SP/code/game/g_target.c
+          grep -Fq 'self->model, "*90"' source/SP/code/game/g_mover.c
+          git -C source diff --binary "$basecommit" -- > darkwolf-explosion-coverage-v4-4-6.patch
+          git -C source apply --reverse --check --binary ../darkwolf-explosion-coverage-v4-4-6.patch
+
+      - name: "Build cgame and qagame"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd source/SP
+          ./cross-make-mingw64.sh -j2 BUILD_CLIENT=0 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=0 USE_RENDERER_DLOPEN=1
+          cd ../..
+          cgame="source/SP/build/release-mingw32-x86_64/main/cgame_sp_x64.dll"
+          qagame="source/SP/build/release-mingw32-x86_64/main/qagame_sp_x64.dll"
+          test -s "$cgame"
+          test -s "$qagame"
+          test "$(sha256sum "$cgame" | awk '{print $1}')" != "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$qagame" | awk '{print $1}')" != "$BASE_QAGAME_SHA256"
+          echo "$cgame" > .cgame
+          echo "$qagame" > .qagame
+
+      - name: "Package candidate"
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_release)"
+          stage="dist/$RELEASE_BASENAME"
+          mkdir -p "$stage"
+          cp -a "$base/." "$stage/"
+          cp "$(cat .cgame)" "$stage/Main/cgame_sp_x64.dll"
+          cp "$(cat .qagame)" "$stage/Main/qagame_sp_x64.dll"
+          cp darkwolf-explosion-coverage-v4-4-6.patch "$stage/docs/"
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$stage/Main/darkwolf_ignition_rc_v0_6.pk3" | awk '{print $1}')" = "$BASE_IGNITION_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" != "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" != "$BASE_QAGAME_SHA256"
+          cat > "$stage/docs/DARKWOLF_V4_4_6_EXPLOSION_COVERAGE_AUDIT.txt" <<EOF
+          BASE_RUN=37251837354
+          BASE_SHA=b4573cba51c654214972c30b9d5e51a8db5d04f5
+          GAS_CYLINDER=SWF_EXACT_BMODEL_90
+          RADIOS=PROPS_RADIO_AND_PROPS_RADIOSEVEN
+          V2=ONE_CENTRAL_BLAST_ONLY
+          ALARM_BOX=ENABLED
+          ME109=ENABLED
+          BARREL_EFFECT=UNCHANGED
+          DAMAGE_FUNC_EXPLOSIVE_EFFECT=UNCHANGED
+          TARGET_EFFECT_FIRE=UNCHANGED
+          GRENADE_DYNAMITE=UNCHANGED
+          RENDERER=UNCHANGED
+          SUN_PERF=UNCHANGED
+          DAM_SPOTLIGHT_FIX=UNCHANGED
+          DLIGHT_SHADOW_SLOTS=UNCHANGED
+          VOLUMETRICS=UNCHANGED
+          STATUS=CANDIDATE_NOT_PROMOTED
+          EOF
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path "./docs/SHA256SUMS.txt" -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          mkdir -p dist
+          (cd dist && zip -q -X -r "$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/$RELEASE_BASENAME.zip" > "dist/$RELEASE_BASENAME.zip.sha256"
+
+      - name: "Upload candidate"
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
