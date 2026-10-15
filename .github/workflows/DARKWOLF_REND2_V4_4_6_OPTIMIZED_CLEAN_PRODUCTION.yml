@@ -9,62 +9,106 @@ permissions:
 concurrency:
   group: darkwolf-v446-clean-${{ github.ref }}
   cancel-in-progress: false
-# Deliberate source-only audit checkpoint for the requested RC2 work.
-# This does not build or publish a release. No gameplay assets are accessed.
 jobs:
-  reconstruct-rc1-for-comprehensive-audit:
+  build-verify-rc2:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 75
     env:
       KIT: integration/optimized-v4-4-6
+      RC2: integration/optimized-v4-4-6/rc2
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Recover exact RC1 source and validate provenance
+      - name: Source preflight and toolchain
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p evidence export
-          python3 "$KIT/reconstruct.py" baseline-source 2>&1 | tee evidence/reconstruction.log
-          git clone -q --shared baseline-source source
-          git -C source apply --check "$GITHUB_WORKSPACE/$KIT/optimized.patch"
-          git -C source apply "$GITHUB_WORKSPACE/$KIT/optimized.patch"
-          python3 "$KIT/apply_targeted_shader_optimizations.py" source evidence
-          python3 "$KIT/test_equivalence.py" source baseline-source evidence
-          python3 "$KIT/test_targeted_shader_math.py" evidence/shader-math.json
-          python3 "$KIT/validate_source.py" source baseline-source evidence
-          python3 - <<'PY'
-          import hashlib, json
-          from pathlib import Path
-          expected = {
-            'tr_main.c':'ab5bb21b7a0b88db39c264ec1c2bc95806a6d50fcc3cedfb6f9c0347cbce2b25',
-            'tr_scene.c':'9425f52eb3e5e08662a907b33af9efc7751704b5bb59039f70cfaff9c91b6647',
-            'glsl/ssgi_fp.glsl':'51520409b68872ce243d8baa7d0665829c03f7891aa05100120141fe38057ca7',
-            'glsl/volumetriclocal_fp.glsl':'857dcba6df9d77a924ac337d4f7a6c312b07ac2870c9c09dad462a2cbe7b9f70',
-            'glsl/volumetricsun_fp.glsl':'860b09c86b4e24d3fb5263af871f0222461e65f8484bf55cafe53999b265f1cf',
-          }
-          for name,digest in expected.items():
-              actual=hashlib.sha256((Path('source/SP/code/rend2')/name).read_bytes()).hexdigest()
-              if actual!=digest: raise SystemExit('RC1 source mismatch: '+name)
-          Path('evidence/rc1-identity.json').write_text(json.dumps({'package_sha256':'d005ca823debf7b5bfab025a11d360752ed1033c258fc9d22797e5291306014f','modified_files':expected},indent=2))
-          PY
-          git -C source add -A
-          git -C source write-tree > evidence/rc1-source-tree.txt
-          tar --exclude='./.git' -czf export/rc1-source.tar.gz -C source .
-          git archive --format=tar.gz -o export/builder.tar.gz HEAD
-          cp -r evidence export/evidence
-          (cd export && sha256sum rc1-source.tar.gz builder.tar.gz > SHA256SUMS.txt)
-      - name: Publish source-only audit input
+          mkdir -p evidence
+          python3 -m py_compile "$RC2"/*.py
+          bash -n "$KIT/build.sh"
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends gcc-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 g++-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 binutils-mingw-w64-x86-64=2.41.90.20240122-1ubuntu1+11.4 python3-pil xvfb xauth libsdl2-dev libgl1-mesa-dev libopenal-dev
+          cp "$RC2/apply_rc2.py" "$RC2/rc2-lock.json" "$RC2/AUDIT_RC2.md" evidence/
+      - name: Exact RC1 reconstruction and ten-change source gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 "$RC2/pipeline.py" prepare 2>&1 | tee evidence/reconstruction-rc2.log
+      - name: Differential C and shader arithmetic tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 "$RC2/test_rc2.py" rc1-source source evidence/unit 2>&1 | tee evidence/rc2-unit.log
+      - name: Build RC1 Windows x64 SP comparison
+        shell: bash
+        run: bash "$KIT/build.sh" rc1-source evidence/rc1-build
+      - name: Build RC2 Windows x64 SP candidate
+        shell: bash
+        run: bash "$KIT/build.sh" source evidence/rc2-build
+      - name: Verify pristine Win64 package components
+        shell: bash
+        run: python3 "$RC2/pipeline.py" stage
+      - name: Protected retail assets for smoke only
+        id: retail
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo 'MESA_SMOKE_NOT_RUN: no protected asset token' > evidence/runtime-status.txt
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+          else
+            bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > protected-assets-path.log
+            tail -1 protected-assets-path.log > .retail_main
+            test -d "$(cat .retail_main)"
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Broad RC1 versus RC2 Mesa smoke with progress
+        if: steps.retail.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for pair in 'rc1-source rc1' 'source rc2'; do
+            read -r original variant <<< "$pair"
+            target="linux-$variant"
+            git clone -q --shared "$original" "$target"
+            python3 testlab/scripts/apply_testlab_instrumentation.py "$target"
+            python3 "$KIT/instrument_runtime.py" "$target"
+            make -C "$target/SP" -j2 release BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 2>&1 | tee "evidence/$variant-linux-build.log"
+            python3 -u "$RC2/run_smoke.py" "$target" "$(cat .retail_main)" "evidence/$variant-runtime" 2>&1 | tee "evidence/$variant-smoke-progress.log"
+          done
+      - name: Finalize clean candidate and actual acceptance
+        shell: bash
+        run: python3 "$RC2/pipeline.py" finish
+      - name: Publish one RC2 clean candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DarkWolf-v446-RC1-source-audit-input
-          path: export/
+          name: DarkWolf-v446-Optimized-Clean-RC2-Win64-SP
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            dist/BUILD_PROVENANCE.json
           if-no-files-found: error
           compression-level: 0
-          retention-days: 30
-      - name: Preserve failed reconstruction diagnostics
-        if: failure()
+          retention-days: 90
+      - name: Actual run summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## RC2: ten source-based optimizations over d005ca82 RC1'
+            echo "Builder: $GITHUB_SHA"
+            echo "Run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo 'Windows runtime / gaming GPU FPS / complete visual acceptance: NOT_RUN; user PC test.'
+            echo 'RC1 lamp-ring/table captures are not reused as RC2 evidence.'
+            if test -f evidence/rc2-acceptance.json; then cat evidence/rc2-acceptance.json; fi
+            if test -f evidence/runtime-status.txt; then cat evidence/runtime-status.txt; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve all diagnostics including failures
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DarkWolf-v446-RC2-audit-failure
+          name: DarkWolf-v446-RC2-validation-evidence
           path: evidence/
           if-no-files-found: error
+          retention-days: 30
