@@ -18,7 +18,7 @@ TARGETS={
  ('assault_spawn_cagelight',[4660.,7136.,1249.]),
  ('assault_burning_truck',[1559.,1068.,94.]),
  ('assault_firetrail',[5816.,2104.,264.])]}
-DIAG=[('r_bloomThreshold','0.35'),('r_bloomStrength','2.50'),('r_bloomRadius','3.00'),('r_bloomBlurPasses','3'),('r_bloomPyramidRadius','2.60'),('r_bloomPyramidNearWeight','0.80'),('r_bloomPyramidMidWeight','1.20'),('r_bloomPyramidFarWeight','1.60')]
+DIAG=[('r_bloomThreshold','0.35'),('r_bloomStrength','2'),('r_bloomRadius','3.00'),('r_bloomBlurPasses','3'),('r_bloomPyramidRadius','2.60'),('r_bloomPyramidNearWeight','0.80'),('r_bloomPyramidMidWeight','1.20'),('r_bloomPyramidFarWeight','1.60')]
 
 ESC=[[420.,468.,-250.],[260.,500.,-245.],[80.,520.,-230.],[-120.,540.,-190.],[-360.,560.,-140.],[-620.,580.,-95.],[-840.,595.,-55.],[-1020.,602.,-35.]]
 CRYPT=[[-192.,1664.,472.],[-120.,1664.,474.],[-40.,1664.,474.],[40.,1664.,470.],[130.,1665.,462.],[220.,1666.,452.],[310.,1667.,438.],[390.,1668.,425.]]
