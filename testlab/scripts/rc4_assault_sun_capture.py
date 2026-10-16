@@ -111,7 +111,7 @@ def main():
     root=source();instrument(root);b=build(root,out);rt,main=runtime(b,retail,release)
     report={'bloom':dict(CV),'screenshots_from_run':38839497144,'videos':[],'source_tree':TREE,'build_run':38798189322}
     for mapname,pts in [('escape1',ESC),('crypt1',CRYPT)]:
-        seq=['set con_notifytime -1','set r_customwidth 640','set r_customheight 360','set cl_aviFrameRate 20','vid_restart','wait 8','god','notarget','give all','set dw_proofShot 99','wait 3',f'video {mapname}_bloom_v2','wait 2']
+        seq=['set con_notifytime -1','set r_customwidth 640','set r_customheight 360','set cl_aviFrameRate 10','vid_restart','wait 8','god','notarget','give all','set dw_proofShot 99','wait 3',f'video {mapname}_bloom_v2','wait 2']
         for p,a in lerp(pts):seq+=['proofView '+' '.join(f'{x:.6f}' for x in p+a),'wait 1']
         seq+=['wait 3','stopvideo','echo BLOOM_VIDEO_COMPLETE','wait 2','quit'];sc=f'{mapname}_video.cfg';(main/sc).write_text('\n'.join(seq)+'\n');home=rt/f'home-video-{mapname}';rc=game(rt,home,mapname,sc,out/f'{mapname}-video.log',timeout=420);txt=logs(home,out,mapname+'-video')
         for k,v in CV:assert f'name={k} value={v}' in txt,(mapname,k,v)
@@ -119,7 +119,7 @@ def main():
         mp4=out/f'{mapname}-bloom-v2-runtime.mp4';sh(['ffmpeg','-y','-loglevel','error','-i',str(avi[0]),'-c:v','libx264','-crf','18','-pix_fmt','yuv420p',str(mp4)])
         dur=float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',str(mp4)],text=True).strip())
         assert mp4.stat().st_size>100000 and rc==0 and 'BLOOM_VIDEO_COMPLETE' in txt and 9.5<=dur<=15.5,(mapname,mp4.stat().st_size,rc,dur)
-        report['videos'].append({'map':mapname,'file':mp4.name,'seconds':dur,'resolution':'640x360','avi_fps':20})
+        report['videos'].append({'map':mapname,'file':mp4.name,'seconds':dur,'resolution':'640x360','avi_fps':10})
     (out/'BLOOM_RUNTIME_PROOF.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 
 if __name__=='__main__':main()
