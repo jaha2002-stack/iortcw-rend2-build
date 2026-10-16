@@ -165,9 +165,9 @@ def main():
         txt=logs(home,out,mapname+'-ab')
         assert rc==0 and 'BLOOM_AB_MAP_COMPLETE' in txt,(mapname,rc)
         import re
-        view_re=re.compile(r'PROOF_VIEW shot=(\\d+) time=\\d+ eye=([^ ]+) forward=([^ ]+)')
+        view_re=re.compile(r'PROOF_VIEW shot=(\d+) time=\d+ eye=([^ ]+) forward=([^ ]+)')
         proof_views={int(m.group(1)):(m.group(2),m.group(3)) for m in view_re.finditer(txt)}
-        cvar_re=re.compile(r'PROOF_CVAR shot=(\\d+) name=([^ ]+) value=([^\\r\\n]+)')
+        cvar_re=re.compile(r'PROOF_CVAR shot=(\d+) name=([^ ]+) value=([^\r\n]+)')
         proof_cvars={}
         for m in cvar_re.finditer(txt):
             proof_cvars.setdefault(int(m.group(1)),{})[m.group(2)]=m.group(3).strip()
