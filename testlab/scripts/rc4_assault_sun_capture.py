@@ -6,11 +6,20 @@ BLOOM_ART=12004010089
 TREE='bb1432b459a4daf72a324f3fb477744bdb51fd4a'
 CV=[('r_bloom','1'),('r_bloomMode','2'),('r_bloomThreshold','1.20'),('r_bloomStrength','0.65'),('r_bloomRadius','1.50'),('r_bloomBlurPasses','1'),('r_bloomPyramidRadius','1.35'),('r_bloomPyramidNearWeight','0.35'),('r_bloomPyramidMidWeight','0.55'),('r_bloomPyramidFarWeight','0.90')]
 TARGETS={
-'escape1':[('escape1_guard_furnace',[-1226.,602.,-64.]),('escape1_guard_lamp',[-1076.,1172.,96.])],
-'crypt1':[('crypt1_spawn_dlight',[-152.,1668.,636.]),('crypt1_spawn_lamp',[-132.,1842.,516.])],
-'assault':[('assault_spawn_cagelight',[4660.,7136.,1280.]),('assault_burning_truck',[2127.,3210.,94.])],
-'forest':[('forest_cagelight_near_camp',[1728.,-5248.,568.]),('forest_cagelight_mid',[-3514.,-64.,324.])],
-'dam':[('dam_xlight_corridor',[-1676.,-2464.,1232.]),('dam_xlight_upper',[-2300.,-1600.,2428.])]}
+'crypt1':[
+ ('crypt1_spawn_dlight',[-152.,1668.,636.]),
+ ('crypt1_spawn_lamp',[-132.,1842.,516.]),
+ ('crypt1_spawn_second_dlight',[388.,1668.,420.])],
+'escape1':[
+ ('escape1_guard_furnace',[-1226.,602.,-64.]),
+ ('escape1_guard_lamp',[-1076.,1172.,96.]),
+ ('escape1_doctor_tesla_dlight',[328.,448.,-532.])],
+'assault':[
+ ('assault_spawn_cagelight',[4660.,7136.,1249.]),
+ ('assault_burning_truck',[1559.,1068.,94.]),
+ ('assault_firetrail',[5816.,2104.,264.])]}
+DIAG=[('r_bloomThreshold','0.85'),('r_bloomStrength','1.25'),('r_bloomRadius','2.20'),('r_bloomBlurPasses','2'),('r_bloomPyramidRadius','1.90'),('r_bloomPyramidNearWeight','0.55'),('r_bloomPyramidMidWeight','0.85'),('r_bloomPyramidFarWeight','1.25')]
+
 ESC=[[420.,468.,-250.],[260.,500.,-245.],[80.,520.,-230.],[-120.,540.,-190.],[-360.,560.,-140.],[-620.,580.,-95.],[-840.,595.,-55.],[-1020.,602.,-35.]]
 CRYPT=[[-192.,1664.,472.],[-120.,1664.,474.],[-40.,1664.,474.],[40.,1664.,470.],[130.,1665.,462.],[220.,1666.,452.],[310.,1667.,438.],[390.,1668.,425.]]
 
@@ -105,21 +114,83 @@ def lerp(points,n=210):
     return o
 
 def main():
-    _,retail_s,release_s,out_s,variant=sys.argv[1:6];out=Path(out_s);out.mkdir(parents=True,exist_ok=True)
-    if variant!='candidate':(out/'base-skip.json').write_text('{"status":"skipped"}\n');return
-    retail=Path(retail_s);release=Path(release_s);sh(['sudo','apt-get','-o','Acquire::Retries=3','install','-y','--no-install-recommends','ffmpeg'])
+    _,retail_s,release_s,out_s,variant=sys.argv[1:6]
+    out=Path(out_s);out.mkdir(parents=True,exist_ok=True)
+    if variant!='candidate':
+        (out/'base-skip.json').write_text(json.dumps({'status':'skipped','reason':'A/B proof runs on Bloom candidate only'},indent=2)+'\n')
+        return
+    retail=Path(retail_s);release=Path(release_s)
     root=source();instrument(root);b=build(root,out);rt,main=runtime(b,retail,release)
-    report={'bloom':dict(CV),'screenshots_from_run':38839497144,'videos':[],'source_tree':TREE,'build_run':38798189322}
-    for mapname,pts in [('escape1',ESC),('crypt1',CRYPT)]:
-        seq=['set con_notifytime -1','set r_customwidth 640','set r_customheight 360','set cl_aviFrameRate 10','vid_restart','wait 8','god','notarget','give all','set dw_proofShot 99','wait 3',f'video {mapname}_bloom_v2','wait 2']
-        for p,a in lerp(pts):seq+=['proofView '+' '.join(f'{x:.6f}' for x in p+a),'wait 1']
-        seq+=['wait 3','stopvideo','echo BLOOM_VIDEO_COMPLETE','wait 2','quit'];sc=f'{mapname}_video.cfg';(main/sc).write_text('\n'.join(seq)+'\n');home=rt/f'home-video-{mapname}';rc=game(rt,home,mapname,sc,out/f'{mapname}-video.log',timeout=420);txt=logs(home,out,mapname+'-video')
-        for k,v in CV:assert f'name={k} value={v}' in txt,(mapname,k,v)
-        avi=list(home.rglob(f'{mapname}_bloom_v2.avi'));assert len(avi)==1,(mapname,avi)
-        mp4=out/f'{mapname}-bloom-v2-runtime.mp4';sh(['ffmpeg','-y','-loglevel','error','-i',str(avi[0]),'-c:v','libx264','-crf','18','-pix_fmt','yuv420p',str(mp4)])
-        dur=float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',str(mp4)],text=True).strip())
-        assert mp4.stat().st_size>100000 and rc==0 and 'BLOOM_VIDEO_COMPLETE' in txt and 9.5<=dur<=15.5,(mapname,mp4.stat().st_size,rc,dur)
-        report['videos'].append({'map':mapname,'file':mp4.name,'seconds':dur,'resolution':'640x360','avi_fps':10})
-    (out/'BLOOM_RUNTIME_PROOF.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
+    from PIL import Image,ImageDraw,ImageFont
+
+    # Diagnostic preset: deliberately stronger than production to make the difference obvious.
+    diag=dict(DIAG)
+    report={
+      'mode':'Bloom OFF/ON A/B diagnostic',
+      'source_tree':TREE,
+      'build_run':38798189322,
+      'production_bloom':dict(CV),
+      'diagnostic_bloom_on':{'r_bloom':'1','r_bloomMode':'2',**diag},
+      'diagnostic_bloom_off':{'r_bloom':'0','r_bloomMode':'2',**diag},
+      'pairs':[]
+    }
+
+    pair_images=[]
+    pair_no=0
+    for mapname,targets in TARGETS.items():
+        commands=['set con_notifytime -1','set cg_draw2D 0','set cg_drawGun 1','god','notarget','give all','wait 20']
+        meta=[]
+        for local_idx,(name,target) in enumerate(targets,1):
+            pair_no+=1
+            eye,ang=camera(retail,mapname,target)
+            # Apply amplified diagnostic parameters identically to both frames.
+            commands += [f'set {k} {v}' for k,v in DIAG]
+            commands += ['set r_bloomMode 2','set r_bloom 0',
+                         'proofView '+' '.join(f'{x:.6f}' for x in eye+ang),
+                         'wait 12',f'set dw_proofShot {pair_no*2-1}','wait 3',
+                         f'echo BLOOM_AB_CAPTURE {name} OFF',f'screenshot {name}_OFF','wait 3',
+                         'set r_bloom 1','wait 12',f'set dw_proofShot {pair_no*2}','wait 3',
+                         f'echo BLOOM_AB_CAPTURE {name} ON',f'screenshot {name}_ON','wait 3']
+            meta.append((name,target,eye,ang,pair_no))
+        commands += ['echo BLOOM_AB_MAP_COMPLETE','quit']
+        scen=f'BLOOM_AB_{mapname.upper()}.cfg'
+        (main/scen).write_text('\n'.join(commands)+'\n')
+        shutil.copy2(main/scen,out/scen)
+        home=rt/f'home-ab-{mapname}'
+        rc=game(rt,home,mapname,scen,out/f'{mapname}-ab.log',timeout=240)
+        txt=logs(home,out,mapname+'-ab')
+        assert rc==0 and 'BLOOM_AB_MAP_COMPLETE' in txt,(mapname,rc)
+        for name,target,eye,ang,pn in meta:
+            files={}
+            for state in ('OFF','ON'):
+                hits=list(home.rglob(f'{name}_{state}.tga'))
+                assert len(hits)==1,(name,state,hits)
+                dest=out/f'{name}_{state}.png'
+                Image.open(hits[0]).convert('RGB').save(dest)
+                files[state]=dest.name
+            # Runtime logger must have observed both states and diagnostic values.
+            assert 'name=r_bloom value=0' in txt,(mapname,name,'OFF cvar missing')
+            assert 'name=r_bloom value=1' in txt,(mapname,name,'ON cvar missing')
+            for k,v in DIAG:
+                assert f'name={k} value={v}' in txt,(mapname,name,k,v)
+            report['pairs'].append({'pair':pn,'map':mapname,'name':name,'target':target,'camera_origin':eye,'camera_angles':ang,'off':files['OFF'],'on':files['ON']})
+            pair_images.append((pn,mapname,name,out/files['OFF'],out/files['ON']))
+
+    # Build a literal side-by-side contact sheet: OFF left, ON right.
+    thumb_w,thumb_h=640,360
+    header=54
+    canvas=Image.new('RGB',(thumb_w*2, (thumb_h+header)*len(pair_images)),(24,24,24))
+    draw=ImageDraw.Draw(canvas)
+    for row,(pn,mapname,name,offp,onp) in enumerate(pair_images):
+        y=row*(thumb_h+header)
+        draw.text((10,y+8),f'Pair {pn} | {mapname} | {name} | OFF',fill='white')
+        draw.text((thumb_w+10,y+8),f'Pair {pn} | {mapname} | {name} | ON (AMPLIFIED BLOOM)',fill='white')
+        off=Image.open(offp).convert('RGB');on=Image.open(onp).convert('RGB')
+        off.thumbnail((thumb_w,thumb_h));on.thumbnail((thumb_w,thumb_h))
+        canvas.paste(off,(0,y+header));canvas.paste(on,(thumb_w,y+header))
+    canvas.save(out/'BLOOM_AB_CONTACT_SHEET_OFF_ON.png')
+
+    (out/'BLOOM_AB_RUNTIME_PROOF.json').write_text(json.dumps(report,indent=2)+'\n')
+    print(json.dumps(report,indent=2),flush=True)
 
 if __name__=='__main__':main()
