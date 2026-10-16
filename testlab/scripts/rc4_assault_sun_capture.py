@@ -18,7 +18,7 @@ TARGETS={
  ('assault_spawn_cagelight',[4660.,7136.,1249.]),
  ('assault_burning_truck',[1559.,1068.,94.]),
  ('assault_firetrail',[5816.,2104.,264.])]}
-DIAG=[('r_bloomThreshold','0.85'),('r_bloomStrength','1.25'),('r_bloomRadius','2.20'),('r_bloomBlurPasses','2'),('r_bloomPyramidRadius','1.90'),('r_bloomPyramidNearWeight','0.55'),('r_bloomPyramidMidWeight','0.85'),('r_bloomPyramidFarWeight','1.25')]
+DIAG=[('r_bloomThreshold','0.35'),('r_bloomStrength','2.50'),('r_bloomRadius','3.00'),('r_bloomBlurPasses','3'),('r_bloomPyramidRadius','2.60'),('r_bloomPyramidNearWeight','0.80'),('r_bloomPyramidMidWeight','1.20'),('r_bloomPyramidFarWeight','1.60')]
 
 ESC=[[420.,468.,-250.],[260.,500.,-245.],[80.,520.,-230.],[-120.,540.,-190.],[-360.,560.,-140.],[-620.,580.,-95.],[-840.,595.,-55.],[-1020.,602.,-35.]]
 CRYPT=[[-192.,1664.,472.],[-120.,1664.,474.],[-40.,1664.,474.],[40.,1664.,470.],[130.,1665.,462.],[220.,1666.,452.],[310.,1667.,438.],[390.,1668.,425.]]
@@ -126,7 +126,7 @@ def main():
     # Diagnostic preset: deliberately stronger than production to make the difference obvious.
     diag=dict(DIAG)
     report={
-      'mode':'Bloom OFF/ON A/B diagnostic',
+      'mode':'Bloom OFF/ON A/B EXAGGERATED diagnostic',
       'source_tree':TREE,
       'build_run':38798189322,
       'production_bloom':dict(CV),
@@ -203,7 +203,7 @@ def main():
     for row,(pn,mapname,name,offp,onp) in enumerate(pair_images):
         y=row*(thumb_h+header)
         draw.text((10,y+8),f'Pair {pn} | {mapname} | {name} | OFF',fill='white')
-        draw.text((thumb_w+10,y+8),f'Pair {pn} | {mapname} | {name} | ON (AMPLIFIED BLOOM)',fill='white')
+        draw.text((thumb_w+10,y+8),f'Pair {pn} | {mapname} | {name} | ON (EXAGGERATED BLOOM)',fill='white')
         off=Image.open(offp).convert('RGB');on=Image.open(onp).convert('RGB')
         off.thumbnail((thumb_w,thumb_h));on.thumbnail((thumb_w,thumb_h))
         canvas.paste(off,(0,y+header));canvas.paste(on,(thumb_w,y+header))
