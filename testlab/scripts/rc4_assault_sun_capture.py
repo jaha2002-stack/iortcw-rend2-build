@@ -31,7 +31,7 @@ def instrument(root):
     d.instrument(root)
     p=root/'SP/code/cgame/cg_view.c';s=p.read_text()
     old='"r_ssgi","r_volumetricSun","r_volumetricLocal","r_volumetricFire","r_ext_framebuffer_multisample","r_forceSun","r_ssgiStrength","r_volumetricSunStrength","r_volumetricLocalStrength","cg_drawGun"'
-    new=old[:-1]+',"r_bloom","r_bloomMode","r_bloomThreshold","r_bloomStrength","r_bloomRadius","r_bloomBlurPasses","r_bloomPyramidRadius","r_bloomPyramidNearWeight","r_bloomPyramidMidWeight","r_bloomPyramidFarWeight"'
+    new=old+',"r_bloom","r_bloomMode","r_bloomThreshold","r_bloomStrength","r_bloomRadius","r_bloomBlurPasses","r_bloomPyramidRadius","r_bloomPyramidNearWeight","r_bloomPyramidMidWeight","r_bloomPyramidFarWeight"'
     assert s.count(old)==1;p.write_text(s.replace(old,new))
     p=root/'SP/code/client/cl_main.c';s=p.read_text()
     old='if( !clc.demoplaying )\n\t{\n\t\tCom_Printf( "The video command can only be used when playing back demos\\n" );\n\t\treturn;\n\t}'
