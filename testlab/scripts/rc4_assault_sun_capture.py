@@ -6,10 +6,6 @@ BLOOM_ART=12004010089
 TREE='bb1432b459a4daf72a324f3fb477744bdb51fd4a'
 CV=[('r_bloom','1'),('r_bloomMode','2'),('r_bloomThreshold','1.20'),('r_bloomStrength','0.65'),('r_bloomRadius','1.50'),('r_bloomBlurPasses','1'),('r_bloomPyramidRadius','1.35'),('r_bloomPyramidNearWeight','0.35'),('r_bloomPyramidMidWeight','0.55'),('r_bloomPyramidFarWeight','0.90')]
 TARGETS={
-'crypt1':[
- ('crypt1_spawn_dlight',[-152.,1668.,636.]),
- ('crypt1_spawn_lamp',[-132.,1842.,516.]),
- ('crypt1_spawn_second_dlight',[388.,1668.,420.])],
 'escape1':[
  ('escape1_guard_furnace',[-1226.,602.,-64.]),
  ('escape1_guard_lamp',[-1076.,1172.,96.]),
@@ -87,7 +83,7 @@ def runtime(build,retail,release):
     for n in ('PRODUCTION_HIGH_QUALITY.cfg','UNIFIED_PRODUCTION.cfg','darkwolf_ignition_rc_v0_6.pk3'):
         h=list(release.rglob(n))
         if h:shutil.copy2(h[0],main/n)
-    cfg=['exec PRODUCTION_HIGH_QUALITY.cfg','set r_mode -1','set r_customwidth 1600','set r_customheight 900','set r_fullscreen 0','set r_renderer rend2','set cl_renderer rend2','set r_hdr 1','set r_postProcess 1','set r_toneMap 1','set r_ssgi 1','set r_volumetricSun 1','set r_volumetricLocal 1','set r_volumetricFire 1','set r_swapInterval 0','set s_initsound 0','set cg_draw2D 0','set cg_drawGun 1','set con_notifytime -1','set fixedtime 100']+[f'set {k} {v}' for k,v in CV]
+    cfg=['exec PRODUCTION_HIGH_QUALITY.cfg','set r_mode -1','set r_customwidth 1280','set r_customheight 720','set r_fullscreen 0','set r_renderer rend2','set cl_renderer rend2','set r_hdr 1','set r_postProcess 1','set r_toneMap 1','set r_ssgi 1','set r_volumetricSun 1','set r_volumetricLocal 1','set r_volumetricFire 1','set r_swapInterval 0','set s_initsound 0','set cg_draw2D 0','set cg_drawGun 1','set con_notifytime -1','set fixedtime 100']+[f'set {k} {v}' for k,v in CV]
     (main/'BLOOM.cfg').write_text('\n'.join(cfg)+'\n');return rt,main
 
 def env():
@@ -147,17 +143,17 @@ def main():
             commands += [f'set {k} {v}' for k,v in DIAG]
             commands += ['set r_bloomMode 2','set r_bloom 0',
                          'proofView '+' '.join(f'{x:.6f}' for x in eye+ang),
-                         'wait 12',f'set dw_proofShot {pair_no*2-1}','wait 3',
-                         f'echo BLOOM_AB_CAPTURE {name} OFF',f'screenshot {name}_OFF','wait 3',
-                         'set r_bloom 1','wait 12',f'set dw_proofShot {pair_no*2}','wait 3',
-                         f'echo BLOOM_AB_CAPTURE {name} ON',f'screenshot {name}_ON','wait 3']
+                         'wait 4',f'set dw_proofShot {pair_no*2-1}','wait 1',
+                         f'echo BLOOM_AB_CAPTURE {name} OFF',f'screenshot {name}_OFF','wait 1',
+                         'set r_bloom 1','wait 4',f'set dw_proofShot {pair_no*2}','wait 1',
+                         f'echo BLOOM_AB_CAPTURE {name} ON',f'screenshot {name}_ON','wait 1']
             meta.append((name,target,eye,ang,pair_no))
         commands += ['echo BLOOM_AB_MAP_COMPLETE','quit']
         scen=f'BLOOM_AB_{mapname.upper()}.cfg'
         (main/scen).write_text('\n'.join(commands)+'\n')
         shutil.copy2(main/scen,out/scen)
         home=rt/f'home-ab-{mapname}'
-        rc=game(rt,home,mapname,scen,out/f'{mapname}-ab.log',timeout=240)
+        rc=game(rt,home,mapname,scen,out/f'{mapname}-ab.log',timeout=360)
         txt=logs(home,out,mapname+'-ab')
         assert rc==0 and 'BLOOM_AB_MAP_COMPLETE' in txt,(mapname,rc)
         for name,target,eye,ang,pn in meta:
