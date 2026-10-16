@@ -145,14 +145,16 @@ def main():
             eye,ang=camera(retail,mapname,target)
             # Apply amplified diagnostic parameters identically to both frames.
             commands += [f'set {k} {v}' for k,v in DIAG]
-            commands += ['set r_bloomMode 2','set dw_proofFreeze 0',
+            anchor_shot=pair_no*2-1
+            check_shot=pair_no*2
+            commands += ['set r_bloomMode 2','set r_bloom 0','set dw_proofFreeze 0',
                          'proofView '+' '.join(f'{x:.6f}' for x in eye+ang),
-                         'wait 24','set dw_proofFreeze 1','wait 3',
-                         'set r_bloom 0','wait 5',f'set dw_proofShot {pair_no*2-1}','wait 2',
+                         'wait 24',f'set dw_proofShot {anchor_shot}','wait 2',
+                         'set dw_proofFreeze 1','wait 2',
                          f'echo BLOOM_AB_CAPTURE {name} OFF',f'screenshot {name}_OFF','wait 2',
-                         'set r_bloom 1','wait 5',f'set dw_proofShot {pair_no*2}','wait 2',
+                         'set r_bloom 1','wait 5',
                          f'echo BLOOM_AB_CAPTURE {name} ON',f'screenshot {name}_ON','wait 2',
-                         'set dw_proofFreeze 0','wait 2']
+                         'set dw_proofFreeze 0','wait 1',f'set dw_proofShot {check_shot}','wait 2']
             meta.append((name,target,eye,ang,pair_no))
         commands += ['set dw_proofFreeze 0','echo BLOOM_AB_MAP_COMPLETE','quit']
         scen=f'BLOOM_AB_{mapname.upper()}.cfg'
@@ -177,19 +179,20 @@ def main():
                 dest=out/f'{name}_{state}.png'
                 Image.open(hits[0]).convert('RGB').save(dest)
                 files[state]=dest.name
-            # Strict A/B acceptance: same frozen camera and only r_bloom changes.
-            off_shot,on_shot=pn*2-1,pn*2
-            assert off_shot in proof_views and on_shot in proof_views,(mapname,name,'missing PROOF_VIEW')
-            assert proof_views[off_shot]==proof_views[on_shot],(mapname,name,'camera drift',proof_views[off_shot],proof_views[on_shot])
-            oc=proof_cvars.get(off_shot,{}); nc=proof_cvars.get(on_shot,{})
-            assert oc.get('r_bloom')=='0',(mapname,name,'OFF r_bloom',oc.get('r_bloom'))
-            assert nc.get('r_bloom')=='1',(mapname,name,'ON r_bloom',nc.get('r_bloom'))
+            # Strict A/B acceptance: bracket the frozen OFF/ON capture by two runtime camera probes.
+            # CGame does not advance while frozen, so no PROOF_VIEW event is expected inside the frozen interval.
+            anchor_shot,check_shot=pn*2-1,pn*2
+            assert anchor_shot in proof_views and check_shot in proof_views,(mapname,name,'missing bracket PROOF_VIEW',proof_views)
+            assert proof_views[anchor_shot]==proof_views[check_shot],(mapname,name,'camera drift across frozen A/B',proof_views[anchor_shot],proof_views[check_shot])
+            oc=proof_cvars.get(anchor_shot,{}); nc=proof_cvars.get(check_shot,{})
+            assert oc.get('r_bloom')=='0',(mapname,name,'pre-freeze r_bloom',oc.get('r_bloom'))
+            assert nc.get('r_bloom')=='1',(mapname,name,'post-freeze r_bloom',nc.get('r_bloom'))
             assert oc.get('r_bloomMode')=='2' and nc.get('r_bloomMode')=='2'
             for k,v in DIAG:
                 assert oc.get(k)==v and nc.get(k)==v,(mapname,name,k,oc.get(k),nc.get(k),v)
             for k in ('r_ssgi','r_volumetricSun','r_volumetricLocal','r_volumetricFire','r_forceSun'):
                 assert oc.get(k)==nc.get(k),(mapname,name,'non-bloom cvar drift',k,oc.get(k),nc.get(k))
-            report['pairs'].append({'pair':pn,'map':mapname,'name':name,'target':target,'camera_origin':eye,'camera_angles':ang,'proof_eye_forward':proof_views[off_shot],'off':files['OFF'],'on':files['ON']})
+            report['pairs'].append({'pair':pn,'map':mapname,'name':name,'target':target,'camera_origin':eye,'camera_angles':ang,'proof_eye_forward':proof_views[anchor_shot],'snapshot_frozen_between_off_on':True,'off':files['OFF'],'on':files['ON']})
             pair_images.append((pn,mapname,name,out/files['OFF'],out/files['ON']))
 
     # Build a literal side-by-side contact sheet: OFF left, ON right.
