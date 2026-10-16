@@ -6,6 +6,10 @@ BLOOM_ART=12004010089
 TREE='bb1432b459a4daf72a324f3fb477744bdb51fd4a'
 CV=[('r_bloom','1'),('r_bloomMode','2'),('r_bloomThreshold','1.20'),('r_bloomStrength','0.65'),('r_bloomRadius','1.50'),('r_bloomBlurPasses','1'),('r_bloomPyramidRadius','1.35'),('r_bloomPyramidNearWeight','0.35'),('r_bloomPyramidMidWeight','0.55'),('r_bloomPyramidFarWeight','0.90')]
 TARGETS={
+'crypt1':[
+ ('crypt1_spawn_dlight',[-152.,1668.,636.]),
+ ('crypt1_spawn_lamp',[-132.,1842.,516.]),
+ ('crypt1_spawn_second_dlight',[388.,1668.,420.])],
 'escape1':[
  ('escape1_guard_furnace',[-1226.,602.,-64.]),
  ('escape1_guard_lamp',[-1076.,1172.,96.]),
@@ -134,28 +138,37 @@ def main():
     pair_images=[]
     pair_no=0
     for mapname,targets in TARGETS.items():
-        commands=['set con_notifytime -1','set cg_draw2D 0','set cg_drawGun 1','god','notarget','give all','wait 20']
+        commands=['set con_notifytime -1','set cg_draw2D 0','set cg_drawGun 1','set cg_bobup 0','set cg_bobpitch 0','set cg_bobroll 0','set r_autoExposure 0','set r_forceAutoExposure 0','set r_forceSunPause 1','god','notarget','give all','wait 20']
         meta=[]
         for local_idx,(name,target) in enumerate(targets,1):
             pair_no+=1
             eye,ang=camera(retail,mapname,target)
             # Apply amplified diagnostic parameters identically to both frames.
             commands += [f'set {k} {v}' for k,v in DIAG]
-            commands += ['set r_bloomMode 2','set r_bloom 0',
+            commands += ['set r_bloomMode 2','set dw_proofFreeze 0',
                          'proofView '+' '.join(f'{x:.6f}' for x in eye+ang),
-                         'wait 4',f'set dw_proofShot {pair_no*2-1}','wait 1',
-                         f'echo BLOOM_AB_CAPTURE {name} OFF',f'screenshot {name}_OFF','wait 1',
-                         'set r_bloom 1','wait 4',f'set dw_proofShot {pair_no*2}','wait 1',
-                         f'echo BLOOM_AB_CAPTURE {name} ON',f'screenshot {name}_ON','wait 1']
+                         'wait 24','set dw_proofFreeze 1','wait 3',
+                         'set r_bloom 0','wait 5',f'set dw_proofShot {pair_no*2-1}','wait 2',
+                         f'echo BLOOM_AB_CAPTURE {name} OFF',f'screenshot {name}_OFF','wait 2',
+                         'set r_bloom 1','wait 5',f'set dw_proofShot {pair_no*2}','wait 2',
+                         f'echo BLOOM_AB_CAPTURE {name} ON',f'screenshot {name}_ON','wait 2',
+                         'set dw_proofFreeze 0','wait 2']
             meta.append((name,target,eye,ang,pair_no))
-        commands += ['echo BLOOM_AB_MAP_COMPLETE','quit']
+        commands += ['set dw_proofFreeze 0','echo BLOOM_AB_MAP_COMPLETE','quit']
         scen=f'BLOOM_AB_{mapname.upper()}.cfg'
         (main/scen).write_text('\n'.join(commands)+'\n')
         shutil.copy2(main/scen,out/scen)
         home=rt/f'home-ab-{mapname}'
-        rc=game(rt,home,mapname,scen,out/f'{mapname}-ab.log',timeout=360)
+        rc=game(rt,home,mapname,scen,out/f'{mapname}-ab.log',timeout=480)
         txt=logs(home,out,mapname+'-ab')
         assert rc==0 and 'BLOOM_AB_MAP_COMPLETE' in txt,(mapname,rc)
+        import re
+        view_re=re.compile(r'PROOF_VIEW shot=(\\d+) time=\\d+ eye=([^ ]+) forward=([^ ]+)')
+        proof_views={int(m.group(1)):(m.group(2),m.group(3)) for m in view_re.finditer(txt)}
+        cvar_re=re.compile(r'PROOF_CVAR shot=(\\d+) name=([^ ]+) value=([^\\r\\n]+)')
+        proof_cvars={}
+        for m in cvar_re.finditer(txt):
+            proof_cvars.setdefault(int(m.group(1)),{})[m.group(2)]=m.group(3).strip()
         for name,target,eye,ang,pn in meta:
             files={}
             for state in ('OFF','ON'):
@@ -164,12 +177,19 @@ def main():
                 dest=out/f'{name}_{state}.png'
                 Image.open(hits[0]).convert('RGB').save(dest)
                 files[state]=dest.name
-            # Runtime logger must have observed both states and diagnostic values.
-            assert 'name=r_bloom value=0' in txt,(mapname,name,'OFF cvar missing')
-            assert 'name=r_bloom value=1' in txt,(mapname,name,'ON cvar missing')
+            # Strict A/B acceptance: same frozen camera and only r_bloom changes.
+            off_shot,on_shot=pn*2-1,pn*2
+            assert off_shot in proof_views and on_shot in proof_views,(mapname,name,'missing PROOF_VIEW')
+            assert proof_views[off_shot]==proof_views[on_shot],(mapname,name,'camera drift',proof_views[off_shot],proof_views[on_shot])
+            oc=proof_cvars.get(off_shot,{}); nc=proof_cvars.get(on_shot,{})
+            assert oc.get('r_bloom')=='0',(mapname,name,'OFF r_bloom',oc.get('r_bloom'))
+            assert nc.get('r_bloom')=='1',(mapname,name,'ON r_bloom',nc.get('r_bloom'))
+            assert oc.get('r_bloomMode')=='2' and nc.get('r_bloomMode')=='2'
             for k,v in DIAG:
-                assert f'name={k} value={v}' in txt,(mapname,name,k,v)
-            report['pairs'].append({'pair':pn,'map':mapname,'name':name,'target':target,'camera_origin':eye,'camera_angles':ang,'off':files['OFF'],'on':files['ON']})
+                assert oc.get(k)==v and nc.get(k)==v,(mapname,name,k,oc.get(k),nc.get(k),v)
+            for k in ('r_ssgi','r_volumetricSun','r_volumetricLocal','r_volumetricFire','r_forceSun'):
+                assert oc.get(k)==nc.get(k),(mapname,name,'non-bloom cvar drift',k,oc.get(k),nc.get(k))
+            report['pairs'].append({'pair':pn,'map':mapname,'name':name,'target':target,'camera_origin':eye,'camera_angles':ang,'proof_eye_forward':proof_views[off_shot],'off':files['OFF'],'on':files['ON']})
             pair_images.append((pn,mapname,name,out/files['OFF'],out/files['ON']))
 
     # Build a literal side-by-side contact sheet: OFF left, ON right.
