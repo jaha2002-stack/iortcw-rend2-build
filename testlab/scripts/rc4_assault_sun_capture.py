@@ -78,18 +78,18 @@ def runtime(build,retail,release):
     for n in ('PRODUCTION_HIGH_QUALITY.cfg','UNIFIED_PRODUCTION.cfg','darkwolf_ignition_rc_v0_6.pk3'):
         h=list(release.rglob(n))
         if h:shutil.copy2(h[0],main/n)
-    cfg=['exec PRODUCTION_HIGH_QUALITY.cfg','set r_mode -1','set r_customwidth 1600','set r_customheight 900','set r_fullscreen 0','set r_renderer rend2','set cl_renderer rend2','set r_hdr 1','set r_postProcess 1','set r_toneMap 1','set r_ssgi 1','set r_volumetricSun 1','set r_volumetricLocal 1','set r_volumetricFire 1','set r_swapInterval 0','set s_initsound 0','set cg_draw2D 0','set cg_drawGun 1','set fixedtime 100']+[f'set {k} {v}' for k,v in CV]
+    cfg=['exec PRODUCTION_HIGH_QUALITY.cfg','set r_mode -1','set r_customwidth 1600','set r_customheight 900','set r_fullscreen 0','set r_renderer rend2','set cl_renderer rend2','set r_hdr 1','set r_postProcess 1','set r_toneMap 1','set r_ssgi 1','set r_volumetricSun 1','set r_volumetricLocal 1','set r_volumetricFire 1','set r_swapInterval 0','set s_initsound 0','set cg_draw2D 0','set cg_drawGun 1','set con_notifytime -1','set fixedtime 100']+[f'set {k} {v}' for k,v in CV]
     (main/'BLOOM.cfg').write_text('\n'.join(cfg)+'\n');return rt,main
 
 def env():
     e={k:v for k,v in os.environ.items() if not any(x in k.upper() for x in ('TOKEN','SECRET','PASSWORD','CREDENTIAL'))};e['LIBGL_ALWAYS_SOFTWARE']='1';e['LP_NUM_THREADS']='2';return e
 
-def game(rt,home,mapname,scenario,out):
+def game(rt,home,mapname,scenario,out,timeout=180):
     home.mkdir(parents=True,exist_ok=True);exe=next(p for p in rt.iterdir() if p.name.lower().startswith('iowolfsp'));exe.chmod(0o755)
     cmd=['xvfb-run','-a',str(exe),'+safe','+set','fs_basepath',str(rt),'+set','fs_homepath',str(home),'+set','com_introplayed','1','+set','com_recommendedSet','1','+set','logfile','2','+set','dw_proofAutomation','1','+set','r_renderer','rend2','+set','cl_renderer','rend2','+exec','BLOOM.cfg','+vid_restart','+set','dw_proofScenario',scenario,'+spdevmap',mapname]
     with out.open('w') as f:
         p=subprocess.Popen(cmd,stdout=f,stderr=subprocess.STDOUT,env=env(),start_new_session=True)
-        try:return p.wait(timeout=180)
+        try:return p.wait(timeout=timeout)
         except subprocess.TimeoutExpired:os.killpg(p.pid,signal.SIGKILL);p.wait();return 124
 
 def logs(home,out,prefix):
@@ -97,7 +97,7 @@ def logs(home,out,prefix):
     for i,p in enumerate(home.rglob('*console*.log')):shutil.copy2(p,out/f'{prefix}-console-{i}.log');t.append(p.read_text(errors='replace'))
     return '\n'.join(t)
 
-def lerp(points,n=120):
+def lerp(points,n=210):
     o=[];m=len(points)-1
     for i in range(n):
         u=i/(n-1)*m;j=min(m-1,int(u));t=u-j;p=[points[j][k]*(1-t)+points[j+1][k]*t for k in range(3)];q=points[min(j+1,m)];d=[q[k]-p[k] for k in range(3)]
@@ -109,27 +109,17 @@ def main():
     if variant!='candidate':(out/'base-skip.json').write_text('{"status":"skipped"}\n');return
     retail=Path(retail_s);release=Path(release_s);sh(['sudo','apt-get','-o','Acquire::Retries=3','install','-y','--no-install-recommends','ffmpeg'])
     root=source();instrument(root);b=build(root,out);rt,main=runtime(b,retail,release)
-    from PIL import Image
-    report={'bloom':dict(CV),'screenshots':[],'videos':[],'source_tree':TREE,'build_run':38798189322}
-    for mapname,targets in TARGETS.items():
-        c=['god','notarget','give all','wait 20'];meta=[]
-        for i,(name,target) in enumerate(targets,1):
-            e,a=camera(retail,mapname,target);c+=['proofView '+' '.join(f'{x:.6f}' for x in e+a),'wait 18',f'set dw_proofShot {i}','wait 4',f'screenshot {name}','wait 4'];meta.append((name,e,a,target))
-        c+=['echo BLOOM_SCREENSHOTS_COMPLETE','quit'];sc=f'{mapname}_shots.cfg';(main/sc).write_text('\n'.join(c)+'\n');home=rt/f'home-{mapname}';rc=game(rt,home,mapname,sc,out/f'{mapname}.log');txt=logs(home,out,mapname)
-        files=[]
-        for name,e,a,target in meta:
-            h=list(home.rglob(name+'.tga'));assert len(h)==1,name;dest=out/(name+'.png');Image.open(h[0]).convert('RGB').save(dest);files.append(dest.name)
-        for k,v in CV:assert f'name={k} value={v}' in txt,(mapname,k,v)
-        assert rc==0 and 'BLOOM_SCREENSHOTS_COMPLETE' in txt
-        report['screenshots'].append({'map':mapname,'files':files})
+    report={'bloom':dict(CV),'screenshots_from_run':38839497144,'videos':[],'source_tree':TREE,'build_run':38798189322}
     for mapname,pts in [('escape1',ESC),('crypt1',CRYPT)]:
-        seq=['god','notarget','give all','wait 20',f'video {mapname}_bloom_v2','wait 10']
+        seq=['set con_notifytime -1','set r_customwidth 640','set r_customheight 360','set cl_aviFrameRate 20','vid_restart','wait 8','god','notarget','give all','set dw_proofShot 99','wait 3',f'video {mapname}_bloom_v2','wait 2']
         for p,a in lerp(pts):seq+=['proofView '+' '.join(f'{x:.6f}' for x in p+a),'wait 1']
-        seq+=['wait 10','stopvideo','echo BLOOM_VIDEO_COMPLETE','wait 5','quit'];sc=f'{mapname}_video.cfg';(main/sc).write_text('\n'.join(seq)+'\n');home=rt/f'home-video-{mapname}';rc=game(rt,home,mapname,sc,out/f'{mapname}-video.log');txt=logs(home,out,mapname+'-video')
+        seq+=['wait 3','stopvideo','echo BLOOM_VIDEO_COMPLETE','wait 2','quit'];sc=f'{mapname}_video.cfg';(main/sc).write_text('\n'.join(seq)+'\n');home=rt/f'home-video-{mapname}';rc=game(rt,home,mapname,sc,out/f'{mapname}-video.log',timeout=420);txt=logs(home,out,mapname+'-video')
+        for k,v in CV:assert f'name={k} value={v}' in txt,(mapname,k,v)
         avi=list(home.rglob(f'{mapname}_bloom_v2.avi'));assert len(avi)==1,(mapname,avi)
-        mp4=out/f'{mapname}-bloom-v2-runtime.mp4';sh(['ffmpeg','-y','-loglevel','error','-i',str(avi[0]),'-t','15','-c:v','libx264','-crf','18','-pix_fmt','yuv420p',str(mp4)])
-        assert mp4.stat().st_size>100000 and rc==0 and 'BLOOM_VIDEO_COMPLETE' in txt
-        report['videos'].append({'map':mapname,'file':mp4.name,'seconds':15})
+        mp4=out/f'{mapname}-bloom-v2-runtime.mp4';sh(['ffmpeg','-y','-loglevel','error','-i',str(avi[0]),'-c:v','libx264','-crf','18','-pix_fmt','yuv420p',str(mp4)])
+        dur=float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',str(mp4)],text=True).strip())
+        assert mp4.stat().st_size>100000 and rc==0 and 'BLOOM_VIDEO_COMPLETE' in txt and 9.5<=dur<=15.5,(mapname,mp4.stat().st_size,rc,dur)
+        report['videos'].append({'map':mapname,'file':mp4.name,'seconds':dur,'resolution':'640x360','avi_fps':20})
     (out/'BLOOM_RUNTIME_PROOF.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 
 if __name__=='__main__':main()
