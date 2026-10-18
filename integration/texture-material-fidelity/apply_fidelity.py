@@ -77,11 +77,8 @@ static qboolean DW_IsModelTextureName(const char *name)
     def image(txt):
         txt=change(txt, 'typedef struct {\n\tchar *name;',
                    model_helper+'typedef struct {\n\tchar *name;', "model texture classifier")
-        pattern = r'static qboolean RawImage_ScaleToPower2\\(([^\\n]*?)(\\)\\s*\\{)'
-        match = re.search(pattern,txt)
-        if not match or txt.count('static qboolean RawImage_ScaleToPower2(')!=1:
-            raise RuntimeError("texture scaler signature missing: " + repr([line for line in txt.splitlines() if "ScaleToPower2" in line or "RawImage_Scale" in line][:8]))
-        txt = txt[:match.start()] + 'static qboolean RawImage_ScaleToPower2(' + match.group(1) + ', qboolean characterMip' + match.group(2) + txt[match.end():]
+        if txt.count('static qboolean RawImage_ScaleToPower2( byte **data, int *inout_width, int *inout_height, imgType_t type, imgFlags_t flags, qboolean characterMip, byte **resampledBuffer)') != 1:
+            raise RuntimeError("Expected RC4 characterMip-capable scaling signature")
         txt=change(txt,'\tqboolean scaled;\n#if 0',
             '''	qboolean scaled;
 	// DARKWOLF_TEXTURE_MATERIAL_FIDELITY_V01: select only small diffuse maps.
@@ -114,8 +111,8 @@ static qboolean DW_IsModelTextureName(const char *name)
 			? r_picmip2->integer : r_picmip->integer;
 		scaled_width >>= mipShift;
 		scaled_height >>= mipShift;''',"character picmip")
-        txt=change(txt,'RawImage_ScaleToPower2(&pic, &width, &height, type, flags, &resampledBuffer);',
-            'RawImage_ScaleToPower2(&pic, &width, &height, type, flags, &resampledBuffer, characterMip);',"texture scaler call")
+        if txt.count('RawImage_ScaleToPower2(&pic, &width, &height, type, flags, characterMip, &resampledBuffer);') != 1:
+            raise RuntimeError("RC4 characterMip-aware scaler caller absent")
         txt=change(txt,'for (miplevel = r_picmip->integer; miplevel > 0 && numMips > 1; miplevel--, numMips--)',
             '''for (miplevel = (r_dwTextureFidelity->integer && characterMip ?
 				r_picmip2->integer : r_picmip->integer);
