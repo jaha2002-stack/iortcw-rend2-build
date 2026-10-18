@@ -172,11 +172,15 @@ def compare(out,maps,results):
     row=0
     for mapname,views in maps.items():
         a=results[mapname]["BASE"];b=results[mapname]["STAGE3"]
-        assert len(a["probes"])==len(b["probes"])==len(views)
+        assert all(len(results[mapname][mode]["probes"])==len(views) for mode in PROFILE)
         for i,v in enumerate(views):
             off=a["probes"][i];on=b["probes"][i]
             assert off["eye"]==on["eye"] and off["forward"]==on["forward"],(mapname,v["name"],"camera mismatch")
             assert off["weapon"]==on["weapon"],"weapon not matched"
+            for mode in PROFILE:
+                probe=results[mapname][mode]["probes"][i]
+                assert probe["eye"]==off["eye"] and probe["forward"]==off["forward"],(mapname,v["name"],mode,"camera mismatch")
+                assert probe["weapon"]==off["weapon"],(mapname,v["name"],mode,"weapon mismatch")
             left=Image.open(out/a["images"][v["name"]]).convert("RGB")
             right=Image.open(out/b["images"][v["name"]]).convert("RGB")
             assert left.size==right.size
@@ -186,6 +190,15 @@ def compare(out,maps,results):
                      "on":b["images"][v["name"]],"changed":bool(bbox),
                      "identical_camera":True,"identical_weapon":True,
                      "diff_bbox":list(bbox) if bbox else None}
+            summary["stage_deltas"] = []
+            for old_mode,new_mode in zip(list(PROFILE)[:-1],list(PROFILE)[1:]):
+                old=results[mapname][old_mode]["images"][v["name"]]
+                new=results[mapname][new_mode]["images"][v["name"]]
+                diff=ImageChops.difference(Image.open(out/old).convert("RGB"),Image.open(out/new).convert("RGB"))
+                from PIL import ImageStat
+                summary["stage_deltas"].append({"from":old_mode,"to":new_mode,
+                    "changed":diff.getbbox() is not None,
+                    "mean_abs_rgb_0_255":round(sum(ImageStat.Stat(diff).mean)/3,4)})
             pairs.append(summary)
             y=row*(thumb[1]+55)
             draw.text((10,y+10),f"{mapname} | {v['name']} | OFF",fill="white")
