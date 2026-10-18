@@ -110,7 +110,7 @@ static qboolean DW_IsModelTextureName(const char *name)
             '''const int mipShift = (r_dwTextureFidelity->integer && characterMip)
 			? r_picmip2->integer : r_picmip->integer;
 		scaled_width >>= mipShift;
-		scaled_height >>= mipShift;''',"character picmip")
+		scaled_height >>= mipShift;''',"character picmip: " + repr([v for v in txt.splitlines() if "r_picmip2" in v or "scaled_width >>=" in v][:20]))
         if txt.count('RawImage_ScaleToPower2(&pic, &width, &height, type, flags, characterMip, &resampledBuffer);') != 1:
             raise RuntimeError("RC4 characterMip-aware scaler caller absent")
         txt=change(txt,'for (miplevel = r_picmip->integer; miplevel > 0 && numMips > 1; miplevel--, numMips--)',
