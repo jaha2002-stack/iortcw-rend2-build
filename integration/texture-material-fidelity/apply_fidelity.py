@@ -247,24 +247,14 @@ static void DW_MipMapCutout(byte *p, int width, int height)
         return txt
 
     def glsl_fp(txt):
-        txt=change(txt,'''	float roughness = pow(2.0 / (8190.0 * gloss + 2.0), 0.25);
-  #endif
-
-	reflectance''',
-            '''	float roughness = pow(2.0 / (8190.0 * gloss + 2.0), 0.25);
-  #endif
-
-	// DARKWOLF_TEXTURE_MATERIAL_FIDELITY_V01: reduce moving-gun/face
-	// normalmap specular sparkle, without modifying world/light/CSM shaders.
+        anchor = 'reflectance  = CalcDiffuse(diffuse.rgb, NH, EH, roughness);'
+        patch = '''// DARKWOLF_TEXTURE_MATERIAL_FIDELITY_V01:
   #if defined(DW_MATERIAL_FIDELITY) && defined(USE_NORMALMAP)
-	vec3 dnx = dFdx(N);
-	vec3 dny = dFdy(N);
-	float normalFootprint = max(dot(dnx, dnx), dot(dny, dny));
-	roughness = clamp(max(roughness, 0.04 + 0.30 * sqrt(max(normalFootprint, 0.0))), 0.04, 1.0);
+    float dwNormalFootprint = max(dot(dFdx(N), dFdx(N)), dot(dFdy(N), dFdy(N)));
+    roughness = clamp(max(roughness, 0.04 + 0.30 * sqrt(max(dwNormalFootprint, 0.0))), 0.04, 1.0);
   #endif
-
-	reflectance''',"normalmap specular antialias")
-        return txt
+    '''
+        return change(txt,anchor,patch+anchor,"normalmap specular antialias")
 
     if not (root/"SP/code/rend2/tr_scene.c").exists():
         raise RuntimeError("Not an unpacked RC4 game source tree")
