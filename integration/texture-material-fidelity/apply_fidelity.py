@@ -197,6 +197,7 @@ static void DW_MipMapCutout(byte *p, int width, int height)
 					DW_MipMapCutout(data, width, height);
 				else
 					R_MipMapsRGB(data, width, height);''',"alpha-aware color mip")
+        txt=txt.replace('dwUpsampleLevel && \\n', 'dwUpsampleLevel &&\\n')
         return txt
 
     def shader(txt):
