@@ -189,7 +189,7 @@ static void DW_MipMapCutout(byte *p, int width, int height)
 
 	dataFormat = PixelDataFormatFromInternalFormat(internalFormat);''',"cutout detect")
         txt=change(txt,'if (glRefConfig.framebufferObject)\n\t\t\t{\n\t\t\t\tqglGenerateTextureMipmapEXT(texture, target);',
-            '''if (glRefConfig.framebufferObject && !(r_dwTextureFidelity->integer && rgba8))
+            '''if (glRefConfig.framebufferObject && !dwCutout)
 			{
 				qglGenerateTextureMipmapEXT(texture, target);''',"prefer linear-light CPU mips")
         txt=change(txt,'else\n\t\t\t\t\tR_MipMapsRGB(data, width, height);',
