@@ -77,9 +77,11 @@ static qboolean DW_IsModelTextureName(const char *name)
     def image(txt):
         txt=change(txt, 'typedef struct {\n\tchar *name;',
                    model_helper+'typedef struct {\n\tchar *name;', "model texture classifier")
-        old='static qboolean RawImage_ScaleToPower2( byte **data, int *inout_width, int *inout_height, imgType_t type, imgFlags_t flags, byte **resampledBuffer)'
-        new='static qboolean RawImage_ScaleToPower2( byte **data, int *inout_width, int *inout_height, imgType_t type, imgFlags_t flags, byte **resampledBuffer, qboolean characterMip)'
-        txt=change(txt,old,new,"texture scaler signature")
+        pattern = r'static qboolean RawImage_ScaleToPower2\\(([^\\n]*?)(\\)\\s*\\{)'
+        match = re.search(pattern,txt)
+        if not match or txt.count('static qboolean RawImage_ScaleToPower2(')!=1:
+            raise RuntimeError("texture scaler signature missing")
+        txt = txt[:match.start()] + 'static qboolean RawImage_ScaleToPower2(' + match.group(1) + ', qboolean characterMip' + match.group(2) + txt[match.end():]
         txt=change(txt,'\tqboolean scaled;\n#if 0',
             '''	qboolean scaled;
 	// DARKWOLF_TEXTURE_MATERIAL_FIDELITY_V01: select only small diffuse maps.
