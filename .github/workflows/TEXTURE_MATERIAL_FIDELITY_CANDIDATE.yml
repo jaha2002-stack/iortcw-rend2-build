@@ -1,0 +1,109 @@
+name: Texture Material Fidelity RC4 CSM Candidate
+on:
+  push:
+    branches: [rend2-texture-material-fidelity-candidate-20261019]
+    paths:
+      - 'integration/texture-material-fidelity/**'
+      - '.github/workflows/TEXTURE_MATERIAL_FIDELITY_CANDIDATE.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore verified RC4 Bloom v2 source and exact CSM guard
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p source evidence dist
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/12004010089/zip > parent.zip
+          echo '6c6c2d2302e2f4f45bad9d7e3df7e2573fd79a72646bcf049596440cb62f7659  parent.zip' | sha256sum -c -
+          unzip -q parent.zip -d parent
+          (cd parent && sha256sum -c DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz.sha256)
+          tar -xzf parent/DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz -C source
+          git -C source init -q
+          git -C source add .
+          test "$(git -C source write-tree)" = bb1432b459a4daf72a324f3fb477744bdb51fd4a
+          python3 integration/rc4-final-csm/apply_csm_guard.py source
+          grep -Fq DARKWOLF_RC4_FORCE_SUN_CSM_REPRIME_V1 source/SP/code/rend2/tr_scene.c
+          cp source/SP/code/rend2/tr_scene.c evidence/guarded-tr-scene.c
+      - name: Apply opt-in texture and material candidate and inspect bounded delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/texture-material-fidelity/apply_fidelity.py
+          python3 integration/texture-material-fidelity/apply_fidelity.py source --manifest evidence/fidelity-manifest.json
+          git -C source diff --check
+          git -C source diff -- SP/code/rend2 > dist/DARKWOLF_TEXTURE_MATERIAL_FIDELITY_V01.patch
+          git -C source diff --name-only | sort > evidence/changed-files.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          expected=set('tr_scene.c tr_init.c tr_local.h tr_image.c tr_shader.c tr_glsl.c glsl/lightall_vp.glsl glsl/lightall_fp.glsl'.split())
+          actual={line.removeprefix('SP/code/rend2/') for line in Path('evidence/changed-files.txt').read_text().splitlines()}
+          assert actual==expected, (actual,expected)
+          s=Path('source/SP/code/rend2/tr_scene.c').read_bytes()
+          assert s==Path('evidence/guarded-tr-scene.c').read_bytes()
+          assert b'DARKWOLF_RC4_FORCE_SUN_CSM_REPRIME_V1' in s
+          import json
+          m=json.loads(Path('evidence/fidelity-manifest.json').read_text())
+          assert len(m['source_files'])==7
+          cfg=Path('source/SP/code/rend2/tr_init.c').read_text()
+          for cvar in ('r_dwTextureFidelity','r_dwMaterialFidelity'):
+            assert f'ri.Cvar_Get("{cvar}", "0"' in cfg
+          print('PASS: fail-closed patch, seven changed source files + unchanged guard')
+          PY
+          sha256sum dist/DARKWOLF_TEXTURE_MATERIAL_FIDELITY_V01.patch > dist/PATCH.sha256
+      - name: Install native and Windows cross-compiler prerequisites
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends gcc-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 g++-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 binutils-mingw-w64-x86-64=2.41.90.20240122-1ubuntu1+11.4 libgl1-mesa-dev libsdl2-dev libopenal-dev xvfb xauth python3-pil python3-numpy
+      - name: Build production Win64 single player with existing shaders and CSM
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-TextureFidelity-TEST BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 PLATFORM=mingw32 ARCH=x86_64 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres 2>&1 | tee evidence/win64-build.log
+          find source/SP/build -name renderer_sp_rend2_x64.dll -exec cp -v '{}' dist/renderer_sp_rend2_x64.dll \;
+          test -s dist/renderer_sp_rend2_x64.dll
+          sha256sum dist/renderer_sp_rend2_x64.dll > dist/RENDERER.sha256
+      - name: Static safe-off parity and guarded-source provenance
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('source/SP/code/rend2')
+          assert b'DARKWOLF_RC4_FORCE_SUN_CSM_REPRIME_V1' in (root/'tr_scene.c').read_bytes()
+          for p in ('tr_backend.c','tr_fbo.c','tr_image_dds.c'):
+            assert b'DARKWOLF_TEXTURE_MATERIAL_FIDELITY_V01' not in (root/p).read_bytes()
+          m=json.loads(Path('evidence/fidelity-manifest.json').read_text())
+          assert m['default_enabled'] is False
+          Path('dist/ACCEPTANCE_STATUS.txt').write_text(
+            'RC4-parent: run 38798189322\nCSM: RC4 guard from run 39152821574\n'
+            'candidate-features-default: OFF\n'
+            'GPU-Factory-Escape1-Assault A/B: NOT_RUN\n'
+            'gaming-GPU-FPS-regression: NOT_RUN\n'
+            'quality-verdict: PENDING_REAL_GAME_AB\n'
+            'Not a clean production release; use a separate RTCW copy.\n')
+          print('PASS static guard preservation')
+          PY
+      - name: Publish test candidate and complete reproducibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Texture-Material-Fidelity-Candidate-or-Failure-Evidence
+          path: |
+            dist/
+            evidence/fidelity-manifest.json
+            evidence/changed-files.txt
+            evidence/win64-build.log
+          if-no-files-found: warn
+          retention-days: 30
