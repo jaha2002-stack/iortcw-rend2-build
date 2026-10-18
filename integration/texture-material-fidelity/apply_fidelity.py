@@ -80,7 +80,7 @@ static qboolean DW_IsModelTextureName(const char *name)
         pattern = r'static qboolean RawImage_ScaleToPower2\\(([^\\n]*?)(\\)\\s*\\{)'
         match = re.search(pattern,txt)
         if not match or txt.count('static qboolean RawImage_ScaleToPower2(')!=1:
-            raise RuntimeError("texture scaler signature missing")
+            raise RuntimeError("texture scaler signature missing: " + repr([line for line in txt.splitlines() if "ScaleToPower2" in line or "RawImage_Scale" in line][:8]))
         txt = txt[:match.start()] + 'static qboolean RawImage_ScaleToPower2(' + match.group(1) + ', qboolean characterMip' + match.group(2) + txt[match.end():]
         txt=change(txt,'\tqboolean scaled;\n#if 0',
             '''	qboolean scaled;
