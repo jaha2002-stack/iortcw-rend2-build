@@ -214,15 +214,20 @@ static void DW_MipMapCutout(byte *p, int width, int height)
         return txt
 
     def glsl_c(txt):
-        txt=change(txt,'''		if (r_dlightMode->integer >= 2)
-			Q_strcat(extradefines, 1024, "#define USE_SHADOWMAP\\n");''',
-            '''		// DARKWOLF_TEXTURE_MATERIAL_FIDELITY_V01: only animated lightall passes.
-		if (r_dwMaterialFidelity->integer &&
-		    (i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION)))
-			Q_strcat(extradefines, 1024, "#define DW_MATERIAL_FIDELITY\\n");
-		if (r_dlightMode->integer >= 2)
-			Q_strcat(extradefines, 1024, "#define USE_SHADOWMAP\\n");''',"animated material shader define")
-        return txt
+        # Scope injection strictly to the lightall shader permutation loop.
+        begin=txt.find('for (i = 0; i < LIGHTDEF_COUNT; i++)')
+        if begin<0: raise RuntimeError("lightall permutation loop not found")
+        end=txt.find('if (glRefConfig.swizzleNormalmap)',begin)
+        if end<0 or end-begin>2500: raise RuntimeError("lightall shader insertion scope drift")
+        anchor='extradefines[0] = \'\\0\';'
+        section=txt[begin:end]
+        if section.count(anchor)!=1: raise RuntimeError("ambiguous lightall define initialization")
+        section=section.replace(anchor,anchor+'''
+        // DARKWOLF_TEXTURE_MATERIAL_FIDELITY_V01: isolate animated lightall.
+        if (r_dwMaterialFidelity->integer &&
+            (i & (LIGHTDEF_ENTITY_VERTEX_ANIMATION | LIGHTDEF_ENTITY_BONE_ANIMATION)))
+            Q_strcat(extradefines, 1024, "#define DW_MATERIAL_FIDELITY\\n");''',1)
+        return txt[:begin]+section+txt[end:]
 
     def glsl_vp(txt):
         txt=change(txt,'''#if defined(USE_LIGHT) && !defined(USE_FAST_LIGHT)
