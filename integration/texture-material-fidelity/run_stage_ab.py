@@ -78,6 +78,21 @@ def camera_views(retail, name):
     if len(result)<2:raise RuntimeError("No verifiable Escape1 camera viewpoints")
     return result[:3]
 
+def discover_character_model(retail):
+    candidates=[]
+    for pk3 in sorted(retail.glob("*.pk3")):
+        with zipfile.ZipFile(pk3) as z:
+            for n in z.namelist():
+                low=n.lower()
+                if low.startswith("models/players/") and low.endswith(".md3") and not low.endswith("_lod.md3"):
+                    candidates.append(n)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda n: (0 if n.lower().endswith("/body.md3") else
+                                   1 if n.lower().endswith("/head.md3") else 2,
+                                   len(n),n.lower()))
+    return candidates[0]
+
 def prepare_runtime(build,retail,out):
     runtime=Path("fidelity-runtime").resolve()
     shutil.rmtree(runtime,ignore_errors=True)
@@ -109,6 +124,12 @@ def one_run(runtime,main,retail,mapname,mode,views,out):
                       "wait 14","set dw_proofFreeze 1","wait 3",
                       f"set dw_proofShot {idx+1}","wait 4",
                       f"screenshot {shot}","wait 2"]
+    model_path=discover_character_model(retail) if mapname=="assault" else None
+    if model_path:
+        camera_cmds+=["set dw_proofFreeze 0", "testmodel "+model_path,
+                      "wait 15",f"screenshot {prefix}_character_model_frame0",
+                      "nextframe","wait 10",f"screenshot {prefix}_character_model_frame1",
+                      "wait 2"]
     camera_cmds+=["set dw_proofFreeze 0","echo DW_FIDELITY_AB_COMPLETE","quit"]
     (main/scenario).write_text("\n".join(camera_cmds)+"\n")
     setup=["exec PRODUCTION_HIGH_QUALITY.cfg",
@@ -148,7 +169,8 @@ def one_run(runtime,main,retail,mapname,mode,views,out):
         (out/f"{prefix}-console-{i}.log").write_text(t)
         logs.append(t)
     log="\n".join(logs)
-    report={"exit":code,"ready":"PROOF_READY" in log,"complete":"DW_FIDELITY_AB_COMPLETE" in log,"images":{}}
+    report={"exit":code,"ready":"PROOF_READY" in log,"complete":"DW_FIDELITY_AB_COMPLETE" in log,"images":{},
+            "character_model_path":model_path, "character_images":{}}
     for v in views:
         name=f"{prefix}_{v['name']}"
         found=list(home.rglob(name+".tga"))
@@ -156,6 +178,16 @@ def one_run(runtime,main,retail,mapname,mode,views,out):
             img=Image.open(found[0]).convert("RGB")
             png=out/(name+".png");img.save(png)
             report["images"][v["name"]]=png.name
+    if model_path:
+        for frame in ("frame0","frame1"):
+            name=f"{prefix}_character_model_{frame}"
+            found=list(home.rglob(name+".tga"))
+            if len(found)==1:
+                png=out/(name+".png")
+                Image.open(found[0]).convert("RGB").save(png)
+                report["character_images"][frame]=png.name
+        if len(report["character_images"])!=2:
+            raise RuntimeError("Character model screenshots missing: "+json.dumps(report))
     matches=re.findall(r"PROOF_VIEW shot=(\d+) time=\d+ eye=([^ ]+) forward=([^ ]+) weapon=(\d+)",log)
     report["probes"]=[{"shot":int(v[0]),"eye":v[1],"forward":v[2],"weapon":v[3]} for v in matches]
     (out/f"{prefix}-result.json").write_text(json.dumps(report,indent=2)+"\n")
