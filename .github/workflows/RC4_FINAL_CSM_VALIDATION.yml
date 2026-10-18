@@ -1,0 +1,95 @@
+name: RC4 Final CSM Validation and Win64 Build
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-rc4-sun-csm-final-regression-20261018]
+    paths:
+      - 'integration/rc4-final-csm/**'
+      - '.github/workflows/RC4_FINAL_CSM_VALIDATION.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  csm-native-and-win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recover verified Bloom RC4 production source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p source evidence dist
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/12004010089/zip > parent.zip
+          echo '6c6c2d2302e2f4f45bad9d7e3df7e2573fd79a72646bcf049596440cb62f7659  parent.zip' | sha256sum -c -
+          unzip -q parent.zip -d parent
+          sha256sum -c parent/DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz.sha256
+          tar -xzf parent/DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz -C source
+          git -C source init -q
+          git -C source add .
+          test "$(git -C source write-tree)" = bb1432b459a4daf72a324f3fb477744bdb51fd4a
+          cp parent/DarkWolf-v446-RC4-BloomV2-Production-Win64-SP.zip dist/BASELINE-RC4-BLOOMV2.zip
+      - name: Apply ONLY one renderer source correction
+        run: |
+          set -Eeuo pipefail
+          python3 integration/rc4-final-csm/apply_csm_guard.py source
+          git -C source diff --check
+          git -C source diff -- SP/code/rend2/tr_scene.c > dist/RC4-CSM-REPRIME.patch
+          test "$(git -C source diff --name-only | wc -l)" = 1
+          test "$(git -C source diff --name-only)" = SP/code/rend2/tr_scene.c
+      - name: Compile and execute native real-implementation regression suite
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import pathlib,base64,zlib,hashlib
+          p=pathlib.Path('integration/rc4-final-csm/test_csm_integration.py.zlib.b64')
+          data=zlib.decompress(base64.b64decode(p.read_text().strip()))
+          assert hashlib.sha256(data).hexdigest()=='d41bfcaacca8b5f241f555d2d8375303f9243d997bce6cba12e2d4afde3cc202'
+          pathlib.Path('evidence/test_csm_integration.py').write_bytes(data)
+          PY
+          python3 evidence/test_csm_integration.py source --out evidence/native
+          grep -Fx ALL_CSM_NATIVE_INTEGRATION_TESTS_PASS evidence/native/native-test-results.log
+      - name: Install pinned Windows x64 compiler
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends gcc-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 g++-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 binutils-mingw-w64-x86-64=2.41.90.20240122-1ubuntu1+11.4
+      - name: Compile exact cumulative RC4 Bloom v2 with bounded CSM guard
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-Clean-RC4 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CROSS_COMPILE=x86_64-w64-mingw32- 2>&1 | tee evidence/windows-build.log
+          find source/SP/build -name 'renderer_sp_rend2_x64.dll' -print
+      - name: Publish candidate only after every mandatory gate passed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          find source/SP/build -name 'renderer_sp_rend2_x64.dll' -exec cp -v '{}' dist/renderer_sp_rend2_x64.dll \;
+          test -s dist/renderer_sp_rend2_x64.dll
+          sha256sum dist/renderer_sp_rend2_x64.dll > dist/RC4-CSM-REPRIME.sha256
+          cp evidence/native/native-test-results.log dist/RC4-CSM-TESTS.txt
+          cat > dist/ACCEPTANCE_STATUS.txt <<'EOF'
+          source-integrity: PASS
+          native-CSM-integration: PASS
+          win64-build: PASS
+          hardware-GPU-FPS-Factory-Escape1-Assault: NOT_RUN
+          final-production-GPU-acceptance: PENDING
+          Installation: replace ONLY renderer_sp_rend2_x64.dll in the original run 38798189322, preserve original backup.
+          EOF
+      - name: Upload evidence even if failures occur
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RC4-CSM-Final-Validation-Evidence
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Publish clean DLL and source patch
+        uses: actions/upload-artifact@v4
+        with:
+          name: RC4-CSM-Guard-Win64-Candidate
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
