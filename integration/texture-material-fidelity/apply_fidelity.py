@@ -208,11 +208,12 @@ static void DW_MipMapCutout(byte *p, int width, int height)
 
     def shader(txt):
         txt=change(txt,'static char *s_shaderText;',model_helper+'static char *s_shaderText;',"shader material classifier")
-        txt=change(txt,'if (r_genNormalMaps->integer)\n\t\t\t\t\t\tflags |= IMGFLAG_GENNORMALMAP;',
-            '''if (r_genNormalMaps->integer ||
+        for ntabs in (6, 5):
+            txt=change(txt, 'if (r_genNormalMaps->integer)\n' + '\t'*ntabs + 'flags |= IMGFLAG_GENNORMALMAP;',
+                '''if (r_genNormalMaps->integer ||
 				    (r_dwMaterialFidelity->integer &&
 				     (DW_IsModelTextureName(shader.name) || DW_IsModelTextureName(token))))
-					flags |= IMGFLAG_GENNORMALMAP;''',"map and clamp generated normals",count=2)
+'''+('\t'*ntabs)+'''flags |= IMGFLAG_GENNORMALMAP;''',"authored material normalmap",count=1)
         txt=change(txt,'if (r_genNormalMaps->integer)\n\t\t\t\tflags |= IMGFLAG_GENNORMALMAP;',
             '''if (r_genNormalMaps->integer ||
 			    (r_dwMaterialFidelity->integer && DW_IsModelTextureName(name)))
