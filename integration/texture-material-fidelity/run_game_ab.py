@@ -45,13 +45,10 @@ def camera_views(retail, name):
         views=photo.views("factory")
         return [dict(v) for v in views]
     if name=="assault":
-        # Established RC4 sunlit viewpoints from photo mode, verified as free space.
-        views=photo.views("assault")
-        world=World(maps_from(retail,name))
-        valid=[v for v in views if not world.solid(v["eye"])]
-        if not valid:
-            raise RuntimeError("Assault photo-mode camera poses are obstructed")
-        return valid[:2]
+        # Reuse the proven RC4 in-world sunlit camera/weapon BSP ray validator.
+        from rc4_assault_camera import select_views
+        views,proof=select_views(retail)
+        return views
     world=World(maps_from(retail,name))
     targets=[
       ("escape1_furnace",[-1226.,602.,-64.]),
@@ -68,8 +65,6 @@ def camera_views(retail, name):
                     eye=[t[0]+radius*math.cos(ang),t[1]+radius*math.sin(ang),t[2]+dz]
                     if world.solid(eye):
                         continue
-                    if not world.trace(eye,t): # helper may return boolean
-                        pass
                     d=[t[i]-eye[i] for i in range(3)]
                     pitch=-math.degrees(math.atan2(d[2],math.hypot(d[0],d[1])))
                     yaw=math.degrees(math.atan2(d[1],d[0]))%360
