@@ -106,17 +106,11 @@ static qboolean DW_IsModelTextureName(const char *name)
             'finalwidth = scaled_width << dwUpsampleLevel;',"upscale X")
         txt=change(txt,'finalheight = scaled_height << r_imageUpsample->integer;',
             'finalheight = scaled_height << dwUpsampleLevel;',"upscale Y")
-        txt=change(txt,'scaled_width >>= r_picmip->integer;\n\t\tscaled_height >>= r_picmip->integer;',
-            '''const int mipShift = (r_dwTextureFidelity->integer && characterMip)
-			? r_picmip2->integer : r_picmip->integer;
-		scaled_width >>= mipShift;
-		scaled_height >>= mipShift;''',"character picmip: " + repr([v for v in txt.splitlines() if "r_picmip2" in v or "scaled_width >>=" in v][:20]))
-        if txt.count('RawImage_ScaleToPower2(&pic, &width, &height, type, flags, characterMip, &resampledBuffer);') != 1:
-            raise RuntimeError("RC4 characterMip-aware scaler caller absent")
-        txt=change(txt,'for (miplevel = r_picmip->integer; miplevel > 0 && numMips > 1; miplevel--, numMips--)',
-            '''for (miplevel = (r_dwTextureFidelity->integer && characterMip ?
-				r_picmip2->integer : r_picmip->integer);
-			     miplevel > 0 && numMips > 1; miplevel--, numMips--)''',"DDS model mip")
+        # RC4 already fixed characterMip/r_picmip2 selection for ordinary
+        # images and DDS; preserve it byte-for-byte instead of reapplying.
+        if 'scaled_width >>= r_picmip2->integer;' not in txt or \
+           'picmipLevel = characterMip ? r_picmip2->integer : r_picmip->integer;' not in txt:
+            raise RuntimeError("RC4 corrected separate character mip selection absent")
         txt=change(txt,'image->flags = flags;',
             'image->flags = flags;\n\timage->characterMIP = characterMip; // '+MARK,"store real character flag",count=1)
         txt=change(txt,'if (!name) {\n\t\treturn NULL;\n\t}\n\n\thash = generateHashValue(name);',
