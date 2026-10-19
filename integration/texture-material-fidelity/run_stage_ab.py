@@ -125,6 +125,8 @@ def one_run(runtime,main,retail,mapname,mode,views,out):
                       f"set dw_proofShot {idx+1}","wait 4",
                       f"screenshot {shot}","wait 2"]
     model_path=discover_character_model(retail) if mapname=="assault" else None
+    if mapname=="assault" and not model_path:
+        raise RuntimeError("No actual models/players/*.md3 in RTCW retail assets")
     if model_path:
         camera_cmds+=["set dw_proofFreeze 0", "testmodel "+model_path,
                       "wait 15",f"screenshot {prefix}_character_model_frame0",
@@ -179,6 +181,8 @@ def one_run(runtime,main,retail,mapname,mode,views,out):
             png=out/(name+".png");img.save(png)
             report["images"][v["name"]]=png.name
     if model_path:
+        if "Can't register model" in log:
+            raise RuntimeError("RTCW character model failed to register: "+model_path)
         for frame in ("frame0","frame1"):
             name=f"{prefix}_character_model_{frame}"
             found=list(home.rglob(name+".tga"))
