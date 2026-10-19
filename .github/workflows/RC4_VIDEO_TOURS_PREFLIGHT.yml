@@ -1,0 +1,79 @@
+name: RC4 CSM Texture Video Tour Routes Preflight
+on:
+  push:
+    branches: [rend2-video-tours-csm-texture-20261019]
+    paths:
+      - 'integration/video-tours/**'
+      - '.github/workflows/RC4_VIDEO_TOURS_PREFLIGHT.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  maps-and-routes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare game route dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-pil python3-numpy
+          python3 -m py_compile integration/video-tours/run_tour.py integration/texture-material-fidelity/run_character_proof.py integration/texture-material-fidelity/run_stage_ab.py
+      - name: Fetch protected retail maps (runner only)
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}" || { echo "ERROR private retail asset token not present"; exit 1; }
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > private-assets-path.log
+          tail -1 private-assets-path.log > .retail_main
+          test -d "$(cat .retail_main)"
+      - name: Validate exact retail-map entries and collision-safe 60s tours
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/video-routes
+          python3 - <<'PY'
+          import json,sys,zipfile
+          from pathlib import Path
+          sys.path.insert(0,"integration/video-tours")
+          from run_tour import MAPS,route_for_map
+          retail=Path(Path(".retail_main").read_text().strip())
+          actual=set()
+          for p in retail.glob("*.pk3"):
+              with zipfile.ZipFile(p) as z:
+                  actual.update(s.lower().removeprefix("maps/").removesuffix(".bsp")
+                      for s in z.namelist() if s.lower().startswith("maps/") and s.lower().endswith(".bsp"))
+          selected,failures=[],{}
+          for name in MAPS:
+              if name not in actual:
+                  failures[name]="missing from authorized retail BSP"
+                  print("MAP_MISSING",name,flush=True)
+                  continue
+              try:
+                  route=route_for_map(retail,name,Path("evidence/video-routes"))
+                  selected.append(name)
+                  print("MAP_SAFE",name,route["player_start"],flush=True)
+              except Exception as error:
+                  failures[name]=str(error)
+                  print("MAP_UNSAFE",name,str(error),flush=True)
+          summary={"selected":selected,"failures":failures,
+                   "all_retail_maps":sorted(actual),
+                   "input_candidates":list(MAPS),
+                   "all_selected_safe":len(selected)==len(MAPS)}
+          Path("evidence/video-routes/PREFLIGHT.json").write_text(json.dumps(summary,indent=2)+"\n")
+          print(json.dumps(summary,indent=2),flush=True)
+          assert len(selected)==10, "Ten safe tour routes required before any recordings"
+          PY
+      - name: Preserve map route proof only (no retail asset bytes)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RC4-Video-Tour-BSP-Routes-Preflight
+          path: evidence/video-routes/
+          if-no-files-found: warn
+          retention-days: 30
