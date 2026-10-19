@@ -74,6 +74,46 @@ def instrument_close_model(root):
     if txt.count(next_old) != 1:
         raise RuntimeError("Fail closed: testmodel nextframe insertion anchor changed")
     txt = txt.replace(next_old, next_new)
+    add_model_old = "\ttrap_R_AddRefEntityToScene( &cg.testModelEntity );"
+    add_model_new = r'''
+    trap_R_AddRefEntityToScene(&cg.testModelEntity);
+    {
+        static qboolean attempted = qfalse, printedTag = qfalse;
+        static qhandle_t headModel = 0, headSkin = 0;
+        char modelName[MAX_QPATH], skinName[MAX_QPATH];
+        if (!attempted) {
+            attempted = qtrue;
+            trap_Cvar_VariableStringBuffer("dw_proofHeadModel", modelName, sizeof(modelName));
+            trap_Cvar_VariableStringBuffer("dw_proofHeadSkin", skinName, sizeof(skinName));
+            headModel = trap_R_RegisterModel(modelName);
+            headSkin = trap_R_RegisterSkin(skinName);
+            CG_Printf("PROOF_CHARACTER_HEAD model=%s model_handle=%d skin=%s skin_handle=%d\n",
+                      modelName, headModel, skinName, headSkin);
+        }
+        if (headModel && headSkin) {
+            refEntity_t head;
+            orientation_t tag;
+            memset(&head, 0, sizeof(head));
+            head.hModel = headModel;
+            head.customSkin = headSkin;
+            AxisClear(head.axis);
+            if (trap_R_LerpTag(&tag, &cg.testModelEntity, "tag_head", 0) >= 0) {
+                CG_PositionRotatedEntityOnTag(&head, &cg.testModelEntity, "tag_head");
+                trap_R_AddRefEntityToScene(&head);
+                if (!printedTag) {
+                    CG_Printf("PROOF_CHARACTER_HEAD_TAG_FOUND tag_head=1\n");
+                    printedTag = qtrue;
+                }
+            } else if (!printedTag) {
+                CG_Printf("PROOF_CHARACTER_HEAD_TAG_MISSING tag_head=0\n");
+                printedTag = qtrue;
+            }
+        }
+    }
+    '''
+    if txt.count(add_model_old) != 1:
+        raise RuntimeError("Fail closed: testmodel head attachment anchor missing")
+    txt=txt.replace(add_model_old, add_model_new)
     path.write_text(txt)
     print("PROOF_CHARACTER_CLOSEUP: test-only model distance 120 units, z=-32; required skin; renderer unchanged", flush=True)
 
@@ -108,6 +148,13 @@ def animated_player_mesh(retail):
                  and p.endswith(".skin") and paths[p][2] > 10]
         if not skins:
             continue
+        heads = [p for p in paths if p in (folder+"/head.md3", folder+"/head.mdc")]
+        head_skins = [(p, paths[p][2]) for p in paths if p.startswith(folder+"/head_")
+                      and p.endswith(".skin") and paths[p][2]>10]
+        if not heads or not head_skins:
+            continue
+        heads.sort(key=lambda p: (not p.endswith(".md3"), p))
+        head_skins.sort(key=lambda pair: ("default" not in pair[0], -pair[1], pair[0]))
         skins.sort(key=lambda pair: ("default" not in pair[0],
                                     "original" not in pair[0], -pair[1], pair[0]))
         name = folder.rsplit("/", 1)[-1]
@@ -117,7 +164,9 @@ def animated_player_mesh(retail):
         candidates.append({"path": original, "frames": frames, "bytes": size,
                            "skin": paths[skins[0][0]][1], "skin_bytes":skins[0][1],
                            "body_mesh": True, "format":"mds",
-                           "skin_variants":len(skins), "human_character_rank":rank})
+                           "skin_variants":len(skins), "human_character_rank":rank,
+                           "head_model":paths[heads[0]][1],
+                           "head_skin":paths[head_skins[0][0]][1]})
     candidates.sort(key=lambda x:(x["human_character_rank"],
                                    -min(x["bytes"],2000000),x["path"].lower()))
     info = {"selected": candidates[0] if candidates else None,
@@ -141,7 +190,9 @@ def prepare_runtime_with_skin(build, retail, out):
     assert MODEL_SELECTION and MODEL_SELECTION["skin"].endswith(".skin")
     cfg = main/"PRODUCTION_HIGH_QUALITY.cfg"
     with cfg.open("a") as handle:
-        handle.write("\nset dw_proofSkin " + MODEL_SELECTION["skin"] + "\n")
+        handle.write("\nset dw_proofSkin " + MODEL_SELECTION["skin"])
+        handle.write("\nset dw_proofHeadModel " + MODEL_SELECTION["head_model"])
+        handle.write("\nset dw_proofHeadSkin " + MODEL_SELECTION["head_skin"] + "\n")
     return runtime, main
 
 
@@ -163,6 +214,11 @@ def analyze_character(out):
         assert all(path.exists() for path in paths)
         log=(out/f"assault_{mode}-console-0.log").read_text(errors="replace")
         proof=re.search(r"PROOF_CHARACTER_SKIN requested=([^ ]+) handle=(\d+)",log)
+        h=re.search(r"PROOF_CHARACTER_HEAD model=(\S+) model_handle=(\d+) skin=(\S+) skin_handle=(\d+)",log)
+        if not h or h.group(1).lower()!=MODEL_SELECTION["head_model"].lower() or h.group(3).lower()!=MODEL_SELECTION["head_skin"].lower() or int(h.group(2))<=0 or int(h.group(4))<=0:
+            raise RuntimeError(f"{mode}: original player head or head skin failed to register")
+        if "PROOF_CHARACTER_HEAD_TAG_FOUND tag_head=1" not in log:
+            raise RuntimeError(f"{mode}: tag_head attachment missing")
         if "PROOF_CHARACTER_RIG torso_axis_identity=1" not in log or "PROOF_CHARACTER_RIG_NEXT frame=1 torso_frame=1" not in log:
             raise RuntimeError(f"{mode}: missing MDS skeletal torso rig proof in test CGame")
         if not proof or proof.group(1).lower()!=MODEL_SELECTION["skin"].lower() or int(proof.group(2))<=0:
@@ -186,6 +242,8 @@ def analyze_character(out):
         "asset_path": modelpath, "source_frame_count":MODEL_SELECTION["frames"],
         "test_model_distance_units":120, "test_model_origin_z_adjust":-32,
         "skin_path":MODEL_SELECTION["skin"], "skin_registration_verified":True,
+        "head_model":MODEL_SELECTION["head_model"], "head_skin":MODEL_SELECTION["head_skin"],
+        "head_registration_verified":True, "head_tag_attachment_verified":True,
         "full_body_mds":True, "renderer_source_changes_for_closeup":False,
         "model_frame_checks": checks,
         "acceptance":"PENDING_USER_REVIEW_AND_REAL_GPU_FPS"
