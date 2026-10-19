@@ -4,7 +4,8 @@ on:
     branches: [rend2-texture-material-fidelity-candidate-20261019]
     paths:
       - 'integration/texture-material-fidelity/run_stage_ab.py'
-      - '.github/workflows/TEXTURE_MATERIAL_FIDELITY_REAL_GAME_AB.yml'
+      - '.github/workflows/TEXTURE_MATERIAL_FIDELITY_STAGES.yml'
+      - 'integration/texture-material-fidelity/apply_fidelity.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -40,7 +41,7 @@ jobs:
           set -Eeuo pipefail
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev xvfb xauth python3-pil python3-numpy
-          python3 -m py_compile integration/texture-material-fidelity/run_game_ab.py testlab/scripts/rc4_requested_views.py testlab/scripts/rc4_assault_camera.py
+          python3 -m py_compile integration/texture-material-fidelity/run_stage_ab.py testlab/scripts/rc4_requested_views.py testlab/scripts/rc4_assault_camera.py
       - name: Fetch authorized RTCW retail inputs on runner only
         env:
           GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
@@ -55,9 +56,27 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 -u integration/texture-material-fidelity/run_game_ab.py source "$(cat .retail_main)" evidence/real-game-ab 2>&1 | tee evidence/game-ab-driver.log
+          python3 -u integration/texture-material-fidelity/run_stage_ab.py source "$(cat .retail_main)" evidence/real-game-ab 2>&1 | tee evidence/game-ab-driver.log
           test -s evidence/real-game-ab/DARKWOLF_TEXTURE_MATERIAL_AB.png
           test -s evidence/real-game-ab/AB_REPORT.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          out=Path('evidence/real-game-ab')
+          data=json.loads((out/'AB_REPORT.json').read_text())
+          expected=('BASE','STAGE1','STAGE2','STAGE3')
+          assert tuple(data.get('profiles',{}))==expected, 'Old OFF/ON report detected'
+          assert len(data.get('pairs',[]))==8, 'Expected eight fixed-camera viewpoints'
+          assert all(len(p.get('stage_deltas',[]))==3 for p in data['pairs']), 'Missing isolated stage comparisons'
+          assert all(all(x.get('identical_camera') and x.get('identical_weapon') for x in [p]) for p in data['pairs'])
+          assert len(list(out.glob('*_character_model_frame*.png')))==8, 'Expected player model screenshots in all four stages'
+          for mapname,count in {'factory':3,'escape1':3,'assault':2}.items():
+              for mode in expected:
+                  result=json.loads((out/f'{mapname}_{mode}-result.json').read_text())
+                  assert result['exit']==0 and result['ready'] and result['complete'], f'{mapname}/{mode} failed'
+                  assert len(result['images'])==count, f'{mapname}/{mode} incomplete images'
+          print('PASS: 4/4 isolated modes, 8/8 cameras, 24 incremental deltas, 8 real player model frame shots')
+          PY
       - name: Preserve A-B source logs full-resolution PNG and diff evidence
         if: always()
         uses: actions/upload-artifact@v4
