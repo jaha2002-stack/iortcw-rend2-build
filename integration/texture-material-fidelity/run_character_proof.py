@@ -44,7 +44,37 @@ def instrument_close_model(root):
     '''
     if txt.count(original) != 1:
         raise RuntimeError("Fail closed: unexpected RTCW testmodel camera anchor")
-    path.write_text(txt.replace(original, changed))
+    txt = txt.replace(original, changed)
+    # Base RTCW testmodel is an MD3 helper. Unlike CG_Player, it never fills
+    # torsoAxis/torsoFrame/torsoBacklerp for skeletal MDS characters, causing
+    # the upper body bones to collapse. Correct ONLY the testing CGame rig.
+    axis_old = "\tAnglesToAxis( angles, cg.testModelEntity.axis );"
+    axis_new = r'''
+    AnglesToAxis( angles, cg.testModelEntity.axis );
+    AxisClear(cg.testModelEntity.torsoAxis);
+    cg.testModelEntity.torsoFrame = cg.testModelEntity.frame;
+    cg.testModelEntity.oldTorsoFrame = cg.testModelEntity.oldframe;
+    cg.testModelEntity.torsoBacklerp = cg.testModelEntity.backlerp;
+    CG_Printf("PROOF_CHARACTER_RIG torso_axis_identity=1 torso_frame=%d old_torso_frame=%d\n",
+              cg.testModelEntity.torsoFrame, cg.testModelEntity.oldTorsoFrame);
+    '''
+    if txt.count(axis_old) != 1:
+        raise RuntimeError("Fail closed: testmodel torso-axis insertion anchor changed")
+    txt = txt.replace(axis_old, axis_new)
+    next_old = "\tcg.testModelEntity.frame++;\n\tCG_Printf( \"frame %i\\n\", cg.testModelEntity.frame );"
+    next_new = r'''
+    cg.testModelEntity.frame++;
+    cg.testModelEntity.oldframe = cg.testModelEntity.frame;
+    cg.testModelEntity.torsoFrame = cg.testModelEntity.frame;
+    cg.testModelEntity.oldTorsoFrame = cg.testModelEntity.frame;
+    cg.testModelEntity.torsoBacklerp = 0;
+    CG_Printf("PROOF_CHARACTER_RIG_NEXT frame=%d torso_frame=%d\n",
+              cg.testModelEntity.frame, cg.testModelEntity.torsoFrame);
+    '''
+    if txt.count(next_old) != 1:
+        raise RuntimeError("Fail closed: testmodel nextframe insertion anchor changed")
+    txt = txt.replace(next_old, next_new)
+    path.write_text(txt)
     print("PROOF_CHARACTER_CLOSEUP: test-only model distance 120 units, z=-32; required skin; renderer unchanged", flush=True)
 
 
@@ -133,6 +163,8 @@ def analyze_character(out):
         assert all(path.exists() for path in paths)
         log=(out/f"assault_{mode}-console-0.log").read_text(errors="replace")
         proof=re.search(r"PROOF_CHARACTER_SKIN requested=([^ ]+) handle=(\d+)",log)
+        if "PROOF_CHARACTER_RIG torso_axis_identity=1" not in log or "PROOF_CHARACTER_RIG_NEXT frame=1 torso_frame=1" not in log:
+            raise RuntimeError(f"{mode}: missing MDS skeletal torso rig proof in test CGame")
         if not proof or proof.group(1).lower()!=MODEL_SELECTION["skin"].lower() or int(proof.group(2))<=0:
             raise RuntimeError(f"{mode}: original RTCW skin not registered: {MODEL_SELECTION['skin']}")
         images = [Image.open(p).convert("RGB") for p in paths]
