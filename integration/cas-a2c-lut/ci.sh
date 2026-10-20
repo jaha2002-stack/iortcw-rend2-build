@@ -17,8 +17,9 @@ git -C source -c user.name=DarkWolf-CI -c user.email=ci@example.invalid commit -
 echo 'f1c7cd39e81bd1ccab1a0ff358b8f0d348da193d22de5097ed4110c2f3e0a537  integration/cas-a2c-lut/feature.patch' | sha256sum -c -
 git -C source apply --check "$GITHUB_WORKSPACE/integration/cas-a2c-lut/feature.patch"
 git -C source apply "$GITHUB_WORKSPACE/integration/cas-a2c-lut/feature.patch"
-git -C source diff --check
-git -C source diff --name-only | LC_ALL=C sort > evidence/changed-files.txt
+git -C source add -A
+git -C source diff --cached --check
+git -C source diff --cached --name-only | LC_ALL=C sort > evidence/changed-files.txt
 python3 - <<'PY'
 from pathlib import Path
 expected=set(['SP/Makefile']+[f'SP/code/rend2/{p}' for p in ('tr_init.c','tr_local.h','tr_image.c','tr_glsl.c','tr_backend.c','tr_shade.c','glsl/generic_fp.glsl','glsl/lightall_fp.glsl','glsl/dwfinal_fp.glsl','glsl/dwfinal_vp.glsl')])
