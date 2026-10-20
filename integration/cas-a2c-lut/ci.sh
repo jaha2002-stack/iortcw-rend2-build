@@ -14,7 +14,7 @@ python3 integration/texture-material-fidelity/apply_fidelity.py source --manifes
 grep -Fq DARKWOLF_RC4_FORCE_SUN_CSM_REPRIME_V1 source/SP/code/rend2/tr_scene.c
 git -C source -c user.name=DarkWolf-CI -c user.email=ci@example.invalid add -A
 git -C source -c user.name=DarkWolf-CI -c user.email=ci@example.invalid commit -qm baseline
-echo 'f1c7cd39e81bd1ccab1a0ff358b8f0d348da193d22de5097ed4110c2f3e0a537  integration/cas-a2c-lut/feature.patch' | sha256sum -c -
+echo '6d143993ecd24537aa1b66e6649b43ba5281c3d5f21cee527192ef20c1336dec  integration/cas-a2c-lut/feature.patch' | sha256sum -c -
 git -C source apply --check "$GITHUB_WORKSPACE/integration/cas-a2c-lut/feature.patch"
 git -C source apply "$GITHUB_WORKSPACE/integration/cas-a2c-lut/feature.patch"
 git -C source add -A
