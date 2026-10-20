@@ -91,15 +91,51 @@ def route_for_map(retail,map_name,out):
     if not starts:
         starts=[e for e in world.entities if e.get("classname","").startswith("info_player") and pos(e)]
     if not starts:raise RuntimeError("No authored player start "+map_name)
-    spawn=None; start_ent=None
+    # Factory's authored spawn occasionally lies in a script-controlled
+    # brush/trigger volume. Use the nearest geometrically verified open eye
+    # in a *bounded neighborhood* of the original player start, never teleport
+    # through geometry or use unrelated map locations.
+    spawn=None; start_ent=None; spawn_offset=None
+    spawn_diagnostics=[]
     for ent in starts:
         base=pos(ent)
-        for dz in (58.,64.,48.,72.,80.,40.,88.):
-            eye=[base[0],base[1],base[2]+dz]
-            if grounded(world,eye) is not None:
-                spawn=eye;start_ent=ent;break
-        if spawn:break
-    if not spawn:raise RuntimeError(map_name+": no non-solid grounded player start")
+        tries=0; closest=None
+        offsets=[(0.,0.)]
+        if map_name=="factory":
+            for radius in (16.,32.,48.,72.,96.,128.,160.,192.,256.,320.):
+                for n in range(16):
+                    a=n*2*math.pi/16
+                    offsets.append((round(radius*math.cos(a),4),
+                                    round(radius*math.sin(a),4)))
+        for dx,dy in offsets:
+            for dz in (58.,64.,48.,72.,80.,40.,88.,96.,24.,112.,128.,-16.,0.):
+                eye=[base[0]+dx,base[1]+dy,base[2]+dz]
+                tries+=1
+                # Ground and solid checks rely on the actual authorized BSP.
+                if grounded(world,eye) is None:
+                    continue
+                score=dx*dx+dy*dy+((dz-58.)*0.2)**2
+                if closest is None or score<closest[0]:
+                    closest=(score,eye,dx,dy,dz)
+                break
+            if closest and closest[0]<25:
+                break
+        spawn_diagnostics.append({"origin":base,"tried":tries,
+            "nearest":None if closest is None else
+                {"eye":closest[1],"xy_offset":[closest[2],closest[3]],
+                 "z_offset":closest[4],"distance_score":closest[0]}})
+        if closest:
+            if spawn is None or closest[0]<spawn_offset["score"]:
+                spawn=closest[1];start_ent=ent
+                spawn_offset={"xy":[closest[2],closest[3]],
+                              "z":closest[4],"score":closest[0],
+                              "authored_origin":base}
+        if map_name!="factory" and spawn:
+            break
+    (out/f"{map_name}_START_DIAGNOSTICS.json").write_text(
+        json.dumps({"map":map_name,"authored_starts":spawn_diagnostics},indent=2)+"\n")
+    if not spawn:
+        raise RuntimeError(map_name+": no verified non-solid grounded camera within 320 units of authored player starts")
     try:yaw=float(start_ent.get("angle","0"))%360
     except ValueError:yaw=0.
     if "angles" in start_ent:
@@ -127,11 +163,11 @@ def route_for_map(retail,map_name,out):
     model_yaw=None
     for dev in (0,25,-25,45,-45,90,-90,135,180,225,270,315):
         d=(first_yaw+dev)%360
-        dest=point_at(first,d,148.)
+        dest=point_at(first,d,132.)
         if clear_line(world,first,dest):
             model_yaw=d;break
     if model_yaw is None:
-        raise RuntimeError(map_name+": no unobstructed 148-unit view for character inspection")
+        raise RuntimeError(map_name+": no unobstructed 132-unit view for character inspection")
     wall=None
     for origin in (second,first,spawn):
         wall_candidates=[]
@@ -172,7 +208,7 @@ def route_for_map(retail,map_name,out):
                                      for x in ("ai_","soldier","guard","zombie","enemy","monster"))
         and pos(e)]
     report={"map":map_name,"source":"original RTCW retail BSP",
-            "player_start":spawn,"spawn_angle":yaw,
+            "player_start":spawn,"authored_start_origin":spawn_offset["authored_origin"],"spawn_offset":spawn_offset,"spawn_angle":yaw,
             "forward_point":first,"corridor_point":second,
             "character_view_yaw":model_yaw,"wall":wall,
             "floor_eye":floor_camera,"native_ai_entity_count":len(ai),
