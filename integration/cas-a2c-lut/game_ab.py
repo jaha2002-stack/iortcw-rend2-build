@@ -125,7 +125,7 @@ def one_run(runtime,main,retail,mapname,mode,views,out):
       "set r_dwTextureFidelity 1","set r_dwMaterialFidelity 1",
       "set r_dwCas "+PROFILE[mode][0],"set r_dwCasStrength 0.35",
       "set r_dwA2C "+PROFILE[mode][1],
-      "set r_dwLut "+PROFILE[mode][2],"set r_dwLutPreset 1",
+      "set r_dwLut "+PROFILE[mode][2],"set r_dwLutMode 1","set r_dwLutStrength 0.35",
       "set r_ext_framebuffer_multisample 4",
       "set s_initsound 0","set r_swapInterval 0","set fixedtime 100"]
     conf=f"DW_FIDELITY_SETUP_{mode}.cfg"
