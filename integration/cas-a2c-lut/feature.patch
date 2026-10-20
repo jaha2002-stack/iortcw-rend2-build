@@ -1,0 +1,424 @@
+diff --git a/SP/Makefile b/SP/Makefile
+index d38fb78..cdfead4 100644
+--- a/SP/Makefile
++++ b/SP/Makefile
+@@ -1897,6 +1897,8 @@ Q3R2STRINGOBJ = \
+   $(B)/rend2/glsl/bokeh_vp.o \
+   $(B)/rend2/glsl/bloom_fp.o \
+   $(B)/rend2/glsl/bloom_vp.o \
++  $(B)/rend2/glsl/dwfinal_fp.o \
++  $(B)/rend2/glsl/dwfinal_vp.o \
+   $(B)/rend2/glsl/calclevels4x_fp.o \
+   $(B)/rend2/glsl/calclevels4x_vp.o \
+   $(B)/rend2/glsl/depthblur_fp.o \
+diff --git a/SP/code/rend2/glsl/dwfinal_fp.glsl b/SP/code/rend2/glsl/dwfinal_fp.glsl
+new file mode 100644
+index 0000000..54d4e44
+--- /dev/null
++++ b/SP/code/rend2/glsl/dwfinal_fp.glsl
+@@ -0,0 +1,51 @@
++// DARKWOLF_CAS_A2C_LUT_V01: optional adaptive sharpen and LUT in one draw.
++// Not a verbatim AMD FidelityFX CAS reference implementation.
++uniform sampler2D u_TextureMap;
++uniform sampler2D u_LevelsMap; // manually trilinearly sampled 16^3 LUT atlas
++uniform vec2 u_InvTexRes;
++uniform vec4 u_ViewInfo; // normalized viewport bounds, half-texel inset
++uniform vec4 u_Color;    // x = sharpen [0..0.75]; y = LUT mix [0..1]
++varying vec2 var_Tex1;
++
++vec3 DW_CAS(vec2 uv, vec3 center)
++{
++    vec2 lo = u_ViewInfo.xy;
++    vec2 hi = u_ViewInfo.zw;
++    vec3 n = texture2D(u_TextureMap, clamp(uv + vec2(0.0, -u_InvTexRes.y), lo, hi)).rgb;
++    vec3 s = texture2D(u_TextureMap, clamp(uv + vec2(0.0,  u_InvTexRes.y), lo, hi)).rgb;
++    vec3 w = texture2D(u_TextureMap, clamp(uv + vec2(-u_InvTexRes.x, 0.0), lo, hi)).rgb;
++    vec3 e = texture2D(u_TextureMap, clamp(uv + vec2( u_InvTexRes.x, 0.0), lo, hi)).rgb;
++    vec3 mn = min(center, min(min(n,s), min(w,e)));
++    vec3 mx = max(center, max(max(n,s), max(w,e)));
++    vec3 headroom = max(min(mn, 1.0 - mx), vec3(0.0));
++    vec3 attenuation = sqrt(clamp(headroom / max(mx, vec3(0.0001)), 0.0, 1.0));
++    vec3 weight = (-0.125 * clamp(u_Color.x, 0.0, 0.75)) * attenuation;
++    vec3 sharpened = (center + weight * (n + s + w + e)) / (1.0 + 4.0 * weight);
++    return clamp(sharpened, 0.0, 1.0);
++}
++
++vec3 DW_AtlasSlice(vec3 rgb, float sliceIndex)
++{
++    float x = (sliceIndex * 16.0 + rgb.r * 15.0 + 0.5) / 256.0;
++    float y = (rgb.g * 15.0 + 0.5) / 16.0;
++    return texture2D(u_LevelsMap, vec2(x, y)).rgb;
++}
++
++vec3 DW_Lut(vec3 rgb)
++{
++    vec3 v = clamp(rgb, 0.0, 1.0);
++    float z = v.b * 15.0;
++    float z0 = floor(z);
++    return mix(DW_AtlasSlice(v, z0), DW_AtlasSlice(v, min(z0 + 1.0, 15.0)), fract(z));
++}
++
++void main()
++{
++    vec4 scene = texture2D(u_TextureMap, var_Tex1);
++    vec3 rgb = clamp(scene.rgb, 0.0, 1.0);
++    if (u_Color.x > 0.0)
++        rgb = DW_CAS(var_Tex1, rgb);
++    if (u_Color.y > 0.0)
++        rgb = mix(rgb, DW_Lut(rgb), clamp(u_Color.y, 0.0, 1.0));
++    gl_FragColor = vec4(rgb, scene.a);
++}
+diff --git a/SP/code/rend2/glsl/dwfinal_vp.glsl b/SP/code/rend2/glsl/dwfinal_vp.glsl
+new file mode 100644
+index 0000000..aaa9116
+--- /dev/null
++++ b/SP/code/rend2/glsl/dwfinal_vp.glsl
+@@ -0,0 +1,10 @@
++// DARKWOLF_CAS_A2C_LUT_V01: full-screen final LDR polish, before HUD.
++attribute vec3 attr_Position;
++attribute vec4 attr_TexCoord0;
++uniform mat4 u_ModelViewProjectionMatrix;
++varying vec2 var_Tex1;
++void main()
++{
++    gl_Position = u_ModelViewProjectionMatrix * vec4(attr_Position, 1.0);
++    var_Tex1 = attr_TexCoord0.st;
++}
+diff --git a/SP/code/rend2/glsl/generic_fp.glsl b/SP/code/rend2/glsl/generic_fp.glsl
+index 50a1fbf..487bc9e 100644
+--- a/SP/code/rend2/glsl/generic_fp.glsl
++++ b/SP/code/rend2/glsl/generic_fp.glsl
+@@ -36,6 +36,11 @@ void main()
+ 		if (alpha < 0.5)
+ 			discard;
+ 	}
++	else if (u_AlphaTest == 4) // DARKWOLF_CAS_A2C_LUT_V01: sample coverage from shader alpha
++	{
++		if (alpha <= 0.0)
++			discard;
++	}
+ 
+ 	gl_FragColor.rgb = color.rgb * var_Color.rgb;
+ 	gl_FragColor.a = alpha;
+diff --git a/SP/code/rend2/glsl/lightall_fp.glsl b/SP/code/rend2/glsl/lightall_fp.glsl
+index 1c14381..48cc5bf 100644
+--- a/SP/code/rend2/glsl/lightall_fp.glsl
++++ b/SP/code/rend2/glsl/lightall_fp.glsl
+@@ -475,6 +475,11 @@ void main()
+ 		if (alpha < 0.5)
+ 			discard;
+ 	}
++	else if (u_AlphaTest == 4) // DARKWOLF_CAS_A2C_LUT_V01: sample coverage from shader alpha
++	{
++		if (alpha <= 0.0)
++			discard;
++	}
+ 
+ // REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION
+ // Modes 1-3 exit before lighting/specular sampling. u_EnableTextures.z is an integer diagnostic code only in these modes.
+diff --git a/SP/code/rend2/tr_backend.c b/SP/code/rend2/tr_backend.c
+index 762213b..6d58293 100644
+--- a/SP/code/rend2/tr_backend.c
++++ b/SP/code/rend2/tr_backend.c
+@@ -9181,6 +9181,45 @@ RB_PostProcess
+ 
+ =============
+ */
++
++// DARKWOLF_CAS_A2C_LUT_V01: after tone map, Bloom, sun rays and bokeh,
++// before resolve-to-screen, never touches HDR donors/shadows/SSGI or UI.
++static void RB_DWFinalPolish(FBO_t *srcFbo, ivec4_t srcBox)
++{
++	vec4_t parms, bounds;
++	int lutIndex;
++	float cas = (r_dwCas && r_dwCas->integer) ? Com_Clamp(0.0f, 0.75f, r_dwCasStrength->value) : 0.0f;
++	float lut = (r_dwLut && r_dwLut->integer) ? Com_Clamp(0.0f, 1.0f, r_dwLutStrength->value) : 0.0f;
++	if (cas <= 0.0f && lut <= 0.0f)
++		return; // exact old framebuffer path, no draw/bind/copy when disabled
++	if (!srcFbo || !srcFbo->colorImage[0] || !tr.screenScratchFbo ||
++		!tr.screenScratchFbo->colorImage[0] || srcFbo == tr.screenScratchFbo ||
++		!tr.dwFinalPolishShader.program || srcBox[2] <= 0 || srcBox[3] <= 0)
++		return;
++	// This shader is LDR-only: do not alter HDR energy when tone mapping is disabled.
++	if (!r_hdr || !r_hdr->integer ||
++		!(r_toneMap->integer || r_forceToneMap->integer))
++		return;
++	lutIndex = r_dwLutMode ? Com_Clamp(0, 2, r_dwLutMode->integer) : 0;
++	if (!tr.dwColorLutImages[lutIndex])
++		lut = 0.0f;
++	if (lut <= 0.0f && cas <= 0.0f)
++		return;
++	VectorSet4(parms, cas, lut, 0.0f, 0.0f);
++	VectorSet4(bounds,
++		(srcBox[0] + 0.5f) / (float)srcFbo->width,
++		(srcBox[1] + 0.5f) / (float)srcFbo->height,
++		(srcBox[0] + srcBox[2] - 0.5f) / (float)srcFbo->width,
++		(srcBox[1] + srcBox[3] - 0.5f) / (float)srcFbo->height);
++	GLSL_BindProgram(&tr.dwFinalPolishShader);
++	GLSL_SetUniformVec4(&tr.dwFinalPolishShader, UNIFORM_VIEWINFO, bounds);
++	// When CAS runs alone, bind a valid harmless sampler rather than relying on stale GL bindings.
++	GL_BindToTMU(lut > 0.0f ? tr.dwColorLutImages[lutIndex] : tr.whiteImage, TB_LEVELSMAP);
++	FBO_Blit(srcFbo, srcBox, NULL, tr.screenScratchFbo, srcBox,
++		&tr.dwFinalPolishShader, parms, 0);
++	FBO_FastBlit(tr.screenScratchFbo, srcBox, srcFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++}
++
+ const void *RB_PostProcess(const void *data)
+ {
+ 	const postProcessCommand_t *cmd = data;
+@@ -9441,6 +9480,7 @@ const void *RB_PostProcess(const void *data)
+ 	else
+ 		RB_GaussianBlur(srcFbo, srcFbo, backEnd.refdef.blurFactor);
+ 	RB_USLRDRootCauseSampleStage(srcFbo, srcBox, s_uslrdRcAfterBokeh);
++	RB_DWFinalPolish(srcFbo, srcBox); // DARKWOLF_CAS_A2C_LUT_V01
+ 
+ 	RB_USLRDRootCauseEndPixelSample(srcFbo, srcBox, autoExposure);
+ 
+diff --git a/SP/code/rend2/tr_glsl.c b/SP/code/rend2/tr_glsl.c
+index e142927..83ab7a4 100644
+--- a/SP/code/rend2/tr_glsl.c
++++ b/SP/code/rend2/tr_glsl.c
+@@ -28,6 +28,8 @@ extern const char *fallbackShader_bokeh_vp;
+ extern const char *fallbackShader_bokeh_fp;
+ extern const char *fallbackShader_bloom_vp; // REND2_BLOOM_V1_HDR_EXTRACT_LDR_COMPOSITE
+ extern const char *fallbackShader_bloom_fp;
++extern const char *fallbackShader_dwfinal_vp; // DARKWOLF_CAS_A2C_LUT_V01
++extern const char *fallbackShader_dwfinal_fp;
+ extern const char *fallbackShader_calclevels4x_vp;
+ extern const char *fallbackShader_calclevels4x_fp;
+ extern const char *fallbackShader_depthblur_vp;
+@@ -1425,6 +1427,29 @@ void GLSL_InitGPUShaders(void)
+ 
+ 	numEtcShaders++;
+ 
++	// DARKWOLF_CAS_A2C_LUT_V01: do not compile optional shader when both features are OFF.
++	// Both enable CVars are latched, so program lifetime cannot race with a live toggle.
++	if ((r_dwCas && r_dwCas->integer) || (r_dwLut && r_dwLut->integer))
++	{
++		attribs = ATTR_POSITION | ATTR_TEXCOORD;
++		extradefines[0] = '\0';
++		if (!GLSL_InitGPUShader(&tr.dwFinalPolishShader, "dwfinal", attribs, qtrue, extradefines,
++			qtrue, fallbackShader_dwfinal_vp, fallbackShader_dwfinal_fp))
++		{
++			// This feature is not required to play; failure must never break RC4 startup.
++			ri.Printf(PRINT_WARNING, "DW final-polish shader unavailable; CAS/LUT disabled for this session.\n");
++			Com_Memset(&tr.dwFinalPolishShader, 0, sizeof(tr.dwFinalPolishShader));
++		}
++		else
++		{
++			GLSL_InitUniforms(&tr.dwFinalPolishShader);
++			GLSL_SetUniformInt(&tr.dwFinalPolishShader, UNIFORM_TEXTUREMAP, TB_COLORMAP);
++			GLSL_SetUniformInt(&tr.dwFinalPolishShader, UNIFORM_LEVELSMAP, TB_LEVELSMAP);
++			GLSL_FinishGPUShader(&tr.dwFinalPolishShader);
++			numEtcShaders++;
++		}
++	}
++
+ 
+ 	for (i = 0; i < 2; i++)
+ 	{
+@@ -1657,6 +1682,7 @@ void GLSL_ShutdownGPUShaders(void)
+ 	GLSL_DeleteGPUShader(&tr.bokehShader);
+ 	GLSL_DeleteGPUShader(&tr.bloomShader); // REND2_BLOOM_V1_HDR_EXTRACT_LDR_COMPOSITE
+ 	GLSL_DeleteGPUShader(&tr.tonemapShader);
++	GLSL_DeleteGPUShader(&tr.dwFinalPolishShader); // DARKWOLF_CAS_A2C_LUT_V01
+ 
+ 	for ( i = 0; i < 2; i++)
+ 		GLSL_DeleteGPUShader(&tr.calclevels4xShader[i]);
+diff --git a/SP/code/rend2/tr_image.c b/SP/code/rend2/tr_image.c
+index 6b71cc4..538fbd4 100644
+--- a/SP/code/rend2/tr_image.c
++++ b/SP/code/rend2/tr_image.c
+@@ -2922,6 +2922,46 @@ static void R_CreateDefaultImage( void ) {
+ R_CreateBuiltinImages
+ ==================
+ */
++
++// DARKWOLF_CAS_A2C_LUT_V01: independent 16^3 look-up-table atlases (256x16, 4 channels).
++// LDR display-space grading. All profiles are explicit, not automatically selected by maps.
++static void DW_CreateColorLuts(void)
++{
++	byte rgba[256 * 16 * 4];
++	int mode, r, g, b;
++	if (!r_dwLut || !r_dwLut->integer)
++		return; // no extra images or VRAM in the disabled stock profile
++	for (mode = 0; mode < 3; ++mode)
++	{
++		for (b = 0; b < 16; ++b)
++		for (g = 0; g < 16; ++g)
++		for (r = 0; r < 16; ++r)
++		{
++			float c[3] = { r / 15.0f, g / 15.0f, b / 15.0f };
++			float l = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
++			int index = ((g * 256) + b * 16 + r) * 4;
++			if (mode == 1) // subtle warm highlights, cool shadows
++			{
++				c[0] *= 1.0f + 0.070f * l;
++				c[1] *= 1.0f + 0.008f * l;
++				c[2] = c[2] * (1.0f - 0.046f * l) + 0.012f * (1.0f - l);
++			}
++			if (mode == 2) // cool industrial grade; neutral highlights
++			{
++				c[0] *= 1.0f - 0.065f * (1.0f - l);
++				c[1] *= 1.0f + 0.005f * (1.0f - l);
++				c[2] = c[2] * (1.0f + 0.070f * (1.0f - l));
++			}
++			for (int k = 0; k < 3; ++k)
++				rgba[index + k] = (byte)(Com_Clamp(0.0f, 1.0f, c[k]) * 255.0f + 0.5f);
++			rgba[index + 3] = 255;
++		}
++		tr.dwColorLutImages[mode] = R_CreateImage(
++			va("*dwColorLut%d", mode), rgba, 256, 16, IMGTYPE_COLORALPHA,
++			IMGFLAG_NO_COMPRESSION | IMGFLAG_NOLIGHTSCALE | IMGFLAG_CLAMPTOEDGE, GL_RGBA8);
++	}
++}
++
+ void R_CreateBuiltinImages( void ) {
+ 	int		x,y;
+ 	byte	data[DEFAULT_SIZE][DEFAULT_SIZE][4];
+@@ -2931,6 +2971,7 @@ void R_CreateBuiltinImages( void ) {
+ 	// we use a solid white image instead of disabling texturing
+ 	Com_Memset( data, 255, sizeof( data ) );
+ 	tr.whiteImage = R_CreateImage("*white", (byte *)data, 8, 8, IMGTYPE_COLORALPHA, IMGFLAG_NONE, 0);
++	DW_CreateColorLuts(); // DARKWOLF_CAS_A2C_LUT_V01; allocated only with r_dwLut 1 on vid_restart
+ 
+ 	if (r_dlightMode->integer >= 2)
+ 	{
+diff --git a/SP/code/rend2/tr_init.c b/SP/code/rend2/tr_init.c
+index d1a1527..1dbc587 100644
+--- a/SP/code/rend2/tr_init.c
++++ b/SP/code/rend2/tr_init.c
+@@ -373,6 +373,13 @@ cvar_t *r_dwTextureFidelity;
+ cvar_t *r_dwAdaptiveUpsample;
+ cvar_t *r_dwCutoutMip;
+ cvar_t *r_dwMaterialFidelity;
++// DARKWOLF_CAS_A2C_LUT_V01: independent safe-off feature toggles.
++cvar_t *r_dwCas;
++cvar_t *r_dwCasStrength;
++cvar_t *r_dwA2C;
++cvar_t *r_dwLut;
++cvar_t *r_dwLutStrength;
++cvar_t *r_dwLutMode;
+ cvar_t  *r_forceSun;
+ cvar_t  *r_forceSunSpeed;
+ cvar_t  *r_forceSunTime;
+@@ -2010,6 +2017,19 @@ void R_Register( void ) {
+ 	ri.Cvar_CheckRange(r_dwAdaptiveUpsample, 0, 1, qtrue);
+ 	ri.Cvar_CheckRange(r_dwCutoutMip, 0, 1, qtrue);
+ 	ri.Cvar_CheckRange(r_dwMaterialFidelity, 0, 1, qtrue);
++	// DARKWOLF_CAS_A2C_LUT_V01: no forced on/reset, no effects changed without opt-in.
++	r_dwCas = ri.Cvar_Get("r_dwCas", "0", CVAR_ARCHIVE | CVAR_LATCH);
++	r_dwCasStrength = ri.Cvar_Get("r_dwCasStrength", "0.35", CVAR_ARCHIVE);
++	r_dwA2C = ri.Cvar_Get("r_dwA2C", "0", CVAR_ARCHIVE);
++	r_dwLut = ri.Cvar_Get("r_dwLut", "0", CVAR_ARCHIVE | CVAR_LATCH);
++	r_dwLutStrength = ri.Cvar_Get("r_dwLutStrength", "0.35", CVAR_ARCHIVE);
++	r_dwLutMode = ri.Cvar_Get("r_dwLutMode", "1", CVAR_ARCHIVE);
++	ri.Cvar_CheckRange(r_dwCas, 0, 1, qtrue);
++	ri.Cvar_CheckRange(r_dwCasStrength, 0.0f, 0.75f, qfalse);
++	ri.Cvar_CheckRange(r_dwA2C, 0, 1, qtrue);
++	ri.Cvar_CheckRange(r_dwLut, 0, 1, qtrue);
++	ri.Cvar_CheckRange(r_dwLutStrength, 0.0f, 1.0f, qfalse);
++	ri.Cvar_CheckRange(r_dwLutMode, 0, 2, qtrue);
+ 
+ 	r_forceSun = ri.Cvar_Get( "r_forceSun", "0", CVAR_ARCHIVE );
+ 	// REND2_SUN_5A_CONTROLLED_DYNAMIC_SUN_CLOCK: live controls for the legacy r_forceSun 2 daylight arc.
+diff --git a/SP/code/rend2/tr_local.h b/SP/code/rend2/tr_local.h
+index a863eac..8e3039f 100644
+--- a/SP/code/rend2/tr_local.h
++++ b/SP/code/rend2/tr_local.h
+@@ -1923,6 +1923,7 @@ typedef struct {
+ 	shaderProgram_t bokehShader;
+ 	shaderProgram_t bloomShader; // REND2_BLOOM_V1_HDR_EXTRACT_LDR_COMPOSITE
+ 	shaderProgram_t tonemapShader;
++	shaderProgram_t dwFinalPolishShader; // DARKWOLF_CAS_A2C_LUT_V01
+ 	shaderProgram_t calclevels4xShader[2];
+ 	shaderProgram_t shadowmaskShader;
+ 	shaderProgram_t volumetricSunShader; // DARKWOLF_SUN_VOLUMETRIC_V0_3
+@@ -1931,6 +1932,7 @@ typedef struct {
+ 	shaderProgram_t ssaoShader;
+ 	// REND2_GI_2_V1_SCREEN_SPACE_LOCAL_INDIRECT
+ 	shaderProgram_t ssgiShader;
++	image_t *dwColorLutImages[3]; // 16x16x16 RGB 2D atlases, created only when LUT enabled
+ 	shaderProgram_t depthBlurShader[4];
+ 	shaderProgram_t testcubeShader;
+ 
+@@ -2150,6 +2152,13 @@ extern cvar_t *r_dwTextureFidelity;
+ extern cvar_t *r_dwAdaptiveUpsample;
+ extern cvar_t *r_dwCutoutMip;
+ extern cvar_t *r_dwMaterialFidelity;
++// DARKWOLF_CAS_A2C_LUT_V01
++extern cvar_t *r_dwCas;
++extern cvar_t *r_dwCasStrength;
++extern cvar_t *r_dwA2C;
++extern cvar_t *r_dwLut;
++extern cvar_t *r_dwLutStrength;
++extern cvar_t *r_dwLutMode;
+ 
+ extern cvar_t  *r_drawBuffer;
+ extern cvar_t  *r_glIgnoreWicked3D;
+diff --git a/SP/code/rend2/tr_shade.c b/SP/code/rend2/tr_shade.c
+index 973344a..8f3c745 100644
+--- a/SP/code/rend2/tr_shade.c
++++ b/SP/code/rend2/tr_shade.c
+@@ -1886,6 +1886,10 @@ static void R_FST1ApplyGenericStage(shaderStage_t *pStage, shaderProgram_t *sp)
+ 	GLSL_SetUniformVec2(sp, UNIFORM_INVTEXRES, invTexRes);
+ }
+ 
++#ifndef GL_SAMPLE_ALPHA_TO_COVERAGE
++#define GL_SAMPLE_ALPHA_TO_COVERAGE 0x809E
++#endif
++
+ static void RB_IterateStagesGeneric( shaderCommands_t *input )
+ {
+ 	int stage;
+@@ -1907,6 +1911,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
+ 		shaderProgram_t *sp;
+ 		vec4_t texMatrix[8];
+ 		qboolean fst13ForceGeneric = qfalse;
++		qboolean dwA2C = qfalse; // DARKWOLF_CAS_A2C_LUT_V01
+ 
+ 		if ( !pStage )
+ 		{
+@@ -1926,6 +1931,18 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
+ 		glFog = NULL;
+ 		// REND2_FST_1_V1_3_PRODUCTION_CANDIDATE
+ 		fst13ForceGeneric = R_FST13UseGenericSoftPath(pStage);
++		// A2C only for alphaFunc GE128 of non-blended scene geometry in the
++		// main multisampled FBO. No shadow, depth-only, volumetric, smoke,
++		// material probes, HUD, portals/cubemaps, or SSGI mask. GLSL 4 feeds
++		// fractional alpha to the fixed-function per-sample coverage generator.
++		dwA2C = (r_dwA2C && r_dwA2C->integer && tr.msaaResolveFbo &&
++			glState.currentFBO == tr.renderFbo && !renderToCubemap &&
++			!backEnd.depthFill && !backEnd.ssgiEntityDepthFill &&
++			!backEnd.projection2D && !fst13ForceGeneric &&
++			r_materialDebug->integer == 0 &&
++			(pStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GE_80 &&
++			!(pStage->stateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS | GLS_DEPTHTEST_DISABLE)) &&
++			(!backEnd.currentEntity || !backEnd.currentEntity->e.fadeStartTime)) ? qtrue : qfalse;
+ 
+ 		if (backEnd.depthFill)
+ 		{
+@@ -2096,7 +2113,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
+ 		}
+ 		else if ((pStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GE_80)
+ 		{
+-			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 3);
++			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, dwA2C ? 4 : 3);
+ 		}
+ 		else
+ 		{
+@@ -2481,9 +2498,13 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
+ 		}
+ 
+ 		//
+-		// draw
++		// draw. Restore fixed-function A2C before ANY subsequent stage/draw.
+ 		//
++		if (dwA2C)
++			qglEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+ 		R_DrawElements(input->numIndexes, input->firstIndex);
++		if (dwA2C)
++			qglDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+ 
+ 		// allow skipping out to show just lightmaps during development
+ 		if ( r_lightmap->integer && ( pStage->bundle[0].isLightmap || pStage->bundle[1].isLightmap ) )
