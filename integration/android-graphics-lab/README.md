@@ -15,3 +15,9 @@ An x86_64 CI-only build now compiles the same V03 source and Lab Java overlay, b
 ## 2026-10-21: corrected graphical acceptance
 
 Run 39656996857 started the SP map and compiled 282 GLSL shaders on SwiftShader but its saved screenshot was covered by Android's 'Viewing full screen' prompt. That screenshot is NOT visual proof. The new visual gate taps 'Got it', captures up to four frames, and requires image variation and non-neutral textured pixels (calibrated to reject the actual old black/prompt screenshots). A PNG without a scene now **fails** the gate. This pixel heuristic is a smoke test, not complete image parity; inspect the frame manually and test on physical GPU before production. The x86_64 CI build used to delete the previously built phone APK; a separate ARM64 preserve directory is now uploaded to the artifact.
+
+## Visual gate correction after failed Run 39659201876
+
+Root cause: Android's `wm size` returned portrait 320x640 while the active surface, accessibility tree and screenshot were landscape 640x320. The old script tapped outside the fullscreen dialog. The real Android accessibility XML placed the `Got it` button at [475,166][546,214], center (510,190). The screenshot also exposed the RTCW mission briefing underneath; `PLAYERSTART=PASS` is therefore insufficient as scene proof.
+
+The revised CI applies the immersive confirmation setting before game launch; uses XML node bounds (never guessed screen dimensions) to dismiss any remaining dialog; forces mission briefing closed only when the x86 CI-specific cvar is set; emits a new native marker after 90 active, unpaused/no-menu frames; and requires an independent screenshot quality check with six diagnostics. The standalone driver includes a zero-device preflight self-test. Retail-asset SHA validation, ARM64 APK preservation, and always-upload failure artifacts remain mandatory. Smoke screenshot checks are not a substitute for physical Adreno GPU visual parity testing.

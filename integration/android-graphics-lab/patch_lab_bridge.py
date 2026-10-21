@@ -7,6 +7,29 @@ path=root/"SP/code/client/cl_ui.c"
 s=path.read_text()
 assert "#include <jni.h>" in s
 s=s.replace("#include <jni.h>", "#include <jni.h>\n#include <pthread.h>", 1)
+ci_scene=r'''
+/* CI-only: force the RTCW briefing closed, then prove the engine is actively
+ * rendering with no menu catcher. Never enabled on ARM64 phone by default. */
+static int dwLabCiFrames;
+static int dwLabCiAnnounced;
+static void CL_AndroidCIGameViewGate(void)
+{
+    if (!Cvar_VariableIntegerValue("dw_android_ci_playerstart"))
+        return;
+    if (cls.state != CA_ACTIVE)
+        return;
+    if (Key_GetCatcher() & KEYCATCH_UI) {
+        if (uivm)
+            VM_Call(uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE);
+        Key_SetCatcher(Key_GetCatcher() & ~KEYCATCH_UI);
+        Cvar_Set("cl_paused", "0");
+        dwLabCiFrames = 0;
+    } else if (!dwLabCiAnnounced && ++dwLabCiFrames >= 90) {
+        dwLabCiAnnounced = 1;
+        Com_Printf("GRAPHICS_LAB_CI_GAMEVIEW=PASS\n");
+    }
+}
+'''
 needle="void CL_AndroidConsumeGameActions(void)"
 assert needle in s, "Android portability patch not applied"
 bridge=r'''
@@ -130,10 +153,10 @@ Java_org_darkwolf_rend2_DarkWolfActivity_nativeLabCvars(
     return result;
 }
 '''
-s=s.replace(needle,catalog+"\n"+bridge+"\n"+needle,1)
+s=s.replace(needle,catalog+"\n"+bridge+"\n"+ci_scene+"\n"+needle,1)
 # Integrate at action consumption, exactly once per frame.
 needle2="    androidGameAppliedMask = desired;"
 assert needle2 in s
-s=s.replace(needle2,needle2+"\n    CL_AndroidConsumeLabCommand();\n    CL_AndroidPublishLabCvars();",1)
+s=s.replace(needle2,needle2+"\n    CL_AndroidConsumeLabCommand();\n    CL_AndroidPublishLabCvars();\n    CL_AndroidCIGameViewGate();",1)
 path.write_text(s)
 print("GRAPHICS_LAB_JNI_BRIDGE=APPLIED")
