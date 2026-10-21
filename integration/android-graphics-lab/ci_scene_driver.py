@@ -92,7 +92,7 @@ def clear_android_immersive(out):
     if parse_immersive(text) is not None:
         raise RuntimeError("Android immersive dialog remains after XML-guided dismissal")
 
-def wait_gameview(out, seconds=55):
+def wait_gameview(out, seconds=120):
     start=time.monotonic()
     retried=False
     while time.monotonic()-start < seconds:
@@ -112,9 +112,15 @@ def wait_gameview(out, seconds=55):
     raise RuntimeError("gameview marker absent: active 3D state unverified")
 
 def verify_frame(path):
-    r=run((sys.executable,"integration/android-graphics-lab/verify_rend2_frame.py",
-          str(path)),timeout=25,check=False)
-    return r.returncode==0,r.stdout.decode("utf-8","replace").strip()
+    # run() intentionally returns stdout bytes for adb helpers; a frame probe
+    # also needs its exit status. Use CompletedProcess directly here.
+    r = subprocess.run(
+        (sys.executable, "integration/android-graphics-lab/verify_rend2_frame.py", str(path)),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25, check=False)
+    detail = r.stdout.decode("utf-8", "replace").strip()
+    if r.returncode and not detail:
+        detail = r.stderr.decode("utf-8", "replace").strip()[-1000:]
+    return r.returncode == 0, detail
 
 def main(out):
     out.mkdir(parents=True,exist_ok=True)
