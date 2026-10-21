@@ -289,9 +289,11 @@ public final class DarkWolfActivity extends SDLActivity {
                 "+set", "vm_game", "1",
                 "+set", "vm_ui", "1",
                 "+set", "dw_android_ci_playerstart", "1",
-                "+set", "dw_android_ultralow", "1",
-                "+set", "dw_android_renderScale", "50",
+                "+set", "dw_android_ultralow", "0",
+                "+set", "dw_android_renderScale", "100",
                 "+set", "com_introplayed", "1",
+                "+set", "r_dlightMode", "2",
+                "+set", "r_forceSun", "1",
                 "+set", "r_fullscreen", "1",
                 "+set", "r_mode", "-2",
                 "+set", "r_centerWindow", "0",
@@ -696,9 +698,9 @@ cp "$QVMS/bin/cgame.sp.qvm" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/
 cp "$QVMS/bin/qagame.sp.qvm" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/vm/"
 
 cat > "$PROJECT/app/src/main/assets/darkwolf-runtime/PROVENANCE.txt" <<EOF
-BASE_RUN_ID=37266797451
-BASE_HEAD_SHA=e410db87b5704fb1518740f1cfc760e9ea67d34f
-ANDROID_BRANCH=rend2-android-testlab-v0.1
+BASE_RUN_ID=39556894566
+BASE_HEAD_SHA=6db34503c1d6353076dc7db137ea204d89cc5953
+ANDROID_BRANCH=rend2-android-graphics-lab-v01-20261021
 ANDROID_ABI=x86_64
 ANDROID_MIN_API=29
 RENDERER=Rend2
@@ -710,6 +712,7 @@ A6_QVM_CGAME_SHA256=$(sha256sum "$QVMS/bin/cgame.sp.qvm" | awk '{print $1}')
 A6_QVM_QAGAME_SHA256=$(sha256sum "$QVMS/bin/qagame.sp.qvm" | awk '{print $1}')
 EOF
 
+python3 "$ROOT/integration/android-graphics-lab/inject_java.py" "$PROJECT"
 (
   cd "$PROJECT"
   ./gradlew --no-daemon --stacktrace :app:assembleDebug

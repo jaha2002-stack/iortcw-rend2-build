@@ -101,8 +101,7 @@ new=r'''
         final java.util.ArrayList<String[]> records = new java.util.ArrayList<>();
         for (String line : raw) {
             String[] parts = line.split("\t",-1);
-            if (parts.length == 5 && (parts[0].startsWith("r_") ||
-                    parts[0].startsWith("cg_") || parts[0].startsWith("dw_")))
+            if (parts.length == 5)
                 records.add(parts);
         }
         android.widget.EditText search = new android.widget.EditText(this);
