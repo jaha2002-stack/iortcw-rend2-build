@@ -1,0 +1,1219 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import sys
+
+MARKER = "DARKWOLF_ANDROID_REND2_V01"
+
+def replace_once(text: str, old: str, new: str, label: str) -> str:
+    if new in text:
+        return text
+    if old not in text:
+        raise SystemExit(f"{label}: anchor not found")
+    return text.replace(old, new, 1)
+
+def patch_qgl(path: Path) -> None:
+    s = path.read_text()
+    old = '''#ifdef USE_LOCAL_HEADERS
+#\tinclude "SDL_opengl.h"
+#else
+#\tinclude <SDL_opengl.h>
+#endif
+'''
+    new = f'''/* {MARKER}: Android Rend2 uses GLES3 headers, never desktop GL headers. */
+#if defined(DARKWOLF_ANDROID_GLES)
+# include <GLES3/gl3.h>
+# include <GLES3/gl3ext.h>
+/* Keep the shared desktop/GLES qgl ABI source-compatible on Android. */
+#ifndef APIENTRY
+# define APIENTRY GL_APIENTRY
+#endif
+#ifndef APIENTRYP
+# define APIENTRYP GL_APIENTRYP
+#endif
+typedef double GLdouble;
+typedef double GLclampd;
+
+/* Desktop ARB/EXT tokens used by Rend2 source, mapped to GLES3 equivalents. */
+#ifndef GL_COLOR_ATTACHMENT0_EXT
+# define GL_COLOR_ATTACHMENT0_EXT GL_COLOR_ATTACHMENT0
+#endif
+#ifndef GL_TEXTURE_CUBE_MAP_POSITIVE_X_ARB
+# define GL_TEXTURE_CUBE_MAP_POSITIVE_X_ARB GL_TEXTURE_CUBE_MAP_POSITIVE_X
+#endif
+#ifndef GL_DEPTH_COMPONENT16_ARB
+# define GL_DEPTH_COMPONENT16_ARB GL_DEPTH_COMPONENT16
+#endif
+#ifndef GL_DEPTH_COMPONENT24_ARB
+# define GL_DEPTH_COMPONENT24_ARB GL_DEPTH_COMPONENT24
+#endif
+#ifndef GL_DEPTH_COMPONENT32_ARB
+# define GL_DEPTH_COMPONENT32_ARB 0x81A7
+#endif
+#ifndef GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER
+# define GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER 0x8CDB
+#endif
+#ifndef GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER
+# define GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER 0x8CDC
+#endif
+#ifndef GL_STENCIL_INDEX
+# define GL_STENCIL_INDEX 0x1901
+#endif
+#ifndef GL_STENCIL_INDEX1
+# define GL_STENCIL_INDEX1 0x8D46
+#endif
+#ifndef GL_STENCIL_INDEX4
+# define GL_STENCIL_INDEX4 0x8D47
+#endif
+#ifndef GL_STENCIL_INDEX16
+# define GL_STENCIL_INDEX16 0x8D49
+#endif
+#ifndef GL_LINE
+# define GL_LINE 0x1B01
+#endif
+#ifndef GL_FILL
+# define GL_FILL 0x1B02
+#endif
+#ifndef GL_SAMPLES_PASSED
+# define GL_SAMPLES_PASSED GL_ANY_SAMPLES_PASSED
+#endif
+/* Legacy enums kept as source metadata; actual GLES-safe texture formats
+ * are translated separately before texture allocation/upload. */
+#ifndef GL_EYE_PLANE
+# define GL_EYE_PLANE 0x2502
+#endif
+#ifndef GL_BACK_LEFT
+# define GL_BACK_LEFT 0x0402
+#endif
+#ifndef GL_BACK_RIGHT
+# define GL_BACK_RIGHT 0x0403
+#endif
+#ifndef GL_STACK_OVERFLOW
+# define GL_STACK_OVERFLOW 0x0503
+#endif
+#ifndef GL_STACK_UNDERFLOW
+# define GL_STACK_UNDERFLOW 0x0504
+#endif
+#ifndef GL_EXP
+# define GL_EXP 0x0800
+#endif
+#ifndef GL_DEPTH_TEXTURE_MODE
+/* Legacy desktop token, referenced only by the renderer's < GL3 fallback. */
+# define GL_DEPTH_TEXTURE_MODE 0x884B
+#endif
+#ifndef GL_COMPARE_R_TO_TEXTURE
+/* GLES3 renamed the desktop comparison mode token. */
+# define GL_COMPARE_R_TO_TEXTURE GL_COMPARE_REF_TO_TEXTURE
+#endif
+#ifndef GL_RGBA16
+# define GL_RGBA16 0x805B
+#endif
+#ifndef GL_RGB5
+# define GL_RGB5 0x8050
+#endif
+#ifndef GL_LUMINANCE8
+# define GL_LUMINANCE8 0x8040
+#endif
+#ifndef GL_LUMINANCE8_ALPHA8
+# define GL_LUMINANCE8_ALPHA8 0x8045
+#endif
+#ifndef GL_DEPTH_COMPONENT32
+# define GL_DEPTH_COMPONENT32 0x81A7
+#endif
+#ifndef GL_SRGB_EXT
+# define GL_SRGB_EXT 0x8C40
+#endif
+#ifndef GL_SRGB8_EXT
+# define GL_SRGB8_EXT GL_SRGB8
+#endif
+#ifndef GL_SRGB_ALPHA_EXT
+# define GL_SRGB_ALPHA_EXT 0x8C42
+#endif
+#ifndef GL_SRGB8_ALPHA8_EXT
+# define GL_SRGB8_ALPHA8_EXT GL_SRGB8_ALPHA8
+#endif
+#ifndef GL_SLUMINANCE_EXT
+# define GL_SLUMINANCE_EXT 0x8C46
+#endif
+#ifndef GL_SLUMINANCE8_EXT
+# define GL_SLUMINANCE8_EXT 0x8C47
+#endif
+#ifndef GL_SLUMINANCE_ALPHA_EXT
+# define GL_SLUMINANCE_ALPHA_EXT 0x8C44
+#endif
+#ifndef GL_SLUMINANCE8_ALPHA8_EXT
+# define GL_SLUMINANCE8_ALPHA8_EXT 0x8C45
+#endif
+#ifndef GL_COMPRESSED_SRGB_S3TC_DXT1_EXT
+# define GL_COMPRESSED_SRGB_S3TC_DXT1_EXT 0x8C4C
+#endif
+#ifndef GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT
+# define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT 0x8C4D
+#endif
+#ifndef GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT
+# define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT 0x8C4E
+#endif
+#ifndef GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
+# define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT 0x8C4F
+#endif
+#else
+#ifdef USE_LOCAL_HEADERS
+# include "SDL_opengl.h"
+#else
+# include <SDL_opengl.h>
+#endif
+#endif
+'''
+    s = replace_once(s, old, new, "qgl include")
+    path.write_text(s)
+
+def patch_glimp(path: Path) -> None:
+    s = path.read_text()
+    old = '''#ifdef USE_OPENGLES
+\t\tSDL_GL_SetAttribute( SDL_GL_CONTEXT_MAJOR_VERSION, 1 );
+#endif
+'''
+    new = f'''#ifdef USE_OPENGLES
+# ifdef DARKWOLF_ANDROID_GLES
+\t\t/* {MARKER}: Rend2 needs programmable GLES3, not the legacy ES1 context. */
+\t\tSDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES );
+\t\tSDL_GL_SetAttribute( SDL_GL_CONTEXT_MAJOR_VERSION, 3 );
+\t\tSDL_GL_SetAttribute( SDL_GL_CONTEXT_MINOR_VERSION, 0 );
+# else
+\t\tSDL_GL_SetAttribute( SDL_GL_CONTEXT_MAJOR_VERSION, 1 );
+# endif
+#endif
+'''
+    s = replace_once(s, old, new, "glimp first ES context")
+    old2 = '''#ifdef USE_OPENGLES
+\t\tSDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+\t\tSDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 1);
+\t\tSDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+#endif
+
+\t\tif (!fixedFunction)
+'''
+    new2 = f'''#ifdef USE_OPENGLES
+\t\tSDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+# ifdef DARKWOLF_ANDROID_GLES
+\t\tSDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+\t\tSDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+# else
+\t\tSDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 1);
+\t\tSDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+# endif
+#endif
+
+\t\tif (!fixedFunction)
+'''
+    s = replace_once(s, old2, new2, "glimp second ES context")
+
+    old3 = '''\t\tif (!fixedFunction)
+\t\t{
+\t\t\tint profileMask, majorVersion, minorVersion;
+'''
+    new3 = f'''\t\tif (!fixedFunction)
+\t\t{{
+#ifdef DARKWOLF_ANDROID_GLES
+\t\t\t/* {MARKER}: SDL already owns a GLES3 context request on Android. */
+\t\t\tif ((SDL_glContext = SDL_GL_CreateContext(SDL_window)) != NULL)
+\t\t\t{{
+\t\t\t\tif (!GLimp_GetProcAddresses(fixedFunction))
+\t\t\t\t{{
+\t\t\t\t\tGLimp_ClearProcAddresses();
+\t\t\t\t\tSDL_GL_DeleteContext(SDL_glContext);
+\t\t\t\t\tSDL_glContext = NULL;
+\t\t\t\t}}
+\t\t\t}}
+#else
+\t\t\tint profileMask, majorVersion, minorVersion;
+'''
+    s = replace_once(s, old3, new3, "glimp desktop context begin")
+    old4 = '''\t\t\t}
+\t\t}
+\t\telse
+\t\t{
+\t\t\tSDL_glContext = NULL;
+\t\t}
+'''
+    new4 = '''\t\t\t}
+#endif
+\t\t}
+\t\telse
+\t\t{
+\t\t\tSDL_glContext = NULL;
+\t\t}
+'''
+    # anchor occurs near end of the desktop-context block.
+    idx = s.find(old4, s.find(MARKER))
+    if idx < 0:
+        raise SystemExit("glimp desktop context end: anchor not found")
+    s = s[:idx] + new4 + s[idx+len(old4):]
+
+    old5 = '''\t\t} else if ( QGLES_VERSION_ATLEAST( 2, 0 ) ) {
+\t\t\tQGL_1_1_PROCS;
+\t\t\tQGL_ES_1_1_PROCS;
+\t\t\tQGL_1_3_PROCS;
+\t\t\tQGL_1_5_PROCS;
+\t\t\tQGL_2_0_PROCS;
+\t\t\t// error so this doesn't segfault due to NULL desktop GL functions being used
+\t\t\tCom_Error( ERR_FATAL, "Unsupported OpenGL Version: %s", version );
+'''
+    new5 = f'''\t\t}} else if ( QGLES_VERSION_ATLEAST( 3, 0 ) ) {{
+\t\t\t/* {MARKER}: Rend2 programmable path on GLES3. */
+\t\t\tQGL_1_1_PROCS;
+\t\t\tQGL_ES_1_1_PROCS;
+\t\t\tQGL_1_3_PROCS;
+\t\t\tQGL_1_5_PROCS;
+\t\t\tQGL_2_0_PROCS;
+\t\t\t/* Desktop entry points still referenced by shared Rend2 code. */
+\t\t\tqglClearDepth = GLimp_GLES_ClearDepth;
+\t\t\tqglDepthRange = GLimp_GLES_DepthRange;
+\t\t\tqglDrawBuffer = GLimp_GLES_DrawBuffer;
+\t\t\tqglPolygonMode = GLimp_GLES_PolygonMode;
+'''
+    s = replace_once(s, old5, new5, "glimp GLES3 proc gate")
+    path.write_text(s)
+
+def patch_glsl(path: Path) -> None:
+    s = path.read_text()
+    anchor = '''\tdest[0] = '\\0';
+
+\t// HACK: abuse the GLSL preprocessor to turn GLSL 1.20 shaders into 1.30 ones
+'''
+    new = f'''\tdest[0] = '\\0';
+
+#ifdef DARKWOLF_ANDROID_GLES
+\t/* {MARKER}: translate the existing Rend2 shader body to GLSL ES 3.00. */
+\tQ_strcat(dest, size, "#version 300 es\\n");
+\tQ_strcat(dest, size, "precision highp float;\\nprecision highp int;\\n");
+\tif(shaderType == GL_VERTEX_SHADER)
+\t{{
+\t\tQ_strcat(dest, size, "#define attribute in\\n");
+\t\tQ_strcat(dest, size, "#define varying out\\n");
+\t}}
+\telse
+\t{{
+\t\tQ_strcat(dest, size, "#define varying in\\n");
+\t\tQ_strcat(dest, size, "out vec4 out_Color;\\n");
+\t\tQ_strcat(dest, size, "#define gl_FragColor out_Color\\n");
+\t\tQ_strcat(dest, size, "#define texture2D texture\\n");
+\t\tQ_strcat(dest, size, "#define textureCubeLod textureLod\\n");
+\t\tQ_strcat(dest, size, "#define shadow2D(a,b) texture(a,b)\\n");
+\t}}
+#else
+\t// HACK: abuse the GLSL preprocessor to turn GLSL 1.20 shaders into 1.30 ones
+'''
+    s = replace_once(s, anchor, new, "GLSL header start")
+    end_anchor = '''\t\tQ_strcat(dest, size, "#version 120\\n");
+\t\tQ_strcat(dest, size, "#define shadow2D(a,b) shadow2D(a,b).r \\n");
+\t}
+
+\t// HACK: add some macros to avoid extra uniforms and save speed and code maintenance
+'''
+    end_new = '''\t\tQ_strcat(dest, size, "#version 120\\n");
+\t\tQ_strcat(dest, size, "#define shadow2D(a,b) shadow2D(a,b).r \\n");
+\t}
+#endif
+
+\t// HACK: add some macros to avoid extra uniforms and save speed and code maintenance
+'''
+    s = replace_once(s, end_anchor, end_new, "GLSL header end")
+    path.write_text(s)
+
+def patch_gles_shader_literals(path: Path) -> None:
+    s = path.read_text()
+
+    # GLSL ES 3.x (notably Qualcomm Adreno) rejects implicit int -> float
+    # conversions that desktop GLSL drivers commonly accept. Keep this patch
+    # idempotent because reconstructed v4.4.6 may already contain some fixes.
+    replacements = (
+        ("float zDeformScale = 0;", "float zDeformScale = 0.0;"),
+        ("if (frequency < 0)", "if (frequency < 0.0)"),
+        ("zDeformScale = 1;", "zDeformScale = 1.0;"),
+        ("frequency *= -1;", "frequency *= -1.0;"),
+        ("if (frequency > 999)", "if (frequency > 999.0)"),
+        ("frequency -= 999;", "frequency -= 999.0;"),
+        ("zDeformScale = -1;", "zDeformScale = -1.0;"),
+        ("if (zDeformScale != 0)", "if (zDeformScale != 0.0)"),
+        ("if (nDot * scale > 0)", "if (nDot * scale > 0.0)"),
+        ("color.a = 0;", "color.a = 0.0;"),
+    )
+    for old, new in replacements:
+        s = s.replace(old, new)
+
+    forbidden = (
+        "float zDeformScale = 0;",
+        "if (frequency < 0)",
+        "zDeformScale = 1;",
+        "frequency *= -1;",
+        "if (frequency > 999)",
+        "frequency -= 999;",
+        "zDeformScale = -1;",
+        "if (zDeformScale != 0)",
+        "if (nDot * scale > 0)",
+        "color.a = 0;",
+    )
+    remaining = [token for token in forbidden if token in s]
+    if remaining:
+        raise SystemExit("generic_vp strict-float rewrite incomplete: " + ", ".join(remaining))
+
+    path.write_text(s)
+
+def patch_tr_image(path: Path) -> None:
+    s = path.read_text()
+
+    helper_anchor = '''static GLenum PixelDataFormatFromInternalFormat(GLenum internalFormat)
+{
+'''
+    helper = f'''#ifdef DARKWOLF_ANDROID_GLES
+/*
+ * {MARKER}: desktop Rend2 allocates texture storage with glTexImage2D(NULL)
+ * and relies on desktop GL to convert loosely-matched internal/external
+ * format+type combinations. GLES3 validates these combinations strictly.
+ *
+ * Keep source uploads RGBA-compatible and canonicalize legacy/unsized desktop
+ * formats to sized GLES3 storage formats. Render/depth/float/compressed formats
+ * that are already GLES3-valid are preserved.
+ */
+static GLenum AndroidGLES_TextureStorageFormat(GLenum internalFormat)
+{{
+    switch (internalFormat)
+    {{
+        case GL_RGB:
+        case GL_RGB8:
+        case GL_RGB5:
+        case GL_RGBA:
+        case GL_RGBA4:
+            return GL_RGBA8;
+
+        case GL_SRGB_EXT:
+        case GL_SRGB8_EXT:
+        case GL_SRGB_ALPHA_EXT:
+            return GL_SRGB8_ALPHA8;
+
+        case GL_LUMINANCE:
+        case GL_LUMINANCE8:
+        case GL_LUMINANCE_ALPHA:
+        case GL_LUMINANCE8_ALPHA8:
+        case GL_SLUMINANCE_EXT:
+        case GL_SLUMINANCE8_EXT:
+        case GL_SLUMINANCE_ALPHA_EXT:
+        case GL_SLUMINANCE8_ALPHA8_EXT:
+            /* Legacy luminance paths are disabled in current Rend2, but keep
+             * a valid sampled-color fallback instead of illegal ES tokens. */
+            return GL_RGBA8;
+
+        case GL_DEPTH_COMPONENT:
+            return GL_DEPTH_COMPONENT24;
+
+        case GL_DEPTH_COMPONENT32_ARB:
+            return GL_DEPTH_COMPONENT32F;
+
+        default:
+            return internalFormat;
+    }}
+}}
+#endif
+
+static GLenum PixelDataFormatFromInternalFormat(GLenum internalFormat)
+{{
+'''
+    if helper not in s:
+        if helper_anchor not in s:
+            raise SystemExit("tr_image helper anchor not found")
+        s = s.replace(helper_anchor, helper, 1)
+
+    format_anchor = '''\tif (!internalFormat)
+\t\tinternalFormat = RawImage_GetFormat(pic, width * height, picFormat, isLightmap, image->type, image->flags);
+
+\timage->internalFormat = internalFormat;
+'''
+    format_new = f'''\tif (!internalFormat)
+\t\tinternalFormat = RawImage_GetFormat(pic, width * height, picFormat, isLightmap, image->type, image->flags);
+
+#ifdef DARKWOLF_ANDROID_GLES
+\t/* {MARKER}: canonical storage format must be chosen before both allocation
+\t * and later subimage upload bookkeeping. */
+\tinternalFormat = AndroidGLES_TextureStorageFormat(internalFormat);
+#endif
+\timage->internalFormat = internalFormat;
+'''
+    s = replace_once(s, format_anchor, format_new, "tr_image storage format normalization")
+
+    alloc_anchor = '''\t// Allocate texture storage so we don't have to worry about it later.
+\tdataFormat = PixelDataFormatFromInternalFormat(internalFormat);
+\tmipWidth = width;
+\tmipHeight = height;
+\tmiplevel = 0;
+\tdo
+\t{
+\t\tlastMip = !mipmap || (mipWidth == 1 && mipHeight == 1);
+\t\tif (cubemap)
+\t\t{
+\t\t\tint i;
+
+\t\t\tfor (i = 0; i < 6; i++)
+\t\t\t\tqglTextureImage2DEXT(image->texnum, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, miplevel, internalFormat, mipWidth, mipHeight, 0, dataFormat, GL_UNSIGNED_BYTE, NULL);
+\t\t}
+\t\telse
+\t\t{
+\t\t\tqglTextureImage2DEXT(image->texnum, GL_TEXTURE_2D, miplevel, internalFormat, mipWidth, mipHeight, 0, dataFormat, GL_UNSIGNED_BYTE, NULL);
+\t\t}
+
+\t\tmipWidth  = MAX(1, mipWidth >> 1);
+\t\tmipHeight = MAX(1, mipHeight >> 1);
+\t\tmiplevel++;
+\t}
+\twhile (!lastMip);
+'''
+    alloc_new = f'''\t// Allocate texture storage so we don't have to worry about it later.
+\tdataFormat = PixelDataFormatFromInternalFormat(internalFormat);
+#ifdef DARKWOLF_ANDROID_GLES
+\t{{
+\t\tint storageLevels = 1;
+\t\tint storageWidth = width;
+\t\tint storageHeight = height;
+
+\t\tif (mipmap)
+\t\t{{
+\t\t\twhile (storageWidth > 1 || storageHeight > 1)
+\t\t\t{{
+\t\t\t\tstorageWidth = MAX(1, storageWidth >> 1);
+\t\t\t\tstorageHeight = MAX(1, storageHeight >> 1);
+\t\t\t\tstorageLevels++;
+\t\t\t}}
+\t\t}}
+
+\t\t/*
+\t\t * {MARKER}: GLES3 immutable storage is the correct allocation primitive.
+\t\t * It accepts sized color/float/depth/compressed internal formats without
+\t\t * inventing an external format/type pair. The existing upload path then
+\t\t * uses TexSubImage2D/CompressedTexSubImage2D against valid storage.
+\t\t */
+\t\tGL_BindMultiTexture(GL_TEXTURE0, textureTarget, image->texnum);
+\t\tglTexStorage2D(textureTarget, storageLevels, internalFormat, width, height);
+\t\tGL_CheckErrors();
+\t}}
+#else
+\tmipWidth = width;
+\tmipHeight = height;
+\tmiplevel = 0;
+\tdo
+\t{{
+\t\tlastMip = !mipmap || (mipWidth == 1 && mipHeight == 1);
+\t\tif (cubemap)
+\t\t{{
+\t\t\tint i;
+
+\t\t\tfor (i = 0; i < 6; i++)
+\t\t\t\tqglTextureImage2DEXT(image->texnum, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, miplevel, internalFormat, mipWidth, mipHeight, 0, dataFormat, GL_UNSIGNED_BYTE, NULL);
+\t\t}}
+\t\telse
+\t\t{{
+\t\t\tqglTextureImage2DEXT(image->texnum, GL_TEXTURE_2D, miplevel, internalFormat, mipWidth, mipHeight, 0, dataFormat, GL_UNSIGNED_BYTE, NULL);
+\t\t}}
+
+\t\tmipWidth  = MAX(1, mipWidth >> 1);
+\t\tmipHeight = MAX(1, mipHeight >> 1);
+\t\tmiplevel++;
+\t}}
+\twhile (!lastMip);
+#endif
+'''
+    s = replace_once(s, alloc_anchor, alloc_new, "tr_image GLES3 immutable texture storage")
+    path.write_text(s)
+
+def patch_depth_texture_mode(path: Path) -> None:
+    s = path.read_text()
+    old = '''\t\t\tif ( !QGL_VERSION_ATLEAST( 3, 0 ) ) {
+\t\t\t\tqglTextureParameterfEXT(image->texnum, textureTarget, GL_DEPTH_TEXTURE_MODE, GL_LUMINANCE);
+\t\t\t}
+'''
+    new = f'''\t\t\tif ( !QGL_VERSION_ATLEAST( 3, 0 ) && !QGLES_VERSION_ATLEAST( 3, 0 ) ) {{
+\t\t\t\tqglTextureParameterfEXT(image->texnum, textureTarget, GL_DEPTH_TEXTURE_MODE, GL_LUMINANCE);
+\t\t\t}}
+'''
+    s = replace_once(s, old, new, "depth texture mode GLES3 guard")
+    path.write_text(s)
+
+def patch_backend(path: Path) -> None:
+    s = path.read_text()
+
+    # Guard every inherited fixed-function fog disable. Do this line-by-line
+    # instead of with a regex so tabs and legacy inline comments cannot evade
+    # the Android GLES3 patch.
+    needle = "qglDisable( GL_FOG );"
+    lines = s.splitlines(keepends=True)
+    out = []
+    patched = 0
+
+    for line in lines:
+        if needle not in line:
+            out.append(line)
+            continue
+
+        before, after = line.split(needle, 1)
+        newline = "\n" if line.endswith("\n") else ""
+        suffix = after[:-1] if newline else after
+        out.append(before + "#ifndef DARKWOLF_ANDROID_GLES\n")
+        out.append(before + needle + suffix + "\n")
+        out.append(before + "#else\n")
+        out.append(before + f"/* {MARKER}: fixed-function fog state does not exist in GLES3. */\n")
+        out.append(before + "#endif" + newline)
+        patched += 1
+
+    if patched < 1:
+        raise SystemExit("backend fixed-function fog: no GL_FOG disable sites found")
+
+    s = "".join(out)
+
+    # Every original call must now be immediately protected by an Android guard.
+    unguarded = 0
+    scan = s.splitlines()
+    for i, line in enumerate(scan):
+        if needle in line:
+            prev = scan[i - 1].strip() if i > 0 else ""
+            if prev != "#ifndef DARKWOLF_ANDROID_GLES":
+                unguarded += 1
+    if unguarded:
+        raise SystemExit(f"backend fixed-function fog: {unguarded} unguarded sites remain")
+
+    path.write_text(s)
+
+def patch_android_console(path: Path) -> None:
+    s = path.read_text()
+
+    include_old = '#include <stdio.h>\n'
+    include_new = f'''#include <stdio.h>
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+'''
+    s = replace_once(s, include_old, include_new, "Android console log include")
+
+    print_old = '''void CON_Print( const char *msg )
+{
+\tif( com_ansiColor && com_ansiColor->integer )
+\t\tSys_AnsiColorPrint( msg );
+\telse
+\t\tfputs( msg, stderr );
+}
+'''
+    print_new = f'''void CON_Print( const char *msg )
+{{
+#ifdef __ANDROID__
+\t/* {MARKER}: make Com_Printf visible to pid-scoped Android logcat. */
+\t__android_log_write(ANDROID_LOG_INFO, "DarkWolfEngine", msg);
+#endif
+\tif( com_ansiColor && com_ansiColor->integer )
+\t\tSys_AnsiColorPrint( msg );
+\telse
+\t\tfputs( msg, stderr );
+}}
+'''
+    s = replace_once(s, print_old, print_new, "Android console log forwarding")
+    path.write_text(s)
+
+def patch_android_ui_query(path: Path) -> None:
+    s = path.read_text()
+
+    include_old = '#include "client.h"\n\n#include "../botlib/botlib.h"\n'
+    include_new = f'''#include "client.h"
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
+
+#include "../botlib/botlib.h"
+'''
+    s = replace_once(s, include_old, include_new, "Android UI query JNI include")
+
+    vm_old = 'vm_t *uivm;\n\nextern char cl_cdkey[34];\n'
+    vm_new = f'''vm_t *uivm;
+
+#ifdef __ANDROID__
+static volatile int androidUiTapPending;
+static volatile int androidUiTapX;
+static volatile int androidUiTapY;
+static volatile unsigned int androidGameDesiredMask;
+static unsigned int androidGameAppliedMask;
+
+#define DW_ACT_FORWARD   (1u << 0)
+#define DW_ACT_BACK      (1u << 1)
+#define DW_ACT_LEFT      (1u << 2)
+#define DW_ACT_RIGHT     (1u << 3)
+#define DW_ACT_ATTACK    (1u << 4)
+#define DW_ACT_JUMP      (1u << 5)
+#define DW_ACT_CROUCH    (1u << 6)
+#define DW_ACT_ACTIVATE  (1u << 7)
+#define DW_ACT_RELOAD    (1u << 8)
+
+/*
+ * {MARKER}: Java may query whether RTCW currently routes input to UI.
+ * The actual QVM call must stay on the engine thread.
+ */
+JNIEXPORT jboolean JNICALL
+Java_org_darkwolf_rend2_DarkWolfActivity_nativeIsUiActive(JNIEnv *env, jclass clazz)
+{{
+    (void)env;
+    (void)clazz;
+    return (Key_GetCatcher() & KEYCATCH_UI) ? JNI_TRUE : JNI_FALSE;
+}}
+
+/*
+ * Android UI thread only publishes a virtual 640x480 tap. CL_Frame consumes
+ * it and enters the UI QVM from the normal engine thread on the next frame.
+ */
+JNIEXPORT void JNICALL
+Java_org_darkwolf_rend2_DarkWolfActivity_nativeQueueUiTap(
+        JNIEnv *env, jclass clazz, jint x, jint y)
+{{
+    (void)env;
+    (void)clazz;
+
+    if (x < 0) x = 0;
+    if (x > 640) x = 640;
+    if (y < 0) y = 0;
+    if (y > 480) y = 480;
+
+    androidUiTapX = (int)x;
+    androidUiTapY = (int)y;
+    __sync_synchronize();
+    androidUiTapPending = 1;
+}}
+
+static unsigned int CL_AndroidActionBit(int action)
+{{
+    switch (action)
+    {{
+        case 1: return DW_ACT_FORWARD;
+        case 2: return DW_ACT_BACK;
+        case 3: return DW_ACT_LEFT;
+        case 4: return DW_ACT_RIGHT;
+        case 5: return DW_ACT_ATTACK;
+        case 6: return DW_ACT_JUMP;
+        case 7: return DW_ACT_CROUCH;
+        case 8: return DW_ACT_ACTIVATE;
+        case 9: return DW_ACT_RELOAD;
+        default: return 0;
+    }}
+}}
+
+JNIEXPORT void JNICALL
+Java_org_darkwolf_rend2_DarkWolfActivity_nativeSetGameAction(
+        JNIEnv *env, jclass clazz, jint action, jboolean down)
+{{
+    unsigned int bit = CL_AndroidActionBit((int)action);
+    (void)env;
+    (void)clazz;
+
+    if (!bit)
+        return;
+
+    if (down)
+        __sync_fetch_and_or(&androidGameDesiredMask, bit);
+    else
+        __sync_fetch_and_and(&androidGameDesiredMask, ~bit);
+}}
+
+JNIEXPORT void JNICALL
+Java_org_darkwolf_rend2_DarkWolfActivity_nativeClearGameActions(
+        JNIEnv *env, jclass clazz)
+{{
+    (void)env;
+    (void)clazz;
+    __sync_lock_test_and_set(&androidGameDesiredMask, 0);
+}}
+
+static void CL_AndroidEmitGameAction(unsigned int bit, qboolean down)
+{{
+    const char *cmd = NULL;
+
+    switch (bit)
+    {{
+        case DW_ACT_FORWARD:  cmd = down ? "+forward\\n"  : "-forward\\n"; break;
+        case DW_ACT_BACK:     cmd = down ? "+back\\n"     : "-back\\n"; break;
+        case DW_ACT_LEFT:     cmd = down ? "+moveleft\\n" : "-moveleft\\n"; break;
+        case DW_ACT_RIGHT:    cmd = down ? "+moveright\\n": "-moveright\\n"; break;
+        case DW_ACT_ATTACK:   cmd = down ? "+attack\\n"   : "-attack\\n"; break;
+        case DW_ACT_JUMP:     cmd = down ? "+moveup\\n"   : "-moveup\\n"; break;
+        case DW_ACT_CROUCH:   cmd = down ? "+movedown\\n" : "-movedown\\n"; break;
+        case DW_ACT_ACTIVATE: cmd = down ? "+activate\\n" : "-activate\\n"; break;
+        case DW_ACT_RELOAD:   cmd = down ? "+reload\\n"   : "-reload\\n"; break;
+        default: break;
+    }}
+
+    if (cmd)
+        Cbuf_ExecuteText(EXEC_APPEND, cmd);
+}}
+
+void CL_AndroidConsumeGameActions(void)
+{{
+    unsigned int desired;
+    unsigned int changed;
+    unsigned int bit;
+
+    if (Key_GetCatcher() & KEYCATCH_UI)
+        __sync_lock_test_and_set(&androidGameDesiredMask, 0);
+
+    __sync_synchronize();
+    desired = androidGameDesiredMask;
+    changed = desired ^ androidGameAppliedMask;
+
+    for (bit = 1u; bit <= DW_ACT_RELOAD; bit <<= 1)
+    {{
+        if (changed & bit)
+            CL_AndroidEmitGameAction(bit, (desired & bit) ? qtrue : qfalse);
+    }}
+
+    androidGameAppliedMask = desired;
+}}
+
+void CL_AndroidConsumeUiTap(void)
+{{
+    int x;
+    int y;
+
+    if (!androidUiTapPending)
+        return;
+
+    __sync_synchronize();
+    x = androidUiTapX;
+    y = androidUiTapY;
+    androidUiTapPending = 0;
+
+    if (!uivm || !(Key_GetCatcher() & KEYCATCH_UI))
+    {{
+        Com_Printf("DARKWOLF_ANDROID_UI_TAP_DROPPED=%d,%d\\n", x, y);
+        return;
+    }}
+
+    /*
+     * RTCW UI owns a virtual 640x480 relative cursor. Reset it deterministically
+     * to the top-left, move to the requested absolute virtual coordinate, then
+     * deliver the same K_MOUSE1 down/up events used by the desktop client.
+     */
+    VM_Call(uivm, UI_MOUSE_EVENT, -640, -480);
+    VM_Call(uivm, UI_MOUSE_EVENT, x, y);
+    VM_Call(uivm, UI_KEY_EVENT, K_MOUSE1, qtrue);
+    VM_Call(uivm, UI_KEY_EVENT, K_MOUSE1, qfalse);
+
+    Com_Printf("DARKWOLF_ANDROID_UI_TAP_CONSUMED=%d,%d\\n", x, y);
+}}
+#endif
+
+extern char cl_cdkey[34];
+'''
+    s = replace_once(s, vm_old, vm_new, "Android UI catcher JNI query")
+    path.write_text(s)
+
+def patch_android_ui_frame(path: Path) -> None:
+    s = path.read_text()
+
+    old = '''/*
+==================
+CL_Frame
+
+==================
+*/
+void CL_Frame( int msec ) {
+
+\tif ( !com_cl_running->integer ) {
+\t\treturn;
+\t}
+'''
+    new = f'''#ifdef __ANDROID__
+extern void CL_AndroidConsumeUiTap( void );
+extern void CL_AndroidConsumeGameActions( void );
+#endif
+
+/*
+==================
+CL_Frame
+
+==================
+*/
+void CL_Frame( int msec ) {{
+
+\tif ( !com_cl_running->integer ) {{
+\t\treturn;
+\t}}
+
+#ifdef __ANDROID__
+\t/* {MARKER}: consume UI taps and direct gameplay actions on the engine thread. */
+\tCL_AndroidConsumeUiTap();
+\tCL_AndroidConsumeGameActions();
+#endif
+'''
+    s = replace_once(s, old, new, "Android UI tap frame consumer")
+    path.write_text(s)
+
+def patch_android_perf_profile(path: Path) -> None:
+    s = path.read_text()
+
+    old = '''\tR_Register();
+
+\t// Ridah, init the virtual memory
+'''
+    new = f'''\tR_Register();
+
+#ifdef __ANDROID__
+\tif (ri.Cvar_VariableIntegerValue("dw_android_ultralow"))
+\t{{
+\t\t/* {MARKER}: force mobile profile after any cfg-driven vid_restart. */
+\t\tri.Cvar_Set("r_hdr", "0");
+\t\tri.Cvar_Set("r_postProcess", "0");
+\t\tri.Cvar_Set("r_toneMap", "0");
+\t\tri.Cvar_Set("r_autoExposure", "0");
+\t\tri.Cvar_Set("r_depthPrepass", "0");
+\t\tri.Cvar_Set("r_ssao", "0");
+\t\tri.Cvar_Set("r_normalMapping", "0");
+\t\tri.Cvar_Set("r_specularMapping", "0");
+\t\tri.Cvar_Set("r_deluxeMapping", "0");
+\t\tri.Cvar_Set("r_parallaxMapping", "0");
+\t\tri.Cvar_Set("r_cubeMapping", "0");
+\t\tri.Cvar_Set("r_pbr", "0");
+\t\tri.Cvar_Set("r_dynamiclight", "1");
+\t\tri.Cvar_Set("r_dlightMode", "0");
+\t\tri.Cvar_Set("r_dlightShadowMaxLights", "0");
+\t\tri.Cvar_Set("r_dlightShadowMapSize", "256");
+\t\tri.Cvar_Set("r_sunShadows", "0");
+\t\tri.Cvar_Set("r_forceSun", "0");
+\t\tri.Cvar_Set("r_sunlightMode", "0");
+\t\tri.Cvar_Set("r_drawSun", "0");
+\t\tri.Cvar_Set("r_drawSunRays", "0");
+\t\tri.Cvar_Set("r_staticPromote", "0");
+\t\tri.Cvar_Set("r_staticPromoteMaxLights", "0");
+\t\tri.Cvar_Set("r_volumetricLocal", "0");
+\t\tri.Cvar_Set("r_volumetricSun", "0");
+\t\tri.Cvar_Set("r_volumetricFire", "0");
+\t\tri.Cvar_Set("r_softParticles", "0");
+\t\tri.Cvar_Set("r_fxStage9Enable", "0");
+\t\tri.Cvar_Set("r_flares", "0");
+\t\tri.Cvar_Set("r_detailtextures", "0");
+\t\tri.Cvar_Set("r_picmip", "3");
+\t\tri.Cvar_Set("r_picmip2", "3");
+\t\tri.Cvar_Set("r_subdivisions", "20");
+\t\tri.Cvar_Set("r_lodbias", "2");
+\t\tri.Cvar_Set("r_fastsky", "1");
+\t\tri.Cvar_Set("r_textureMode", "GL_LINEAR_MIPMAP_NEAREST");
+\t\tri.Cvar_Set("r_ext_texture_filter_anisotropic", "0");
+\t\tri.Cvar_Set("r_ext_framebuffer_multisample", "0");
+\t\tri.Cvar_Set("r_ext_multisample", "0");
+\t\tri.Cvar_Set("r_finish", "0");
+\t\tri.Cvar_Set("r_swapInterval", "0");
+\t\tri.Printf(PRINT_ALL, "DARKWOLF_ANDROID_ULTRALOW_ENFORCED scale=%d\\n",
+\t\t\tri.Cvar_VariableIntegerValue("dw_android_renderScale"));
+\t}}
+#endif
+
+\t// Ridah, init the virtual memory
+'''
+    s = replace_once(s, old, new, "Android ultra-low profile enforcement")
+    path.write_text(s)
+
+def patch_android_internal_scale_image(path: Path) -> None:
+    s = path.read_text()
+    old = '''\t\twidth = glConfig.vidWidth;
+\t\theight = glConfig.vidHeight;
+
+\t\thdrFormat = GL_RGBA8;
+'''
+    new = f'''\t\twidth = glConfig.vidWidth;
+\t\theight = glConfig.vidHeight;
+#ifdef __ANDROID__
+\t\tif (ri.Cvar_VariableIntegerValue("dw_android_renderScale") >= 25 &&
+\t\t\tri.Cvar_VariableIntegerValue("dw_android_renderScale") < 100)
+\t\t{{
+\t\t\tint scale = ri.Cvar_VariableIntegerValue("dw_android_renderScale");
+\t\t\twidth = (width * scale) / 100;
+\t\t\theight = (height * scale) / 100;
+\t\t\twidth &= ~1;
+\t\t\theight &= ~1;
+\t\t\tif (width < 320) width = 320;
+\t\t\tif (height < 180) height = 180;
+\t\t\tri.Printf(PRINT_ALL,
+\t\t\t\t"DARKWOLF_ANDROID_INTERNAL_RENDER=%dx%d scale=%d native=%dx%d\\n",
+\t\t\t\twidth, height, scale, glConfig.vidWidth, glConfig.vidHeight);
+\t\t}}
+#endif
+
+\t\thdrFormat = GL_RGBA8;
+'''
+    s = replace_once(s, old, new, "Android internal render image scale")
+    path.write_text(s)
+
+def patch_android_internal_scale_fbo(path: Path) -> None:
+    s = path.read_text()
+    old = '''\telse if (r_hdr->integer)
+\t{
+\t\ttr.renderFbo = FBO_Create("_render", tr.renderDepthImage->width, tr.renderDepthImage->height);
+\t\tFBO_AttachImage(tr.renderFbo, tr.renderImage, GL_COLOR_ATTACHMENT0, 0);
+\t\tFBO_AttachImage(tr.renderFbo, tr.renderDepthImage, GL_DEPTH_ATTACHMENT, 0);
+\t\tR_CheckFBO(tr.renderFbo);
+\t}
+'''
+    new = f'''\telse if (r_hdr->integer
+#ifdef __ANDROID__
+\t\t|| (ri.Cvar_VariableIntegerValue("dw_android_renderScale") >= 25 &&
+\t\t\tri.Cvar_VariableIntegerValue("dw_android_renderScale") < 100)
+#endif
+\t)
+\t{{
+\t\ttr.renderFbo = FBO_Create("_render", tr.renderDepthImage->width, tr.renderDepthImage->height);
+\t\tFBO_AttachImage(tr.renderFbo, tr.renderImage, GL_COLOR_ATTACHMENT0, 0);
+\t\tFBO_AttachImage(tr.renderFbo, tr.renderDepthImage, GL_DEPTH_ATTACHMENT, 0);
+\t\tR_CheckFBO(tr.renderFbo);
+#ifdef __ANDROID__
+\t\tif (!r_hdr->integer)
+\t\t\tri.Printf(PRINT_ALL, "DARKWOLF_ANDROID_SCALE_FBO=PASS %dx%d\\n",
+\t\t\t\ttr.renderFbo->width, tr.renderFbo->height);
+#endif
+\t}}
+'''
+    s = replace_once(s, old, new, "Android scaled render FBO")
+    path.write_text(s)
+
+def patch_android_internal_scale_backend(path: Path) -> None:
+    s = path.read_text()
+
+    viewport_old = '''static void SetViewportAndScissor( void ) {
+\tGL_SetProjectionMatrix( backEnd.viewParms.projectionMatrix );
+
+\t// set the window clipping
+\tqglViewport( backEnd.viewParms.viewportX, backEnd.viewParms.viewportY, 
+\t\tbackEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight );
+// TODO: insert handling for widescreen?  (when looking through camera)
+\tqglScissor( backEnd.viewParms.viewportX, backEnd.viewParms.viewportY, 
+\t\tbackEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight );
+}
+'''
+    viewport_new = f'''static qboolean androidScaledScenePresented = qfalse;
+
+static qboolean RB_AndroidScaledRenderActive(void)
+{{
+#ifdef __ANDROID__
+\tint scale = ri.Cvar_VariableIntegerValue("dw_android_renderScale");
+\treturn (tr.renderFbo && scale >= 25 && scale < 100) ? qtrue : qfalse;
+#else
+\treturn qfalse;
+#endif
+}}
+
+static void SetViewportAndScissor( void ) {{
+\tGL_SetProjectionMatrix( backEnd.viewParms.projectionMatrix );
+
+#ifdef __ANDROID__
+\tif (RB_AndroidScaledRenderActive() && glState.currentFBO == tr.renderFbo)
+\t{{
+\t\tfloat sx = tr.renderFbo->width / (float)glConfig.vidWidth;
+\t\tfloat sy = tr.renderFbo->height / (float)glConfig.vidHeight;
+\t\tint x = (int)(backEnd.viewParms.viewportX * sx + 0.5f);
+\t\tint y = (int)(backEnd.viewParms.viewportY * sy + 0.5f);
+\t\tint w = (int)(backEnd.viewParms.viewportWidth * sx + 0.5f);
+\t\tint h = (int)(backEnd.viewParms.viewportHeight * sy + 0.5f);
+\t\tqglViewport(x, y, w, h);
+\t\tqglScissor(x, y, w, h);
+\t\treturn;
+\t}}
+#endif
+
+\t// set the window clipping
+\tqglViewport( backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
+\t\tbackEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight );
+// TODO: insert handling for widescreen?  (when looking through camera)
+\tqglScissor( backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
+\t\tbackEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight );
+}}
+'''
+    s = replace_once(s, viewport_old, viewport_new, "Android scaled 3D viewport")
+
+    gl2d_old = '''void\tRB_SetGL2D (void) {
+\tmat4_t matrix;
+\tint width, height;
+
+\tif (backEnd.projection2D && backEnd.last2DFBO == glState.currentFBO)
+\t\treturn;
+'''
+    gl2d_new = f'''void\tRB_SetGL2D (void) {{
+\tmat4_t matrix;
+\tint width, height;
+
+#ifdef __ANDROID__
+\tif (RB_AndroidScaledRenderActive() && glState.currentFBO == tr.renderFbo)
+\t{{
+\t\tif (!androidScaledScenePresented)
+\t\t{{
+\t\t\tFBO_FastBlit(tr.renderFbo, NULL, NULL, NULL,
+\t\t\t\tGL_COLOR_BUFFER_BIT, GL_LINEAR);
+\t\t\tandroidScaledScenePresented = qtrue;
+\t\t}}
+\t\tFBO_Bind(NULL);
+\t}}
+#endif
+
+\tif (backEnd.projection2D && backEnd.last2DFBO == glState.currentFBO)
+\t\treturn;
+'''
+    s = replace_once(s, gl2d_old, gl2d_new, "Android scaled scene present before 2D")
+
+    draw_old = '''\tcmd = (const drawBufferCommand_t *)data;
+
+\t// finish any 2D drawing if needed
+'''
+    draw_new = f'''\tcmd = (const drawBufferCommand_t *)data;
+
+#ifdef __ANDROID__
+\tandroidScaledScenePresented = qfalse;
+#endif
+
+\t// finish any 2D drawing if needed
+'''
+    s = replace_once(s, draw_old, draw_new, "Android scaled frame reset")
+
+    swap_old = '''\tif (glRefConfig.framebufferObject)
+\t{
+\t\tif (tr.msaaResolveFbo && r_hdr->integer)
+\t\t{
+\t\t\t// Resolving an RGB16F MSAA FBO to the screen messes with the brightness, so resolve to an RGB16F FBO first
+\t\t\tFBO_FastBlit(tr.renderFbo, NULL, tr.msaaResolveFbo, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+\t\t\tFBO_FastBlit(tr.msaaResolveFbo, NULL, NULL, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+\t\t}
+\t\telse if (tr.renderFbo)
+\t\t{
+\t\t\tFBO_FastBlit(tr.renderFbo, NULL, NULL, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+\t\t}
+\t}
+'''
+    swap_new = f'''\tif (glRefConfig.framebufferObject)
+\t{{
+#ifdef __ANDROID__
+\t\tif (RB_AndroidScaledRenderActive())
+\t\t{{
+\t\t\tif (!androidScaledScenePresented)
+\t\t\t{{
+\t\t\t\tFBO_FastBlit(tr.renderFbo, NULL, NULL, NULL,
+\t\t\t\t\tGL_COLOR_BUFFER_BIT, GL_LINEAR);
+\t\t\t\tandroidScaledScenePresented = qtrue;
+\t\t\t}}
+\t\t}}
+\t\telse
+#endif
+\t\tif (tr.msaaResolveFbo && r_hdr->integer)
+\t\t{{
+\t\t\t// Resolving an RGB16F MSAA FBO to the screen messes with the brightness, so resolve to an RGB16F FBO first
+\t\t\tFBO_FastBlit(tr.renderFbo, NULL, tr.msaaResolveFbo, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+\t\t\tFBO_FastBlit(tr.msaaResolveFbo, NULL, NULL, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+\t\t}}
+\t\telse if (tr.renderFbo)
+\t\t{{
+\t\t\tFBO_FastBlit(tr.renderFbo, NULL, NULL, NULL, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+\t\t}}
+\t}}
+'''
+    s = replace_once(s, swap_old, swap_new, "Android scaled scene swap")
+    path.write_text(s)
+
+def patch_ci_playerstart(path: Path) -> None:
+    s = path.read_text()
+
+    old = '''\t// init for this gamestate
+\t// use the lastExecutedServerCommand instead of the serverCommandSequence
+\t// otherwise server commands sent just before a gamestate are dropped
+\tVM_Call( cgvm, CG_INIT, clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum );
+
+\t// reset any CVAR_CHEAT cvars registered by cgame
+'''
+    new = f'''\t// init for this gamestate
+\t// use the lastExecutedServerCommand instead of the serverCommandSequence
+\t// otherwise server commands sent just before a gamestate are dropped
+\tVM_Call( cgvm, CG_INIT, clc.serverMessageSequence, clc.lastExecutedServerCommand, clc.clientNum );
+
+#ifdef __ANDROID__
+\t/*
+\t * {MARKER}: CI-only deterministic transition from SP briefing to live
+\t * gameplay. The hook is inert in the ARM64 phone APK unless the explicit
+\t * test cvar is supplied by the x86_64 TestLab launcher.
+\t */
+\tif ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ) {{
+\t\tif ( uivm ) {{
+\t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE );
+\t\t}}
+\t\tKey_SetCatcher( Key_GetCatcher() & ~KEYCATCH_UI );
+\t\tCvar_Set( "cl_paused", "0" );
+\t\tCvar_Set( "g_playerstart", "1" );
+\t\tCom_Printf( "DARKWOLF_ANDROID_CI_PLAYERSTART=PASS\\n" );
+\t}}
+#endif
+
+\t// reset any CVAR_CHEAT cvars registered by cgame
+'''
+    s = replace_once(s, old, new, "CI playerstart hook")
+
+    popup_old = '''\tcase CG_INGAME_POPUP:
+\t\tif ( VMA( 1 ) && !Q_stricmp( VMA( 1 ), "briefing" ) ) {  //----(SA) added
+\t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_BRIEFING );
+\t\t\treturn 0;
+\t\t}
+'''
+    popup_new = f'''\tcase CG_INGAME_POPUP:
+\t\tif ( VMA( 1 ) && !Q_stricmp( VMA( 1 ), "briefing" ) ) {{  //----(SA) added
+#ifdef __ANDROID__
+\t\t\tif ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ) {{
+\t\t\t\t/* {MARKER}: cgame posts briefing after CG_INIT; suppress only
+\t\t\t\t * in the x86_64 TestLab opt-in so 3D evidence is deterministic. */
+\t\t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE );
+\t\t\t\tKey_SetCatcher( Key_GetCatcher() & ~KEYCATCH_UI );
+\t\t\t\tCvar_Set( "cl_paused", "0" );
+\t\t\t\tCvar_Set( "g_playerstart", "1" );
+\t\t\t\tCom_Printf( "DARKWOLF_ANDROID_CI_BRIEFING_SUPPRESSED=PASS\\n" );
+\t\t\t\treturn 0;
+\t\t\t}}
+#endif
+\t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_BRIEFING );
+\t\t\treturn 0;
+\t\t}}
+'''
+    s = replace_once(s, popup_old, popup_new, "CI briefing popup suppression")
+    path.write_text(s)
+
+def patch_tr_extensions(path: Path) -> None:
+    s = path.read_text()
+    old = '''\tq_gl_version_at_least_3_0 = QGL_VERSION_ATLEAST( 3, 0 );
+\tq_gl_version_at_least_3_2 = QGL_VERSION_ATLEAST( 3, 2 );
+'''
+    new = f'''#ifdef DARKWOLF_ANDROID_GLES
+\t/* {MARKER}: core GLES3 supplies FBO/VAO; desktop-only 3.2 features stay disabled. */
+\tq_gl_version_at_least_3_0 = QGLES_VERSION_ATLEAST( 3, 0 );
+\tq_gl_version_at_least_3_2 = qfalse;
+#else
+\tq_gl_version_at_least_3_0 = QGL_VERSION_ATLEAST( 3, 0 );
+\tq_gl_version_at_least_3_2 = QGL_VERSION_ATLEAST( 3, 2 );
+#endif
+'''
+    s = replace_once(s, old, new, "extension version gate")
+    path.write_text(s)
+
+def main(root: Path) -> None:
+    sp = root / "SP" / "code"
+    patch_qgl(sp / "rend2" / "qgl.h")
+    patch_glimp(sp / "sdl" / "sdl_glimp.c")
+    patch_glsl(sp / "rend2" / "tr_glsl.c")
+    patch_gles_shader_literals(sp / "rend2" / "glsl" / "generic_vp.glsl")
+    patch_tr_image(sp / "rend2" / "tr_image.c")
+    patch_depth_texture_mode(sp / "rend2" / "tr_image.c")
+    patch_backend(sp / "rend2" / "tr_backend.c")
+    patch_android_perf_profile(sp / "rend2" / "tr_init.c")
+    patch_android_internal_scale_image(sp / "rend2" / "tr_image.c")
+    patch_android_internal_scale_fbo(sp / "rend2" / "tr_fbo.c")
+    patch_android_internal_scale_backend(sp / "rend2" / "tr_backend.c")
+    patch_tr_extensions(sp / "rend2" / "tr_extensions.c")
+    patch_android_console(sp / "sys" / "con_passive.c")
+    patch_android_ui_query(sp / "client" / "cl_ui.c")
+    patch_android_ui_frame(sp / "client" / "cl_main.c")
+    patch_ci_playerstart(sp / "client" / "cl_cgame.c")
+    print(f"{MARKER}: patched Android GLES3 bring-up layer")
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: apply_android_rend2_v0_1.py <iortcw-source-root>")
+    main(Path(sys.argv[1]).resolve())

@@ -1,0 +1,76 @@
+name: DarkWolf Rend2 Android Graphics Lab V01
+on:
+  push:
+    branches: [rend2-android-graphics-lab-v01-20261021]
+    paths:
+      - '.github/workflows/ANDROID_GRAPHICS_LAB_V01.yml'
+      - 'integration/android-graphics-lab/**'
+      - 'integration/android-rend2-v0-1/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  native-arm64-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      ANDROID_API: "29"
+      ANDROID_NDK_VERSION: "27.2.12479018"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates git gh jq python3 python3-pip unzip zip ninja-build cmake
+      - name: Android NDK and SDK
+        run: |
+          set -Eeuo pipefail
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;${ANDROID_NDK_VERSION}" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+      - name: Reconstruct V03 source from verified Windows parent, not DLL
+        run: |
+          set -Eeuo pipefail
+          sed '/^sudo apt-get -o Acquire::Retries=3 update/,$d' integration/cas-a2c-lut/ci_visible_v03.sh > /tmp/dw_lab_reconstruct.sh
+          grep -Fq 'DARKWOLF_3FX_VISIBLE_V03.patch' /tmp/dw_lab_reconstruct.sh
+          bash /tmp/dw_lab_reconstruct.sh
+          mkdir -p .android-rend2-work
+          mv source .android-rend2-work/source
+          printf '%s\n' 'V03_BASE_RUN=39556894566' 'V03_BASE_SHA=6db34503c1d6353076dc7db137ea204d89cc5953' > .android-rend2-work/GRAPHICS_LAB_PROVENANCE.txt
+      - name: Apply existing GLES3 Android portability layer
+        run: |
+          set -Eeuo pipefail
+          python3 integration/android-rend2-v0-1/apply_android_rend2_v0_1.py .android-rend2-work/source
+          grep -Fq DARKWOLF_ANDROID_GLES .android-rend2-work/source/SP/code/rend2/qgl.h
+      - name: Build ARM64 game modules and SP QVMs
+        run: |
+          set -Eeuo pipefail
+          export PATH="$ANDROID_HOME/build-tools/35.0.0:$PATH"
+          bash integration/android-rend2-v0-1/build_game_modules_arm64.sh
+          bash integration/android-rend2-v0-1/build_game_qvms_host.sh
+      - name: Link ARM64 native Rend2 engine
+        run: |
+          set -Eeuo pipefail
+          bash integration/android-rend2-v0-1/build_native_runtime_arm64.sh
+      - name: Build APK
+        run: |
+          set -Eeuo pipefail
+          export PATH="$ANDROID_HOME/build-tools/35.0.0:$ANDROID_HOME/platform-tools:$PATH"
+          bash integration/android-rend2-v0-1/build_android_apk_bootstrap.sh
+      - name: Upload candidate and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-Graphics-Lab-V03-ARM64-Build-Probe
+          path: |
+            .android-rend2-work/GRAPHICS_LAB_PROVENANCE.txt
+            .android-rend2-work/native-runtime/log/**
+            .android-rend2-work/native-runtime/bin/*.so
+            .android-rend2-work/android-apk/dist/*.apk
+            .android-rend2-work/android-apk/dist/*.sha256
+            .android-rend2-work/game-modules/log/**
+          if-no-files-found: warn
+          retention-days: 30
