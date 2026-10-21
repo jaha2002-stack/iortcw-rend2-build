@@ -16,13 +16,18 @@ static void CL_AndroidCIGameViewGate(void)
 {
     if (!Cvar_VariableIntegerValue("dw_android_ci_playerstart"))
         return;
-    if (cls.state != CA_ACTIVE)
+    if (clc.state != CA_ACTIVE) {
+        dwLabCiFrames = 0;
         return;
+    }
     if (Key_GetCatcher() & KEYCATCH_UI) {
         if (uivm)
             VM_Call(uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE);
         Key_SetCatcher(Key_GetCatcher() & ~KEYCATCH_UI);
         Cvar_Set("cl_paused", "0");
+        dwLabCiFrames = 0;
+    } else if (Cvar_VariableIntegerValue("cl_paused") ||
+               (Key_GetCatcher() & KEYCATCH_CONSOLE)) {
         dwLabCiFrames = 0;
     } else if (!dwLabCiAnnounced && ++dwLabCiFrames >= 90) {
         dwLabCiAnnounced = 1;
@@ -158,5 +163,14 @@ s=s.replace(needle,catalog+"\n"+bridge+"\n"+ci_scene+"\n"+needle,1)
 needle2="    androidGameAppliedMask = desired;"
 assert needle2 in s
 s=s.replace(needle2,needle2+"\n    CL_AndroidConsumeLabCommand();\n    CL_AndroidPublishLabCvars();\n    CL_AndroidCIGameViewGate();",1)
+# Fail before invoking Clang if a newly injected native hook references
+# nonexistent RTCW client fields (regression caught in Run 39665303146).
+client_header=(root/"SP/code/client/client.h").read_text()
+assert "extern clientConnection_t clc;" in client_header, "missing clc declaration"
+assert "connstate_t" in client_header and "state;" in client_header, "connection state missing"
+assert "if (clc.state != CA_ACTIVE)" in s, "wrong active connection variable"
+assert ("if (" + "cls.state") not in s, "invalid clientStatic_t state member"
+assert "GRAPHICS_LAB_CI_GAMEVIEW=PASS" in s
 path.write_text(s)
+print("GRAPHICS_LAB_NATIVE_CONTRACT=PASS")
 print("GRAPHICS_LAB_JNI_BRIDGE=APPLIED")
