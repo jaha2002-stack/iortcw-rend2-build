@@ -79,17 +79,38 @@ jobs:
           export ANDROID_AVD_HOME="$GITHUB_WORKSPACE/.android-rend2-work/avd"
           mkdir -p "$ANDROID_AVD_HOME"
           echo no | avdmanager create avd -n darkwolf-lab -k "system-images;android-35;google_apis;x86_64" --force
-          accel=off
-          if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then accel=on; fi
-          nohup emulator -avd darkwolf-lab -no-window -noaudio -no-boot-anim -no-snapshot -gpu swiftshader -accel "$accel" > .android-rend2-work/lab-emulator-console.log 2>&1 &
-          timeout 300s adb wait-for-device
+          # GitHub-hosted Ubuntu exposes /dev/kvm with restrictive permissions.
+          # Without access, x86_64 falls back to QEMU TCG and may never boot before timeout.
+          if [ -c /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+            ls -l /dev/kvm
+          else
+            echo "BLOCKED: this runner does not expose /dev/kvm" >&2
+            exit 1
+          fi
+          test -r /dev/kvm && test -w /dev/kvm || {
+            echo "BLOCKED: /dev/kvm is still inaccessible" >&2
+            exit 1
+          }
+          echo "GRAPHICS_LAB_EMULATOR_ACCEL=KVM_ON"
+          nohup emulator -avd darkwolf-lab -no-window -noaudio -no-boot-anim \
+            -no-snapshot -gpu swiftshader -accel on -cores 2 -memory 2048 \
+            > .android-rend2-work/lab-emulator-console.log 2>&1 &
+          emulator_pid=$!
+          trap 'status=$?; if [ "$status" -ne 0 ]; then echo "ANDROID_BOOT_DIAGNOSTICS"; adb devices -l || true; tail -n 120 .android-rend2-work/lab-emulator-console.log || true; fi' EXIT
+          timeout 240s adb wait-for-device
           boot=0
-          for i in $(seq 1 150); do
+          for i in $(seq 1 120); do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              echo "ERROR: emulator process exited before Android boot" >&2
+              break
+            fi
             status="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
             if [ "$status" = "1" ]; then boot=1; break; fi
             sleep 2
           done
           test "$boot" -eq 1
+          echo "GRAPHICS_LAB_EMULATOR_SYSTEM_BOOT=PASS"
           bash integration/android-rend2-v0-1/run_a6_ci_emulator_bootstrap.sh \
             .android-rend2-work/android-apk/dist/DarkWolf-ioRTCW-Rend2-Android-v0.1-X86_64-CI-Debug.apk \
             .android-rend2-work/a6-ci-emulator
