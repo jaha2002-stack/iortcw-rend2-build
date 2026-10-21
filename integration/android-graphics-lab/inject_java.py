@@ -36,7 +36,8 @@ new=r'''
             "ZOOM IN", "ZOOM OUT", "FULL NATIVE RESOLUTION",
             "ALL CVARS: search & inspect", "LIGHT / SUN", "SHADOWS",
             "SSGI / BLOOM", "CAS / LUT / A2C", "TEXTURES",
-            "SAVE PROFILE", "LOAD PROFILE", "RESTART RENDERER"
+            "SAVE PROFILE", "LOAD PROFILE", "RESTART RENDERER",
+            "GOTO XYZ: camera waypoint", "FOV: custom zoom"
         };
         new android.app.AlertDialog.Builder(this)
             .setTitle("DarkWolf Rend2 Graphics Lab")
@@ -69,6 +70,8 @@ new=r'''
                 case 11: labSend("writeconfig graphics_lab.cfg"); break;
                 case 12: labSend("exec graphics_lab.cfg"); break;
                 case 13: labSend("vid_restart"); break;
+                case 14: labGoto(); break;
+                case 15: labFov(); break;
                 }
             }).show();
     }
@@ -141,6 +144,34 @@ new=r'''
             .setTitle(key).setMessage(message).setNegativeButton("CLOSE",null);
         if(!locked)d.setPositiveButton("EDIT",(dd,w)->labCvar(key,row[1]));
         d.show();
+    }
+
+
+    private void labGoto() {
+        android.widget.EditText xyz = new android.widget.EditText(this);
+        xyz.setSingleLine(true);
+        xyz.setHint("x y z yaw   (e.g. 100 220 64 90)");
+        new android.app.AlertDialog.Builder(this).setTitle("Camera position")
+          .setMessage("SetViewPos requires a local cheats-enabled map.")
+          .setView(xyz).setPositiveButton("GO",(d,w)->{
+             String data=xyz.getText().toString().trim();
+             if (data.matches("[-+0-9.]+\\s+[-+0-9.]+\\s+[-+0-9.]+\\s+[-+0-9.]+"))
+                 labSend("setviewpos "+data);
+          }).setNegativeButton("CANCEL",null).show();
+    }
+    private void labFov() {
+        android.widget.EditText field=new android.widget.EditText(this);
+        field.setSingleLine(true);
+        field.setInputType(android.text.InputType.TYPE_CLASS_NUMBER |
+                           android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        field.setText("90");
+        new android.app.AlertDialog.Builder(this).setTitle("Camera field of view")
+          .setView(field).setPositiveButton("APPLY",(d,w)->{
+              try {
+                float f=Float.parseFloat(field.getText().toString());
+                if(f>=15 && f<=135) labSend("cg_fov "+f);
+              } catch(NumberFormatException ignored) { }
+          }).setNegativeButton("CANCEL",null).show();
     }
 
     private void labCvar(String name, String current) {
