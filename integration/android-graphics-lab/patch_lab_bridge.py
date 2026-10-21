@@ -5,61 +5,135 @@ import sys
 root=Path(sys.argv[1])
 path=root/"SP/code/client/cl_ui.c"
 s=path.read_text()
+assert "#include <jni.h>" in s
+s=s.replace("#include <jni.h>", "#include <jni.h>\n#include <pthread.h>", 1)
 needle="void CL_AndroidConsumeGameActions(void)"
 assert needle in s, "Android portability patch not applied"
 bridge=r'''
-/* Graphics Lab: bounded, thread-safe SPSC command mailbox, executed on engine frame.
- * Never execute console commands from Android UI thread.
- */
-static volatile int dwLabBusy;
-static char dwLabCommand[512];
-static volatile int dwLabReady;
+/* GRAPHICS_LAB_V02: serialized UI commands, drained on the engine thread. */
+#define DW_LAB_QUEUE_CAP 64
+#define DW_LAB_CMD_CAP 256
+static pthread_mutex_t dwLabQueueLock = PTHREAD_MUTEX_INITIALIZER;
+static char dwLabCommands[DW_LAB_QUEUE_CAP][DW_LAB_CMD_CAP];
+static unsigned dwLabCmdRead, dwLabCmdWrite;
 JNIEXPORT void JNICALL
 Java_org_darkwolf_rend2_DarkWolfActivity_nativeQueueLabCommand(
     JNIEnv *env, jclass clazz, jstring command)
 {
     const char *text;
+    char key[80], value[80];
     size_t len;
     (void)clazz;
     if (!command) return;
-    text=(*env)->GetStringUTFChars(env,command,NULL);
+    text = (*env)->GetStringUTFChars(env,command,NULL);
     if (!text) return;
-    len=strlen(text);
-    if (len && len<sizeof(dwLabCommand)-2 &&
-        !strchr(text,';') && !strchr(text,'\\') && !strchr(text,'\n') &&
-        !strchr(text,'\r') && !strchr(text,'"')) {
-        if (__sync_lock_test_and_set(&dwLabBusy,1)==0) {
-            if (!dwLabReady) {
-                memcpy(dwLabCommand,text,len);
-                dwLabCommand[len]='\n';
-                dwLabCommand[len+1]='\0';
-                __sync_synchronize();
-                dwLabReady=1;
-            }
-            __sync_lock_release(&dwLabBusy);
-        }
+    len = strlen(text);
+    if (!len || len >= DW_LAB_CMD_CAP-2 || strchr(text,';') ||
+        strchr(text,'\\') || strchr(text,'\n') ||
+        strchr(text,'\r') || strchr(text,'"'))
+        goto out;
+    /* Canonical production guards must not be overridden by the lab UI. */
+    key[0] = value[0] = 0;
+    if (sscanf(text,"%79s %79s",key,value)==2) {
+        if ((!Q_stricmp(key,"r_dlightmode") && strcmp(value,"2")) ||
+            (!Q_stricmp(key,"r_forcesun") && strcmp(value,"1")))
+            goto out;
     }
+    pthread_mutex_lock(&dwLabQueueLock);
+    if (dwLabCmdWrite-dwLabCmdRead < DW_LAB_QUEUE_CAP) {
+        char *dst = dwLabCommands[dwLabCmdWrite % DW_LAB_QUEUE_CAP];
+        memcpy(dst,text,len);
+        dst[len]='\n';
+        dst[len+1]='\0';
+        ++dwLabCmdWrite;
+    }
+    pthread_mutex_unlock(&dwLabQueueLock);
+out:
     (*env)->ReleaseStringUTFChars(env,command,text);
 }
 static void CL_AndroidConsumeLabCommand(void)
 {
-    char local[sizeof(dwLabCommand)];
-    if (!dwLabReady) return;
-    if (__sync_lock_test_and_set(&dwLabBusy,1)!=0) return;
-    if (!dwLabReady) {
-        __sync_lock_release(&dwLabBusy);
-        return;
+    int i;
+    for (i=0; i<8; ++i) {
+        char local[DW_LAB_CMD_CAP];
+        pthread_mutex_lock(&dwLabQueueLock);
+        if (dwLabCmdRead==dwLabCmdWrite) {
+            pthread_mutex_unlock(&dwLabQueueLock);
+            return;
+        }
+        memcpy(local,dwLabCommands[dwLabCmdRead % DW_LAB_QUEUE_CAP],
+               sizeof(local));
+        ++dwLabCmdRead;
+        pthread_mutex_unlock(&dwLabQueueLock);
+        Cbuf_ExecuteText(EXEC_APPEND,local);
     }
-    memcpy(local,dwLabCommand,sizeof(local));
-    dwLabReady=0;
-    __sync_lock_release(&dwLabBusy);
-    Cbuf_ExecuteText(EXEC_APPEND,local);
 }
 '''
-s=s.replace(needle,bridge+"\n"+needle,1)
+catalog=r'''
+/* Engine-thread catalog. The UI thread only reads a mutex-protected snapshot.
+ * Includes all registered CVars, their reset values, latches and flags.
+ * No direct UI-thread walk of cvar_vars; no CVar mutation here.
+ */
+#define DW_LAB_CATALOG_CAP (256*1024)
+extern cvar_t *cvar_vars;
+static pthread_mutex_t dwLabCatalogLock = PTHREAD_MUTEX_INITIALIZER;
+static char dwLabCatalogPending[DW_LAB_CATALOG_CAP];
+static char dwLabCatalogPublished[DW_LAB_CATALOG_CAP];
+static unsigned dwLabCatalogTick;
+static void DWLabCleanField(char *dst, size_t cap, const char *src)
+{
+    size_t i=0;
+    if (!src) src="";
+    while (i+1<cap && src[i]) {
+        unsigned char c=(unsigned char)src[i];
+        dst[i] = (c>=32 && c<127 && c!='\t') ? (char)c : ' ';
+        ++i;
+    }
+    dst[i]=0;
+}
+static void CL_AndroidPublishLabCvars(void)
+{
+    cvar_t *cv;
+    size_t used=0;
+    if (++dwLabCatalogTick%15 != 1) return;
+    dwLabCatalogPending[0]=0;
+    for (cv=cvar_vars; cv; cv=cv->next) {
+        char name[128],cur[256],def[256],lat[256];
+        int n;
+        DWLabCleanField(name,sizeof(name),cv->name);
+        DWLabCleanField(cur,sizeof(cur),cv->string);
+        DWLabCleanField(def,sizeof(def),cv->resetString);
+        DWLabCleanField(lat,sizeof(lat),cv->latchedString);
+        n=snprintf(dwLabCatalogPending+used,DW_LAB_CATALOG_CAP-used,
+                   "%s\t%s\t%s\t%d\t%s\n",
+                   name,cur,def,cv->flags,lat);
+        if (n<0) break;
+        if ((size_t)n >= DW_LAB_CATALOG_CAP-used) {
+            dwLabCatalogPending[used]=0;
+            break;
+        }
+        used+=(size_t)n;
+    }
+    pthread_mutex_lock(&dwLabCatalogLock);
+    memcpy(dwLabCatalogPublished,dwLabCatalogPending,used+1);
+    pthread_mutex_unlock(&dwLabCatalogLock);
+}
+JNIEXPORT jstring JNICALL
+Java_org_darkwolf_rend2_DarkWolfActivity_nativeLabCvars(
+    JNIEnv *env, jclass clazz)
+{
+    jstring result;
+    (void)clazz;
+    pthread_mutex_lock(&dwLabCatalogLock);
+    result=(*env)->NewStringUTF(env,dwLabCatalogPublished);
+    pthread_mutex_unlock(&dwLabCatalogLock);
+    return result;
+}
+'''
+s=s.replace(needle,catalog+"\n"+bridge+"\n"+needle,1)
 # Integrate at action consumption, exactly once per frame.
 needle2="    androidGameAppliedMask = desired;"
 assert needle2 in s
-s=s.replace(needle2,needle2+"\n    CL_AndroidConsumeLabCommand();",1)
+s=s.replace(needle2,needle2+"\n    CL_AndroidConsumeLabCommand();\n    CL_AndroidPublishLabCvars();",1)
 path.write_text(s)
 print("GRAPHICS_LAB_JNI_BRIDGE=APPLIED")
