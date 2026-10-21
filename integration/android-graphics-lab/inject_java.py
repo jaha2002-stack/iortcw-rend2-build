@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Inject native Android Graphics Lab HUD into generated SDL2 app (Java source)."""
+from pathlib import Path
+import sys
+root=Path(sys.argv[1])
+p=root/"app/src/main/java/org/darkwolf/rend2/DarkWolfActivity.java"
+s=p.read_text()
+assert "private void installTouchControls()" in s
+assert "installTouchControls();" in s
+s=s.replace("installTouchControls();", "installTouchControls();\n        installLabButton();",1)
+s=s.replace("    static native boolean nativeIsUiActive();","    static native void nativeQueueLabCommand(String command);\n    static native boolean nativeIsUiActive();",1)
+new=r'''
+    private android.widget.Button labButton;
+    private final java.util.Map<String,String> labSaved =
+        new java.util.LinkedHashMap<>();
+    private void labSend(String cmd) {
+        if (cmd.length() < 450 && !cmd.contains(";") && !cmd.contains("\n")) {
+            nativeQueueLabCommand(cmd);
+        }
+    }
+    private void installLabButton() {
+        labButton = new android.widget.Button(this);
+        labButton.setText("GRAPHICS LAB");
+        labButton.setTextSize(11);
+        RelativeLayout.LayoutParams lp = new RelativeLayout.LayoutParams(
+            170, 68);
+        lp.addRule(RelativeLayout.ALIGN_PARENT_TOP);
+        lp.addRule(RelativeLayout.ALIGN_PARENT_RIGHT);
+        mLayout.addView(labButton, lp);
+        labButton.bringToFront();
+        labButton.setOnClickListener(v -> labMenu());
+    }
+    private void labMenu() {
+        final String[] items = {
+            "MAP: open any map", "CAMERA: free camera (noclip)",
+            "ZOOM IN", "ZOOM OUT", "FULL NATIVE RESOLUTION",
+            "CHANGE CVAR", "LIGHT / SUN", "SHADOWS",
+            "SSGI / BLOOM", "CAS / LUT / A2C", "TEXTURES",
+            "SAVE PROFILE", "LOAD PROFILE", "RESTART RENDERER"
+        };
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("DarkWolf Rend2 Graphics Lab")
+            .setItems(items, (dialog, which) -> {
+                switch (which) {
+                case 0: labMap(); break;
+                case 1: labSend("noclip"); break;
+                case 2: labSend("cg_fov 50"); break;
+                case 3: labSend("cg_fov 100"); break;
+                case 4: labSend("dw_android_renderScale 100"); break;
+                case 5: labCvar("", ""); break;
+                case 6: labSelect(new String[] {"r_forceSun","r_sunShadows",
+                    "r_sunlightMode","r_drawSunRays","r_volumetricSun",
+                    "r_volumetricLocal","r_volumetricFire","r_dlightmode"});
+                    break;
+                case 7: labSelect(new String[] {"r_dlightShadowMaxLights",
+                    "r_dlightShadowMapSize","r_staticPromote",
+                    "r_staticPromoteMaxLights","r_shadowMapSize"});
+                    break;
+                case 8: labSelect(new String[] {"r_ssgi","r_bloom",
+                    "r_bloomMode","r_bloomThreshold","r_bloomStrength",
+                    "r_toneMap","r_hdr"}); break;
+                case 9: labSelect(new String[] {"r_dwCas","r_dwCasStrength",
+                    "r_dwLut","r_dwLutMode","r_dwLutStrength",
+                    "r_dwA2C"}); break;
+                case 10: labSelect(new String[] {"r_picmip","r_picmip2",
+                    "r_textureMode","r_ext_texture_filter_anisotropic",
+                    "r_normalMapping","r_specularMapping","r_parallaxMapping",
+                    "r_detailtextures","r_lodbias"}); break;
+                case 11: labSend("writeconfig graphics_lab.cfg"); break;
+                case 12: labSend("exec graphics_lab.cfg"); break;
+                case 13: labSend("vid_restart"); break;
+                }
+            }).show();
+    }
+    private void labSelect(String[] names) {
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Choose graphics CVar")
+            .setItems(names, (d,i) -> labCvar(names[i],
+                labSaved.containsKey(names[i]) ? labSaved.get(names[i]) : ""))
+            .show();
+    }
+    private void labMap() {
+        android.widget.EditText value = new android.widget.EditText(this);
+        value.setSingleLine(true);
+        value.setHint("escape1, factory, assault, crypt1, church, boss1...");
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Load RTCW map")
+            .setView(value)
+            .setPositiveButton("LOAD", (d,w) -> {
+                String map=value.getText().toString().trim();
+                if (map.matches("[A-Za-z0-9_]{1,48}"))
+                    labSend("spdevmap "+map);
+            }).setNegativeButton("CANCEL",null).show();
+    }
+    private void labCvar(String name, String current) {
+        android.widget.LinearLayout stack = new android.widget.LinearLayout(this);
+        stack.setPadding(30,20,30,10);
+        stack.setOrientation(android.widget.LinearLayout.VERTICAL);
+        android.widget.EditText key = new android.widget.EditText(this);
+        key.setSingleLine(true);
+        key.setHint("CVar name, e.g. r_bloomStrength");
+        key.setText(name);
+        android.widget.EditText val = new android.widget.EditText(this);
+        val.setSingleLine(true);
+        val.setHint("New value");
+        val.setText(current);
+        stack.addView(key);
+        stack.addView(val);
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Set renderer CVar")
+            .setView(stack)
+            .setPositiveButton("APPLY", (d,w) -> {
+                String k=key.getText().toString().trim();
+                String v=val.getText().toString().trim();
+                if (k.matches("[A-Za-z][A-Za-z0-9_]{1,63}") &&
+                    v.matches("[A-Za-z0-9_.+-]{1,80}")) {
+                    labSaved.put(k,v);
+                    labSend(k+" "+v);
+                }
+            }).setNeutralButton("QUERY", (d,w) -> {
+                String k=key.getText().toString().trim();
+                if (k.matches("[A-Za-z][A-Za-z0-9_]{1,63}")) labSend(k);
+            }).setNegativeButton("CANCEL",null).show();
+    }
+'''
+needle="    private void prepareFilesystem() {"
+assert needle in s
+s=s.replace(needle,new+"\n"+needle,1)
+# Graphics inspection defaults are not the old ultra-low-performance baseline.
+s=s.replace('"+set", "dw_android_ultralow", "1",','"+set", "dw_android_ultralow", "0",')
+s=s.replace('"+set", "dw_android_renderScale", "50",','"+set", "dw_android_renderScale", "100",')
+s=s.replace('"+set", "r_dlightMode", "0",','"+set", "r_dlightMode", "2",')
+s=s.replace('"+set", "r_forceSun", "0",','"+set", "r_forceSun", "1",')
+p.write_text(s)
+print("GRAPHICS_LAB_ANDROID_UI=INSTALLED")
