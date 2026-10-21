@@ -23,7 +23,7 @@ jobs:
       - name: Host dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ca-certificates git gh jq python3 python3-pip unzip zip ninja-build cmake
+          sudo apt-get install -y --no-install-recommends ca-certificates git gh jq python3 python3-pip python3-pil unzip zip ninja-build cmake
       - name: Android NDK and SDK
         run: |
           set -Eeuo pipefail
@@ -61,6 +61,17 @@ jobs:
           set -Eeuo pipefail
           export PATH="$ANDROID_HOME/build-tools/35.0.0:$ANDROID_HOME/platform-tools:$PATH"
           bash integration/android-rend2-v0-1/build_android_apk_bootstrap.sh
+      - name: Preserve ARM64 phone APK before emulator build
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          apk=".android-rend2-work/android-apk/dist/DarkWolf-ioRTCW-Rend2-Android-v0.1-ARM64-Debug.apk"
+          output=".android-rend2-work/arm64-phone"
+          test -s "$apk"
+          mkdir -p "$output"
+          cp "$apk" "$output/DarkWolf-Graphics-Lab-V03-ARM64.apk"
+          (cd "$output" && sha256sum DarkWolf-Graphics-Lab-V03-ARM64.apk > SHA256SUMS.txt)
+          echo "GRAPHICS_LAB_ARM64_APK_PRESERVED=PASS"
       - name: Build x86_64 Graphics Lab emulator candidate
         shell: bash
         run: |
@@ -155,12 +166,41 @@ jobs:
             if grep -q "DARKWOLF_ANDROID_CI_PLAYERSTART=PASS" "$out/logcat.txt"; then break; fi
             sleep 2
           done
-          adb exec-out screencap -p > "$out/retail-frame.png" || true
+          # A successful player-start marker is NOT proof of a rendered 3D image.
+          # First-run Android immersive-mode dialogs can cover the entire game view.
+          device_size="$(adb shell wm size | tr -d '\r' | grep -Eo '[0-9]+x[0-9]+' | tail -1)"
+          test -n "$device_size"
+          dw="${device_size%x*}"
+          dh="${device_size#*x}"
+          echo "GRAPHICS_LAB_SCREEN=${dw}x${dh}"
+          adb shell input tap "$((dw*80/100))" "$((dh*59/100))" || true
+          sleep 5
+          visual_pass=0
+          : > "$out/frame-audit.txt"
+          for i in 1 2 3 4; do
+            filename="$out/retail-frame-$i.png"
+            adb exec-out screencap -p > "$filename"
+            if /usr/bin/python3 integration/android-graphics-lab/verify_rend2_frame.py "$filename" | tee -a "$out/frame-audit.txt"; then
+              cp "$filename" "$out/retail-frame.png"
+              visual_pass=1
+              break
+            fi
+            # If Android's "Viewing full screen" prompt persisted, dismiss it.
+            adb shell input tap "$((dw*80/100))" "$((dh*59/100))" || true
+            sleep 5
+          done
+          adb logcat -d -v threadtime > "$out/logcat.txt"
           adb shell pidof org.darkwolf.rend2 | tee "$out/pid.txt"
           grep -q "DARKWOLF_ANDROID_CI_PLAYERSTART=PASS" "$out/logcat.txt"
           grep -q "loaded .* GLSL shaders" "$out/logcat.txt"
           ! grep -Eqi "Fatal signal|FATAL EXCEPTION|GLSL compile error|GLSL link error" "$out/logcat.txt"
-          printf '%s\n' "RETAIL_RUNTIME=PASS_PLAYERSTART" "GPU_RENDERED_FRAME=CAPTURED" > "$out/STATUS.txt"
+          if [ "$visual_pass" -ne 1 ]; then
+            echo "VISUAL_GATE=FAIL: Android screenshot exists but does not prove a textured 3D scene" | tee "$out/STATUS.txt"
+            timeout 20s adb shell uiautomator dump /sdcard/lab-ui.xml >/dev/null 2>&1 || true
+            adb exec-out cat /sdcard/lab-ui.xml > "$out/window-ui.xml" 2>/dev/null || true
+            exit 1
+          fi
+          printf '%s\n' "RETAIL_RUNTIME=PASS_PLAYERSTART" "GPU_RENDERED_FRAME=VISUALLY_VERIFIED" > "$out/STATUS.txt"
           echo GRAPHICS_LAB_RETAIL_RUNTIME=PASS
       - name: Upload candidate and diagnostics
         if: always()
@@ -169,6 +209,8 @@ jobs:
           name: DarkWolf-Graphics-Lab-V03-ARM64-Build-Probe
           path: |
             .android-rend2-work/GRAPHICS_LAB_PROVENANCE.txt
+            .android-rend2-work/arm64-phone/*.apk
+            .android-rend2-work/arm64-phone/SHA256SUMS.txt
             .android-rend2-work/native-runtime/log/**
             .android-rend2-work/native-runtime/bin/*.so
             .android-rend2-work/android-apk/dist/*.apk

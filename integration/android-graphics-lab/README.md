@@ -11,3 +11,7 @@
 ## V01 emulator acceptance gate
 
 An x86_64 CI-only build now compiles the same V03 source and Lab Java overlay, boots Android 35 with SwiftShader, validates JNI library loading and captures its startup screen. When the private licensed retail asset token is configured, CI imports the six essential RTCW PK3s into the emulator, starts `escape1`, checks GLSL compilation and the player-start marker, and saves a screenshot plus log. Retail PK3 files are **never** uploaded with public artifacts. Passing APK compilation alone is not a gameplay validation. The emulator is not proof of performance on Adreno or other real phone GPUs.
+
+## 2026-10-21: corrected graphical acceptance
+
+Run 39656996857 started the SP map and compiled 282 GLSL shaders on SwiftShader but its saved screenshot was covered by Android's 'Viewing full screen' prompt. That screenshot is NOT visual proof. The new visual gate taps 'Got it', captures up to four frames, and requires image variation and non-neutral textured pixels (calibrated to reject the actual old black/prompt screenshots). A PNG without a scene now **fails** the gate. This pixel heuristic is a smoke test, not complete image parity; inspect the frame manually and test on physical GPU before production. The x86_64 CI build used to delete the previously built phone APK; a separate ARM64 preserve directory is now uploaded to the artifact.
