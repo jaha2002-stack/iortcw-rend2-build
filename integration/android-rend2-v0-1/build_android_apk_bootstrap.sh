@@ -1049,6 +1049,8 @@ A6_QVM_CGAME_SHA256=$(sha256sum "$QVMS/bin/cgame.sp.qvm" | awk '{print $1}')
 A6_QVM_QAGAME_SHA256=$(sha256sum "$QVMS/bin/qagame.sp.qvm" | awk '{print $1}')
 EOF
 
+python3 "$ROOT/integration/android-graphics-lab/inject_java.py" "$PROJECT"
+
 (
   cd "$PROJECT"
   ./gradlew --no-daemon --stacktrace :app:assembleDebug
