@@ -8,7 +8,7 @@ s=p.read_text()
 assert "private void installTouchControls()" in s
 assert "installTouchControls();" in s
 s=s.replace("installTouchControls();", "installTouchControls();\n        installLabButton();",1)
-s=s.replace("    static native boolean nativeIsUiActive();","    static native void nativeQueueLabCommand(String command);\n    static native boolean nativeIsUiActive();",1)
+s=s.replace("    static native boolean nativeIsUiActive();","    static native void nativeQueueLabCommand(String command);\n    static native String nativeLabCvars();\n    static native boolean nativeIsUiActive();",1)
 new=r'''
     private android.widget.Button labButton;
     private final java.util.Map<String,String> labSaved =
@@ -34,7 +34,7 @@ new=r'''
         final String[] items = {
             "MAP: open any map", "CAMERA: free camera (noclip)",
             "ZOOM IN", "ZOOM OUT", "FULL NATIVE RESOLUTION",
-            "CHANGE CVAR", "LIGHT / SUN", "SHADOWS",
+            "ALL CVARS: search & inspect", "LIGHT / SUN", "SHADOWS",
             "SSGI / BLOOM", "CAS / LUT / A2C", "TEXTURES",
             "SAVE PROFILE", "LOAD PROFILE", "RESTART RENDERER"
         };
@@ -47,7 +47,7 @@ new=r'''
                 case 2: labSend("cg_fov 50"); break;
                 case 3: labSend("cg_fov 100"); break;
                 case 4: labSend("dw_android_renderScale 100"); break;
-                case 5: labCvar("", ""); break;
+                case 5: labCatalog(""); break;
                 case 6: labSelect(new String[] {"r_forceSun","r_sunShadows",
                     "r_sunlightMode","r_drawSunRays","r_volumetricSun",
                     "r_volumetricLocal","r_volumetricFire","r_dlightmode"});
@@ -92,6 +92,57 @@ new=r'''
                     labSend("spdevmap "+map);
             }).setNegativeButton("CANCEL",null).show();
     }
+
+    private void labCatalog(String initialFilter) {
+        final String[] raw = nativeLabCvars().split("\n");
+        final java.util.ArrayList<String[]> records = new java.util.ArrayList<>();
+        for (String line : raw) {
+            String[] parts = line.split("\t",-1);
+            if (parts.length == 5 && (parts[0].startsWith("r_") ||
+                    parts[0].startsWith("cg_") || parts[0].startsWith("dw_")))
+                records.add(parts);
+        }
+        android.widget.EditText search = new android.widget.EditText(this);
+        search.setSingleLine(true);
+        search.setText(initialFilter);
+        search.setHint("Search registered CVar");
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Runtime CVar catalog ("+records.size()+")")
+            .setView(search)
+            .setPositiveButton("SEARCH",(d,w)->{
+                String filter = search.getText().toString().toLowerCase(java.util.Locale.ROOT);
+                java.util.ArrayList<String> labels = new java.util.ArrayList<>();
+                java.util.ArrayList<String[]> found = new java.util.ArrayList<>();
+                for(String[] row:records) {
+                    if (!row[0].toLowerCase(java.util.Locale.ROOT).contains(filter)) continue;
+                    if(found.size() >= 250) break;
+                    found.add(row);
+                    labels.add(row[0]+" = "+row[1]);
+                }
+                new android.app.AlertDialog.Builder(this)
+                    .setTitle("CVar results ("+found.size()+")")
+                    .setItems(labels.toArray(new String[0]),(dd,index)->labInspect(found.get(index)))
+                    .setNegativeButton("CLOSE",null).show();
+            }).setNegativeButton("CANCEL",null).show();
+    }
+    private void labInspect(String[] row) {
+        final String key=row[0];
+        final int flags;
+        try { flags=Integer.parseInt(row[3]); } catch (NumberFormatException e) { return; }
+        final boolean locked=(flags & (0x0010|0x0040|0x2000))!=0 ||
+            key.equalsIgnoreCase("r_dlightmode") || key.equalsIgnoreCase("r_forcesun");
+        final boolean latched=(flags & 0x0020)!=0;
+        String message="Current: "+row[1]+"\nDefault: "+row[2]+
+            "\nPending: "+(row[4].isEmpty()?"none":row[4])+
+            "\nFlags: 0x"+Integer.toHexString(flags)+
+            (latched?"\nRESTART REQUIRED":"")+
+            (locked?"\nREAD-ONLY / PROTECTED":"");
+        android.app.AlertDialog.Builder d=new android.app.AlertDialog.Builder(this)
+            .setTitle(key).setMessage(message).setNegativeButton("CLOSE",null);
+        if(!locked)d.setPositiveButton("EDIT",(dd,w)->labCvar(key,row[1]));
+        d.show();
+    }
+
     private void labCvar(String name, String current) {
         android.widget.LinearLayout stack = new android.widget.LinearLayout(this);
         stack.setPadding(30,20,30,10);
