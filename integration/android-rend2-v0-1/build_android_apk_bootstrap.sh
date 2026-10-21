@@ -580,50 +580,10 @@ public final class DarkWolfActivity extends SDLActivity {
                 "+set", "dw_android_ultralow", "1",
                 "+set", "dw_android_renderScale", "50",
 
-                "+set", "r_hdr", "0",
-                "+set", "r_postProcess", "0",
-                "+set", "r_toneMap", "0",
-                "+set", "r_autoExposure", "0",
-                "+set", "r_depthPrepass", "0",
-                "+set", "r_ssao", "0",
-
-                "+set", "r_normalMapping", "0",
-                "+set", "r_specularMapping", "0",
-                "+set", "r_deluxeMapping", "0",
-                "+set", "r_parallaxMapping", "0",
-                "+set", "r_cubeMapping", "0",
-                "+set", "r_pbr", "0",
-
-                "+set", "r_dynamiclight", "1",
-                "+set", "r_dlightMode", "0",
-                "+set", "r_dlightShadowMaxLights", "0",
-                "+set", "r_dlightShadowMapSize", "256",
-                "+set", "r_sunShadows", "0",
-                "+set", "r_forceSun", "0",
-                "+set", "r_sunlightMode", "0",
-                "+set", "r_drawSun", "0",
-                "+set", "r_drawSunRays", "0",
-
-                "+set", "r_staticPromote", "0",
-                "+set", "r_staticPromoteMaxLights", "0",
-                "+set", "r_volumetricLocal", "0",
-                "+set", "r_volumetricSun", "0",
-                "+set", "r_volumetricFire", "0",
-                "+set", "r_softParticles", "0",
-                "+set", "r_fxStage9Enable", "0",
-
-                "+set", "r_flares", "0",
-                "+set", "r_detailtextures", "0",
-                "+set", "r_picmip", "3",
-                "+set", "r_picmip2", "3",
-                "+set", "r_subdivisions", "20",
-                "+set", "r_lodbias", "2",
-                "+set", "r_textureMode", "GL_LINEAR_MIPMAP_NEAREST",
-                "+set", "r_ext_texture_filter_anisotropic", "0",
-                "+set", "r_ext_framebuffer_multisample", "0",
-                "+set", "r_ext_multisample", "0",
-                "+set", "r_finish", "0",
-                "+set", "r_swapInterval", "0",
+                // Graphics Lab: inherit V03 renderer defaults, do not forcibly disable effects.
+                // Mandatory production guards follow their known required values.
+                "+set", "r_dlightMode", "2",
+                "+set", "r_forceSun", "1",
 
                 "+set", "r_fullscreen", "1",
                 "+set", "r_mode", "-2",
@@ -1035,9 +995,9 @@ cp "$QVMS/bin/cgame.sp.qvm" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/
 cp "$QVMS/bin/qagame.sp.qvm" "$PROJECT/app/src/main/assets/darkwolf-runtime/main/vm/"
 
 cat > "$PROJECT/app/src/main/assets/darkwolf-runtime/PROVENANCE.txt" <<EOF
-BASE_RUN_ID=37266797451
-BASE_HEAD_SHA=e410db87b5704fb1518740f1cfc760e9ea67d34f
-ANDROID_BRANCH=rend2-android-testlab-v0.1
+BASE_RUN_ID=39556894566
+BASE_HEAD_SHA=6db34503c1d6353076dc7db137ea204d89cc5953
+ANDROID_BRANCH=rend2-android-graphics-lab-v01-20261021
 ANDROID_ABI=arm64-v8a
 ANDROID_MIN_API=29
 RENDERER=Rend2
@@ -1109,9 +1069,9 @@ A5_BASEGAME_CASE=main
 A5_FS_BASEPATH=APP_SCOPED_EXTERNAL_DARKWOLF_ROOT
 A5_FS_HOMEPATH=APP_PRIVATE_DARKWOLF_ROOT
 A5_NATIVE_MODULE_EXTRACTION=PASS_BY_JAVA_COMPILE_AND_APK_CONTENT
-ANDROID_PERF_PROFILE=V0_3_PLAYABLE_INTERNAL_SCALE_DIRECT_INPUT
+ANDROID_PERF_PROFILE=GRAPHICS_LAB_V03_NATIVE_RES
 ANDROID_NATIVE_SURFACE=UNCHANGED_R_MODE_MINUS_2
-ANDROID_INTERNAL_RENDER_SCALE=50_PERCENT
+ANDROID_INTERNAL_RENDER_SCALE=NATIVE_GLES_VIEWPORT
 ANDROID_DIRECT_GAME_ACTIONS=1
 ANDROID_SYNC_FILE_LOGGING=0
 ANDROID_HDR=0
