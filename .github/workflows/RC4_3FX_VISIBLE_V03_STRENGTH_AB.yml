@@ -1,0 +1,85 @@
+name: Rend2 Visible V03 CAS055 LUT080 AB
+on:
+  push:
+    branches: [rend2-3fx-visible-v03-20261021]
+    paths: ['integration/cas-a2c-lut/strength_ab.py', '.github/workflows/RC4_3FX_VISIBLE_V03_STRENGTH_AB.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  in-game-ab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct RC4 + CSM + Texture + CAS A2C LUT locked candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p source parent evidence
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/12004010089/zip > parent.zip
+          echo '6c6c2d2302e2f4f45bad9d7e3df7e2573fd79a72646bcf049596440cb62f7659  parent.zip' | sha256sum -c -
+          unzip -q parent.zip -d parent
+          (cd parent && mkdir -p dist && ln -s ../DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz dist/DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz && sha256sum -c DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz.sha256)
+          tar -xzf parent/DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz -C source
+          git -C source init -q
+          git -C source add -A
+          test "$(git -C source write-tree)" = bb1432b459a4daf72a324f3fb477744bdb51fd4a
+          python3 integration/rc4-final-csm/apply_csm_guard.py source
+          python3 integration/texture-material-fidelity/apply_fidelity.py source --manifest evidence/texture-manifest.json
+          echo '6d143993ecd24537aa1b66e6649b43ba5281c3d5f21cee527192ef20c1336dec  integration/cas-a2c-lut/feature.patch' | sha256sum -c -
+          git -C source apply --check "$GITHUB_WORKSPACE/integration/cas-a2c-lut/feature.patch"
+          git -C source apply "$GITHUB_WORKSPACE/integration/cas-a2c-lut/feature.patch"
+          echo 'b9f83421ebc55e5bc1d9ab3fc023eece71cc6e0a3203ab4e6eafd3d8ae83059a  integration/cas-a2c-lut/DARKWOLF_3FX_VISIBLE_V03.patch' | sha256sum -c -
+          git -C source apply --check "$GITHUB_WORKSPACE/integration/cas-a2c-lut/DARKWOLF_3FX_VISIBLE_V03.patch"
+          git -C source apply "$GITHUB_WORKSPACE/integration/cas-a2c-lut/DARKWOLF_3FX_VISIBLE_V03.patch"
+          grep -Fq '9-tap neighborhood' source/SP/code/rend2/glsl/dwfinal_fp.glsl
+          grep -Fq 'DARKWOLF_3FX_VISIBLE_V03' source/SP/code/rend2/tr_image.c
+          git -C source diff --check
+      - name: Install real-game renderer and pixel capture prerequisites
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev xvfb xauth python3-pil python3-numpy
+          python3 -m py_compile integration/cas-a2c-lut/strength_ab.py testlab/scripts/rc4_requested_views.py testlab/scripts/rc4_assault_camera.py
+      - name: Fetch licensed RTCW assets from existing protected TestLab release
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}" || { echo 'RTCW_TEST_ASSET_TOKEN_MISSING' > evidence/status.txt; exit 1; }
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > evidence/asset-path.log
+          tail -1 evidence/asset-path.log > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+      - name: Capture identical cameras CAS035 LUT035 vs CAS055 LUT080 with A2C fixed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u integration/cas-a2c-lut/strength_ab.py source "$(cat .retail_main)" evidence/real-game-ab 2>&1 | tee evidence/game-ab.log
+          test -s evidence/real-game-ab/STRENGTH_AB_REAL_GAME.png
+          test -s evidence/real-game-ab/STRENGTH_AB_REPORT.json
+          python3 - <<'PY'
+          import json,pathlib
+          p=pathlib.Path('evidence/real-game-ab')
+          d=json.loads((p/'STRENGTH_AB_REPORT.json').read_text())
+          assert len(d['pairs'])>=7
+          assert all(x['identical_camera'] and x['identical_weapon'] for x in d['pairs'])
+          for name in ('factory','escape1','assault'):
+              for mode in ('BASE','CAS055','LUT080','STRONG'):
+                  j=json.loads((p/f'{name}_{mode}-result.json').read_text())
+                  assert j['exit']==0 and j['ready'] and j['complete'] and j['images'],(name,mode)
+          print('PASS: CAS055 LUT080 strong mode scenes / A2C fixed')
+          PY
+      - name: Preserve true framebuffer images, source and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RC4-3FX-VisibleV03-StrongSettings-A-B-Evidence
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 60
