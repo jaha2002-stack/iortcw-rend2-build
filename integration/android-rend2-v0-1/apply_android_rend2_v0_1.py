@@ -1203,9 +1203,9 @@ def main(root: Path) -> None:
     patch_depth_texture_mode(sp / "rend2" / "tr_image.c")
     patch_backend(sp / "rend2" / "tr_backend.c")
     patch_android_perf_profile(sp / "rend2" / "tr_init.c")
-    patch_android_internal_scale_image(sp / "rend2" / "tr_image.c")
-    patch_android_internal_scale_fbo(sp / "rend2" / "tr_fbo.c")
-    patch_android_internal_scale_backend(sp / "rend2" / "tr_backend.c")
+    # Graphics Lab V03: patch_android_internal_scale_image(sp / "rend2" / "tr_image.c")  [disabled; native 1:1 framebuffer]
+    # Graphics Lab V03: patch_android_internal_scale_fbo(sp / "rend2" / "tr_fbo.c")  [disabled; native 1:1 framebuffer]
+    # Graphics Lab V03: patch_android_internal_scale_backend(sp / "rend2" / "tr_backend.c")  [disabled; native 1:1 framebuffer]
     patch_tr_extensions(sp / "rend2" / "tr_extensions.c")
     patch_android_console(sp / "sys" / "con_passive.c")
     patch_android_ui_query(sp / "client" / "cl_ui.c")
