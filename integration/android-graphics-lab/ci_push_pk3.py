@@ -204,9 +204,19 @@ def selftest() -> None:
         data = bytes(range(256)) * 16001
         file = d / "fixture.bin"
         file.write_bytes(data)
-        pieces = [data[i:i+CHUNK_BYTES] for i in range(0,len(data),CHUNK_BYTES)]
+        pieces = [data[i:i+CHUNK_BYTES] for i in range(0, len(data), CHUNK_BYTES)]
         assert len(pieces) > 1
-        assert digest(pieces[0]) == file_hash(file)
+        assert len(pieces[0]) == CHUNK_BYTES
+        assert all(0 < len(piece) <= CHUNK_BYTES for piece in pieces)
+        # A chunk hash is not the full file hash. Exercise the actual
+        # multi-chunk append contract and compare the concatenated digest.
+        assembled = hashlib.sha256()
+        for piece in pieces:
+            assert digest(piece) == hashlib.sha256(piece).hexdigest()
+            assembled.update(piece)
+        assert b"".join(pieces) == data
+        assert assembled.hexdigest() == file_hash(file)
+        assert digest(pieces[0]) != file_hash(file)
         assert app_private_destination(
             "org.darkwolf.rend2", "/data/user/0/org.darkwolf.rend2",
             "files/DarkWolfRTCW/main") == (
