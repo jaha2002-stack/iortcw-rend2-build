@@ -15,12 +15,12 @@ FATAL = ("FATAL EXCEPTION", "Fatal signal", "GLSL compile error", "GLSL link err
          "UnsatisfiedLinkError", "JNI DETECTED ERROR IN APPLICATION")
 MARKER = "GRAPHICS_LAB_CI_GAMEVIEW=PASS"
 # Logcat contains unrelated Android services. Restrict critical checks to game PID.
-GAME_THREADTIME = re.compile(r"^\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d+\\s+(\\d+)\\s+\\d+\\s+[A-Z]\\s+")
+GAME_THREADTIME = re.compile(r"^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+(\d+)\s+\d+\s+[A-Z]\s+")
 
 def extract_game_log(raw: str, pid: int) -> str:
     lines = [line for line in raw.splitlines()
              if (match := GAME_THREADTIME.match(line)) and int(match.group(1)) == pid]
-    return "\\n".join(lines) + ("\\n" if lines else "")
+    return "\n".join(lines) + ("\n" if lines else "")
 
 def current_game_pid() -> int:
     values = adb("shell", "pidof", PKG, timeout=12, check=False).decode("utf-8", "replace").split()
@@ -187,11 +187,19 @@ def selftest():
     # A Google/Widevine dlopen warning cannot fail the game process.
     foreign = "10-21 20:02:50.127   432   432 W WVCdm: dlopen failed: liboemcrypto.so"
     game = "10-21 20:03:35.760  2879  2947 I DarkWolfEngine: loaded 282 GLSL shaders"
-    assert extract_game_log(foreign + "\\n" + game, 2879).strip() == game
+    assert extract_game_log(foreign + "\n" + game, 2879).strip() == game
     assert not any(err in extract_game_log(foreign, 2879) for err in FATAL)
     own_error = "10-21 20:03:50.127  2879  2947 E DarkWolfEngine: GLSL compile error"
     assert "GLSL compile error" in extract_game_log(own_error, 2879)
     assert extract_game_log(game, 9999) == ""
+    # Explicitly reject foreign PID errors and preserve all game PID lines.
+    second = "10-21 20:03:50.128  2879  2948 W DarkWolfEngine: CVar registered"
+    another = "10-21 20:03:50.129  3288  3290 E App: FATAL EXCEPTION"
+    sample = "\n".join((foreign, game, second, another))
+    assert extract_game_log(sample, 2879).splitlines() == [game, second]
+    assert "FATAL EXCEPTION" not in extract_game_log(sample, 2879)
+    assert extract_game_log(sample, 3288).splitlines() == [another]
+    assert GAME_THREADTIME.match(game).group(1) == "2879"
     from tempfile import TemporaryDirectory
     from PIL import ImageDraw
     with TemporaryDirectory() as d:
