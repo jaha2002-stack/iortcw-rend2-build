@@ -68,4 +68,4 @@ assert "CONTROLS / COMMAND HELP" in ui
 for source in [arm,emu]:
     assert 'patch_touch_input.py" --java "$PROJECT"' in source
 wf = read(".github/workflows/ANDROID_GRAPHICS_LAB_V01.yml")
-assert 'patch_touch_input.py .android-rend2-work/source' in wf
+assert 'patch_touch_input.py --native .android-rend2-work/source' in wf
