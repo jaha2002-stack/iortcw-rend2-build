@@ -29,7 +29,7 @@ def patch_game(s):
 def patch_active(s):
     # Throttled server-side observation, after PMove, never force PM_NORMAL.
     needle = "\tmonsterslick = Pmove( &pm );"
-    repl = r'''\tmonsterslick = Pmove( &pm );
+    repl = r'''	monsterslick = Pmove( &pm );
     /* DW_ANDROID_SERVER_PMOVE_P1: the authoritative check. The client-side
      * usercmd marker alone is insufficient to establish player motion.
      * Never change command inputs, weapons or cinematic state here. */
