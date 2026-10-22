@@ -115,7 +115,7 @@ def wait_gameview(out, seconds=180):
         if any(z in log for z in FATAL):
             raise RuntimeError("fatal exception or shader failure in game logcat")
         if MARKER in log:
-            if "DARKWOLF_ANDROID_MAP_AUTOSTART=PASS" not in log:
+            if "DARKWOLF_ANDROID_UI_BRIEFING_AUTOSTART=PASS" not in log:
                 raise RuntimeError("active game view without stock map-autostart event")
             print("GAMEVIEW_NATIVE_MARKER=PASS",flush=True)
             print("MAP_AUTOSTART_WITHOUT_ENTER=PASS",flush=True)

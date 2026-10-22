@@ -34,3 +34,6 @@ for source in [arm,emu]:
               "r_volumetricSun","r_volumetricLocal"]:
         assert '"+set", "'+n+'", "' in source,n
 print("GRAPHICS_LAB_SOURCE_CONTRACTS=PASS")
+
+assert "DARKWOLF_ANDROID_UI_BRIEFING_AUTOSTART=PASS" in driver
+assert "DARKWOLF_ANDROID_UI_BRIEFING_AUTOSTART=PASS" in read("integration/android-graphics-lab/ci_ui_probe.py")
