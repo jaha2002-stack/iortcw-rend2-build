@@ -23,7 +23,12 @@ jobs:
       - name: Host dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ca-certificates git gh jq python3 python3-pip python3-pil unzip zip ninja-build cmake
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl git gh jq python3 python3-pip python3-pil \
+            unzip zip ninja-build cmake \
+            libpulse0 libasound2t64 libnss3 libxkbcommon0 libx11-xcb1 \
+            libxcomposite1 libxcursor1 libxi6 libxrandr2 libxtst6 libgl1 \
+            libxcb1 libxrender1 libxdamage1
       - name: Preflight validate tooling and tests
         shell: bash
         run: |
@@ -81,7 +86,19 @@ jobs:
           mkdir -p "$output"
           cp "$apk" "$output/DarkWolf-Graphics-Lab-V03-ARM64.apk"
           (cd "$output" && sha256sum DarkWolf-Graphics-Lab-V03-ARM64.apk > SHA256SUMS.txt)
+          sha256sum -c "$output/SHA256SUMS.txt" --ignore-missing || (cd "$output" && sha256sum -c SHA256SUMS.txt)
+          test -s "$output/DarkWolf-Graphics-Lab-V03-ARM64.apk"
           echo "GRAPHICS_LAB_ARM64_APK_PRESERVED=PASS"
+      - name: Publish installable ARM64 APK independently of emulator test
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-Graphics-Lab-V03-ARM64-APK
+          path: |
+            .android-rend2-work/arm64-phone/DarkWolf-Graphics-Lab-V03-ARM64.apk
+            .android-rend2-work/arm64-phone/SHA256SUMS.txt
+            .android-rend2-work/GRAPHICS_LAB_PROVENANCE.txt
+          if-no-files-found: error
+          retention-days: 30
       - name: Build x86_64 Graphics Lab emulator candidate
         shell: bash
         run: |
@@ -110,6 +127,18 @@ jobs:
           mv "$ANDROID_HOME/emulator" "$ANDROID_HOME/emulator-latest-unused"
           unzip -q ".android-rend2-work/emulator-${emu_build}.zip" -d "$ANDROID_HOME"
           chmod +x "$ANDROID_HOME/emulator/emulator"
+          echo "GRAPHICS_LAB_EMULATOR_ELF_DEPENDENCY_AUDIT"
+          # Check both launcher and QEMU directly: launcher's -version command
+          # can load QEMU and fail if any system library is absent.
+          for binary in "$ANDROID_HOME/emulator/emulator" \
+                        "$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64"; do
+            test -x "$binary"
+            ldd "$binary" | tee -a ".android-rend2-work/pinned-emulator-ldd.txt"
+          done
+          if grep -F "not found" ".android-rend2-work/pinned-emulator-ldd.txt"; then
+            echo "ERROR: old Android emulator still has unresolved ELF dependencies" >&2
+            exit 1
+          fi
           emulator -version 2>&1 | tee ".android-rend2-work/pinned-emulator-version.txt"
           grep -Fq "36.3.10" ".android-rend2-work/pinned-emulator-version.txt"
           echo "GRAPHICS_LAB_EMULATOR_PINNED=36.3.10"
@@ -266,5 +295,6 @@ jobs:
             .android-rend2-work/lab-emulator-console.log
             .android-rend2-work/emulator-graphics-mode.txt
             .android-rend2-work/pinned-emulator-version.txt
+            .android-rend2-work/pinned-emulator-ldd.txt
           if-no-files-found: warn
           retention-days: 30
