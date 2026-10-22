@@ -14,8 +14,14 @@ assert re.search(r"clc\.state\s*!=\s*CA_ACTIVE",native)
 assert "dw_android_ci_observe_gameview" in native
 assert "GRAPHICS_LAB_CI_GAMEVIEW=PASS" in native
 assert "GRAPHICS_LAB_CMD_DISPATCH=" in native
-assert "DARKWOLF_ANDROID_MAP_AUTOSTART=PASS" in android
-assert android.count('Cvar_Set( "g_playerstart", "1" )')==1
+assert "DARKWOLF_ANDROID_MAP_AUTOSTART_ARMED=PASS" in android
+assert "DARKWOLF_ANDROID_UI_BRIEFING_AUTOSTART=PASS" in android
+assert "DW_ANDROID_BRIEFING_ARROW_AUTOSTART_V01" in android
+assert "patch_android_briefing_ui(sp / \"ui\" / \"ui_main.c\")" in android
+assert android.count('trap_Cvar_Set( "g_playerstart", "1" )')==1
+assert 'Cvar_Set( "dw_android_briefing_autostart_pending", "1" )' in android
+assert 'trap_Cvar_Set( "dw_android_briefing_autostart_pending", "0" )' in android
+assert "DARKWOLF_ANDROID_BRIEFING_SENT_TO_UI=PASS" in android
 assert "dw_android_auto_playerstart" in android
 assert "KEYCODE_ENTER" not in driver and '"keyevent","66"' not in driver
 assert "MAP_AUTOSTART_WITHOUT_ENTER=PASS" in driver

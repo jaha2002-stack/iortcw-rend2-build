@@ -61,12 +61,23 @@ jobs:
           python3 integration/android-rend2-v0-1/apply_android_rend2_v0_1.py .android-rend2-work/source
           python3 integration/android-graphics-lab/patch_lab_bridge.py .android-rend2-work/source
           grep -Fq DARKWOLF_ANDROID_GLES .android-rend2-work/source/SP/code/rend2/qgl.h
+          # The briefing arrow is controlled by the QVM UI, not cl_cgame only.
+          grep -Fq DW_ANDROID_BRIEFING_ARROW_AUTOSTART_V01 .android-rend2-work/source/SP/code/ui/ui_main.c
+          grep -Fq 'dw_android_briefing_autostart_pending' .android-rend2-work/source/SP/code/client/cl_cgame.c
+          echo "GRAPHICS_LAB_UI_BRIEFING_SOURCE_PATCH=PASS"
       - name: Build ARM64 game modules and SP QVMs
         run: |
           set -Eeuo pipefail
           export PATH="$ANDROID_HOME/build-tools/35.0.0:$PATH"
           bash integration/android-rend2-v0-1/build_game_modules_arm64.sh
           bash integration/android-rend2-v0-1/build_game_qvms_host.sh
+          # QVM UI is shipped in the phone APK; require the fixed one here.
+          test -s .android-rend2-work/game-qvms/bin/ui.sp.qvm
+          if ! LC_ALL=C strings .android-rend2-work/game-qvms/bin/ui.sp.qvm | grep -Fq "DARKWOLF_ANDROID_UI_BRIEFING_AUTOSTART=PASS"; then
+            echo "ERROR: UI QVM does not contain the automatic briefing playerstart hook" >&2
+            exit 1
+          fi
+          echo "GRAPHICS_LAB_UI_BRIEFING_QVM=PASS"
       - name: Link ARM64 native Rend2 engine
         run: |
           set -Eeuo pipefail
@@ -257,7 +268,7 @@ jobs:
               sleep 2
               continue
             fi
-            if grep -q "DARKWOLF_ANDROID_MAP_AUTOSTART=PASS" "$out/logcat.txt"; then marker_seen=1; break; fi
+            if grep -q "DARKWOLF_ANDROID_UI_BRIEFING_AUTOSTART=PASS" "$out/logcat.txt"; then marker_seen=1; break; fi
             sleep 2
           done
           if [ "$marker_seen" -ne 1 ]; then
@@ -272,7 +283,7 @@ jobs:
           python3 integration/android-graphics-lab/ci_scene_driver.py "$out"
           adb logcat -d -v threadtime > "$out/logcat.txt"
           test -s "$out/game-logcat.txt"
-          grep -q "DARKWOLF_ANDROID_MAP_AUTOSTART=PASS" "$out/game-logcat.txt"
+          grep -q "DARKWOLF_ANDROID_UI_BRIEFING_AUTOSTART=PASS" "$out/game-logcat.txt"
           grep -q "loaded .* GLSL shaders" "$out/game-logcat.txt"
           grep -q "GRAPHICS_LAB_CI_GAMEVIEW=PASS" "$out/game-logcat.txt"
           grep -q "GRAPHICS_LAB_FEATURE_STATE=CAS1 LUT1 A2C1 SSGI1 BLOOM1 HDR1 TM1 DL2 SUN1 MSAA4" "$out/game-logcat.txt"

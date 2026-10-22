@@ -1141,8 +1141,10 @@ def patch_ci_playerstart(path: Path) -> None:
 \t\t}}
 \t\tKey_SetCatcher( Key_GetCatcher() & ~KEYCATCH_UI );
 \t\tCvar_Set( "cl_paused", "0" );
-\t\tCvar_Set( "g_playerstart", "1" );
-\t\tCom_Printf( "DARKWOLF_ANDROID_MAP_AUTOSTART=PASS\\n" );
+\t\t/* Arm the real UI briefing arrow action; the UI QVM performs
+\t\t * playerstart once when the briefing first appears, not at CG_INIT. */
+\t\tCvar_Set( "dw_android_briefing_autostart_pending", "1" );
+\t\tCom_Printf( "DARKWOLF_ANDROID_MAP_AUTOSTART_ARMED=PASS\\n" );
         if ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ) {{
             Com_Printf( "DARKWOLF_ANDROID_CI_PLAYERSTART=PASS\\n" );
         }}
@@ -1163,18 +1165,10 @@ def patch_ci_playerstart(path: Path) -> None:
 \t\tif ( VMA( 1 ) && !Q_stricmp( VMA( 1 ), "briefing" ) ) {{  //----(SA) added
 #ifdef __ANDROID__
 \t\t\tif ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ||
-             Cvar_VariableIntegerValue( "dw_android_auto_playerstart" ) ) {{
-\t\t\t\t/* {MARKER}: cgame posts briefing after CG_INIT; suppress it
-\t\t\t\t * so the map starts at the normal player spawnpoint. */
-\t\t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE );
-\t\t\t\tKey_SetCatcher( Key_GetCatcher() & ~KEYCATCH_UI );
-\t\t\t\tCvar_Set( "cl_paused", "0" );
-                /* playerstart already issued exactly once at CG_INIT. */
-\t\t\t\tCom_Printf( "DARKWOLF_ANDROID_MAP_BRIEFING_SKIPPED=PASS\\n" );
-                if ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ) {{
-                    Com_Printf( "DARKWOLF_ANDROID_CI_BRIEFING_SUPPRESSED=PASS\\n" );
-                }}
-\t\t\t\treturn 0;
+                 Cvar_VariableIntegerValue( "dw_android_auto_playerstart" ) ) {{
+\t\t\t\t/* The UI QVM owns the briefing/arrow/playerstart action.
+\t\t\t\t * Do not swallow this menu event in the client VM syscall. */
+\t\t\t\tCom_Printf( "DARKWOLF_ANDROID_BRIEFING_SENT_TO_UI=PASS\\n" );
 \t\t\t}}
 #endif
 \t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_BRIEFING );
@@ -1182,6 +1176,45 @@ def patch_ci_playerstart(path: Path) -> None:
 \t\t}}
 '''
     s = replace_once(s, popup_old, popup_new, "CI briefing popup suppression")
+    path.write_text(s)
+
+
+def patch_android_briefing_ui(path: Path) -> None:
+    """Android-specific UI QVM fix: consume RTCW's briefing arrow action.
+
+    Android QVMs are compiled by the HOST toolchain without __ANDROID__.
+    Modify only reconstructed Android source and guard behavior by the launcher
+    CVar, never with a compile-time Android macro inside ui_main.c.
+    """
+    s = path.read_text()
+    old = "\t\tcase UIMENU_BRIEFING:\n\t\t\tMenus_CloseAll();\n\t\t\tMenus_ActivateByName( \"briefing\" );\n\t\t\treturn;"
+    new = r"""        case UIMENU_BRIEFING:
+            /* DW_ANDROID_BRIEFING_ARROW_AUTOSTART_V01:
+             * Equivalent to RTCW's stock UI_RunMenuScript("playerstart")
+             * from the bottom-right arrow. This is the ACTUAL game start
+             * action, not merely closing the briefing panel.
+             */
+            if ( trap_Cvar_VariableValue( "dw_android_auto_playerstart" ) > 0 ||
+                 trap_Cvar_VariableValue( "dw_android_ci_playerstart" ) > 0 ) {
+                if ( trap_Cvar_VariableValue( "dw_android_briefing_autostart_pending" ) > 0 ) {
+                    /* Disarm first so repeated CG_DrawInformation() popups
+                     * cannot retrigger the playerstart script or autosave. */
+                    trap_Cvar_Set( "dw_android_briefing_autostart_pending", "0" );
+                    trap_Cmd_ExecuteText( EXEC_APPEND, "fade 0 0 0 0 3\n" );
+                    trap_Cvar_Set( "g_playerstart", "1" );
+                    trap_Print( "DARKWOLF_ANDROID_UI_BRIEFING_AUTOSTART=PASS\n" );
+                }
+                trap_Key_SetCatcher( trap_Key_GetCatcher() & ~KEYCATCH_UI );
+                trap_Key_ClearStates();
+                trap_Cvar_Set( "cl_paused", "0" );
+                Menus_CloseAll();
+                menutype = UIMENU_NONE;
+                return;
+            }
+            Menus_CloseAll();
+            Menus_ActivateByName( "briefing" );
+            return;"""
+    s = replace_once(s, old, new, "Android UI QVM briefing arrow autostart")
     path.write_text(s)
 
 def patch_tr_extensions(path: Path) -> None:
@@ -1219,6 +1252,7 @@ def main(root: Path) -> None:
     patch_android_ui_query(sp / "client" / "cl_ui.c")
     patch_android_ui_frame(sp / "client" / "cl_main.c")
     patch_ci_playerstart(sp / "client" / "cl_cgame.c")
+    patch_android_briefing_ui(sp / "ui" / "ui_main.c")
     print(f"{MARKER}: patched Android GLES3 bring-up layer")
 
 if __name__ == "__main__":
