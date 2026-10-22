@@ -173,6 +173,28 @@ new=r'''
           }).setNegativeButton("CANCEL",null).show();
     }
 
+
+    private void labQueryCvar(String name) {
+        // QUERY reads the renderer value and shows it in a native dialog.
+        String[] lines = nativeLabCvars().split("\n");
+        for (String line : lines) {
+            String[] fields = line.split("\t", -1);
+            if (fields.length == 5 && fields[0].equalsIgnoreCase(name)) {
+                String details = "Current: " + fields[1] +
+                    "\nDefault: " + fields[2] +
+                    "\nPending: " + (fields[4].isEmpty() ? "none" : fields[4]) +
+                    "\nFlags: " + fields[3];
+                new android.app.AlertDialog.Builder(this)
+                    .setTitle(fields[0]).setMessage(details)
+                    .setPositiveButton("OK", null).show();
+                return;
+            }
+        }
+        new android.app.AlertDialog.Builder(this)
+            .setTitle(name).setMessage("CVar is not registered.")
+            .setPositiveButton("OK", null).show();
+    }
+
     private void labCvar(String name, String current) {
         android.widget.LinearLayout stack = new android.widget.LinearLayout(this);
         stack.setPadding(30,20,30,10);
@@ -200,7 +222,7 @@ new=r'''
                 }
             }).setNeutralButton("QUERY", (d,w) -> {
                 String k=key.getText().toString().trim();
-                if (k.matches("[A-Za-z][A-Za-z0-9_]{1,63}")) labSend(k);
+                if (k.matches("[A-Za-z][A-Za-z0-9_]{1,63}")) labQueryCvar(k);
             }).setNegativeButton("CANCEL",null).show();
     }
 '''

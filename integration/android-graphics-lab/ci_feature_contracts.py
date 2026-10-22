@@ -37,3 +37,11 @@ print("GRAPHICS_LAB_SOURCE_CONTRACTS=PASS")
 
 assert "DARKWOLF_ANDROID_UI_BRIEFING_AUTOSTART=PASS" in driver
 assert "DARKWOLF_ANDROID_UI_BRIEFING_AUTOSTART=PASS" in read("integration/android-graphics-lab/ci_ui_probe.py")
+
+# Device-sized Android EGL drawable instead of legacy corner viewport.
+fullscreen = read("integration/android-graphics-lab/patch_fullscreen.py")
+assert "DARKWOLF_ANDROID_FULLSCREEN_DRAWABLE=PASS" in fullscreen
+assert "SDL_GL_GetDrawableSize" in fullscreen
+assert "SDL_WINDOW_FULLSCREEN_DESKTOP" in fullscreen
+assert "labQueryCvar(k);" in ui
+assert "private void labQueryCvar(String name)" in ui

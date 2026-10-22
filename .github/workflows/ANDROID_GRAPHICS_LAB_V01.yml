@@ -60,7 +60,9 @@ jobs:
           set -Eeuo pipefail
           python3 integration/android-rend2-v0-1/apply_android_rend2_v0_1.py .android-rend2-work/source
           python3 integration/android-graphics-lab/patch_lab_bridge.py .android-rend2-work/source
+          python3 integration/android-graphics-lab/patch_fullscreen.py .android-rend2-work/source
           grep -Fq DARKWOLF_ANDROID_GLES .android-rend2-work/source/SP/code/rend2/qgl.h
+          grep -Fq DARKWOLF_ANDROID_FULLSCREEN_DRAWABLE=PASS .android-rend2-work/source/SP/code/sdl/sdl_glimp.c
           # The briefing arrow is controlled by the QVM UI, not cl_cgame only.
           grep -Fq DW_ANDROID_BRIEFING_ARROW_AUTOSTART_V01 .android-rend2-work/source/SP/code/ui/ui_main.c
           grep -Fq 'dw_android_briefing_autostart_pending' .android-rend2-work/source/SP/code/client/cl_cgame.c
@@ -234,10 +236,19 @@ jobs:
             .android-rend2-work/lab-assets | tail -1)"
           test -d "$retail_main"
           dest="/sdcard/Android/data/org.darkwolf.rend2/files/DarkWolfRTCW/main"
-          adb shell mkdir -p "$dest"
+          pkg="org.darkwolf.rend2"
+          # Android 11's scoped storage denies adb shell writes under Android/data.
+          # Use the app's debuggable UID to populate its own app files.
+          timeout 12s adb shell run-as "$pkg" mkdir -p "$dest"
           for name in pak0.pk3 sp_pak1.pk3 sp_pak2.pk3 sp_pak3.pk3 sp_pak4.pk3 sp_rend2_shaders0.pk3; do
             test -s "$retail_main/$name"
-            adb push "$retail_main/$name" "$dest/$name" >/dev/null
+            staging="/data/local/tmp/dwlab-$name"
+            timeout 100s adb push "$retail_main/$name" "$staging" >/dev/null
+            timeout 60s adb shell run-as "$pkg" cp "$staging" "$dest/$name"
+            timeout 10s adb shell rm -f "$staging"
+            copied="$(timeout 12s adb shell run-as "$pkg" stat -c %s "$dest/$name" | tr -d '\r')"
+            test "$copied" = "$(stat -c %s "$retail_main/$name")"
+            echo "GRAPHICS_LAB_PK3_TRANSFER_VERIFIED=$name"
           done
           adb shell settings put secure immersive_mode_confirmations confirmed || true
           adb shell am force-stop org.darkwolf.rend2 || true
@@ -287,6 +298,7 @@ jobs:
           grep -q "DARKWOLF_ANDROID_UI_BRIEFING_AUTOSTART=PASS" "$out/game-logcat.txt"
           grep -q "loaded .* GLSL shaders" "$out/game-logcat.txt"
           grep -q "GRAPHICS_LAB_CI_GAMEVIEW=PASS" "$out/game-logcat.txt"
+          grep -q "DARKWOLF_ANDROID_FULLSCREEN_DRAWABLE=PASS" "$out/game-logcat.txt"
           grep -q "GRAPHICS_LAB_FEATURE_STATE=CAS1 LUT1 A2C1 SSGI1 BLOOM1 HDR1 TM1 DL2 SUN1 MSAA4" "$out/game-logcat.txt"
           grep -Fq "GPU_RENDERED_FRAME=VISUAL_SMOKE_PASS" "$out/STATUS.txt"
           grep -Fq "MAP_AUTOSTART_WITHOUT_ENTER=PASS" "$out/STATUS.txt"
