@@ -53,3 +53,19 @@ assert 'dest="files/DarkWolfRTCW/main"' in wf
 assert 'adb exec-in' in wf
 assert 'adb shell run-as "$pkg" mkdir -p "$dest"' in wf
 assert 'dest="/sdcard/Android/data/org.darkwolf.rend2/files/DarkWolfRTCW/main"' not in wf
+
+# Fix the actual broken mobile controls at usercmd construction, not via
+# delayed console +forward/-forward which can miss taps between frames.
+touch = read("integration/android-graphics-lab/patch_touch_input.py")
+assert "DARKWOLF_ANDROID_DIRECT_WASD_V01" in touch
+assert "CL_AndroidApplyTouchInput(&cmd)" in touch
+assert "nativeQueueLookDelta" in touch
+assert "androidMoveTapMask" in touch
+assert "drawDirection(canvas, wRect" in touch
+assert "case DW_ACT_FORWARD:" in touch
+assert "GRAPHICS_LAB_DIRECT_TOUCH_SELFTEST=PASS" in touch
+assert "CONTROLS / COMMAND HELP" in ui
+for source in [arm,emu]:
+    assert 'patch_touch_input.py" --java "$PROJECT"' in source
+wf = read(".github/workflows/ANDROID_GRAPHICS_LAB_V01.yml")
+assert 'patch_touch_input.py .android-rend2-work/source' in wf

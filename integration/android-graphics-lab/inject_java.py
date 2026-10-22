@@ -37,7 +37,8 @@ new=r'''
             "ALL CVARS: search & inspect", "LIGHT / SUN", "SHADOWS",
             "SSGI / BLOOM", "CAS / LUT / A2C", "TEXTURES",
             "SAVE PROFILE", "LOAD PROFILE", "RESTART RENDERER",
-            "GOTO XYZ: camera waypoint", "FOV: custom zoom"
+            "GOTO XYZ: camera waypoint", "FOV: custom zoom",
+            "CONTROLS / COMMAND HELP"
         };
         new android.app.AlertDialog.Builder(this)
             .setTitle("DarkWolf Rend2 Graphics Lab")
@@ -72,6 +73,7 @@ new=r'''
                 case 13: labSend("vid_restart"); break;
                 case 14: labGoto(); break;
                 case 15: labFov(); break;
+                case 16: labHelp(); break;
                 }
             }).show();
     }
@@ -82,6 +84,24 @@ new=r'''
                 labSaved.containsKey(names[i]) ? labSaved.get(names[i]) : ""))
             .show();
     }
+    private void labHelp() {
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Controls and Graphics Lab")
+            .setMessage(
+                "MOVE: hold W/A/S/D buttons at the lower left, or drag within their pad.\n" +
+                "LOOK: drag the right-center of the screen to rotate the camera.\n" +
+                "NOCLIP: GRAPHICS LAB > CAMERA: free camera. Move with W/A/S/D; " +
+                "JUMP goes UP and C goes DOWN when noclip is active.\n\n" +
+                "GRAPHICS SETTINGS: choose a group (SSGI / BLOOM, CAS / LUT / A2C, etc.), " +
+                "tap a CVar, enter its VALUE, then APPLY.\n" +
+                "QUERY: read Current / Default / Pending / Flags without changing a CVar.\n" +
+                "ALL CVARS: search by name, choose a result, tap EDIT, then APPLY.\n" +
+                "SAVE PROFILE saves graphics_lab.cfg; LOAD PROFILE restores it.\n" +
+                "RESTART RENDERER applies settings marked RESTART REQUIRED.\n" +
+                "Keep r_dlightMode=2 and r_forceSun=1.")
+            .setPositiveButton("OK", null).show();
+    }
+
     private void labMap() {
         android.widget.EditText value = new android.widget.EditText(this);
         value.setSingleLine(true);
