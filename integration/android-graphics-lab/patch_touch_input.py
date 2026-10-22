@@ -7,6 +7,8 @@ Desktop ioRTCW source is never modified.
 """
 from __future__ import annotations
 from pathlib import Path
+import ast
+import re
 import sys
 
 MARKER = "DARKWOLF_ANDROID_DIRECT_WASD_V01"
@@ -46,19 +48,27 @@ def patch_native_ui(src: str) -> str:
     __sync_lock_test_and_set(&androidLookMilliPitch, 0);
 }""",
         "clear held buttons, taps and camera delta")
-    src = once(src,
-        '        case DW_ACT_FORWARD:  cmd = down ? "+forward\\\\n"  : "-forward\\\\n"; break;\n'
-        '        case DW_ACT_BACK:     cmd = down ? "+back\\\\n"     : "-back\\\\n"; break;\n'
-        '        case DW_ACT_LEFT:     cmd = down ? "+moveleft\\\\n" : "-moveleft\\\\n"; break;\n'
-        '        case DW_ACT_RIGHT:    cmd = down ? "+moveright\\\\n": "-moveright\\\\n"; break;',
-        """        /* Directional touches are applied directly in CL_CreateCmd.
+    # Match the rendered C case statements rather than quoting C's "\\n"
+    # literal in Python. Different levels of escaping caused Run 39765170934
+    # to fail even though the source generator emitted the correct branches.
+    movement_cases = re.compile(
+        r"(?m)^[ \t]*case DW_ACT_FORWARD:[^\n]*\n"
+        r"[ \t]*case DW_ACT_BACK:[^\n]*\n"
+        r"[ \t]*case DW_ACT_LEFT:[^\n]*\n"
+        r"[ \t]*case DW_ACT_RIGHT:[^\n]*"
+    )
+    replacement = """        /* Directional touches are applied directly in CL_CreateCmd.
          * Console +forward would execute a frame too late (or be dropped). */
         case DW_ACT_FORWARD:
         case DW_ACT_BACK:
         case DW_ACT_LEFT:
         case DW_ACT_RIGHT:
-            return;""",
-        "replace delayed direction console path")
+            return;"""
+    src, matches = movement_cases.subn(lambda _: replacement, src)
+    if matches != 1:
+        raise RuntimeError(
+            f"replace delayed direction console path: expected 1 four-case block, got {matches}")
+
     native_function = r'''
 /* DARKWOLF_ANDROID_DIRECT_WASD_V01
  * JNI UI thread publishes atomic inputs. CL_CreateCmd consumes them at the
@@ -247,6 +257,32 @@ def selftest() -> None:
     assert "nativeQueueLookDelta" in parsed
     assert "CL_AndroidApplyTouchInput(usercmd_t *cmd)" in parsed
     assert "Cbuf_ExecuteText(EXEC_APPEND" not in parsed
+    # Integration regression: exercise the *actual generated cl_ui.c* rather
+    # than a fixture that repeats the patch's own Python string escapes.
+    generator = (Path(__file__).resolve().parents[1] /
+                 "android-rend2-v0-1/apply_android_rend2_v0_1.py")
+    module = ast.parse(generator.read_text(), filename=str(generator))
+    methods = [fn for fn in module.body
+               if isinstance(fn, ast.FunctionDef) and
+               fn.name == "patch_android_ui_query"]
+    assert len(methods) == 1
+    assignments = [node for node in methods[0].body
+                   if isinstance(node, ast.Assign) and
+                   any(isinstance(target, ast.Name) and target.id == "vm_new"
+                       for target in node.targets)]
+    assert len(assignments) == 1
+    joined = assignments[0].value
+    assert isinstance(joined, ast.JoinedStr)
+    generated_c = "".join(part.value for part in joined.values
+                          if isinstance(part, ast.Constant)
+                          and isinstance(part.value, str))
+    assert "case DW_ACT_FORWARD:" in generated_c
+    actual = patch_native_ui(generated_c)
+    assert "DARKWOLF_ANDROID_DIRECT_WASD_V01" in actual
+    assert 'cmd = down ? "+forward' not in actual
+    assert 'case DW_ACT_ATTACK:' in actual
+    assert 'CL_AndroidApplyTouchInput(usercmd_t *cmd)' in actual
+    print("GRAPHICS_LAB_DIRECT_TOUCH_GENERATOR_INTEGRATION=PASS")
     print("GRAPHICS_LAB_DIRECT_TOUCH_SELFTEST=PASS")
 
 if __name__ == "__main__":
