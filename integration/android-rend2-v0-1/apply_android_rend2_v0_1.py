@@ -1169,7 +1169,7 @@ def patch_ci_playerstart(path: Path) -> None:
 \t\t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE );
 \t\t\t\tKey_SetCatcher( Key_GetCatcher() & ~KEYCATCH_UI );
 \t\t\t\tCvar_Set( "cl_paused", "0" );
-\t\t\t\tCvar_Set( "g_playerstart", "1" );
+                /* playerstart already issued exactly once at CG_INIT. */
 \t\t\t\tCom_Printf( "DARKWOLF_ANDROID_MAP_BRIEFING_SKIPPED=PASS\\n" );
                 if ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ) {{
                     Com_Printf( "DARKWOLF_ANDROID_CI_BRIEFING_SUPPRESSED=PASS\\n" );

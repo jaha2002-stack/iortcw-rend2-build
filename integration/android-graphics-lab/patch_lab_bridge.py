@@ -8,30 +8,22 @@ s=path.read_text()
 assert "#include <jni.h>" in s
 s=s.replace("#include <jni.h>", "#include <jni.h>\n#include <pthread.h>", 1)
 ci_scene=r'''
-/* CI-only: force the RTCW briefing closed, then prove the engine is actively
- * rendering with no menu catcher. Never enabled on ARM64 phone by default. */
+/* x86 CI only observes the identical Android map-autostart path used on phone.
+ * It must never dismiss menus, unpause, or fake g_playerstart. */
 static int dwLabCiFrames;
 static int dwLabCiAnnounced;
 static void CL_AndroidCIGameViewGate(void)
 {
-    if (!Cvar_VariableIntegerValue("dw_android_ci_playerstart"))
+    if (!Cvar_VariableIntegerValue("dw_android_ci_observe_gameview"))
         return;
-    if (clc.state != CA_ACTIVE) {
+    if (clc.state != CA_ACTIVE ||
+        (Key_GetCatcher() & (KEYCATCH_UI | KEYCATCH_CONSOLE)) ||
+        Cvar_VariableIntegerValue("cl_paused") ||
+        (uivm && VM_Call(uivm, UI_IS_FULLSCREEN))) {
         dwLabCiFrames = 0;
         return;
     }
-    /* A briefing can be fullscreen without holding KEYCATCH_UI. */
-    if ((Key_GetCatcher() & KEYCATCH_UI) ||
-        (uivm && VM_Call(uivm, UI_IS_FULLSCREEN))) {
-        if (uivm)
-            VM_Call(uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE);
-        Key_SetCatcher(Key_GetCatcher() & ~KEYCATCH_UI);
-        Cvar_Set("cl_paused", "0");
-        dwLabCiFrames = 0;
-    } else if (Cvar_VariableIntegerValue("cl_paused") ||
-               (Key_GetCatcher() & KEYCATCH_CONSOLE)) {
-        dwLabCiFrames = 0;
-    } else if (!dwLabCiAnnounced && ++dwLabCiFrames >= 16) {
+    if (!dwLabCiAnnounced && ++dwLabCiFrames >= 16) {
         dwLabCiAnnounced = 1;
         Com_Printf("GRAPHICS_LAB_CI_GAMEVIEW=PASS\n");
     }

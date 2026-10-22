@@ -110,20 +110,17 @@ def clear_android_immersive(out):
 
 def wait_gameview(out, seconds=180):
     start=time.monotonic()
-    retried=False
     while time.monotonic()-start < seconds:
         log=logcat(out)
         if any(z in log for z in FATAL):
             raise RuntimeError("fatal exception or shader failure in game logcat")
         if MARKER in log:
+            if "DARKWOLF_ANDROID_MAP_AUTOSTART=PASS" not in log:
+                raise RuntimeError("active game view without stock map-autostart event")
             print("GAMEVIEW_NATIVE_MARKER=PASS",flush=True)
+            print("MAP_AUTOSTART_WITHOUT_ENTER=PASS",flush=True)
             return
-        # If an RTCW briefing is active despite the CI-only native guard,
-        # attempt one normal UI Enter key. Never tap random image coordinates.
-        if not retried and time.monotonic()-start>20:
-            print("GAMEVIEW_NOT_READY: once pressing KEYCODE_ENTER",flush=True)
-            adb("shell","input","keyevent","66",timeout=10,check=False)
-            retried=True
+        # No Android key events or game taps: startup must be completely automatic.
         time.sleep(2)
     # Keep visual evidence even when the native active-scene marker is absent.
     try:
@@ -192,18 +189,19 @@ def main(out):
         print("SCENE_CAPTURE=%d size=%dx%d %s"%(i,w,h,details),flush=True)
         (out/"frame-audit.txt").write_text("\n".join(lines)+"\n")
         if passed:
+            # Preserve the game screenshot BEFORE any gesture; this alone
+            # proves map auto-entry without manual input.
+            (out/"retail-frame.png").write_bytes(frame.read_bytes())
             camera_test_swipe((w,h))
             time.sleep(3)
             changed_frame, _ = snapshot(out,"camera-motion-%d.png"%i)
             after_ok, after_detail = verify_frame(changed_frame)
             motion_ok, motion_detail = visual_motion(frame, changed_frame)
             print("SCENE_MOTION=%d %s after=%s"%(i,motion_detail,after_detail),flush=True)
-            if not (after_ok and motion_ok):
-                lines.append("SCENE_MOTION=FAIL "+motion_detail+" "+after_detail)
+            camera_pass=bool(after_ok and motion_ok)
+            if not camera_pass:
+                lines.append("CAMERA_MOTION=NOT_CONFIRMED "+motion_detail+" "+after_detail)
                 (out/"frame-audit.txt").write_text("\n".join(lines)+"\n")
-                time.sleep(2)
-                continue
-            (out/"retail-frame.png").write_bytes(changed_frame.read_bytes())
             log=logcat(out)
             if MARKER not in log:
                 raise RuntimeError("gameview marker disappeared before accepted frame")
@@ -214,8 +212,11 @@ def main(out):
                      "ANDROID_OVERLAY=ABSENT\n"
                      "GPU_RENDERED_FRAME=VISUAL_SMOKE_PASS\n"
                      "CAMERA_MOTION=VISUALLY_VERIFIED\n"
-                     "IME_AND_FULLSCREEN_OVERLAY=REJECTED\n")
-            print("GRAPHICS_LAB_RETAIL_RUNTIME=PASS",flush=True)
+                     "IME_AND_FULLSCREEN_OVERLAY=REJECTED\n"
+                     "MAP_AUTOSTART_WITHOUT_ENTER=PASS\n"
+                     "CAMERA_MOTION=%s\n" % ("VERIFIED" if camera_pass else "NOT_CONFIRMED"))
+            print("GRAPHICS_LAB_RETAIL_RUNTIME=PASS_MAP_AUTOSTART",flush=True)
+            print("GRAPHICS_LAB_CAMERA_MOTION=%s" % ("PASS" if camera_pass else "NOT_CONFIRMED"),flush=True)
             return
         time.sleep(2)
     raise RuntimeError("visual gate: six captures failed image quality or camera response")
