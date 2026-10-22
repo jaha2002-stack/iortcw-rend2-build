@@ -25,12 +25,21 @@ dominant = bins.most_common(1)[0][1] / len(pixels)
 colored = sum(max(p) - min(p) > 14 for p in pixels) / len(pixels)
 lit = sum(max(p) > 30 for p in pixels) / len(pixels)
 # A flat black frame and the Android "Viewing full screen" dialog must FAIL.
-ok = len(bins) >= 65 and dominant < .76 and colored >= .025 and lit >= .04
+# SDL/Gboard and launcher dialogs can occupy most of the viewport.
+# The false-positive in Run 39709755979 had lower_pale=0.952.
+lower = [im.getpixel((x, y))
+         for y in range(int(h * .34), h, 3)
+         for x in range(0, w, 3)]
+lower_pale = sum(min(p) > 175 and max(p)-min(p) < 30 for p in lower) / len(lower)
+ok = (len(bins) >= 65 and dominant < .76 and colored >= .025 and
+      lit >= .04 and lower_pale < .69)
 print(
     f"FRAME_VISUAL={'PASS' if ok else 'FAIL'} image={path.name} "
     f"size={w}x{h} bins={len(bins)} dominant={dominant:.3f} "
-    f"colored={colored:.3f} lit={lit:.3f}",
+    f"colored={colored:.3f} lit={lit:.3f} lower_pale={lower_pale:.3f}",
     flush=True
 )
 if not ok:
     raise SystemExit(1)
+
+# Pure image diversity is only a preliminary smoke condition, not scene proof.

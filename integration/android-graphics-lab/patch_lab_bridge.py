@@ -20,7 +20,9 @@ static void CL_AndroidCIGameViewGate(void)
         dwLabCiFrames = 0;
         return;
     }
-    if (Key_GetCatcher() & KEYCATCH_UI) {
+    /* A briefing can be fullscreen without holding KEYCATCH_UI. */
+    if ((Key_GetCatcher() & KEYCATCH_UI) ||
+        (uivm && VM_Call(uivm, UI_IS_FULLSCREEN))) {
         if (uivm)
             VM_Call(uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE);
         Key_SetCatcher(Key_GetCatcher() & ~KEYCATCH_UI);

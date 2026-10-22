@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 from xml.etree import ElementTree as ET
-from PIL import Image
+from PIL import Image, ImageDraw
 
 PKG = "org.darkwolf.rend2"
 BTN = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
@@ -144,6 +144,35 @@ def verify_frame(path):
         detail = r.stderr.decode("utf-8", "replace").strip()[-1000:]
     return r.returncode == 0, detail
 
+def visual_motion(before, after):
+    """Compare center of view, excluding touch controls, buttons and HUD edges."""
+    with Image.open(before).convert("RGB") as a, Image.open(after).convert("RGB") as b:
+        if a.size != b.size:
+            return False, "different_viewport_sizes"
+        w, h = a.size
+        changed = total = energy = 0
+        ap = a.load()
+        bp = b.load()
+        for y in range(int(h * .20), int(h * .76), 3):
+            for x in range(int(w * .22), int(w * .78), 3):
+                delta = max(abs(ap[x,y][i] - bp[x,y][i]) for i in range(3))
+                changed += delta >= 20
+                energy += delta
+                total += 1
+        ratio = changed / max(1,total)
+        mean = energy / max(1,total)
+        return ratio >= .08 and mean >= 6.0, ("changed=%.3f mean_delta=%.2f" %
+                                             (ratio,mean))
+
+def camera_test_swipe(size):
+    w,h=size
+    # Existing DarkWolfTouchOverlay uses right-center swipes for LOOK.
+    # Avoid buttons at x=.75-.94 and the upper-right Graphics Lab button.
+    adb("shell","input","swipe",
+        str(int(w * .61)), str(int(h * .40)),
+        str(int(w * .51)), str(int(h * .55)),
+        "420", timeout=20)
+
 def main(out):
     out.mkdir(parents=True,exist_ok=True)
     (out/"STATUS.txt").write_text("VISUAL_GATE=NOT_RUN\n")
@@ -163,7 +192,18 @@ def main(out):
         print("SCENE_CAPTURE=%d size=%dx%d %s"%(i,w,h,details),flush=True)
         (out/"frame-audit.txt").write_text("\n".join(lines)+"\n")
         if passed:
-            (out/"retail-frame.png").write_bytes(frame.read_bytes())
+            camera_test_swipe((w,h))
+            time.sleep(3)
+            changed_frame, _ = snapshot(out,"camera-motion-%d.png"%i)
+            after_ok, after_detail = verify_frame(changed_frame)
+            motion_ok, motion_detail = visual_motion(frame, changed_frame)
+            print("SCENE_MOTION=%d %s after=%s"%(i,motion_detail,after_detail),flush=True)
+            if not (after_ok and motion_ok):
+                lines.append("SCENE_MOTION=FAIL "+motion_detail+" "+after_detail)
+                (out/"frame-audit.txt").write_text("\n".join(lines)+"\n")
+                time.sleep(2)
+                continue
+            (out/"retail-frame.png").write_bytes(changed_frame.read_bytes())
             log=logcat(out)
             if MARKER not in log:
                 raise RuntimeError("gameview marker disappeared before accepted frame")
@@ -172,11 +212,13 @@ def main(out):
             (out/"STATUS.txt").write_text("RETAIL_RUNTIME=PASS_PLAYERSTART\n"
                      "GAMEVIEW_NATIVE_MARKER=PASS\n"
                      "ANDROID_OVERLAY=ABSENT\n"
-                     "GPU_RENDERED_FRAME=VISUAL_SMOKE_PASS\n")
+                     "GPU_RENDERED_FRAME=VISUAL_SMOKE_PASS\n"
+                     "CAMERA_MOTION=VISUALLY_VERIFIED\n"
+                     "IME_AND_FULLSCREEN_OVERLAY=REJECTED\n")
             print("GRAPHICS_LAB_RETAIL_RUNTIME=PASS",flush=True)
             return
         time.sleep(2)
-    raise RuntimeError("visual gate: all six captures fail image quality heuristic")
+    raise RuntimeError("visual gate: six captures failed image quality or camera response")
 
 def selftest():
     fixture=("<hierarchy><node text='Viewing full screen' bounds='[0,0][640,320]'>"
@@ -201,7 +243,6 @@ def selftest():
     assert extract_game_log(sample, 3288).splitlines() == [another]
     assert GAME_THREADTIME.match(game).group(1) == "2879"
     from tempfile import TemporaryDirectory
-    from PIL import ImageDraw
     with TemporaryDirectory() as d:
         bad=Path(d)/"blank.png"
         Image.new("RGB",(640,320),(0,0,0)).save(bad)
@@ -214,6 +255,18 @@ def selftest():
         pic.save(good)
         assert not verify_frame(bad)[0], "black frame accepted"
         assert verify_frame(good)[0], "multicolor image rejected"
+        # Regression fixture for the successful-but-false Run 39709755979:
+        # sepia/photo top, pale Android keyboard covering bottom 65%.
+        keyboard=Path(d)/"keyboard.png"
+        fake=Image.new("RGB",(640,320),(36,34,31))
+        fake.paste(pic.crop((0,0,640,110)),(0,0))
+        ImageDraw.Draw(fake).rectangle((0,110,639,319),fill=(239,241,248))
+        fake.save(keyboard)
+        assert not verify_frame(keyboard)[0], "Android IME false-positive accepted"
+        assert not visual_motion(good,good)[0], "static menu accepted as camera motion"
+        moved=Path(d)/"moved.png"
+        Image.new("RGB",(640,320),(0,0,0)).save(moved)
+        assert visual_motion(good,moved)[0], "large image difference not detected"
     print("GRAPHICS_LAB_SCENE_DRIVER_SELFTEST=PASS",flush=True)
 
 if __name__=="__main__":
