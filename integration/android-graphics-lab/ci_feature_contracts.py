@@ -49,14 +49,15 @@ assert "private void labQueryCvar(String name)" in ui
 # Android 11 CI assets must not depend on /sdcard/Android via ADB.
 assert "retailRoot = homeRoot;" in emu
 wf = read(".github/workflows/ANDROID_GRAPHICS_LAB_V01.yml")
-assert 'dest="files/DarkWolfRTCW/main"' in wf
-assert 'adb exec-in' in wf
-assert 'manifest=".android-rend2-work/lab-assets/pk3-files.txt"' in wf
-assert 'mapfile -t pk3_names < "$manifest"' in wf
-assert 'test "$transferred" -eq "${#pk3_names[@]}"' in wf
+assert 'ci_push_pk3.py \\' in wf
+assert "ci_push_pk3.py --selftest" in wf
 assert 'for name in pak0.pk3 sp_pak1.pk3 sp_pak2.pk3' not in wf
-assert 'adb shell run-as "$pkg" mkdir -p "$dest"' in wf
-assert 'dest="/sdcard/Android/data/org.darkwolf.rend2/files/DarkWolfRTCW/main"' not in wf
+transfer = read("integration/android-graphics-lab/ci_push_pk3.py")
+assert 'CHUNK_BYTES = 4 * 1024 * 1024' in transfer
+assert 'digest(chunk)' in transfer
+assert 'remote_hash(pkg, dst)' in transfer
+assert 'GRAPHICS_LAB_PK3_TRANSFER_VERIFIED=' in transfer
+assert 'GRAPHICS_LAB_PK3_CHUNK_IMPORT_SELFTEST=PASS' in transfer
 
 # Fix the actual broken mobile controls at usercmd construction, not via
 # delayed console +forward/-forward which can miss taps between frames.
