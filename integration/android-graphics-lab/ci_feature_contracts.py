@@ -73,3 +73,15 @@ for source in [arm,emu]:
     assert 'patch_touch_input.py" --java "$PROJECT"' in source
 wf = read(".github/workflows/ANDROID_GRAPHICS_LAB_V01.yml")
 assert 'patch_touch_input.py --native .android-rend2-work/source' in wf
+
+# Native Android diagnosis and explicit stock stopcam during noclip.
+nav = read("integration/android-graphics-lab/patch_navigation_diag.py")
+assert "GRAPHICS_LAB_NAVIGATION_DIAGNOSTICS_SELFTEST=PASS" in nav
+assert "DW_ANDROID_LAB_NOCLIP_CINEMATIC_STOP_V01" in nav
+assert "DARKWOLF_ANDROID_NAVIGATION_DIAGNOSTICS_V01" in nav
+assert "nativeLabInputStatus" in nav
+assert "INPUT & COMMAND MONITOR (toggle)" in ui
+for source in [arm,emu]:
+    assert 'patch_navigation_diag.py" --java "$PROJECT"' in source
+    assert '"+set", "dw_android_camera_noclip", "1"' in source
+assert 'patch_navigation_diag.py --native .android-rend2-work/source' in wf

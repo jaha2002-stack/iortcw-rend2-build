@@ -290,6 +290,7 @@ public final class DarkWolfActivity extends SDLActivity {
                 "+set", "vm_game", "1",
                 "+set", "vm_ui", "1",
                 "+set", "dw_android_auto_playerstart", "1",
+                "+set", "dw_android_camera_noclip", "1",
                 "+set", "dw_android_ci_observe_gameview", "1",
                 "+set", "dw_android_ultralow", "0",
                 "+set", "dw_android_renderScale", "100",
@@ -740,6 +741,7 @@ EOF
 
 python3 "$ROOT/integration/android-graphics-lab/inject_java.py" "$PROJECT"
 python3 "$ROOT/integration/android-graphics-lab/patch_touch_input.py" --java "$PROJECT"
+python3 "$ROOT/integration/android-graphics-lab/patch_navigation_diag.py" --java "$PROJECT"
 python3 "$ROOT/integration/android-graphics-lab/patch_ci_keyboard.py" "$PROJECT"
 (
   cd "$PROJECT"

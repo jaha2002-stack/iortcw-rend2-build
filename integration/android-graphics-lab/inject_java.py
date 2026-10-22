@@ -38,7 +38,8 @@ new=r'''
             "SSGI / BLOOM", "CAS / LUT / A2C", "TEXTURES",
             "SAVE PROFILE", "LOAD PROFILE", "RESTART RENDERER",
             "GOTO XYZ: camera waypoint", "FOV: custom zoom",
-            "CONTROLS / COMMAND HELP"
+            "CONTROLS / COMMAND HELP",
+            "INPUT & COMMAND MONITOR (toggle)"
         };
         new android.app.AlertDialog.Builder(this)
             .setTitle("DarkWolf Rend2 Graphics Lab")
@@ -74,6 +75,7 @@ new=r'''
                 case 14: labGoto(); break;
                 case 15: labFov(); break;
                 case 16: labHelp(); break;
+                case 17: labToggleInputMonitor(); break;
                 }
             }).show();
     }
@@ -84,6 +86,56 @@ new=r'''
                 labSaved.containsKey(names[i]) ? labSaved.get(names[i]) : ""))
             .show();
     }
+
+    private android.widget.TextView labInputMonitor;
+    private boolean labInputMonitorVisible;
+    private final android.os.Handler labInputHandler =
+        new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable labInputMonitorTick = new Runnable() {
+        @Override public void run() {
+            if (!labInputMonitorVisible || labInputMonitor == null) return;
+            try {
+                labInputMonitor.setText(nativeLabInputStatus());
+            } catch (Throwable t) {
+                labInputMonitor.setText("JNI status not available: " +
+                    t.getClass().getSimpleName());
+            }
+            labInputHandler.postDelayed(this, 450L);
+        }
+    };
+    private void labToggleInputMonitor() {
+        if (labInputMonitor == null) {
+            labInputMonitor = new android.widget.TextView(this);
+            labInputMonitor.setTextColor(0xFFFFFFFF);
+            labInputMonitor.setTextSize(10f);
+            labInputMonitor.setBackgroundColor(0xB8000000);
+            labInputMonitor.setPadding(10, 7, 10, 7);
+            labInputMonitor.setClickable(false);
+            labInputMonitor.setFocusable(false);
+            labInputMonitor.setMaxLines(9);
+            RelativeLayout.LayoutParams lp =
+                new RelativeLayout.LayoutParams(
+                    RelativeLayout.LayoutParams.WRAP_CONTENT,
+                    RelativeLayout.LayoutParams.WRAP_CONTENT);
+            lp.addRule(RelativeLayout.ALIGN_PARENT_TOP);
+            lp.addRule(RelativeLayout.ALIGN_PARENT_LEFT);
+            lp.setMargins(6, 7, 0, 0);
+            mLayout.addView(labInputMonitor, lp);
+            mLayout.bringChildToFront(labInputMonitor);
+        }
+        labInputMonitorVisible = !labInputMonitorVisible;
+        labInputMonitor.setVisibility(labInputMonitorVisible ?
+            android.view.View.VISIBLE : android.view.View.GONE);
+        labInputHandler.removeCallbacks(labInputMonitorTick);
+        if (labInputMonitorVisible) {
+            labInputHandler.post(labInputMonitorTick);
+            android.widget.Toast.makeText(this,
+                "Hold W/A/S/D and watch fwd/side, PM state and position. " +
+                "Enable noclip to stop any scripted camera.",
+                android.widget.Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void labHelp() {
         new android.app.AlertDialog.Builder(this)
             .setTitle("Controls and Graphics Lab")
@@ -98,6 +150,11 @@ new=r'''
                 "ALL CVARS: search by name, choose a result, tap EDIT, then APPLY.\n" +
                 "SAVE PROFILE saves graphics_lab.cfg; LOAD PROFILE restores it.\n" +
                 "RESTART RENDERER applies settings marked RESTART REQUIRED.\n" +
+                "INPUT & COMMAND MONITOR: toggles an overlay showing the " +
+                "real engine command, player position, PM_FREEZE/NOCLIP, " +
+                "sv_cheats, pause and last dispatched command.\n" +
+                "If Assault starts with a scripted camera, turning noclip ON " +
+                "will end that cinematic to let you freely explore.\n" +
                 "Keep r_dlightMode=2 and r_forceSun=1.")
             .setPositiveButton("OK", null).show();
     }
