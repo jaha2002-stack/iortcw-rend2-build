@@ -2,7 +2,7 @@
 """Reliable binary-safe Android 11 app-private PK3 importer for Graphics Lab CI.
 
 adb exec-in may silently truncate a huge stdin stream despite returning zero.
-Transfer each source in independently verified 4 MiB blocks, retry an invalid
+Transfer each source in independently verified 512 KiB blocks, retry an invalid
 block, then verify the accumulated length and full remote SHA-256 before launch.
 Game data stays inside the debuggable CI app sandbox; never uploaded to artifacts.
 """
@@ -18,8 +18,8 @@ import sys
 import tempfile
 import time
 
-CHUNK_BYTES = 4 * 1024 * 1024
-ATTEMPTS = 4
+CHUNK_BYTES = 512 * 1024
+ATTEMPTS = 5
 VALID_NAME = re.compile(r"[A-Za-z0-9._-]+[.]pk3", re.IGNORECASE)
 
 def digest(data: bytes) -> str:
@@ -205,7 +205,7 @@ def selftest() -> None:
         file = d / "fixture.bin"
         file.write_bytes(data)
         pieces = [data[i:i+CHUNK_BYTES] for i in range(0,len(data),CHUNK_BYTES)]
-        assert len(pieces) == 1
+        assert len(pieces) > 1
         assert digest(pieces[0]) == file_hash(file)
         assert app_private_destination(
             "org.darkwolf.rend2", "/data/user/0/org.darkwolf.rend2",
