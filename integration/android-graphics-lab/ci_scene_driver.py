@@ -211,7 +211,6 @@ def main(out):
                      "GAMEVIEW_NATIVE_MARKER=PASS\n"
                      "ANDROID_OVERLAY=ABSENT\n"
                      "GPU_RENDERED_FRAME=VISUAL_SMOKE_PASS\n"
-                     "CAMERA_MOTION=VISUALLY_VERIFIED\n"
                      "IME_AND_FULLSCREEN_OVERLAY=REJECTED\n"
                      "MAP_AUTOSTART_WITHOUT_ENTER=PASS\n"
                      "CAMERA_MOTION=%s\n" % ("VERIFIED" if camera_pass else "NOT_CONFIRMED"))
@@ -219,7 +218,7 @@ def main(out):
             print("GRAPHICS_LAB_CAMERA_MOTION=%s" % ("PASS" if camera_pass else "NOT_CONFIRMED"),flush=True)
             return
         time.sleep(2)
-    raise RuntimeError("visual gate: six captures failed image quality or camera response")
+    raise RuntimeError("visual gate: all six captures failed image quality")
 
 def selftest():
     fixture=("<hierarchy><node text='Viewing full screen' bounds='[0,0][640,320]'>"
