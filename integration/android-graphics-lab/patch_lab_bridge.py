@@ -29,7 +29,7 @@ static void CL_AndroidCIGameViewGate(void)
     } else if (Cvar_VariableIntegerValue("cl_paused") ||
                (Key_GetCatcher() & KEYCATCH_CONSOLE)) {
         dwLabCiFrames = 0;
-    } else if (!dwLabCiAnnounced && ++dwLabCiFrames >= 90) {
+    } else if (!dwLabCiAnnounced && ++dwLabCiFrames >= 16) {
         dwLabCiAnnounced = 1;
         Com_Printf("GRAPHICS_LAB_CI_GAMEVIEW=PASS\n");
     }

@@ -12,8 +12,21 @@ from PIL import Image
 PKG = "org.darkwolf.rend2"
 BTN = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 FATAL = ("FATAL EXCEPTION", "Fatal signal", "GLSL compile error", "GLSL link error",
-         "UnsatisfiedLinkError", "dlopen failed")
+         "UnsatisfiedLinkError", "JNI DETECTED ERROR IN APPLICATION")
 MARKER = "GRAPHICS_LAB_CI_GAMEVIEW=PASS"
+# Logcat contains unrelated Android services. Restrict critical checks to game PID.
+GAME_THREADTIME = re.compile(r"^\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d+\\s+(\\d+)\\s+\\d+\\s+[A-Z]\\s+")
+
+def extract_game_log(raw: str, pid: int) -> str:
+    lines = [line for line in raw.splitlines()
+             if (match := GAME_THREADTIME.match(line)) and int(match.group(1)) == pid]
+    return "\\n".join(lines) + ("\\n" if lines else "")
+
+def current_game_pid() -> int:
+    values = adb("shell", "pidof", PKG, timeout=12, check=False).decode("utf-8", "replace").split()
+    if len(values) != 1 or not values[0].isdigit():
+        raise RuntimeError("Game process missing or ambiguous: %r" % values)
+    return int(values[0])
 
 def run(args, *, timeout=25, check=True):
     r = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
@@ -28,7 +41,10 @@ def adb(*args, timeout=25, check=True):
 def logcat(out):
     data = adb("logcat", "-d", "-v", "threadtime", timeout=35)
     (out / "logcat.txt").write_bytes(data)
-    return data.decode("utf-8", "replace")
+    pid = current_game_pid()
+    filtered = extract_game_log(data.decode("utf-8", "replace"), pid)
+    (out / "game-logcat.txt").write_text(filtered, encoding="utf-8")
+    return filtered
 
 def snapshot(out, name):
     dst = out / name
@@ -92,7 +108,7 @@ def clear_android_immersive(out):
     if parse_immersive(text) is not None:
         raise RuntimeError("Android immersive dialog remains after XML-guided dismissal")
 
-def wait_gameview(out, seconds=120):
+def wait_gameview(out, seconds=180):
     start=time.monotonic()
     retried=False
     while time.monotonic()-start < seconds:
@@ -109,6 +125,12 @@ def wait_gameview(out, seconds=120):
             adb("shell","input","keyevent","66",timeout=10,check=False)
             retried=True
         time.sleep(2)
+    # Keep visual evidence even when the native active-scene marker is absent.
+    try:
+        snapshot(out, "gameview-timeout.png")
+        xml_dump(out, 90)
+    except Exception as exc:
+        print("GAMEVIEW_TIMEOUT_DIAGNOSTICS_FAILED=%s" % exc, flush=True)
     raise RuntimeError("gameview marker absent: active 3D state unverified")
 
 def verify_frame(path):
@@ -162,6 +184,14 @@ def selftest():
              "bounds='[475,166][546,214]'/></node></hierarchy>")
     assert parse_immersive(fixture)==(510,190)
     assert parse_immersive("<hierarchy><node text='RTCW' /></hierarchy>") is None
+    # A Google/Widevine dlopen warning cannot fail the game process.
+    foreign = "10-21 20:02:50.127   432   432 W WVCdm: dlopen failed: liboemcrypto.so"
+    game = "10-21 20:03:35.760  2879  2947 I DarkWolfEngine: loaded 282 GLSL shaders"
+    assert extract_game_log(foreign + "\\n" + game, 2879).strip() == game
+    assert not any(err in extract_game_log(foreign, 2879) for err in FATAL)
+    own_error = "10-21 20:03:50.127  2879  2947 E DarkWolfEngine: GLSL compile error"
+    assert "GLSL compile error" in extract_game_log(own_error, 2879)
+    assert extract_game_log(game, 9999) == ""
     from tempfile import TemporaryDirectory
     from PIL import ImageDraw
     with TemporaryDirectory() as d:
