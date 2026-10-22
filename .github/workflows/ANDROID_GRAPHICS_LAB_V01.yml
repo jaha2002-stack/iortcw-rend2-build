@@ -113,7 +113,10 @@ jobs:
         run: |
           set -Eeuo pipefail
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
-          sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
+          # The same gfxstream checksum error appears on host Emulator 36 and 37
+          # with Android 35 guest; isolate a mismatched guest GLES encoder by
+          # testing Android 30, a different x86_64 system-image generation.
+          sdkmanager "emulator" "system-images;android-30;google_apis;x86_64"
           # Android Emulator 37.2.12 terminates with gfxstream GL protocol
           # checksum failure when Rend2's real GLES3 renderer initializes.
           # Pin a known earlier stable emulator, not another GPU flag in 37.x.
@@ -144,7 +147,7 @@ jobs:
           echo "GRAPHICS_LAB_EMULATOR_PINNED=36.3.10"
           export ANDROID_AVD_HOME="$GITHUB_WORKSPACE/.android-rend2-work/avd"
           mkdir -p "$ANDROID_AVD_HOME"
-          echo no | avdmanager create avd -n darkwolf-lab -k "system-images;android-35;google_apis;x86_64" --force
+          echo no | avdmanager create avd -n darkwolf-lab -k "system-images;android-30;google_apis;x86_64" --force
           # GitHub-hosted Ubuntu exposes /dev/kvm with restrictive permissions.
           # Without access, x86_64 falls back to QEMU TCG and may never boot before timeout.
           if [ -c /dev/kvm ]; then
@@ -161,7 +164,7 @@ jobs:
           echo "GRAPHICS_LAB_EMULATOR_ACCEL=KVM_ON"
           # Version pin isolates the renderer protocol failure from CI host 37.x.
           # Full V03 High Quality CVar settings are intentionally kept on.
-          printf 'EMULATOR=36.3.10\nGPU=swiftshader\nVULKAN=off\n' > .android-rend2-work/emulator-graphics-mode.txt
+          printf 'EMULATOR=36.3.10\nANDROID_IMAGE_API=30\nGPU=swiftshader\nVULKAN=off\n' > .android-rend2-work/emulator-graphics-mode.txt
           nohup emulator -avd darkwolf-lab -no-window -noaudio -no-boot-anim \
             -no-snapshot -gpu swiftshader -feature -Vulkan -accel on -cores 2 -memory 3072 \
             > .android-rend2-work/lab-emulator-console.log 2>&1 &
@@ -180,6 +183,12 @@ jobs:
           done
           test "$boot" -eq 1
           echo "GRAPHICS_LAB_EMULATOR_SYSTEM_BOOT=PASS"
+          sdkver="$(timeout 12s adb shell getprop ro.build.version.sdk | tr -d '\r')"
+          glver="$(timeout 12s adb shell getprop ro.opengles.version | tr -d '\r')"
+          echo "GRAPHICS_LAB_GUEST_SDK=$sdkver GLES_VERSION_DECIMAL=$glver"
+          test "$sdkver" = 30
+          test "$glver" -ge 196608
+          echo "GRAPHICS_LAB_EMULATOR_GLES3_GUEST=PASS"
           # Prevent Android's first-run "Viewing full screen" blocking the game.
           adb shell settings put secure immersive_mode_confirmations confirmed || true
           adb shell settings get secure immersive_mode_confirmations || true
