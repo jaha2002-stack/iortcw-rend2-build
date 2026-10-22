@@ -1039,6 +1039,7 @@ EOF
 python3 "$ROOT/integration/android-graphics-lab/inject_java.py" "$PROJECT"
 python3 "$ROOT/integration/android-graphics-lab/patch_touch_input.py" --java "$PROJECT"
 python3 "$ROOT/integration/android-graphics-lab/patch_navigation_diag.py" --java "$PROJECT"
+python3 "$ROOT/integration/android-graphics-lab/patch_wasd_mp40_p1.py" --java "$PROJECT"
 
 (
   cd "$PROJECT"
