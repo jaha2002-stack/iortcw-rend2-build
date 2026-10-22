@@ -573,6 +573,8 @@ public final class DarkWolfActivity extends SDLActivity {
                 "+set", "vm_cgame", "1",
                 "+set", "vm_game", "1",
                 "+set", "vm_ui", "1",
+                // Graphics Lab: skip the initial briefing and run the map's playerstart script.
+                "+set", "dw_android_auto_playerstart", "1",
                 "+set", "com_introplayed", "1",
                 "+set", "logfile", "0",
                 "+set", "developer", "0",

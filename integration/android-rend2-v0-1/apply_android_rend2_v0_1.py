@@ -1130,18 +1130,22 @@ def patch_ci_playerstart(path: Path) -> None:
 
 #ifdef __ANDROID__
 \t/*
-\t * {MARKER}: CI-only deterministic transition from SP briefing to live
-\t * gameplay. The hook is inert in the ARM64 phone APK unless the explicit
-\t * test cvar is supplied by the x86_64 TestLab launcher.
+\t * {MARKER}: Android Graphics Lab: transition from SP briefing to live
+\t * gameplay. The hook is enabled in the ARM64 Graphics Lab APK via
+\t * dw_android_auto_playerstart. CI uses the existing test CVar.
 \t */
-\tif ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ) {{
+\tif ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ||
+             Cvar_VariableIntegerValue( "dw_android_auto_playerstart" ) ) {{
 \t\tif ( uivm ) {{
 \t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE );
 \t\t}}
 \t\tKey_SetCatcher( Key_GetCatcher() & ~KEYCATCH_UI );
 \t\tCvar_Set( "cl_paused", "0" );
 \t\tCvar_Set( "g_playerstart", "1" );
-\t\tCom_Printf( "DARKWOLF_ANDROID_CI_PLAYERSTART=PASS\\n" );
+\t\tCom_Printf( "DARKWOLF_ANDROID_MAP_AUTOSTART=PASS\\n" );
+        if ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ) {{
+            Com_Printf( "DARKWOLF_ANDROID_CI_PLAYERSTART=PASS\\n" );
+        }}
 \t}}
 #endif
 
@@ -1158,14 +1162,18 @@ def patch_ci_playerstart(path: Path) -> None:
     popup_new = f'''\tcase CG_INGAME_POPUP:
 \t\tif ( VMA( 1 ) && !Q_stricmp( VMA( 1 ), "briefing" ) ) {{  //----(SA) added
 #ifdef __ANDROID__
-\t\t\tif ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ) {{
-\t\t\t\t/* {MARKER}: cgame posts briefing after CG_INIT; suppress only
-\t\t\t\t * in the x86_64 TestLab opt-in so 3D evidence is deterministic. */
+\t\t\tif ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ||
+             Cvar_VariableIntegerValue( "dw_android_auto_playerstart" ) ) {{
+\t\t\t\t/* {MARKER}: cgame posts briefing after CG_INIT; suppress it
+\t\t\t\t * so the map starts at the normal player spawnpoint. */
 \t\t\t\tVM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE );
 \t\t\t\tKey_SetCatcher( Key_GetCatcher() & ~KEYCATCH_UI );
 \t\t\t\tCvar_Set( "cl_paused", "0" );
 \t\t\t\tCvar_Set( "g_playerstart", "1" );
-\t\t\t\tCom_Printf( "DARKWOLF_ANDROID_CI_BRIEFING_SUPPRESSED=PASS\\n" );
+\t\t\t\tCom_Printf( "DARKWOLF_ANDROID_MAP_BRIEFING_SKIPPED=PASS\\n" );
+                if ( Cvar_VariableIntegerValue( "dw_android_ci_playerstart" ) ) {{
+                    Com_Printf( "DARKWOLF_ANDROID_CI_BRIEFING_SUPPRESSED=PASS\\n" );
+                }}
 \t\t\t\treturn 0;
 \t\t\t}}
 #endif
