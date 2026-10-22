@@ -199,10 +199,11 @@ public final class DarkWolfActivity extends SDLActivity {
 
     private void prepareFilesystem() {
         homeRoot = new File(getFilesDir(), "DarkWolfRTCW");
-        File external = getExternalFilesDir(null);
-        retailRoot = external != null
-                ? new File(external, "DarkWolfRTCW")
-                : homeRoot;
+        // CI-only APK: game data lives under app-private storage.
+        // Android 11 scoped external FUSE blocks adb shell and run-as mkdir
+        // below /sdcard/Android, even with a successful SDK emulator boot.
+        // Use the same engine file loading path without the external mount.
+        retailRoot = homeRoot;
 
         File homeMain = new File(homeRoot, "main");
         File retailMain = new File(retailRoot, "main");

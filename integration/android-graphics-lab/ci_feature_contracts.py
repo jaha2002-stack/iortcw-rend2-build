@@ -45,3 +45,11 @@ assert "SDL_GL_GetDrawableSize" in fullscreen
 assert "SDL_WINDOW_FULLSCREEN_DESKTOP" in fullscreen
 assert "labQueryCvar(k);" in ui
 assert "private void labQueryCvar(String name)" in ui
+
+# Android 11 CI assets must not depend on /sdcard/Android via ADB.
+assert "retailRoot = homeRoot;" in emu
+wf = read(".github/workflows/ANDROID_GRAPHICS_LAB_V01.yml")
+assert 'dest="files/DarkWolfRTCW/main"' in wf
+assert 'adb exec-in' in wf
+assert 'adb shell run-as "$pkg" mkdir -p "$dest"' in wf
+assert 'dest="/sdcard/Android/data/org.darkwolf.rend2/files/DarkWolfRTCW/main"' not in wf

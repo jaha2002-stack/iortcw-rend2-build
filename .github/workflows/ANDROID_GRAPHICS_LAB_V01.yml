@@ -235,17 +235,19 @@ jobs:
             jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 \
             .android-rend2-work/lab-assets | tail -1)"
           test -d "$retail_main"
-          dest="/sdcard/Android/data/org.darkwolf.rend2/files/DarkWolfRTCW/main"
+          # CI-only x86 launcher maps fs_basepath to getFilesDir()/
+          # DarkWolfRTCW, avoiding the Android 11 external storage FUSE.
+          # Send raw PK3 bytes via stdin under the app's own UID; never copy
+          # from a world-readable /data/local/tmp staging directory.
+          dest="files/DarkWolfRTCW/main"
           pkg="org.darkwolf.rend2"
-          # Android 11's scoped storage denies adb shell writes under Android/data.
-          # Use the app's debuggable UID to populate its own app files.
           timeout 12s adb shell run-as "$pkg" mkdir -p "$dest"
+          timeout 12s adb shell run-as "$pkg" pwd
           for name in pak0.pk3 sp_pak1.pk3 sp_pak2.pk3 sp_pak3.pk3 sp_pak4.pk3 sp_rend2_shaders0.pk3; do
             test -s "$retail_main/$name"
-            staging="/data/local/tmp/dwlab-$name"
-            timeout 100s adb push "$retail_main/$name" "$staging" >/dev/null
-            timeout 60s adb shell run-as "$pkg" cp "$staging" "$dest/$name"
-            timeout 10s adb shell rm -f "$staging"
+            # exec-in is binary-safe (no PTY CRLF conversion); run-as writes
+            # directly to the app-private FS used by the CI renderer.
+            timeout --signal=TERM --kill-after=5s 180s adb exec-in               run-as "$pkg" sh -c "cat > '$dest/$name'" < "$retail_main/$name"
             copied="$(timeout 12s adb shell run-as "$pkg" stat -c %s "$dest/$name" | tr -d '\r')"
             test "$copied" = "$(stat -c %s "$retail_main/$name")"
             echo "GRAPHICS_LAB_PK3_TRANSFER_VERIFIED=$name"
