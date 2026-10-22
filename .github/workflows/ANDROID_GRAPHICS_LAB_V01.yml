@@ -97,6 +97,22 @@ jobs:
           set -Eeuo pipefail
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
           sdkmanager "emulator" "system-images;android-35;google_apis;x86_64"
+          # Android Emulator 37.2.12 terminates with gfxstream GL protocol
+          # checksum failure when Rend2's real GLES3 renderer initializes.
+          # Pin a known earlier stable emulator, not another GPU flag in 37.x.
+          # Download Google's unmodified emulator archive and verify SHA256.
+          emu_build=14472402
+          emu_sha=c8ab9ffbc4c2d11c02e06e81a9d9f81970177dc5ab599e3a30eb08a4a5496a67
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 300 \
+            "https://dl.google.com/android/repository/emulator-linux_x64-${emu_build}.zip" \
+            --output ".android-rend2-work/emulator-${emu_build}.zip"
+          printf '%s  %s\n' "$emu_sha" ".android-rend2-work/emulator-${emu_build}.zip" | sha256sum -c -
+          mv "$ANDROID_HOME/emulator" "$ANDROID_HOME/emulator-latest-unused"
+          unzip -q ".android-rend2-work/emulator-${emu_build}.zip" -d "$ANDROID_HOME"
+          chmod +x "$ANDROID_HOME/emulator/emulator"
+          emulator -version 2>&1 | tee ".android-rend2-work/pinned-emulator-version.txt"
+          grep -Fq "36.3.10" ".android-rend2-work/pinned-emulator-version.txt"
+          echo "GRAPHICS_LAB_EMULATOR_PINNED=36.3.10"
           export ANDROID_AVD_HOME="$GITHUB_WORKSPACE/.android-rend2-work/avd"
           mkdir -p "$ANDROID_AVD_HOME"
           echo no | avdmanager create avd -n darkwolf-lab -k "system-images;android-35;google_apis;x86_64" --force
@@ -114,13 +130,11 @@ jobs:
             exit 1
           }
           echo "GRAPHICS_LAB_EMULATOR_ACCEL=KVM_ON"
-          # Run 39726585964: gfxstream/SwiftShader crashed on full HDR+MSAA
-          # with FATAL renderControl_decoder_context_t GL checksum failure.
-          # SWANGLE uses ANGLE-on-SwiftShader, while Vulkan is disabled;
-          # the guest still exposes OpenGL ES 3 for the actual Rend2 renderer.
-          echo "GPU=swangle / Vulkan=disabled" > .android-rend2-work/emulator-graphics-mode.txt
+          # Version pin isolates the renderer protocol failure from CI host 37.x.
+          # Full V03 High Quality CVar settings are intentionally kept on.
+          printf 'EMULATOR=36.3.10\nGPU=swiftshader\nVULKAN=off\n' > .android-rend2-work/emulator-graphics-mode.txt
           nohup emulator -avd darkwolf-lab -no-window -noaudio -no-boot-anim \
-            -no-snapshot -gpu swangle -feature -Vulkan -accel on -cores 2 -memory 3072 \
+            -no-snapshot -gpu swiftshader -feature -Vulkan -accel on -cores 2 -memory 3072 \
             > .android-rend2-work/lab-emulator-console.log 2>&1 &
           emulator_pid=$!
           trap 'status=$?; if [ "$status" -ne 0 ]; then echo "ANDROID_BOOT_DIAGNOSTICS"; adb devices -l || true; tail -n 120 .android-rend2-work/lab-emulator-console.log || true; fi' EXIT
@@ -251,5 +265,6 @@ jobs:
             .android-rend2-work/lab-retail-runtime/**
             .android-rend2-work/lab-emulator-console.log
             .android-rend2-work/emulator-graphics-mode.txt
+            .android-rend2-work/pinned-emulator-version.txt
           if-no-files-found: warn
           retention-days: 30
