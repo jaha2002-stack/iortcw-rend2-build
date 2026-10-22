@@ -247,15 +247,42 @@ jobs:
           pkg="org.darkwolf.rend2"
           timeout 12s adb shell run-as "$pkg" mkdir -p "$dest"
           timeout 12s adb shell run-as "$pkg" pwd
-          for name in pak0.pk3 sp_pak1.pk3 sp_pak2.pk3 sp_pak3.pk3 sp_pak4.pk3 sp_rend2_shaders0.pk3; do
+          # The private retail release is a verified multipart zip, not a
+          # promise that every optional sp_pakNN.pk3 exists. Its fetch helper
+          # already writes an authoritative alphabetized pk3-files.txt.
+          manifest=".android-rend2-work/lab-assets/pk3-files.txt"
+          test -s "$manifest"
+          grep -Fxiq "pak0.pk3" "$manifest"
+          mapfile -t pk3_names < "$manifest"
+          test "${#pk3_names[@]}" -ge 2
+          transferred=0
+          for name in "${pk3_names[@]}"; do
+            case "$name" in
+              ""|*/*|*\\*|*[!a-zA-Z0-9._-]*)
+                echo "ERROR: invalid private PK3 basename: $name" >&2
+                exit 2 ;;
+            esac
+            case "${name,,}" in *.pk3) ;; *)
+              echo "ERROR: manifest contains non-PK3: $name" >&2
+              exit 2 ;;
+            esac
             test -s "$retail_main/$name"
             # exec-in is binary-safe (no PTY CRLF conversion); run-as writes
             # directly to the app-private FS used by the CI renderer.
-            timeout --signal=TERM --kill-after=5s 180s adb exec-in               run-as "$pkg" sh -c "cat > '$dest/$name'" < "$retail_main/$name"
+            timeout --signal=TERM --kill-after=5s 180s adb exec-in \
+              run-as "$pkg" sh -c "cat > '$dest/$name'" < "$retail_main/$name"
             copied="$(timeout 12s adb shell run-as "$pkg" stat -c %s "$dest/$name" | tr -d '\r')"
-            test "$copied" = "$(stat -c %s "$retail_main/$name")"
-            echo "GRAPHICS_LAB_PK3_TRANSFER_VERIFIED=$name"
+            expected_size="$(stat -c %s "$retail_main/$name")"
+            if [ "$copied" != "$expected_size" ]; then
+              echo "ERROR: PK3 transfer short/corrupted: $name actual=$copied expected=$expected_size" >&2
+              exit 2
+            fi
+            transferred=$((transferred+1))
+            echo "GRAPHICS_LAB_PK3_TRANSFER_VERIFIED=$name bytes=$copied"
           done
+          test "$transferred" -eq "${#pk3_names[@]}"
+          printf '%s\n' "${pk3_names[@]}" > "$out/retail-pk3-copied.txt"
+          echo "GRAPHICS_LAB_RETAIL_PK3_MANIFEST=PASS files=$transferred"
           adb shell settings put secure immersive_mode_confirmations confirmed || true
           adb shell am force-stop org.darkwolf.rend2 || true
           adb logcat -c

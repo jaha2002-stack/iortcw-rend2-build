@@ -51,6 +51,10 @@ assert "retailRoot = homeRoot;" in emu
 wf = read(".github/workflows/ANDROID_GRAPHICS_LAB_V01.yml")
 assert 'dest="files/DarkWolfRTCW/main"' in wf
 assert 'adb exec-in' in wf
+assert 'manifest=".android-rend2-work/lab-assets/pk3-files.txt"' in wf
+assert 'mapfile -t pk3_names < "$manifest"' in wf
+assert 'test "$transferred" -eq "${#pk3_names[@]}"' in wf
+assert 'for name in pak0.pk3 sp_pak1.pk3 sp_pak2.pk3' not in wf
 assert 'adb shell run-as "$pkg" mkdir -p "$dest"' in wf
 assert 'dest="/sdcard/Android/data/org.darkwolf.rend2/files/DarkWolfRTCW/main"' not in wf
 
