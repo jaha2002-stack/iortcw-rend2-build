@@ -69,6 +69,28 @@ def remote_hash(pkg: str, file: str) -> str:
         raise RuntimeError("Invalid remote SHA-256 output")
     return token
 
+def app_private_destination(pkg: str, cwd: str, requested: str) -> str:
+    """Use one absolute path across adb shell and exec-in run-as invocations.
+
+    Android's run-as does not promise that sh -c starts in the same working
+    directory as separate shell commands. Avoid all relative PK3 redirections.
+    """
+    root = cwd.strip()
+    if not root.startswith("/data/") or not root.endswith("/" + pkg):
+        raise ValueError("Unexpected run-as app directory: " + repr(root))
+    if requested.startswith("/"):
+        destination = requested
+        relative = requested[len(root) + 1:] if requested.startswith(root + "/") else ""
+    else:
+        relative = requested
+        destination = root + "/" + relative
+    parts = relative.split("/")
+    if (len(parts) < 3 or parts[0] != "files" or
+            any(part in ("", ".", "..") for part in parts)):
+        raise ValueError("Refusing PK3 destination outside private app files")
+    return destination
+
+
 def upload_block(pkg: str, tmp: str, chunk: bytes, label: str) -> None:
     expected_hash = digest(chunk)
     for attempt in range(1, ATTEMPTS + 1):
@@ -152,6 +174,17 @@ def selftest() -> None:
         pieces = [data[i:i+CHUNK_BYTES] for i in range(0,len(data),CHUNK_BYTES)]
         assert len(pieces) == 1
         assert digest(pieces[0]) == file_hash(file)
+        assert app_private_destination(
+            "org.darkwolf.rend2", "/data/user/0/org.darkwolf.rend2",
+            "files/DarkWolfRTCW/main") == (
+                "/data/user/0/org.darkwolf.rend2/files/DarkWolfRTCW/main")
+        try:
+            app_private_destination(
+                "org.darkwolf.rend2", "/data/user/0/org.darkwolf.rend2",
+                "../files/DarkWolfRTCW/main")
+            raise AssertionError("PK3 destination escaped sandbox")
+        except ValueError:
+            pass
         # A truncated ADB stream must not be considered a valid transfer.
         assert digest(data[:-8192]) != digest(data)
         assert len(data[:-8192]) != len(data)
@@ -170,8 +203,13 @@ if __name__ == "__main__":
         args = parser.parse_args()
         names = manifest_names(args.manifest)
         args.out.mkdir(parents=True, exist_ok=True)
+        # Resolve the run-as app root once. Always use this same absolute
+        # destination for mkdir, 4 MiB redirection, append, stat and hashing.
+        app_root = app(["pwd"], args.pkg)
+        args.dest = app_private_destination(args.pkg, app_root, args.dest)
         app(["mkdir", "-p", args.dest], args.pkg)
-        app(["pwd"], args.pkg)
+        app(["test", "-d", args.dest], args.pkg)
+        print(f"GRAPHICS_LAB_RETAIL_DEST={args.dest}", flush=True)
         done = []
         for name in names:
             f = args.retail_main / name
