@@ -2,6 +2,7 @@
 """Graphics Lab native command bridge. Applied AFTER existing Android portability patch."""
 from pathlib import Path
 import sys
+import re
 root=Path(sys.argv[1])
 path=root/"SP/code/client/cl_ui.c"
 s=path.read_text()
@@ -16,8 +17,12 @@ static void CL_AndroidCIGameViewGate(void)
 {
     if (!Cvar_VariableIntegerValue("dw_android_ci_observe_gameview"))
         return;
-    if (clc.state != CA_ACTIVE ||
-        (Key_GetCatcher() & (KEYCATCH_UI | KEYCATCH_CONSOLE)) ||
+    if (clc.state != CA_ACTIVE) {
+        dwLabCiFrames = 0;
+        dwLabCiAnnounced = 0;
+        return;
+    }
+    if ((Key_GetCatcher() & (KEYCATCH_UI | KEYCATCH_CONSOLE)) ||
         Cvar_VariableIntegerValue("cl_paused") ||
         (uivm && VM_Call(uivm, UI_IS_FULLSCREEN))) {
         dwLabCiFrames = 0;
@@ -26,6 +31,17 @@ static void CL_AndroidCIGameViewGate(void)
     if (!dwLabCiAnnounced && ++dwLabCiFrames >= 16) {
         dwLabCiAnnounced = 1;
         Com_Printf("GRAPHICS_LAB_CI_GAMEVIEW=PASS\n");
+        Com_Printf("GRAPHICS_LAB_FEATURE_STATE=CAS%d LUT%d A2C%d SSGI%d BLOOM%d HDR%d TM%d DL%d SUN%d MSAA%d\n",
+                   Cvar_VariableIntegerValue("r_dwCas"),
+                   Cvar_VariableIntegerValue("r_dwLut"),
+                   Cvar_VariableIntegerValue("r_dwA2C"),
+                   Cvar_VariableIntegerValue("r_ssgi"),
+                   Cvar_VariableIntegerValue("r_bloom"),
+                   Cvar_VariableIntegerValue("r_hdr"),
+                   Cvar_VariableIntegerValue("r_toneMap"),
+                   Cvar_VariableIntegerValue("r_dlightMode"),
+                   Cvar_VariableIntegerValue("r_forceSun"),
+                   Cvar_VariableIntegerValue("r_ext_multisample"));
     }
 }
 '''
@@ -87,6 +103,8 @@ static void CL_AndroidConsumeLabCommand(void)
                sizeof(local));
         ++dwLabCmdRead;
         pthread_mutex_unlock(&dwLabQueueLock);
+        if (Cvar_VariableIntegerValue("dw_android_ci_observe_gameview"))
+            Com_Printf("GRAPHICS_LAB_CMD_DISPATCH=%s",local);
         Cbuf_ExecuteText(EXEC_APPEND,local);
     }
 }
@@ -162,7 +180,7 @@ s=s.replace(needle2,needle2+"\n    CL_AndroidConsumeLabCommand();\n    CL_Androi
 client_header=(root/"SP/code/client/client.h").read_text()
 assert "extern clientConnection_t clc;" in client_header, "missing clc declaration"
 assert "connstate_t" in client_header and "state;" in client_header, "connection state missing"
-assert "if (clc.state != CA_ACTIVE)" in s, "wrong active connection variable"
+assert re.search(r"\bclc\.state\s*!=\s*CA_ACTIVE\b", s), "wrong active connection variable"
 assert ("if (" + "cls.state") not in s, "invalid clientStatic_t state member"
 assert "GRAPHICS_LAB_CI_GAMEVIEW=PASS" in s
 path.write_text(s)
