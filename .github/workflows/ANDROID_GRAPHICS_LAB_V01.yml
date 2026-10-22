@@ -114,8 +114,13 @@ jobs:
             exit 1
           }
           echo "GRAPHICS_LAB_EMULATOR_ACCEL=KVM_ON"
+          # Run 39726585964: gfxstream/SwiftShader crashed on full HDR+MSAA
+          # with FATAL renderControl_decoder_context_t GL checksum failure.
+          # SWANGLE uses ANGLE-on-SwiftShader, while Vulkan is disabled;
+          # the guest still exposes OpenGL ES 3 for the actual Rend2 renderer.
+          echo "GPU=swangle / Vulkan=disabled" > .android-rend2-work/emulator-graphics-mode.txt
           nohup emulator -avd darkwolf-lab -no-window -noaudio -no-boot-anim \
-            -no-snapshot -gpu swiftshader -accel on -cores 2 -memory 2048 \
+            -no-snapshot -gpu swangle -feature -Vulkan -accel on -cores 2 -memory 3072 \
             > .android-rend2-work/lab-emulator-console.log 2>&1 &
           emulator_pid=$!
           trap 'status=$?; if [ "$status" -ne 0 ]; then echo "ANDROID_BOOT_DIAGNOSTICS"; adb devices -l || true; tail -n 120 .android-rend2-work/lab-emulator-console.log || true; fi' EXIT
@@ -154,7 +159,7 @@ jobs:
           test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
           out=".android-rend2-work/lab-retail-runtime"
           mkdir -p "$out"
-          trap 'rc=$?; if [ "$rc" -ne 0 ]; then echo "GRAPHICS_LAB_RETAIL_FAILURE_RC=$rc"; adb devices -l || true; adb logcat -d -v threadtime > "$out/logcat-failure.txt" 2>/dev/null || true; tail -n 180 "$out/logcat-failure.txt" || true; fi' EXIT
+          trap 'rc=$?; if [ "$rc" -ne 0 ]; then echo "GRAPHICS_LAB_RETAIL_FAILURE_RC=$rc"; timeout 10s adb devices -l || true; timeout 12s adb logcat -d -v threadtime > "$out/logcat-failure.txt" 2>/dev/null || true; tail -n 50 .android-rend2-work/lab-emulator-console.log || true; fi' EXIT
           if [ -z "${ASSET_TOKEN:-}" ]; then
             echo RETAIL_RUNTIME=NOT_RUN_MISSING_ASSET_TOKEN | tee "$out/STATUS.txt"
             exit 0
@@ -173,13 +178,42 @@ jobs:
           adb shell settings put secure immersive_mode_confirmations confirmed || true
           adb shell am force-stop org.darkwolf.rend2 || true
           adb logcat -c
-          adb shell am start -W -n org.darkwolf.rend2/.DarkWolfActivity | tee "$out/launch.txt"
+          timeout 20s adb shell am start -W -n org.darkwolf.rend2/.DarkWolfActivity | tee "$out/launch.txt"
           echo RUNTIME_LOG_STARTED
+          offline_checks=0
+          marker_seen=0
           for i in $(seq 1 90); do
-            adb logcat -d -v threadtime > "$out/logcat.txt" || true
-            if grep -q "DARKWOLF_ANDROID_MAP_AUTOSTART=PASS" "$out/logcat.txt"; then break; fi
+            if grep -Eqi 'FATAL.*(checksum|renderControl|gfxstream|decoder)' .android-rend2-work/lab-emulator-console.log; then
+              echo "GRAPHICS_LAB_EMULATOR_GRAPHICS_FATAL=YES"
+              tail -n 65 .android-rend2-work/lab-emulator-console.log
+              exit 66
+            fi
+            if ! timeout 12s adb -s emulator-5554 get-state > "$out/adb-state.txt" 2>&1; then
+              offline_checks=$((offline_checks+1))
+              if [ "$offline_checks" -ge 2 ]; then
+                echo "GRAPHICS_LAB_EMULATOR_OFFLINE=YES (2 consecutive probes)"
+                timeout 8s adb devices -l || true
+                tail -n 65 .android-rend2-work/lab-emulator-console.log
+                exit 65
+              fi
+              sleep 2
+              continue
+            fi
+            offline_checks=0
+            if ! timeout 18s adb -s emulator-5554 logcat -d -v threadtime > "$out/logcat.txt" 2>"$out/adb-logcat-error.txt"; then
+              echo "GRAPHICS_LAB_ADB_LOGCAT_RETRY=$i"
+              sleep 2
+              continue
+            fi
+            if grep -q "DARKWOLF_ANDROID_MAP_AUTOSTART=PASS" "$out/logcat.txt"; then marker_seen=1; break; fi
             sleep 2
           done
+          if [ "$marker_seen" -ne 1 ]; then
+            echo "GRAPHICS_LAB_MAP_AUTOSTART_TIMED_OUT=YES"
+            tail -n 100 "$out/logcat.txt" || true
+            exit 1
+          fi
+          echo "GRAPHICS_LAB_MAP_AUTOSTART_LOG=PASS"
           # Strict 3-stage acceptance: remove any Android overlay by XML,
           # require a game-thread marker indicating active unpaused 3D view,
           # then validate a fresh actual-resolution screenshot.
@@ -216,5 +250,6 @@ jobs:
             .android-rend2-work/a6-ci-emulator/**
             .android-rend2-work/lab-retail-runtime/**
             .android-rend2-work/lab-emulator-console.log
+            .android-rend2-work/emulator-graphics-mode.txt
           if-no-files-found: warn
           retention-days: 30
