@@ -12,6 +12,7 @@ import hashlib
 import io
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -57,6 +58,38 @@ def adb(args: list[str], *, input_bytes: bytes | None = None,
 
 def app(args: list[str], pkg: str, *, timeout: int = 45) -> str:
     return adb(["shell", "run-as", pkg, *args], timeout=timeout)
+
+def app_shell_command(pkg: str, script: str) -> str:
+    """Keep redirection inside run-as, not the surrounding Android shell.
+
+    adb shell concatenates argv and reparses it with an outer remote shell;
+    without quoting, >> executes outside run-as and gets Permission denied.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9._]+", pkg):
+        raise ValueError("Invalid Android package name")
+    return f"run-as {shlex.quote(pkg)} sh -c {shlex.quote(script)}"
+
+
+def app_shell(pkg: str, script: str, *, timeout: int = 90) -> str:
+    return adb(["shell", app_shell_command(pkg, script)], timeout=timeout)
+
+
+def probe_private_redirection(pkg: str, dest: str) -> None:
+    """Catch shell-UID writing failures before the large retail PK3 transfer."""
+    probe = f"{dest}/.darkwolf-write-probe"
+    try:
+        app_shell(pkg, f"printf abcd > {shlex.quote(probe)}")
+        if remote_size(pkg, probe) != 4:
+            raise RuntimeError("run-as write probe: incorrect size")
+        app_shell(pkg, f"printf efgh >> {shlex.quote(probe)}")
+        if remote_size(pkg, probe) != 8:
+            raise RuntimeError("run-as append probe: incorrect size")
+        if remote_hash(pkg, probe) != digest(b"abcdefgh"):
+            raise RuntimeError("run-as append probe SHA256 mismatch")
+        print("GRAPHICS_LAB_PK3_PRIVATE_WRITE_APPEND_PROBE=PASS", flush=True)
+    finally:
+        app(["rm", "-f", probe], pkg)
+
 
 def remote_size(pkg: str, file: str) -> int:
     value = app(["stat", "-c", "%s", file], pkg)
@@ -125,7 +158,7 @@ def import_file(source: Path, pkg: str, dest: str) -> None:
             blocks += 1
             upload_block(pkg, tmp, chunk, f"{source.name}:{blocks}")
             # Only a fully length/hash-verified block can be appended.
-            app(["sh", "-c", f"cat '{tmp}' >> '{dst}'"], pkg, timeout=90)
+            app_shell(pkg, f"cat {shlex.quote(tmp)} >> {shlex.quote(dst)}", timeout=90)
             accumulated += len(chunk)
             actual = remote_size(pkg, dst)
             if actual != accumulated:
@@ -178,6 +211,9 @@ def selftest() -> None:
             "org.darkwolf.rend2", "/data/user/0/org.darkwolf.rend2",
             "files/DarkWolfRTCW/main") == (
                 "/data/user/0/org.darkwolf.rend2/files/DarkWolfRTCW/main")
+        script = "cat '/data/user/0/org.darkwolf.rend2/files/a' >> '/data/user/0/org.darkwolf.rend2/files/b'"
+        assert shlex.split(app_shell_command("org.darkwolf.rend2", script)) == [
+            "run-as", "org.darkwolf.rend2", "sh", "-c", script]
         try:
             app_private_destination(
                 "org.darkwolf.rend2", "/data/user/0/org.darkwolf.rend2",
@@ -210,6 +246,7 @@ if __name__ == "__main__":
         app(["mkdir", "-p", args.dest], args.pkg)
         app(["test", "-d", args.dest], args.pkg)
         print(f"GRAPHICS_LAB_RETAIL_DEST={args.dest}", flush=True)
+        probe_private_redirection(args.pkg, args.dest)
         done = []
         for name in names:
             f = args.retail_main / name
