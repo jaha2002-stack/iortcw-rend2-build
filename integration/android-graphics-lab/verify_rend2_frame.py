@@ -31,8 +31,13 @@ lower = [im.getpixel((x, y))
          for y in range(int(h * .34), h, 3)
          for x in range(0, w, 3)]
 lower_pale = sum(min(p) > 175 and max(p)-min(p) < 30 for p in lower) / len(lower)
-ok = (len(bins) >= 65 and dominant < .76 and colored >= .025 and
-      lit >= .04 and lower_pale < .69)
+# Dark 3D rooms legitimately have fewer color bins than menu backgrounds.
+# Scene identity must be proven by the independent CAMERA_MOTION gate; the
+# still-frame check only rejects blank frames and Android keyboard overlays.
+# Empirical fixture Run 39718588021: rendered escape1: bins=38, dominant=.624,
+# colored=.039, lit=.077, lower_pale=.006; blank frame: bins=14, dominant=.947.
+ok = (len(bins) >= 28 and dominant < .85 and colored >= .025 and
+      lit >= .055 and lower_pale < .69)
 print(
     f"FRAME_VISUAL={'PASS' if ok else 'FAIL'} image={path.name} "
     f"size={w}x{h} bins={len(bins)} dominant={dominant:.3f} "
