@@ -136,6 +136,7 @@ printf '%s\n' \
 # Direct-EXE Clean Production Candidate over the verified LUT V05 source:
 # only EXE client persistence + renderer CVar defaults + Tram fog/SSGI guard.
 python3 integration/direct-exe-clean/patch_source.py source --out dist | tee evidence/direct-exe-source-patch.log
+python3 integration/direct-exe-clean/patch_native_defaults.py source --out dist | tee evidence/engine-native-defaults.log
 git -C source diff --check
 python3 - <<'PY_DIRECT_EXE_SOURCE'
 from pathlib import Path
@@ -150,6 +151,13 @@ for name,val in m['first_run_defaults'].items():
 assert 'DARKWOLF_RC4_SSGI_FOG_GUARD_V01' in backend
 assert 'glfogNum > FOG_NONE && glfogsettings[FOG_CURRENT].registered' in backend
 assert 'DARKWOLF_RC4_DIRECT_EXE_PERSISTENCE_V01' in client
+common=(root/'qcommon/common.c').read_text(encoding='latin-1')
+assert 'DARKWOLF_RC4_NATIVE_CLEAN_CONFIG_PRECEDENCE_V01' in common
+assert 'Com_DarkWolfNativeFirstRunDefaults();' in common
+assert 'Com_SetRecommended( qtrue );' not in common
+assert 'DARKWOLF_RC4_DIRECT_EXE_PERSISTENCE_V02' in common
+assert 'exec " Q3CONFIG_CFG' in common
+assert common.index('Com_DarkWolfNativeFirstRunDefaults();') < common.index('exec " Q3CONFIG_CFG')
 assert 'Cvar_Set("r_dlightShadowMaxLights", "3");' not in client
 assert 'Cvar_Set("cl_renderer", "rend2");' in client
 assert re.search(r'ri.Cvar_Get\(\s*"r_ssgi"\s*,\s*"1"',init)
