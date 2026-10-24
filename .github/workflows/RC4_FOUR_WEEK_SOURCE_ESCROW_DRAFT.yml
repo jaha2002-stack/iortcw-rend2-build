@@ -1,0 +1,94 @@
+name: Archive FourWeek Master Final Source to Unpublished Draft
+on:
+  push:
+    branches: [rend2-clean-production-4week-20261024]
+    paths:
+      - '.github/workflows/RC4_FOUR_WEEK_SOURCE_ESCROW_DRAFT.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  reconstruct-and-preserve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DRAFT_RELEASE_ID: "422588491"
+      SOURCE_ARCHIVE: DarkWolf_Rend2_v4.4.6_RC4_FourWeek_Master_SourceDefaultsON_Exact_Source.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify unpublished release remains draft
+        run: |
+          set -Eeuo pipefail
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_RELEASE_ID}" --jq .draft)" = true
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_RELEASE_ID}" --jq .tag_name)" = "v4.4.6-rc4-fourweek-master-sourcedefaultson-20261024"
+      - name: Reconstruct exact SourceDefaultsON renderer from SHA-pinned original chain
+        run: bash integration/cas-a2c-lut/ci_master_clean_4week.sh
+      - name: Verify and freeze complete final source tree
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,hashlib
+          d=json.loads(Path('dist/RELEASE_SOURCE_DEFAULTS.json').read_text())
+          s=Path('source/SP/code/rend2/tr_init.c').read_bytes()
+          assert hashlib.sha256(s).hexdigest()==d['source_after_sha256']
+          assert d['renderer_sha256']=='4112890117f5fb16371ba8387ecd89203257eff361c22d83784db65c67eadd0a'
+          assert hashlib.sha256(Path('dist/renderer_sp_rend2_x64.dll').read_bytes()).hexdigest()==d['renderer_sha256']
+          assert len(d['default_changes'])==10
+          assert 'DARKWOLF_RC4_FORCE_SUN_CSM_REPRIME_V1' in Path('source/SP/code/rend2/tr_scene.c').read_text()
+          assert 'DARKWOLF_3FX_VISIBLE_V03' in Path('source/SP/code/rend2/tr_image.c').read_text()
+          for x in ['R_RenderDlightWorldOcclusion','DlightWorldVisibility']:
+              assert x in (Path('source/SP/code/rend2/tr_scene.c').read_text()+Path('source/SP/code/rend2/tr_backend.c').read_text()+Path('source/SP/code/rend2/tr_shade.c').read_text()),x
+          print('SOURCE_DEFAULTS_FINAL_BINARY_AND_LIGHT_CONTAINMENT_GATES_PASS')
+          PY
+          git -C source add -A -- SP/Makefile SP/code/rend2
+          git -C source -c user.name='DarkWolf CI' -c user.email='ci@invalid.local' commit -qm 'FourWeek Master SourceDefaultsON exact source archive'
+          mkdir -p escrow
+          git -C source archive --format=tar.gz --output="$GITHUB_WORKSPACE/escrow/$SOURCE_ARCHIVE" HEAD
+          sha256sum "escrow/$SOURCE_ARCHIVE" | tee "escrow/$SOURCE_ARCHIVE.sha256"
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,os,subprocess,tarfile
+          archive=Path('escrow')/os.environ['SOURCE_ARCHIVE']
+          tree=subprocess.check_output(['git','-C','source','rev-parse','HEAD^{tree}'],text=True).strip()
+          source_count=int(subprocess.check_output(['git','-C','source','ls-files'],text=True).count('\n'))
+          with tarfile.open(archive,'r:gz') as tar:
+            members=tar.getmembers()
+            assert len(members)>100,'Implausibly small source snapshot'
+            names={m.name for m in members}
+            assert 'SP/code/rend2/tr_init.c' in names
+            assert 'SP/code/rend2/tr_scene.c' in names
+            assert 'SP/code/rend2/glsl/bloom_fp.glsl' in names
+            assert not any(m.name.startswith('/') or '..' in Path(m.name).parts for m in members)
+          info={
+            'identity':'DarkWolf Rend2 v4.4.6 RC4 FourWeek Master SourceDefaultsON',
+            'git_tree_sha1':tree,'tracked_source_files':source_count,
+            'source_archive':archive.name,'source_archive_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),
+            'corresponding_win64_renderer_sha256':'4112890117f5fb16371ba8387ecd89203257eff361c22d83784db65c67eadd0a',
+            'full_game_zip_sha256':'559d01d3815ef1d58b3f018d1c1f215cb37881d2756ad3508ae5cc891179b2e4',
+            'source_assembled_from':'Bloom v2 source tar, CSM Guard, Texture/Material Fidelity, CAS/A2C/LUT V03 and 10 default CVar values',
+            'source_compilation_run':40073883865,'full_game_packaging_run':40074980554,
+            'release_draft_id':422588491,'release_draft_must_remain_unpublished':True,
+            'windows_runtime_visual_gpu_acceptance':'NOT_MEASURED',
+          }
+          Path('escrow/SOURCE_SNAPSHOT_PROVENANCE.json').write_text(json.dumps(info,ensure_ascii=False,indent=2)+'\n')
+          print(json.dumps(info,ensure_ascii=False,indent=2))
+          PY
+      - name: Preserve snapshot and manifest in unpublished Draft Release only
+        run: |
+          set -Eeuo pipefail
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_RELEASE_ID}" --jq .draft)" = true
+          gh release upload "v4.4.6-rc4-fourweek-master-sourcedefaultson-20261024"             "escrow/$SOURCE_ARCHIVE" "escrow/$SOURCE_ARCHIVE.sha256" escrow/SOURCE_SNAPSHOT_PROVENANCE.json
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_RELEASE_ID}" --jq .draft)" = true
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_RELEASE_ID}"             --jq '{id,tag_name,draft,assets:[.assets[]|{name,size,digest}]}'
+          echo "FOURWEEK_SOURCE_ESCROW_DRAFT_RELEASE=PASS"
+      - name: Temporary audit evidence for this run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FourWeek-Source-Snapshot-Verification
+          path: escrow/
+          retention-days: 90
+          if-no-files-found: warn
