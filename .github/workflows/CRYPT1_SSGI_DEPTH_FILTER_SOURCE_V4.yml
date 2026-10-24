@@ -1,0 +1,89 @@
+name: Crypt1 SSGI Active Depth Filtering Source V4
+on:
+  push:
+    branches: [rend2-crypt1-shadow-causal-20261024]
+    paths: ['.github/workflows/CRYPT1_SSGI_DEPTH_FILTER_SOURCE_V4.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  ssgi-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real OpenGL capture tools
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/ssgi-source
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev libcurl4-openssl-dev xvfb xauth python3-pil python3-numpy python3-yaml
+      - name: Reconstruct exact October and source-compile approved V05
+        run: |
+          set -Eeuo pipefail
+          bash integration/lut-v05/ci_lut_v05_candidate.sh > evidence/ssgi-source/reconstruct.log 2>&1 || { tail -100 evidence/ssgi-source/reconstruct.log; exit 1; }
+          grep -Fq LUT_V05_DIAGNOSTIC_COMPILE_PASS evidence/ssgi-source/reconstruct.log
+          python3 testlab/scripts/crypt1_ssgi_depth_filter_source_ab.py instrument source
+          make -C source/SP -j2 release VERSION=1.51d-SP-DW-Crypt1SSGIDepth BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/ssgi-source/native-build.log 2>&1 || { tail -90 evidence/ssgi-source/native-build.log; exit 1; }
+      - name: Fetch protected real Crypt1 asset
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > evidence/ssgi-source/assets.log
+          tail -1 evidence/ssgi-source/assets.log > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+      - name: Actual renderer image from exact baseline and SSGI on/off
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/crypt1_ssgi_depth_filter_source_ab.py capture source "$(cat .retail_main)" evidence/ssgi-source/original 2>&1 | tee evidence/ssgi-source/original-driver.log
+      - name: Preserve SSGI but filter raw-depth source at screen-space receiver
+        run: |
+          set -Eeuo pipefail
+          cp -a source source-depth-filter
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('source-depth-filter/SP/code/rend2/tr_image.c')
+          s=p.read_text()
+          old='qglTextureParameterfEXT(tr.softParticleDepthImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);'
+          old2='qglTextureParameterfEXT(tr.softParticleDepthImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);'
+          assert s.count(old)==1 and s.count(old2)==1
+          s=s.replace(old,old.replace('GL_NEAREST','GL_LINEAR')).replace(old2,old2.replace('GL_NEAREST','GL_LINEAR'))
+          p.write_text(s)
+          print('SSGI_SOURCE_FILTER_EXACT_TWO_LINES_PATCH_PASS')
+          PY
+          make -C source-depth-filter/SP -j2 release VERSION=1.51d-SP-DW-Crypt1SSGILinearDepth BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/ssgi-source/depth-filter-build.log 2>&1 || { tail -90 evidence/ssgi-source/depth-filter-build.log; exit 1; }
+          python3 -u testlab/scripts/crypt1_ssgi_depth_filter_source_ab.py capture source-depth-filter "$(cat .retail_main)" evidence/ssgi-source/linear-depth 2>&1 | tee evidence/ssgi-source/linear-depth-driver.log
+      - name: Pixel compare full A B proof at fixed camera
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from PIL import Image,ImageDraw
+          from pathlib import Path
+          import numpy as np,json
+          r=Path('evidence/ssgi-source')
+          data=[]
+          for view in ('grate_near48_pitch28','grate_near72_pitch42'):
+              sheet=Image.new('RGB',(1280*2,720*2),(0,0,0))
+              for i,mode in enumerate(('baseline','no_ssgi','lightmap_only','lightmap_no_ssgi')):
+                  name=f'crypt1_{view}_{mode}.png'
+                  a=np.array(Image.open(r/'original'/name).convert('RGB')).astype('int16')
+                  b=np.array(Image.open(r/'linear-depth'/name).convert('RGB')).astype('int16')
+                  d=np.abs(a-b)
+                  data.append({'view':view,'mode':mode,'abs_rgb_mean':round(float(d.mean()),5),'changed_gt4_pct':round(float(np.any(d>4,axis=2).mean()*100),4)})
+                  sheet.paste(Image.fromarray(b.astype('uint8')),((i%2)*1280,(i//2)*720))
+                  ImageDraw.Draw(sheet).text(((i%2)*1280+20,(i//2)*720+20),mode+' LINEAR',fill='white')
+              sheet.save(r/(view+'_LINEAR_DEPTH_COMPARE.png'))
+          (r/'SSGI_DEPTH_FILTER_AB.json').write_text(json.dumps(data,indent=2))
+          for v in data:print('SSGI_DEPTH_AB',v)
+          print('SSGI_DEPTH_SOURCE_V4_PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Crypt1-SSGI-Depth-Linear-Filter-Source-V4
+          path: evidence/ssgi-source/
+          retention-days: 90
