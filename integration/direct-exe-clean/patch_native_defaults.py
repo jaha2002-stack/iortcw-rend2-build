@@ -15,7 +15,7 @@ def apply(root,out):
  assert s.count(anchor)==1
  s=s.replace(anchor,NATIVE_CODE+anchor,1)
  anchor='\tCbuf_Execute(); // Always execute after exec to prevent text buffer overflowing\n\n\tif(!Com_SafeMode())'
- replacement='\tCbuf_Execute(); // Always execute after exec to prevent text buffer overflowing\n\n\t// Native first-run defaults, always BEFORE the user's wolfconfig.cfg.\n\tCom_DarkWolfNativeFirstRunDefaults();\n\n\tif(!Com_SafeMode())'
+ replacement='\tCbuf_Execute(); // Always execute after exec to prevent text buffer overflowing\n\n\t// Native first-run defaults, always BEFORE the personal wolfconfig.cfg.\n\tCom_DarkWolfNativeFirstRunDefaults();\n\n\tif(!Com_SafeMode())'
  assert s.count(anchor)==1
  s=s.replace(anchor,replacement,1)
  a='com_recommendedSet = Cvar_Get( "com_recommendedSet", "0", CVAR_ARCHIVE );'
