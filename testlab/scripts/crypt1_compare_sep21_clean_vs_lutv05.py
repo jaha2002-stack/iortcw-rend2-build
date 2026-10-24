@@ -29,10 +29,11 @@ def gray(im):
 
 def edge_stats(a):
     g=gray(a)
-    xx=np.abs(np.diff(g,axis=1))[:,1:]
-    yy=np.abs(np.diff(g,axis=0))[1:,:]
-    yy=yy[:xx.shape[0],:xx.shape[1]]
-    return int(((xx+yy)>20).sum()),round(float((xx+yy).mean()),3)
+    # Central differences share the same interior (H-2)x(W-2) dimensions.
+    xx=np.abs(g[1:-1,2:]-g[1:-1,:-2])
+    yy=np.abs(g[2:,1:-1]-g[:-2,1:-1])
+    activity=xx+yy
+    return int((activity>20).sum()),round(float(activity.mean()),3)
 
 def main(old_path,new_path,out):
     old=json.loads((old_path/"CRYPT1_GRATE_CLOSEUP_REPORT.json").read_text())
