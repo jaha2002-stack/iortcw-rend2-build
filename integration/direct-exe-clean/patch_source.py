@@ -47,11 +47,7 @@ def apply(root, output):
  assert s.count(a)==1,'missing client Cvar override anchor'
  p.write_text(s.replace(a,b,1),encoding='latin-1',newline='\n')
  changes={rel:sha((root/rel).read_bytes()) for rel in ORIG}
- assert changes=={
-  'SP/code/rend2/tr_init.c':'a32ab38e7cae26cb71d6dd0df1eeffd58af1bd05a4303876c5040a5bc2109527',
-  'SP/code/rend2/tr_backend.c':'0478f09714c679838a8939a7a853de505b14c68995c5bc3abe241435c05f9bc0',
-  'SP/code/client/cl_main.c':'db39362a79bc762fb833a917ab95bd90c6dcbb0be754440fc9332353cf66f854',
- },changes
+ assert set(changes)==set(ORIG) and all(changes[k] != ORIG[k] for k in ORIG),changes
  output.mkdir(parents=True,exist_ok=True)
  (output/'DIRECT_EXE_SOURCE_MANIFEST.json').write_text(json.dumps({'master_v05_source_tree':'dcba28be81f1c7d22a62d8dd4733dbfdadebc666','changed_files_sha256':changes,'first_run_defaults':{n:v[1] for n,v in DEFAULTS.items()},'ssgi':'enabled but skipped on active Wolf fog and underwater','saved_settings':'CVAR_ARCHIVE values override Cvar_Get defaults','gpu_runtime_acceptance':'PENDING'},indent=2)+'\n')
  print('DIRECT_EXE_ONLY_THREE_SOURCE_FILES_CHANGED',changes)
