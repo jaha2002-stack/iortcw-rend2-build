@@ -1,0 +1,105 @@
+name: Crypt1 Grate Historical Bloom CSM vs FourWeek V05 Same-Camera
+on:
+  push:
+    branches: [rend2-crypt1-grate-shadow-ab-20261024]
+    paths:
+      - 'testlab/scripts/crypt1_grate_legacy_vs_v05.py'
+      - '.github/workflows/CRYPT1_GRATE_HISTORICAL_RC4_V05_COMPARE.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  old-vs-v05:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native OpenGL/Mesa and Python comparison tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/crypt1-old-v05 original-source original-parent
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev \
+            libcurl4-openssl-dev xvfb xauth python3-pil python3-numpy python3-yaml
+          python3 -m py_compile testlab/scripts/crypt1_grate_legacy_vs_v05.py
+      - name: Reconstruct original RC4 Bloom v2 and apply ONLY the accepted CSM Guard
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12004010089/zip" > original-parent.zip
+          echo '6c6c2d2302e2f4f45bad9d7e3df7e2573fd79a72646bcf049596440cb62f7659  original-parent.zip' | sha256sum -c
+          unzip -q original-parent.zip -d original-parent
+          (cd original-parent && mkdir -p dist && ln -s ../DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz dist/DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz && sha256sum -c DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz.sha256)
+          tar -xzf original-parent/DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz -C original-source
+          git -C original-source init -q
+          git -C original-source add -A
+          test "$(git -C original-source write-tree)" = bb1432b459a4daf72a324f3fb477744bdb51fd4a
+          python3 integration/rc4-final-csm/apply_csm_guard.py original-source
+          grep -Fq DARKWOLF_RC4_FORCE_SUN_CSM_REPRIME_V1 original-source/SP/code/rend2/tr_scene.c
+          python3 testlab/scripts/crypt1_grate_legacy_vs_v05.py instrument original-source
+          git -C original-source diff --check
+          echo LEGACY_CSM_SOURCE_RECONSTRUCTION_PASS
+      - name: Compile historical RC4 CSM Linux-SP game for actual BSP framebuffer testing
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C original-source/SP -j2 release \
+            VERSION=1.51d-SP-DarkWolf-Crypt1-HistoricalBloomCSM \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            > evidence/crypt1-old-v05/legacy-linux-build.log 2>&1 || {
+              tail -120 evidence/crypt1-old-v05/legacy-linux-build.log
+              exit 1
+            }
+          find original-source/SP/build/release-linux-x86_64 -maxdepth 1 -type f -iname '*rend2*.so' -print
+          test -n "$(find original-source/SP/build/release-linux-x86_64 -maxdepth 1 -type f -iname '*rend2*.so' -print -quit)"
+          echo LEGACY_RC4_CSM_LINUX_BUILD_PASS
+      - name: Fetch licensed original RTCW Crypt1 only in protected TestLab environment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}" || { echo BLOCKED_MISSING_LICENSED_ASSETS;exit 1; }
+          bash testlab/scripts/fetch_private_release_assets.sh \
+            jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets \
+            > evidence/crypt1-old-v05/private-location.log
+          tail -1 evidence/crypt1-old-v05/private-location.log > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+      - name: Real Crypt1 screenshot of historical Bloom v2 CSM at identical camera
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/crypt1_grate_legacy_vs_v05.py \
+            capture original-source "$(cat .retail_main)" evidence/crypt1-old-v05 \
+            2>&1 | tee evidence/crypt1-old-v05/driver.log
+          test -s evidence/crypt1-old-v05/crypt1_rc4_bloom_csm_closeup.png
+      - name: Load previous verified 28-shot V05 artifact and create matched side-by-side
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/v05-reference
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12568158252/zip" > v05-reference.zip
+          echo 'b6ac899c816a4bed200d3ae69aa2576619b12d070f3f6e84fc5fdda2c624972d  v05-reference.zip' | sha256sum -c
+          unzip -q v05-reference.zip -d evidence/v05-reference
+          python3 testlab/scripts/crypt1_grate_legacy_vs_v05.py \
+            compare evidence/crypt1-old-v05 evidence/v05-reference evidence/crypt1-old-v05 \
+            | tee evidence/crypt1-old-v05/compare.log
+          test -s evidence/crypt1-old-v05/CRYPT1_GRATE_LEGACY_VS_V05_SAME_CAMERA.png
+          echo CRYPT1_HISTORICAL_RC4_V05_REAL_GAME_AB_PASS
+      - name: Upload real engine screenshots and source provenance, never retail assets
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Crypt1-Grate-RC4-BloomCSM-vs-FourWeek-V05-Game-Images
+          path: |
+            evidence/crypt1-old-v05/
+          if-no-files-found: warn
+          retention-days: 90
