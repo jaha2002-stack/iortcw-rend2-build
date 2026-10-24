@@ -1,0 +1,170 @@
+name: Crypt1 Sep 21 Clean Production vs FourWeek LUT V05 Real Game A-B
+on:
+  push:
+    branches: [rend2-crypt1-sep21-vs-v05-realgame-20261024]
+    paths:
+      - 'testlab/scripts/crypt1_compare_sep21_clean_vs_lutv05.py'
+      - '.github/workflows/CRYPT1_SEP21_CLEAN_VS_V05_REALGAME_AB.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  historical-comparison:
+    name: Real Crypt1 at identical camera Sept Clean vs current LUT V05
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SEPT_RUN: "35361762179"
+      SEPT_ARTIFACT: iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1
+      SEPT_INNER_SHA256: 9b24185302c468b47b9c0125a31eb9b1edd9518e7cbd0084a80710c52d395a4b
+      SEPT_RENDERER_SHA256: 84053287054333b89ffdc0d733e7231371098674fa75932f044598fa67df1701
+      SEPT_PATCH_SHA256: 7041376f9dccc1be3a2172ef5834c73bb270cc76d768ad1ad115b0567c1077a0
+      SEPT_UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      OCT_RUN: "40114380523"
+      OCT_ARTIFACT_ID: "12568158252"
+      OCT_ARTIFACT_NAME: RC4-V05-Crypt1-Grate-NearContact-CAS-A2C-SSGI-Shadow-Images
+      OCT_OUTER_SHA256: b6ac899c816a4bed200d3ae69aa2576619b12d070f3f6e84fc5fdda2c624972d
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native Linux RTCW Mesa screenshot dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/september evidence/october evidence/comparison
+          python3 -m py_compile testlab/scripts/crypt1_grate_closeup_ab_v05.py testlab/scripts/rc4_requested_views.py testlab/scripts/crypt1_compare_sep21_clean_vs_lutv05.py
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev \
+            libcurl4-openssl-dev xvfb xauth python3-pil python3-numpy python3-yaml \
+            unzip zip gh git make
+          echo CROSS_RELEASE_DEPS_PASS
+      - name: Pin and verify exact historical September 18 Clean Production release as of Sept 21
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          runjson="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SEPT_RUN}")"
+          test "$(jq -r '.conclusion' <<< "$runjson")" = success
+          test "$(jq -r '.path' <<< "$runjson")" = '.github/workflows/DARKWOLF_IORTCW_REND2_CLEAN_PRODUCTION_RELEASE_V1.yml'
+          test "$(jq -r '.head_sha' <<< "$runjson")" = 79642f3242ce270e946ef0a13d2863f421b228b5
+          row="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SEPT_RUN}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == 10555091293) | [.expired,.digest] | @tsv")"
+          test -n "$row"
+          test "$(cut -f1 <<< "$row")" = false
+          test "$(cut -f2 <<< "$row")" = 'sha256:6cd0e66d9e8e68ac4499a2e41b9ab0286b40942e14106b4b6ddc92ba38e3abb1'
+          mkdir -p sep-download sep-release
+          gh run download "$SEPT_RUN" --repo "$GITHUB_REPOSITORY" --name "$SEPT_ARTIFACT" --dir sep-download
+          z="sep-download/${SEPT_ARTIFACT}.zip"
+          test -s "$z" && test -s "$z.sha256"
+          echo "${SEPT_INNER_SHA256}  $z" | sha256sum -c -
+          test "$(awk '{print $1}' "$z.sha256")" = "$SEPT_INNER_SHA256"
+          unzip -tq "$z"
+          unzip -q "$z" -d sep-release
+          sepbase="sep-release/$SEPT_ARTIFACT"
+          test -s "$sepbase/renderer_sp_rend2_x64.dll"
+          echo "${SEPT_RENDERER_SHA256}  $sepbase/renderer_sp_rend2_x64.dll" | sha256sum -c -
+          test -s "$sepbase/docs/darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch"
+          echo "${SEPT_PATCH_SHA256}  $sepbase/docs/darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch" | sha256sum -c -
+          cp "$sepbase/docs/DARKWOLF_REND2_CLEAN_PRODUCTION_RELEASE_V1_CONTRACT.txt" evidence/september/
+          cp "$sepbase/README_DARKWOLF_REND2_CLEAN_PRODUCTION_RELEASE_V1_RU.txt" evidence/september/
+          echo 'SEPTEMBER_18_2026_CLEAN_PRODUCTION_PINNED_AS_OF_SEPT_21_PASS' | tee evidence/september/provenance.txt
+      - name: Reconstruct September actual source from full cumulative patch against pinned upstream
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone -q https://github.com/iortcw/iortcw.git sep-source
+          git -C sep-source checkout -q --detach "$SEPT_UPSTREAM_SHA"
+          git -C sep-source reset --hard "$SEPT_UPSTREAM_SHA"
+          git -C sep-source clean -fdx
+          patch="$GITHUB_WORKSPACE/sep-release/$SEPT_ARTIFACT/docs/darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch"
+          git -C sep-source apply --check --binary --whitespace=nowarn "$patch"
+          git -C sep-source apply --binary --whitespace=nowarn "$patch"
+          git -C sep-source apply --reverse --check --binary --whitespace=nowarn "$patch"
+          test "$(grep -c '^diff --git ' "$patch")" -eq 67
+          grep -Fq 'DARKWOLF_USLRD_CLEAN_PRODUCTION_V1' sep-source/SP/code/rend2/tr_init.c
+          test -z "$(find sep-source/SP/code/rend2 -maxdepth 1 -name 'dwfinal*' -print)"
+          sha256sum sep-source/SP/code/rend2/tr_init.c sep-source/SP/code/rend2/tr_backend.c \
+            > evidence/september/SEPT18_EXACT_SOURCE_SHA256.txt
+          echo 'SEPTEMBER_SOURCE_RECONSTRUCTED_FROM_67_FILE_PATCH_PASS' | tee -a evidence/september/provenance.txt
+      - name: Instrument September game and cgame for EXACT camera proof — preserve renderer source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 testlab/scripts/crypt1_grate_closeup_ab_v05.py instrument sep-source \
+            2>&1 | tee evidence/september/PROOF_INSTRUMENTATION.log
+          grep -Fq 'CRYPT1_CLOSEUP_TESTLAB_INSTRUMENTATION_PASS' evidence/september/PROOF_INSTRUMENTATION.log
+          mv evidence/crypt1-source-isolation.json evidence/september/
+      - name: Compile exact September Clean Production native Linux RTCW and renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C sep-source/SP -j2 release \
+            VERSION=1.51d-SP-DarkWolf-Sep18-CleanV1-Compare \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            > evidence/september/native-linux-compile.log 2>&1 || {
+              tail -110 evidence/september/native-linux-compile.log
+              exit 1
+            }
+          test -x sep-source/SP/build/release-linux-x86_64/ioWolfSP.x86_64
+          find sep-source/SP/build/release-linux-x86_64 -maxdepth 1 -iname '*rend2*.so' -type f -print \
+            | tee evidence/september/native-renderer-proof.txt
+          test -s evidence/september/native-renderer-proof.txt
+          echo SEPTEMBER_SOURCE_NATIVE_GAME_AND_RENDERER_COMPILE_PASS
+      - name: Retrieve protected original RTCW Crypt1 retail map
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}" || { echo MISSING_LICENSED_RETAIL_ASSETS; exit 1; }
+          bash testlab/scripts/fetch_private_release_assets.sh \
+            jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets \
+            > evidence/september/private-assets-location.log
+          tail -1 evidence/september/private-assets-location.log > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+          echo SEPTEMBER_SAME_RETAIL_CRYPT1_GAME_DATA_PASS
+      - name: Run September 18 Clean Production on real Crypt1 at Oct 24 identical camera poses
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/crypt1_grate_closeup_ab_v05.py \
+            capture sep-source "$(cat .retail_main)" evidence/september \
+            2>&1 | tee evidence/september/september-game-capture-driver.log
+          test -s evidence/september/CRYPT1_GRATE_CLOSEUP_REPORT.json
+          test -s evidence/september/CRYPT1_GRATE_CLOSEUP_PIXEL_DIFF.json
+          test -s evidence/september/grate_near72_pitch42_A2C_CAS_SHADOW_SSGI_AB.png
+          echo SEPTEMBER_18_REAL_GAME_28_SCREENSHOTS_CAPTURED_PASS
+      - name: Download and verify Oct 24 FourWeek LUT V05 already-proven real-game captures
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          row="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${OCT_RUN}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == 12568158252) | [.expired,.digest] | @tsv")"
+          test -n "$row"
+          test "$(cut -f1 <<< "$row")" = false
+          test "$(cut -f2 <<< "$row")" = "sha256:b6ac899c816a4bed200d3ae69aa2576619b12d070f3f6e84fc5fdda2c624972d"
+          gh run download "$OCT_RUN" --repo "$GITHUB_REPOSITORY" --name "$OCT_ARTIFACT_NAME" --dir evidence/october
+          test -s evidence/october/CRYPT1_GRATE_CLOSEUP_REPORT.json
+          test -s evidence/october/crypt1_grate_near72_pitch42_baseline.png
+          echo OCTOBER_CURRENT_V05_IDENTICAL_CAMERA_SOURCE_REFERENCE_PASS
+      - name: Cross-version align camera and produce old-vs-new side-by-side evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 testlab/scripts/crypt1_compare_sep21_clean_vs_lutv05.py \
+            evidence/september evidence/october evidence/comparison \
+            | tee evidence/comparison/comparison-validation.log
+          grep -Fq SEPT21_VS_LUTV05_CRYPT1_CAMERA_ALIGNED_CROSS_RELEASE_IMAGES_PASS \
+            evidence/comparison/comparison-validation.log
+          ls -lh evidence/comparison/*png
+      - name: Upload derived screenshots, old/new metrics and production provenance, never retail assets
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Crypt1-Sep21-CleanProduction-vs-Oct24-FourWeek-LUTV05-RealGame-Comparison
+          path: |
+            evidence/september/
+            evidence/comparison/
+            evidence/october/CRYPT1_GRATE_CLOSEUP_REPORT.json
+          if-no-files-found: warn
+          retention-days: 90
