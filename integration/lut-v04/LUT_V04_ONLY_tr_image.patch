@@ -1,0 +1,56 @@
+--- a/SP/code/rend2/tr_image.c
++++ b/SP/code/rend2/tr_image.c
+@@ -2940,27 +2940,38 @@
+ 			float c[3] = { r / 15.0f, g / 15.0f, b / 15.0f };
+ 			float l = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
+ 			int index = ((g * 256) + b * 16 + r) * 4;
+-			if (mode == 1 || mode == 2) // DARKWOLF_3FX_VISIBLE_V03: intentional filmic look
+-			{
+-				float shadow = Com_Clamp(0.0f, 1.0f, (0.73f - l) * 2.15f);
++			if (mode == 1 || mode == 2) // DARKWOLF_LUT_V04_LUMA_PRESERVE: bounded filmic chroma, no shadow crush
++			{
++				// V03's 1.20 contrast curve quantized low RGB values to zero;
++				// with LUT strength 0.80, dim rooms lost up to ~75% luminance.
++				// Preserve mode 0 and the original neutral luma of each LUT entry.
++				float original[3] = { c[0], c[1], c[2] };
++				float shadow = Com_Clamp(0.0f, 1.0f, (0.70f - l) * 2.0f);
+ 				float highlight = 1.0f - shadow;
+-				// Controlled contrast/saturation, leaving identity mode 0 untouched.
+-				for (int k = 0; k < 3; ++k)
++				float gradedL;
++				float luminanceScale;
++				int k;
++				if (mode == 1) // warm highlights, restrained cool shadows
+ 				{
+-					float sat = l + 1.08f * (c[k] - l);
+-					c[k] = Com_Clamp(0.0f, 1.0f, (sat - 0.48f) * 1.20f + 0.48f);
++					c[0] *= 1.0f + 0.055f * highlight - 0.012f * shadow;
++					c[1] *= 1.0f + 0.008f * shadow;
++					c[2] *= 1.0f + 0.045f * shadow - 0.045f * highlight;
+ 				}
+-				if (mode == 1) // cinema amber highlights, restrained cyan shadows
++				else // mode 2: neutral highlights, modest cool shadows
+ 				{
+-					c[0] = c[0] * (1.0f + 0.165f * highlight) - 0.022f * shadow;
+-					c[1] = c[1] * (1.0f + 0.037f * shadow);
+-					c[2] = c[2] * (1.0f + 0.10f * shadow - 0.19f * highlight) + 0.017f * shadow;
++					c[0] *= 1.0f - 0.038f * shadow + 0.010f * highlight;
++					c[1] *= 1.0f + 0.006f * shadow;
++					c[2] *= 1.0f + 0.052f * shadow - 0.016f * highlight;
+ 				}
+-				else // mode 2: distinct cold industrial grade with protected whites
++				gradedL = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
++				luminanceScale = (l > 0.000001f && gradedL > 0.000001f) ? l / gradedL : 1.0f;
++				for (k = 0; k < 3; ++k)
+ 				{
+-					c[0] = c[0] * (1.0f - 0.145f * shadow + 0.025f * highlight);
+-					c[1] = c[1] * (1.0f + 0.040f * shadow);
+-					c[2] = c[2] * (1.0f + 0.18f * shadow - 0.055f * highlight);
++					// Bound individual channel movement to 10%. No added channel
++					// energy on black; prevents V03-style red/chroma speckles.
++					float lower = original[k] * 0.90f;
++					float upper = Com_Clamp(0.0f, 1.0f, original[k] * 1.10f);
++					c[k] = Com_Clamp(lower, upper, c[k] * luminanceScale);
+ 				}
+ 			}
+ 			for (int k = 0; k < 3; ++k)
