@@ -30,22 +30,22 @@ def apply(root, output):
   assert sha((root/rel).read_bytes())==expected, ('source drift',rel,sha((root/rel).read_bytes()))
  p=root/'SP/code/rend2/tr_init.c';s=p.read_text(encoding='latin-1')
  for n,(old,new) in DEFAULTS.items():
-  rx=re.compile(r'(\\b'+re.escape(n)+r'\\s*=\\s*ri\\.Cvar_Get\\s*\\(\\s*"'+re.escape(n)+r'"\\s*,\\s*)"'+re.escape(old)+r'"(?=\\s*,\\s*CVAR_ARCHIVE)')
+  rx=re.compile(r'(\b'+re.escape(n)+r'\s*=\s*ri\.Cvar_Get\s*\(\s*"'+re.escape(n)+r'"\s*,\s*)"'+re.escape(old)+r'"(?=\s*,\s*CVAR_ARCHIVE)')
   s,c=rx.subn(lambda m: m.group(1)+'"'+new+'"',s)
   assert c==1,(n,c)
  for n in ('r_dwLut','r_dwCas','r_ssgi','r_bloom','r_forceSun','r_dlightMode','r_ext_framebuffer_multisample'):
   assert '"'+n+'"' in s,n
- p.write_text(s,encoding='latin-1',newline='\\n')
+ p.write_text(s,encoding='latin-1',newline='\n')
  p=root/'SP/code/rend2/tr_backend.c';s=p.read_text(encoding='latin-1')
- a='\\t\\tif (r_ssgi && r_ssgi->integer)\\n\\t\\t{\\n\\t\\t\\tif (!srcFbo)\\n\\t\\t\\t\\tssgiReason = "no-src-fbo";'
- b='\\t\\tif (r_ssgi && r_ssgi->integer)\\n\\t\\t{\\n\\t\\t\\t// DARKWOLF_RC4_SSGI_FOG_GUARD_V01: skip postprocess color bounce\\n\\t\\t\\t// where active Wolf world fog obscures the depth buffer (Tram).\\n\\t\\t\\t// Keep r_ssgi=1 and enable GI everywhere outside fog scenes.\\n\\t\\t\\tif (glfogNum > FOG_NONE && glfogsettings[FOG_CURRENT].registered)\\n\\t\\t\\t\\tssgiReason = "world-fog-safety";\\n\\t\\t\\telse if (backEnd.refdef.rdflags & RDF_UNDERWATER)\\n\\t\\t\\t\\tssgiReason = "underwater-fog-safety";\\n\\t\\t\\telse if (!srcFbo)\\n\\t\\t\\t\\tssgiReason = "no-src-fbo";'
+ a='\t\tif (r_ssgi && r_ssgi->integer)\n\t\t{\n\t\t\tif (!srcFbo)\n\t\t\t\tssgiReason = "no-src-fbo";'
+ b='\t\tif (r_ssgi && r_ssgi->integer)\n\t\t{\n\t\t\t// DARKWOLF_RC4_SSGI_FOG_GUARD_V01: skip postprocess color bounce\n\t\t\t// where active Wolf world fog obscures the depth buffer (Tram).\n\t\t\t// Keep r_ssgi=1 and enable GI everywhere outside fog scenes.\n\t\t\tif (glfogNum > FOG_NONE && glfogsettings[FOG_CURRENT].registered)\n\t\t\t\tssgiReason = "world-fog-safety";\n\t\t\telse if (backEnd.refdef.rdflags & RDF_UNDERWATER)\n\t\t\t\tssgiReason = "underwater-fog-safety";\n\t\t\telse if (!srcFbo)\n\t\t\t\tssgiReason = "no-src-fbo";'
  assert s.count(a)==1,'missing SSGI anchor'
- p.write_text(s.replace(a,b,1),encoding='latin-1',newline='\\n')
+ p.write_text(s.replace(a,b,1),encoding='latin-1',newline='\n')
  p=root/'SP/code/client/cl_main.c';s=p.read_text(encoding='latin-1')
- a='\\t// Keep Rend2 as the native production renderer, but do not overwrite user-facing\\n\\t// production CVars on CL_InitRef()/vid_restart when their baked defaults already\\n\\t// equal the accepted production values. r_dlightShadowMaxLights remains forced to 3.\\n\\tCvar_Set("cl_renderer", "rend2");\\n\\tCvar_Set("r_dlightShadowMaxLights", "3");'
- b='\\t// DARKWOLF_RC4_DIRECT_EXE_PERSISTENCE_V01: Rend2 is the only shipped renderer.\\n\\t// Do not force quality CVars at CL_InitRef or vid_restart; user changes persist.\\n\\tCvar_Set("cl_renderer", "rend2");'
+ a='\t// Keep Rend2 as the native production renderer, but do not overwrite user-facing\n\t// production CVars on CL_InitRef()/vid_restart when their baked defaults already\n\t// equal the accepted production values. r_dlightShadowMaxLights remains forced to 3.\n\tCvar_Set("cl_renderer", "rend2");\n\tCvar_Set("r_dlightShadowMaxLights", "3");'
+ b='\t// DARKWOLF_RC4_DIRECT_EXE_PERSISTENCE_V01: Rend2 is the only shipped renderer.\n\t// Do not force quality CVars at CL_InitRef or vid_restart; user changes persist.\n\tCvar_Set("cl_renderer", "rend2");'
  assert s.count(a)==1,'missing client Cvar override anchor'
- p.write_text(s.replace(a,b,1),encoding='latin-1',newline='\\n')
+ p.write_text(s.replace(a,b,1),encoding='latin-1',newline='\n')
  changes={rel:sha((root/rel).read_bytes()) for rel in ORIG}
  assert changes=={
   'SP/code/rend2/tr_init.c':'a32ab38e7cae26cb71d6dd0df1eeffd58af1bd05a4303876c5040a5bc2109527',
@@ -53,7 +53,7 @@ def apply(root, output):
   'SP/code/client/cl_main.c':'db39362a79bc762fb833a917ab95bd90c6dcbb0be754440fc9332353cf66f854',
  },changes
  output.mkdir(parents=True,exist_ok=True)
- (output/'DIRECT_EXE_SOURCE_MANIFEST.json').write_text(json.dumps({'master_v05_source_tree':'dcba28be81f1c7d22a62d8dd4733dbfdadebc666','changed_files_sha256':changes,'first_run_defaults':{n:v[1] for n,v in DEFAULTS.items()},'ssgi':'enabled but skipped on active Wolf fog and underwater','saved_settings':'CVAR_ARCHIVE values override Cvar_Get defaults','gpu_runtime_acceptance':'PENDING'},indent=2)+'\\n')
+ (output/'DIRECT_EXE_SOURCE_MANIFEST.json').write_text(json.dumps({'master_v05_source_tree':'dcba28be81f1c7d22a62d8dd4733dbfdadebc666','changed_files_sha256':changes,'first_run_defaults':{n:v[1] for n,v in DEFAULTS.items()},'ssgi':'enabled but skipped on active Wolf fog and underwater','saved_settings':'CVAR_ARCHIVE values override Cvar_Get defaults','gpu_runtime_acceptance':'PENDING'},indent=2)+'\n')
  print('DIRECT_EXE_ONLY_THREE_SOURCE_FILES_CHANGED',changes)
  print('DEFAULTS_PERSISTENCE_FOG_GATES_PASS',len(DEFAULTS))
 
