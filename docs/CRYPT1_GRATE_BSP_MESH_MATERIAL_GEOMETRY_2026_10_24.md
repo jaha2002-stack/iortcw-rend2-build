@@ -24,4 +24,29 @@
 - Record A/B `r_dlightShadowStrength`, `r_ssgi`, `r_dwCasStrength`, `r_dwA2C`, `r_lightmap`, plus restored baseline. Verify actual logged CVars and matching camera per view. Native Linux Mesa reproductions do not prove Windows RTX runtime.
 - Do not modify the verified original FourWeek Master, LUT V05 DLL or published Draft Release on this evidence alone.
 
-**Status:** Real source geometry and material attribution verified; user-observed polygon/shadow cause pending final camera-aligned near-contact A/B review.
+**Status:** Near-contact GPU Lab A/B completed successfully on Linux Mesa; original opaque BSP spike geometry is confirmed as the dominant angular silhouette. Windows GPU FPS and exact-camera aliasing parity remain unmeasured.
+
+## Near-contact REAL GAME evidence — SUCCESS
+
+- [Actions run #40114380523](https://github.com/jaha2002-stack/iortcw-rend2-build/actions/runs/40114380523) = **SUCCESS**, artifact `12568158252` named `RC4-V05-Crypt1-Grate-NearContact-CAS-A2C-SSGI-Shadow-Images`, size 20,816,856 bytes, outer ZIP digest `b6ac899c816a4bed200d3ae69aa2576619b12d070f3f6e84fc5fdda2c624972d`.
+- Native Linux Mesa actual Crypt1 gameplay: `exitcode=0`, `ready=true`, `complete=true`, **28/28** screenshots, **four collision-validated cameras** X -240 and -264 (yaw 180°, pitches 28°/42°). Exact per-shot camera pose and CVar values were logged and asserted. Original baseline restoration was **bitwise identical** at all four views (0 changed pixels).
+- Five diagnostic comparisons per view: dynamic shadow strength OFF, SSGI OFF, CAS strength OFF, A2C OFF, and baked `r_lightmap 1` view. Preserve original source renderer; only Lab game/cgame helpers were added.
+- **A2C OFF changed exactly 0 pixels (0.0%) at all four views**, consistent with the opaque JPG/implicit shader and source alpha-test-only A2C path.
+- **CAS strength OFF changed 2.12–6.45% of frame pixels**, but very slightly (`mean_abs_rgb_delta=0.0204–0.0762` on 0–255), and did not remove spiky mesh silhouettes.
+- **DLight shadow strength OFF changed 10.60–20.03% of pixels** (mean 0.53–1.75) and altered real shadow intensity, but **angular grate/spike geometry remained**. This confirms command works but cannot erase actual mesh vertices.
+- **SSGI OFF changed 1.81–9.86% of pixels** (mean 0.011–0.095), again leaving silhouettes and stair-stepped BSP gate contours present.
+- **`r_lightmap 1` switched to baked lightmap visualization** (naturally changes all pixels), yet the same thick bars, star-shaped spikes and angular geometry silhouettes are plain to see. Therefore those protruding angular forms are **BSP mesh**, not an artifact created by the dynamic light's shadow map.
+- Live user screenshot is closer to gate than initial 40110824975 spawn-only shots; this run addresses it with 48u and 72u closer viewpoints. Caveat still exists: user uses Windows NVIDIA RTX 3060 Ti and screenshot exact camera not synchronized, so GPU-specific antialiasing differences remain possible.
+- The reported *floor cast-shadow aliasing* may have an additional baked-lightmap or geometric screen-space AA component. This test does NOT establish a defective shader or prove shadow-map filtering is broken. Do NOT delete gate triangles or introduce a global graphics change based solely on this.
+- **Actionable next step if pursuing further quality:** isolated A/B at same close camera for 4x vs 8x MSAA (with actual_samples logged) and/or old visually accepted Bloom v2+CSM Guard versus V05 before adjusting any global AA. Only then propose a scoped correction. Current build needs **no forced disabling** of SSGI/CAS/A2C or shadow filters.
+
+Pixel data (0–255 mean RGB delta, full frame):
+
+| View | DLight OFF changed% | SSGI OFF changed% | CAS OFF changed% | A2C OFF changed% | Restore changed% |
+|---|---:|---:|---:|---:|---:|
+| X=-240, pitch 28° | 10.597 | 9.385 | 6.451 | 0.000 | 0.000 |
+| X=-240, pitch 42° | 14.959 | 9.859 | 5.793 | 0.000 | 0.000 |
+| X=-264, pitch 28° | 15.899 | 1.812 | 2.118 | 0.000 | 0.000 |
+| X=-264, pitch 42° | 20.025 | 2.252 | 2.693 | 0.000 | 0.000 |
+
+**Decision:** original gate spiky polygonal silhouette is strongly verified. No production code modification or new public Release.
