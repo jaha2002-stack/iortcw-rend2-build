@@ -50,6 +50,17 @@
 3. Раздельная фиксация решений пользователя, кодовых патчей/тестов, исходных комплектов, критериев acceptance. Исторические chat-транскрипты, видео и логи не гарантированно присутствуют в Git; называть такой индекс «полным архивом всех чатов» нельзя.
 4. Ранние июнь–июльские DXR репозитории связаны как **предшественники**, но их source-tree и большой игровой контент не копируются в public `iortcw-rend2-build` или в этот Draft без отдельной политики доступа. Не смешивать с приватными репозиториями.
 
+## Долговременный Git+Actions escrow — ВЫПОЛНЕНО 24 октября 2026
+
+- Workflow [#40084043856](https://github.com/jaha2002-stack/iortcw-rend2-build/actions/runs/40084043856): **SUCCESS**.
+- `git bundle verify`: **PASS**, `56 refs`, Git confirms complete reachable history. Archive `DarkWolf_ioRTCW_Rend2_All_Branches_Tags_History_20261024.bundle`, **8,865,919 bytes**, SHA256 `11f32779832d77603efbf8611a09136f94d43a62eeccb251fe532dd574cfda02`. This is the full reachable Git history (branches, tags, historical commits) **of the iortcw-rend2-build repository only**.
+- Actions metadata index `ACTIONS_RUNS_INDEX_20261024.json`: **451 runs**, 5 API pages, SHA256 `af1caeead7c42ae89e5d677d5e0f100ab69c53c51c75f77d3d05ae84e87abdf1`. Records name/status/branch/SHA/date/run ID, NOT logs or large expired video artifacts.
+- `GIT_BUNDLE_REFS.txt` SHA256 `19809bd19501fc4c6051560cee2076b9aaf76da58ba5f419e1119afbc1ecf1d2`; `HISTORICAL_ESCROW_SHA256SUMS.txt` holds cross-file checks.
+- All four files are stored in **unpublished Draft Release ID 422588491** together with the FourWeek Master full Win64 ZIP, exact 3,336-file source snapshot and their SHA256/provenance.
+- Original workflow script for recreation: `.github/workflows/REND2_HISTORICAL_GIT_ESCROW_DRAFT.yml`. The Git bundle itself remains unchanged after future branch/commit changes: make a separately named backup later if necessary.
+- The **June–July DXR predecessor repositories have NOT been bundled** into this escrow. They remain separate repositories; do not mistake this Rend2 bundle for an archival copy of `DarkWolfRTCW` / DXR / idTech4 / Android project data.
+- Git bundle verifies reachable content only. Unreachable deleted commits, expired Actions video/log files, historical user chats and privately held local test outputs are outside its coverage. Further separate export is needed to preserve those.
+
 ## Что категорически нельзя потерять
 
 - Fire/Tesla architectural light containment `R_RenderDlightWorldOcclusion`, GLSL `DlightWorldVisibility`; Fire Direct V2.2 — rejected.
