@@ -146,17 +146,17 @@ backend=(root/'rend2/tr_backend.c').read_text(encoding='latin-1')
 client=(root/'client/cl_main.c').read_text(encoding='latin-1')
 m=json.loads(Path('dist/DIRECT_EXE_SOURCE_MANIFEST.json').read_text())
 for name,val in m['first_run_defaults'].items():
-    assert re.search(r'\\b'+re.escape(name)+r'\\s*=\\s*ri\\.Cvar_Get\\s*\\(\\s*"'+re.escape(name)+r'"\\s*,\\s*"'+re.escape(val)+r'"\\s*,\\s*CVAR_ARCHIVE',init),(name,val)
+    assert re.search(r'\b'+re.escape(name)+r'\s*=\s*ri\.Cvar_Get\s*\(\s*"'+re.escape(name)+r'"\s*,\s*"'+re.escape(val)+r'"\s*,\s*CVAR_ARCHIVE',init),(name,val)
 assert 'DARKWOLF_RC4_SSGI_FOG_GUARD_V01' in backend
 assert 'glfogNum > FOG_NONE && glfogsettings[FOG_CURRENT].registered' in backend
 assert 'DARKWOLF_RC4_DIRECT_EXE_PERSISTENCE_V01' in client
 assert 'Cvar_Set("r_dlightShadowMaxLights", "3");' not in client
 assert 'Cvar_Set("cl_renderer", "rend2");' in client
-assert re.search(r'ri.Cvar_Get\\(\\s*"r_ssgi"\\s*,\\s*"1"',init)
-assert re.search(r'ri.Cvar_Get\\(\\s*"r_dwLutStrength"\\s*,\\s*"0.80"',init)
-assert re.search(r'ri.Cvar_Get\\(\\s*"r_dwCasStrength"\\s*,\\s*"0.55"',init)
-assert re.search(r'ri.Cvar_Get\\(\\s*"r_forceSun"\\s*,\\s*"1"',init)
-assert re.search(r'ri.Cvar_Get\\(\\s*"r_dlightMode"\\s*,\\s*"2"',init)
+assert re.search(r'ri.Cvar_Get\(\s*"r_ssgi"\s*,\s*"1"',init)
+assert re.search(r'ri.Cvar_Get\(\s*"r_dwLutStrength"\s*,\s*"0.80"',init)
+assert re.search(r'ri.Cvar_Get\(\s*"r_dwCasStrength"\s*,\s*"0.55"',init)
+assert re.search(r'ri.Cvar_Get\(\s*"r_forceSun"\s*,\s*"1"',init)
+assert re.search(r'ri.Cvar_Get\(\s*"r_dlightMode"\s*,\s*"2"',init)
 print('DIRECT_EXE_ARCHIVE_AND_FOG_GATES_PASS')
 PY_DIRECT_EXE_SOURCE
 
@@ -204,19 +204,19 @@ strings -a dist/renderer_sp_rend2_x64.dll | grep -F 'DARKWOLF_LUT_V05_PROCEDURAL
 echo 'LUT_V05_DIAGNOSTIC_COMPILE_PASS'
 # The game executable must be rebuilt because CL_InitRef incorrectly forced
 # shadow settings to 3 on every vid_restart. Rend2 DLL also has new defaults.
-find source/SP/build -name ioWolfSP.x64.exe -exec cp -v '{}' dist/ioWolfSP.x64.exe \\;
+find source/SP/build -name ioWolfSP.x64.exe -exec cp -v '{}' dist/ioWolfSP.x64.exe \;
 test -s dist/ioWolfSP.x64.exe
 test -s dist/renderer_sp_rend2_x64.dll
 file dist/ioWolfSP.x64.exe | tee evidence/exe-pe-header.txt
 grep -Fq PE32+ evidence/exe-pe-header.txt
 sha256sum dist/ioWolfSP.x64.exe dist/renderer_sp_rend2_x64.dll > dist/DIRECT_EXE_BINARIES.sha256
-printf '%s\\n' \\
-  'COMPILE_WIN64_EXE_RENDERER=PASS' \\
-  'FIRST_RUN_QUALITY_DEFAULTS_IN_SOURCE=PASS' \\
-  'RENDERER_SSGI_WOLF_FOG_GUARD=PASS' \\
-  'USER_CVARS_CVAR_ARCHIVE_PRESERVED=SOURCE_VERIFIED' \\
-  'LUT_V05=UNCHANGED_SOURCE' \\
-  'TRAM_WINDOWS_GPU_RUNTIME=PENDING' \\
+printf '%s\n' \
+  'COMPILE_WIN64_EXE_RENDERER=PASS' \
+  'FIRST_RUN_QUALITY_DEFAULTS_IN_SOURCE=PASS' \
+  'RENDERER_SSGI_WOLF_FOG_GUARD=PASS' \
+  'USER_CVARS_CVAR_ARCHIVE_PRESERVED=SOURCE_VERIFIED' \
+  'LUT_V05=UNCHANGED_SOURCE' \
+  'TRAM_WINDOWS_GPU_RUNTIME=PENDING' \
   'RELEASE_STATUS=FULL_CLEAN_CANDIDATE_PENDING_GPU_ACCEPTANCE' > dist/DIRECT_EXE_CLEAN_STATUS.txt
 echo DIRECT_EXE_CLEAN_BINARIES_BUILD_PASS
 echo DARKWOLF_4WEEK_MASTER_WIN64_BUILD_OK
