@@ -1,0 +1,67 @@
+name: Archive Rend2 Full Git History and Actions Index to Draft
+on:
+  push:
+    branches: [rend2-clean-production-4week-20261024]
+    paths: ['.github/workflows/REND2_HISTORICAL_GIT_ESCROW_DRAFT.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  archive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DRAFT_RELEASE_ID: "422588491"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Freeze repository history and run metadata
+        run: |
+          set -Eeuo pipefail
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_RELEASE_ID}" --jq .draft)" = true
+          mkdir -p escrow
+          git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+          git fetch --tags --force origin
+          git bundle create escrow/DarkWolf_ioRTCW_Rend2_All_Branches_Tags_History_20261024.bundle --all
+          git bundle verify escrow/DarkWolf_ioRTCW_Rend2_All_Branches_Tags_History_20261024.bundle
+          git bundle list-heads escrow/DarkWolf_ioRTCW_Rend2_All_Branches_Tags_History_20261024.bundle > escrow/GIT_BUNDLE_REFS.txt
+          python3 - <<'PY'
+          import json,os,subprocess
+          from pathlib import Path
+          repo=os.environ['GITHUB_REPOSITORY']
+          rows=[]
+          page=1
+          while True:
+              s=subprocess.check_output(['gh','api',f'repos/{repo}/actions/runs?per_page=100&page={page}'],text=True)
+              data=json.loads(s)
+              batch=data['workflow_runs']
+              rows += [{k:v.get(k) for k in ('id','name','created_at','updated_at','status','conclusion','head_branch','head_sha','event','html_url','run_attempt','workflow_id')} for v in batch]
+              if len(batch)<100:break
+              page+=1
+              assert page<=100
+          out=Path('escrow/ACTIONS_RUNS_INDEX_20261024.json')
+          out.write_text(json.dumps({'repository':repo,'run_count':len(rows),'runs':rows},ensure_ascii=False,indent=2)+'\n')
+          print('ACTIONS_INDEX',len(rows),'PAGES',page)
+          assert len(rows)>=450,'Unexpected missing historical actions'
+          PY
+          sha256sum escrow/*.bundle escrow/*.txt escrow/*.json > escrow/HISTORICAL_ESCROW_SHA256SUMS.txt
+          cat escrow/HISTORICAL_ESCROW_SHA256SUMS.txt
+      - name: Add historical backup files to UNPUBLISHED Draft only
+        run: |
+          set -Eeuo pipefail
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_RELEASE_ID}" --jq .draft)" = true
+          gh release upload v4.4.6-rc4-fourweek-master-sourcedefaultson-20261024             escrow/DarkWolf_ioRTCW_Rend2_All_Branches_Tags_History_20261024.bundle             escrow/GIT_BUNDLE_REFS.txt escrow/ACTIONS_RUNS_INDEX_20261024.json escrow/HISTORICAL_ESCROW_SHA256SUMS.txt
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${DRAFT_RELEASE_ID}" --jq .draft)" = true
+          echo REND2_LONG_TERM_HISTORY_ESCROW_PASS
+      - name: Backup SHA and refs as temporary run evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rend2-History-Escrow-Manifest
+          path: |
+            escrow/GIT_BUNDLE_REFS.txt
+            escrow/HISTORICAL_ESCROW_SHA256SUMS.txt
+          if-no-files-found: warn
