@@ -21,7 +21,7 @@
 - Keeps CAS 0.55 and LUT 0.80 enable controls, CSM Guard, Fire/Tesla LightContainment, Bloom v2, Texture/Material Fidelity, SSGI, A2C, volumetrics, shadows, material pipeline and EXE as in master. It is **not the original 3D atlas LUT implementation**; it is a controlled substitution to identify the GPU lookup problem before deciding how to repair the atlas production implementation.
 - Static source checker `integration/lut-v05/test_lut_v05.py` checks 29,101 RGB values, all modes, no channel introduced from black, bounded changes, exact three-file hashes, identity and renderer GLSL markers.
 - Previous diagnostic run `40097905973` successfully built Win64 DLL and ran source tests; it failed a standalone `glslangValidator` call because the tool defaulted to ES 100 without a desktop shader header. This is a CI syntax-check harness mismatch, not a reported runtime GL shader compilation failure.
-- Final corrected desktop GLSL validation and Win64 candidate run: `40098098000`. Verify SUCCESS and artifact DLL hash after completion; do NOT claim production success before user GPU test.
+- **FINAL V05 CI DIAGNOSTIC BUILD: SUCCESS**, run [`40098098000`](https://github.com/jaha2002-stack/iortcw-rend2-build/actions/runs/40098098000), artifact `12560839438`, outer artifact ZIP SHA256 `6d7bbcc10a41ce6b76c056a516d96395cf56e139078be785962c6abb2a94ee80`. Inner Windows x64 `renderer_sp_rend2_x64.dll` is **3,007,297 bytes**, SHA256 `6984fb6405e070981ac26f99ef74c2b606390688515f4c2df80cf973e7901b37`. Three-file source patch isolation PASS, 29,101 RGB samples PASS, Win64 compiler PASS, standalone desktop GLSL validator PASS, unique DLL marker verified in binary. **User GPU runtime visual acceptance PENDING**; not production.
 
 ## User hardware acceptance steps
 
