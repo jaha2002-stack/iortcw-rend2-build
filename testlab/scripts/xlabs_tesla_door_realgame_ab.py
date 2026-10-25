@@ -185,7 +185,7 @@ def capture(root,retail,out):
    c=cv.get(row["id"],{})
    if c.get("cg_xlabsTeslaDoorLight")!=str(row["light"]) or c.get("cg_xlabsTeslaDoorShadows")!=str(row["shadow"]):passed=False
  results=[]
- if passed:
+ if passed and not one_case:
   for v in views:
    def img(k):
     return Image.open(out/("xlabs_"+v["name"]+"_"+k+".png")).convert("RGB")
