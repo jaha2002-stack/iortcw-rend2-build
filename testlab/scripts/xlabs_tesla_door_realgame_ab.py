@@ -136,6 +136,7 @@ def capture(root,retail,out):
       num=int(match[1])
       if num in shot_ids or num<1 or num>len(expected):continue
       row=expected[num-1]
+      shot_ids.add(num)
       time.sleep(0.32)
       imagefile=out/(row["name"]+".png")
       cap=subprocess.run(["import","-display",":97","-window","root",
@@ -144,8 +145,7 @@ def capture(root,retail,out):
       if cap.returncode!=0 or not imagefile.is_file() or imagefile.stat().st_size<3000:
        screenshot_errors.append({"shot":num,"rc":cap.returncode,
                                  "stderr":cap.stderr.decode(errors="replace")[:350]})
-      else:
-       shot_ids.add(num)
+
     time.sleep(0.12)
    if proc.poll() is None:os.killpg(proc.pid,signal.SIGKILL);proc.wait()
    rc=proc.returncode if proc.returncode is not None else 124
