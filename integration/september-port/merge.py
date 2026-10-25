@@ -25,6 +25,14 @@ for file in (oct/"SP").rglob("*"):
 assert len(ported)>=25,(len(ported),ported)
 for required in ("code/rend2/tr_backend.c","code/rend2/tr_init.c","code/rend2/tr_scene.c","code/rend2/glsl/ssgi_fp.glsl","code/cgame/cg_ents.c"):
     assert required in ported,(required,"not ported")
+# The official October tr_scene.c contains a single pre-existing trailing space
+# (a brace at line 6354). Remove only formatting noise so strict source diff
+# validation still enforces every other compiler-visible file change.
+scene_file=sep/"SP/code/rend2/tr_scene.c"
+scene_text=scene_file.read_text()
+scene_fixed=scene_text.replace("\t} "+chr(10),"\t}"+chr(10))
+assert scene_fixed!=scene_text,"Expected historical Oct trailing whitespace preflight"
+scene_file.write_text(scene_fixed)
 init=sep/"SP/code/rend2/tr_init.c"
 s=init.read_text()
 changes={}
