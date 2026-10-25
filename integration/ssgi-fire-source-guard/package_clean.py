@@ -35,13 +35,18 @@ for req in ("ioWolfSP.x64.exe","RUN_DARKWOLF_4WEEK_MASTER.bat",
 assert b'r_dlightMode' in dll and b'r_ssgiBrightSourceFix' in dll and b'r_forceSun' in dll
 files=dict(original)
 files["renderer_sp_rend2_x64.dll"]=dll
+# Force mode 3 even when a user's existing archived wolfconfig had mode 2.
+# All other official master profile settings remain byte-identical.
+profile="Main/DW_4WEEK_MASTER_PRODUCTION.cfg"
+assert b"r_ssgiBrightSourceFix" not in files[profile]
+files[profile]+=b'\n// Targeted Escape1 hot-emitter receiver fix; prior Factory donor rejection preserved.\nseta r_ssgiBrightSourceFix "3"\n'
 files["docs/SSGI_FIRE_SOURCE_RENDERER_SHA256.txt"]=(new_sha+"  renderer_sp_rend2_x64.dll\n").encode()
 srcmanifest=json.loads((a.evidence/"PATCHED_SOURCE_MANIFEST.json").read_text())
 assert srcmanifest["changed_renderer_files"]==["glsl/ssgi_fp.glsl","tr_backend.c","tr_init.c"],srcmanifest
 files["docs/SSGI_FIRE_SOURCE_PATCH_MANIFEST.json"]=json.dumps(srcmanifest,indent=2).encode()
 files["README_SSGI_FIRE_SOURCE_RU.txt"]=(
  "DarkWolf Rend2 4.4.6 RC4 FourWeek Master V03 - targeted SSGI hot emitter fix.\n"
- "Base original 24 October 2026; all original files except renderer_sp_rend2_x64.dll unchanged.\n"
+ "Base original 24 October 2026; only the renderer DLL and master startup CFG change; all other original game files unchanged.\n"
  "SSGI mode3 bright-emitter receiver guard; retains old mode2 donor rejection and enabled SSGI.\n"
  "r_lightmap 1 presents baked lightmaps without SSGI diagnostic bars.\n"
  "No changes to world or sun shadows, Fire/Tesla containment, 3FX, LUT, bloom, MSAA or volumetrics.\n"
@@ -64,7 +69,7 @@ if "MASTER_BUILD_PROVENANCE.json" in files:
  files["MASTER_BUILD_PROVENANCE.json"]=json.dumps(obj,ensure_ascii=False,indent=2).encode()
 files.pop("MASTER_SHA256SUMS.txt",None)
 files["MASTER_SHA256SUMS.txt"]="".join(H(v)+"  "+k+"\n" for k,v in sorted(files.items())).encode()
-original_no_render={k:v for k,v in original.items() if k!="renderer_sp_rend2_x64.dll" and k not in ("MASTER_SHA256SUMS.txt","MASTER_BUILD_PROVENANCE.json","docs/MASTER_RENDERER_SHA256.txt","docs/MASTER_SOURCE_DEFAULTS.json")}
+original_no_render={k:v for k,v in original.items() if k!="renderer_sp_rend2_x64.dll" and k not in ("Main/DW_4WEEK_MASTER_PRODUCTION.cfg","MASTER_SHA256SUMS.txt","MASTER_BUILD_PROVENANCE.json","docs/MASTER_RENDERER_SHA256.txt","docs/MASTER_SOURCE_DEFAULTS.json")}
 for k,v in original_no_render.items():
  assert files[k]==v,("unexpected modified source release content",k)
 out=a.out/(NAME+".zip")
