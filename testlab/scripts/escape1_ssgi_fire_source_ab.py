@@ -26,7 +26,7 @@ FACTORY_VIEWS=[
 ]
 MODES=[("ssgi_off",0,2,0),("factory_guard_v03",1,2,0),
        ("fire_guard_v04",1,3,0),("fire_guard_repeat",1,3,0),
-       ("baked_lightmap",1,3,1)]
+       ("baked_lightmap",1,3,1),("baked_lightmap_off",0,3,1)]
 def read_map(retail,level):
  for file in sorted(retail.glob("*.pk3")):
   with zipfile.ZipFile(file) as z:
@@ -161,6 +161,7 @@ def capture(src,retail,out,level):
    b=np.asarray(imgs["fire_guard_v04"],dtype=np.int16)
    delta=np.abs(a-b)
    assert np.array_equal(np.asarray(imgs["fire_guard_v04"]),np.asarray(imgs["fire_guard_repeat"])),("non deterministic",name)
+   assert np.array_equal(np.asarray(imgs["baked_lightmap"]),np.asarray(imgs["baked_lightmap_off"])),("SSGI contaminated pure lightmap",name)
    board=Image.new("RGB",(1280*2,720*2),(16,16,16))
    for i,key in enumerate(("ssgi_off","factory_guard_v03","fire_guard_v04","baked_lightmap")):
     x=(i%2)*1280;y=(i//2)*720
