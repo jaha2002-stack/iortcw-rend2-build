@@ -1,0 +1,95 @@
+name: Crypt1 Historical RC4 Source Chronological Bisect V1
+on:
+  push:
+    branches: [rend2-crypt1-shadow-causal-20261024]
+    paths: ['.github/workflows/CRYPT1_RELEASE_CHRONOLOGICAL_BISECT_V1.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  bisect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exact pinned source snapshots and native requirements
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/history parent
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev libcurl4-openssl-dev xvfb xauth python3-pil python3-numpy python3-yaml gh
+          python3 integration/optimized-v4-4-6/rc3/bootstrap.py
+          python3 integration/optimized-v4-4-6/rc4/bootstrap.py
+          python3 integration/rc4-light-containment/bootstrap.py
+          python3 -m py_compile testlab/scripts/crypt1_chronological_release_bisect.py
+      - name: Restore SHA-pinned actual RC4 pre-Fire/Tesla production source
+        run: |
+          set -Eeuo pipefail
+          python3 integration/optimized-v4-4-6/rc3/pipeline.py prepare > evidence/history/prepare.log 2>&1
+          python3 integration/optimized-v4-4-6/rc3/pipeline.py apply > evidence/history/rc3-source.log 2>&1
+          python3 integration/optimized-v4-4-6/rc4/pipeline.py apply > evidence/history/rc4-source.log 2>&1
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = 74049eab929ec9271459634e143dda9fd7d700c1
+          cp -a source rc4-before-fire
+          echo PINNED_RC4_PRE_FIRE_SOURCE_PASS
+      - name: Apply exactly targeted Fire/Tesla containment code and store after source
+        run: |
+          set -Eeuo pipefail
+          python3 integration/rc4-light-containment/bootstrap.py source
+          python3 testlab/scripts/rc4_v2_production.py source integration/rc4-light-containment > evidence/history/containment-source.log 2>&1 || { tail -100 evidence/history/containment-source.log; exit 1; }
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = c652eaed9cbcf1df4eb7d7d5187b9bea63dce60b
+          cp -a source rc4-after-fire
+          echo PINNED_RC4_POST_FIRE_SOURCE_PASS
+      - name: Restore verified full source after quality and after Bloom V2
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/11989425549/zip" > parent/quality.zip
+          unzip -q parent/quality.zip -d parent/quality
+          find parent/quality -name '*source*.tar.gz' -print
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12004010089/zip" > parent/bloom.zip
+          echo '6c6c2d2302e2f4f45bad9d7e3df7e2573fd79a72646bcf049596440cb62f7659  parent/bloom.zip' | sha256sum -c
+          unzip -q parent/bloom.zip -d parent/bloom
+          tar -xzf parent/bloom/DarkWolf-v446-RC4-BloomV2-Production-Win64-SP-source.tar.gz -C .
+          test -f SP/code/rend2/tr_scene.c
+          mv SP bloom-source-SP
+          mkdir -p bloom-full/SP
+          mv bloom-source-SP bloom-full/SP/tmp
+          mv bloom-full/SP/tmp bloom-full/SP/..
+          echo BLOOM_SOURCE_ARCHIVE_INSPECTED
+      - name: Capture real Crypt1 pre-fire and post-fire at identical pixel coordinates
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > evidence/history/asset.log
+          tail -1 evidence/history/asset.log > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+          for variant in rc4-before-fire rc4-after-fire; do
+            python3 testlab/scripts/crypt1_chronological_release_bisect.py instrument "$variant"
+            make -C "$variant/SP" -j2 release VERSION=1.51d-SP-DW-Chrono-$variant BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > "evidence/history/${variant}-build.log" 2>&1 || { tail -90 "evidence/history/${variant}-build.log"; exit 1; }
+            python3 -u testlab/scripts/crypt1_chronological_release_bisect.py capture "$variant" "$(cat .retail_main)" "evidence/history/$variant" > "evidence/history/${variant}-capture.log" 2>&1 || { tail -100 "evidence/history/${variant}-capture.log"; exit 1; }
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import numpy as np,json
+          r=Path('evidence/history'); rows=[]
+          for v in ('grate_near48_pitch28','grate_near72_pitch42'):
+              for m in ('shadow_parity','ssgi_on','baked_lightmap'):
+                  f=f'crypt1_{v}_{m}.png'
+                  a=np.asarray(Image.open(r/'rc4-before-fire'/f).convert('RGB'),dtype=np.int16)
+                  b=np.asarray(Image.open(r/'rc4-after-fire'/f).convert('RGB'),dtype=np.int16)
+                  d=np.abs(a-b)
+                  rows.append({'view':v,'mode':m,'mean_abs_rgb':float(d.mean()),'changed_gt4_pct':float(np.mean(np.any(d>4,axis=2))*100)})
+          (r/'CHRONOLOGICAL_RC4_FIRE_CAUSAL.json').write_text(json.dumps(rows,indent=2))
+          for x in rows:print('FIRE_TESLA_CRYPT1_CHRONO',x)
+          print('CRYPT1_RC4_FIRE_TESLA_CROSS_SOURCE_RUNTIME_PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Crypt1-Release-Chronology-RC4-Before-After-Fire-Tesla
+          path: evidence/history/
+          retention-days: 90
