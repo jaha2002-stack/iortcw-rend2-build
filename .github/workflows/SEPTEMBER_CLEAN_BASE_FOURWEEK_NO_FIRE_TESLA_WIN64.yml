@@ -1,0 +1,93 @@
+name: September Clean Production Base plus FourWeek without Fire Tesla
+on:
+  push:
+    branches: [rend2-september-production-port-20261025]
+    paths:
+      - '.github/workflows/SEPTEMBER_CLEAN_BASE_FOURWEEK_NO_FIRE_TESLA_WIN64.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  september-ported-clean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install canonical release compilers and provenance tools
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 git unzip file zip ca-certificates
+          mkdir -p evidence dist build-binaries sept-runtime
+          python3 -m py_compile integration/september-port/merge.py integration/september-port/package.py
+      - name: Restore EXACT September 18 Clean Production user-accepted runtime and source
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/10555091293/zip" > evidence/sep-artifact.zip
+          test "$(sha256sum evidence/sep-artifact.zip | cut -d' ' -f1)" = 6cd0e66d9e8e68ac4499a2e41b9ab0286b40942e14106b4b6ddc92ba38e3abb1
+          unzip -p evidence/sep-artifact.zip iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1.zip > evidence/sep-original.zip
+          test "$(sha256sum evidence/sep-original.zip | cut -d' ' -f1)" = 9b24185302c468b47b9c0125a31eb9b1edd9518e7cbd0084a80710c52d395a4b
+          unzip -q evidence/sep-original.zip -d sept-runtime
+          stage=sept-runtime/iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1
+          test -s "$stage/renderer_sp_rend2_x64.dll"
+          cp "$stage/docs/darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch" evidence/sept-source.patch
+          test "$(sha256sum evidence/sept-source.patch | cut -d' ' -f1)" = 7041376f9dccc1be3a2172ef5834c73bb270cc76d768ad1ad115b0567c1077a0
+          git clone -q https://github.com/iortcw/iortcw.git sept-source
+          git -C sept-source checkout -q --detach 438e7d413b5f7277187c35b032eb0ef9093ae778
+          git -C sept-source apply --binary --whitespace=nowarn --check ../evidence/sept-source.patch
+          git -C sept-source apply --binary --whitespace=nowarn ../evidence/sept-source.patch
+          echo 'SEPTEMBER_CLEAN_18_SOURCE_AND_RUNTIME_SHA_PASS'
+      - name: Rebuild official October improvements, REVERSE the entire Fire Tesla source delta
+        run: |
+          set -Eeuo pipefail
+          bash integration/cas-a2c-lut/ci_master_clean_4week.sh > evidence/oct-source-reconstruction.log 2>&1 || { tail -90 evidence/oct-source-reconstruction.log; exit 1; }
+          grep -Fq DARKWOLF_4WEEK_MASTER_WIN64_BUILD_OK evidence/oct-source-reconstruction.log
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/11971637900/zip" > evidence/containment-artifact.zip
+          unzip -p evidence/containment-artifact.zip containment.patch > evidence/original-fire-tesla.patch
+          test "$(sha256sum evidence/original-fire-tesla.patch | cut -d' ' -f1)" = e3600847ed0d1def868439af0c94f5ce250e2e7afbb0584fbb151459ea009a2f
+          python3 integration/fourweek-no-fire-tesla/apply.py source evidence/original-fire-tesla.patch evidence/NO_FIRE_TESLA_SSGI_MANIFEST.json
+          git -C source diff --check
+          echo 'OCTOBER_FEATURE_DONOR_WITHOUT_FIRE_TESLA_VERIFIED'
+      - name: Rebase ALL accepted October features onto verified SEPTEMBER source with original color
+        run: |
+          set -Eeuo pipefail
+          python3 integration/september-port/merge.py sept-source source evidence/SEPTEMBER_BASE_FEATURE_PORT_MANIFEST.json
+          git -C sept-source diff --check
+          echo 'SEPTEMBER_ORIGIN_COMPLETE_OCTOBER_FEATURES_EXCEPT_FIRE_TESLA_PASS'
+      - name: Cross-compile ALL five game and renderer Win64 binaries from September base
+        run: |
+          set -Eeuo pipefail
+          make -C sept-source/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-SepBase-FourWeek-NoFire PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/september-ported-win64-build.log 2>&1 || { tail -130 evidence/september-ported-win64-build.log; exit 1; }
+          for name in ioWolfSP.x64.exe renderer_sp_rend2_x64.dll cgame_sp_x64.dll qagame_sp_x64.dll ui_sp_x64.dll; do
+            list="$(find sept-source/SP/build -type f -name "$name" -print)"
+            test "$(printf '%s\n' "$list" | grep -c .)" -eq 1 || { echo "AMBIGUOUS_BUILD_OUTPUT: $name $list"; exit 1; }
+            cp "$list" build-binaries/"$name"
+            file build-binaries/"$name" | grep -F PE32+
+          done
+          sha256sum build-binaries/* | tee evidence/NEW_SEPTEMBER_BASE_BINARIES_SHA256.txt
+          echo 'SEPTEMBER_PORTED_COMPLETE_WIN64_BINARIES_PASS'
+      - name: Build full clean Sep-based Windows release, ensure LUT red preset removed
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12595015081/zip" > evidence/oct-no-fire-previous-artifact.zip
+          test "$(sha256sum evidence/oct-no-fire-previous-artifact.zip | cut -d' ' -f1)" = 2f32ec9df3f1cdfb1d63525c3ce2e91648f5b1aa30e0f725ed91fbf233993708
+          python3 integration/september-port/package.py --september evidence/sep-original.zip --october evidence/oct-no-fire-previous-artifact.zip --build build-binaries --source-manifest evidence/SEPTEMBER_BASE_FEATURE_PORT_MANIFEST.json --out dist
+          test -s dist/SEPTEMBER_PORT_COMPLETE_RELEASE_VALIDATION.json
+          echo 'SEPTEMBER_VISUAL_CLEAN_NO_FIRE_TESLA_FULL_WIN64_PACKAGE_PASS'
+      - name: Upload full Clean Production Windows archive and exact code provenance
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DarkWolf-Sep18-CleanBase-FourWeek-V03-NoFireTesla-SSGI-Win64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            dist/*.json
+            evidence/SEPTEMBER_BASE_FEATURE_PORT_MANIFEST.json
+            evidence/NO_FIRE_TESLA_SSGI_MANIFEST.json
+            evidence/NEW_SEPTEMBER_BASE_BINARIES_SHA256.txt
+            evidence/september-ported-win64-build.log
+          retention-days: 90
