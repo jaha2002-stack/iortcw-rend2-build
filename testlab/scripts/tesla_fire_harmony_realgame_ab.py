@@ -36,7 +36,7 @@ static void Cmd_DWProofActivateTesla_f(gentity_t *ent) {
     if (!g_cheats.integer || !ent || !ent->client) return;
     for (i=0;i<level.num_entities;i++) {
         gentity_t *e=&g_entities[i];
-        if (!e->inuse || !e->classname || Q_stricmp(e->classname,"shooter_tesla") || !e->use)
+        if (!e->inuse || !e->classname || Q_stricmp(e->classname,"shooter_tesla") || !e->use || e->r.linked)
             continue;
         e->use(e,ent,ent);
         count++;
