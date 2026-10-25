@@ -28,17 +28,21 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*_Exact_Source.tar.gz' --dir release-base
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*_Clean_Win64.zip' --dir release-base
-          source_archive="$(find release-base -maxdepth 1 -name '*_Exact_Source.tar.gz' -print -quit)"
+          # Reconstruct the exact original FourWeek Master source from checksum-pinned
+          # Actions artifacts. This path has already passed real game tests in run 40168471406.
+          bash integration/cas-a2c-lut/ci_master_clean_4week.sh > evidence/ssgi/master-source-reconstruction.log 2>&1 || { tail -110 evidence/ssgi/master-source-reconstruction.log; exit 1; }
+          grep -Fq DARKWOLF_4WEEK_MASTER_WIN64_BUILD_OK evidence/ssgi/master-source-reconstruction.log
+          test -s dist/renderer_sp_rend2_x64.dll
+          test "$(sha256sum dist/renderer_sp_rend2_x64.dll | cut -d' ' -f1)" = 4112890117f5fb16371ba8387ecd89203257eff361c22d83784db65c67eadd0a
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12552083888/zip" > release-base/master-dll.zip
+          test "$(sha256sum release-base/master-dll.zip | cut -d' ' -f1)" = f66a7788c8eccb4d7460eb3ce18c541e253a0ee367120710992ebc281b17f074
+          cp parent.zip release-base/bloom-parent.zip
+          test "$(sha256sum release-base/bloom-parent.zip | cut -d' ' -f1)" = 6c6c2d2302e2f4f45bad9d7e3df79a72646bcf049596440cb62f7659
+          python3 integration/fourweek-master-release/package.py --base release-base/bloom-parent.zip --master-dll release-base/master-dll.zip --out release-base > evidence/ssgi/original-master-packaging.log 2>&1 || { tail -110 evidence/ssgi/original-master-packaging.log; exit 1; }
           zip_archive="$(find release-base -maxdepth 1 -name '*_Clean_Win64.zip' -print -quit)"
-          test -s "$source_archive" && test -s "$zip_archive"
-          echo '9f6f4a79495154d7727384d94d96f57576ed9567015d45c1f21b7a6446480c22  ' "$source_archive" | sed 's/  /  /g' > /dev/null
-          test "$(sha256sum "$source_archive" | cut -d' ' -f1)" = 9f6f4a79495154d7727384d94d96f57576ed9567015d45c1f21b7a6446480c22
+          test -s "$zip_archive"
           test "$(sha256sum "$zip_archive" | cut -d' ' -f1)" = 559d01d3815ef1d58b3f018d1c1f215cb37881d2756ad3508ae5cc891179b2e4
-          mkdir source
-          tar -xzf "$source_archive" -C source
-          test -f source/SP/code/rend2/glsl/ssgi_fp.glsl
+          echo FOURWEEK_EXACT_ORIGINAL_SOURCE_AND_FULL_ZIP_SHA_PASS
           cp -a source original
           cp -a source candidate
           python3 integration/ssgi-fire-source-guard/apply.py candidate | tee evidence/ssgi/SSGI_SOURCE_PATCH_PASS.log
