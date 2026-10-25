@@ -26,12 +26,26 @@ def main(root):
 	// bulb, fire or torch surface from receiving its own quarter-res GI.
 	// Preserve the direct emissive surface, volumetrics, bloom and world light.
 	// Mode 2 remains the historical Factory-tested donor rejection.
-	if (u_ViewInfo.w >= 2.5)
+	if (u_ViewInfo.w >= 3.5)
 	{
+		// DARKWOLF_ESCAPE1_FIRE_GI_RECEIVER_V04: the inherited 0.72/1.35
+		// luminance cutoff misses actual orange flame texels in Escape1.
+		// Limit suppression to *emissive-looking, saturated hot cores*.
+		// Unlit stone, normal metal and neutral-white Factory lamps retain
+		// their historically validated SSGI donor and receiver behavior.
+		float corePeak = max(centerColor.r, max(centerColor.g, centerColor.b));
+		float heat = smoothstep(0.22, 0.52, corePeak);
+		float amber = smoothstep(0.05, 0.28, centerColor.r - centerColor.b);
+		float redOverGreen = smoothstep(0.035, 0.19, centerColor.r - centerColor.g);
+		float flameReceiver = heat * amber * redOverGreen;
+		bounce *= 1.0 - 0.995 * flameReceiver;
+	}
+	else if (u_ViewInfo.w >= 2.5)
+	{
+		// Exact previous experimental mode 3 retained for source A/B.
 		float corePeak = max(centerColor.r, max(centerColor.g, centerColor.b));
 		float coreMetric = max(centerLuma, 0.75 * corePeak);
 		float brightCore = smoothstep(0.72, 1.35, coreMetric);
-		// Retain indirect bounce on the nonemissive surroundings.
 		bounce *= 1.0 - 0.98 * brightCore;
 	}
 	bounce = min(bounce, vec3(clamp(u_Color.z, 0.0, 1.0)));"""
@@ -39,12 +53,12 @@ def main(root):
     init=base/"tr_init.c"
     s=init.read_text()
     a='r_ssgiBrightSourceFix = ri.Cvar_Get( "r_ssgiBrightSourceFix", "2", CVAR_ARCHIVE );'
-    b='r_ssgiBrightSourceFix = ri.Cvar_Get( "r_ssgiBrightSourceFix", "3", CVAR_ARCHIVE );'
+    b='r_ssgiBrightSourceFix = ri.Cvar_Get( "r_ssgiBrightSourceFix", "4", CVAR_ARCHIVE );'
     assert s.count(a)==1 and s.count('ri.Cvar_CheckRange( r_ssgiBrightSourceFix, 0, 2, qtrue );')==1
     assert MARK not in s
     init.write_text(s.replace(a,b,1).replace(
       'ri.Cvar_CheckRange( r_ssgiBrightSourceFix, 0, 2, qtrue );',
-      '// '+MARK+' uses mode 3; modes 0..2 are unchanged.\n\tri.Cvar_CheckRange( r_ssgiBrightSourceFix, 0, 3, qtrue );',1))
+      '// '+MARK+' uses mode 4 for fire receivers; modes 0..3 are unchanged.\n\tri.Cvar_CheckRange( r_ssgiBrightSourceFix, 0, 4, qtrue );',1))
     reports.append({"file":str(init),"before_sha256":hashlib.sha256(s.encode()).hexdigest(),
       "after_sha256":hashlib.sha256(init.read_bytes()).hexdigest()})
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"crypt1-ssgi-lightmap-isolation"))
