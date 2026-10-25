@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real original RTCW Xlabs Tesla door A/B, renderer byte-identical to production."""
 from pathlib import Path
-import sys,argparse,math,json,re,zipfile,os,signal,subprocess,shutil,hashlib
+import sys,argparse,math,json,re,zipfile,os,signal,subprocess,shutil,hashlib,time
 import numpy as np
 from PIL import Image,ImageDraw
 sys.path.insert(0,str(Path("testlab/scripts").resolve()))
@@ -98,7 +98,7 @@ def capture(root,retail,out):
    i+=1;name="xlabs_"+v["name"]+"_"+label
    scenario+=["set cg_xlabsTeslaDoorLight "+str(on),
               "set cg_xlabsTeslaDoorShadows "+str(shadow),"wait 20",
-              "set dw_proofShot "+str(i),"wait 5","screenshot "+name,"wait 3"]
+              "set dw_proofShot "+str(i),"wait 24"]
    expected.append(dict(id=i,name=name,view=v["name"],label=label,light=on,shadow=shadow))
  scenario+=["set dw_proofFreeze 0","echo XLABS_DOOR_ACTUAL_AB_COMPLETED","quit"]
  (main/"XLABS_SETUP.cfg").write_text("\n".join(config)+"\n")
@@ -107,7 +107,7 @@ def capture(root,retail,out):
  (out/"XLABS_SCENARIO.cfg").write_text("\n".join(scenario)+"\n")
  exe=next(p for p in runtime.iterdir() if p.is_file() and p.name.lower().startswith("iowolfsp"));exe.chmod(0o755)
  home=runtime/"home";home.mkdir()
- cmd=["xvfb-run","-a","-s","-screen 0 1600x900x24",str(exe),
+ cmd=[str(exe),
       "+safe","+set","fs_basepath",str(runtime),"+set","fs_homepath",str(home),
       "+set","com_introplayed","1","+set","com_recommendedSet","1",
       "+set","logfile","2","+set","dw_proofAutomation","1",
@@ -115,14 +115,46 @@ def capture(root,retail,out):
       "+exec","XLABS_SETUP.cfg","+vid_restart",
       "+set","dw_proofScenario","XLABS_SCENARIO.cfg","+spdevmap","xlabs"]
  env={k:v for k,v in os.environ.items() if not any(x in k.upper() for x in ("TOKEN","SECRET","PASSWORD","CREDENTIAL"))}
- env.update(LIBGL_ALWAYS_SOFTWARE="1",LP_NUM_THREADS="2",SDL_AUDIODRIVER="dummy")
+ env.update(LIBGL_ALWAYS_SOFTWARE="1",LP_NUM_THREADS="2",SDL_AUDIODRIVER="dummy",
+            SDL_VIDEO_CENTERED="1",DISPLAY=":97")
+ # Capture the real SDL game window through a separate X11 client.
+ # The native software rasterizer SIGSEGVs on the first in-engine screenshot
+ # even in the control case with the new lighting disabled.
+ display=subprocess.Popen(["Xvfb",":97","-screen","0","1600x900x24","-nolisten","tcp"],
+                           stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+ time.sleep(1)
+ shot_ids=set()
+ screenshot_errors=[]
+ begin=time.monotonic()
  with (out/"runtime.log").open("w") as log:
   proc=subprocess.Popen(cmd,stdout=log,stderr=subprocess.STDOUT,env=env,start_new_session=True)
-  try:rc=proc.wait(timeout=670)
-  except subprocess.TimeoutExpired:os.killpg(proc.pid,signal.SIGKILL);proc.wait();rc=124
+  try:
+   while proc.poll() is None and time.monotonic()-begin<660:
+    for console in home.rglob("*console*.log"):
+     contents=console.read_text(errors="replace")
+     for match in re.finditer(r"PROOF_VIEW shot=(\d+) time=",contents):
+      num=int(match[1])
+      if num in shot_ids or num<1 or num>len(expected):continue
+      row=expected[num-1]
+      time.sleep(0.32)
+      imagefile=out/(row["name"]+".png")
+      cap=subprocess.run(["import","-display",":97","-window","root",
+                          "-crop","1280x720+160+90","png:"+str(imagefile)],
+                         stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=28)
+      if cap.returncode!=0 or not imagefile.is_file() or imagefile.stat().st_size<3000:
+       screenshot_errors.append({"shot":num,"rc":cap.returncode,
+                                 "stderr":cap.stderr.decode(errors="replace")[:350]})
+      else:
+       shot_ids.add(num)
+    time.sleep(0.12)
+   if proc.poll() is None:os.killpg(proc.pid,signal.SIGKILL);proc.wait()
+   rc=proc.returncode if proc.returncode is not None else 124
+  finally:
+   if display.poll() is None:os.killpg(display.pid,signal.SIGTERM);display.wait()
  logs=[]
  for j,p in enumerate(sorted(home.rglob("*console*.log"))):
   t=p.read_text(errors="replace");(out/("console%d.log"%j)).write_text(t);logs.append(t)
+ (out/"EXTERNAL_X11_CAPTURE_ERRORS.json").write_text(json.dumps(screenshot_errors,indent=2))
  combined="\n".join(logs);cv={};camera={}
  for m in re.finditer(r"PROOF_CVAR shot=(\d+) name=([^\s]+) value=([^\s]+)",combined):
   cv.setdefault(int(m[1]),{})[m[2]]=m[3]
@@ -130,9 +162,10 @@ def capture(root,retail,out):
   camera[int(m[1])]={"eye":m[3],"forward":m[4]}
  saved=[]
  for row in expected:
-  found=list(home.rglob(row["name"]+".tga"))
-  if len(found)!=1:continue
-  Image.open(found[0]).convert("RGB").save(out/(row["name"]+".png"));saved.append(row)
+  imagefile=out/(row["name"]+".png")
+  if imagefile.is_file() and imagefile.stat().st_size>3000:
+   with Image.open(imagefile) as img:
+    if img.size==(1280,720):saved.append(row)
  passed=(rc==0 and "PROOF_READY" in combined and "XLABS_DOOR_ACTUAL_AB_COMPLETED" in combined and
          len(saved)==len(expected) and len(camera)==len(expected))
  if passed:
@@ -162,7 +195,7 @@ def capture(root,retail,out):
     board.paste(imgs[i],((i%2)*1280,(i//2)*720))
     ImageDraw.Draw(board).text(((i%2)*1280+12,(i//2)*720+15),label,fill="white")
    board.save(out/("xlabs_"+v["name"]+"_AB_CONTACT_SHEET.png"))
- report={"map":"xlabs","source":"original licensed RTCW BSP with Mesa llvmpipe",
+ report={"map":"xlabs","source":"licensed RTCW Xlabs BSP, Linux Mesa llvmpipe with external X11 framebuffer capture",
          "exit_code":rc,"valid":passed,"requested":expected,"captured":len(saved),
          "camera_count":len(camera),"views":views,"deltas":results}
  (out/"XLABS_REAL_GAME_REPORT.json").write_text(json.dumps(report,indent=2)+"\n")
