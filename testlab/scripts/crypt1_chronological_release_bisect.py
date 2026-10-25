@@ -132,8 +132,8 @@ def capture(source,retail,out):
             im.save(out/shot["png"])
     ready="PROOF_READY" in joined
     complete="CRYPT1_GRATE_CLOSEUP_AB_COMPLETE" in joined
-    report=dict(name="Crypt1 user-near-closeup geometry/shadow/SSGI/CAS/A2C/lightmap A/B",
-        map="crypt1",source="FourWeek Master SourceDefaultsON + accepted LUT V05",
+    report=dict(name="Crypt1 historical release bisect, matched cameras and common cvars",
+        map="crypt1",source=str(source)+" exact historic source; common runtime cvars (no modern CAS/LUT), source variant from workflow",
         environment="Linux Mesa llvmpipe (not NVIDIA RTX 3060Ti Windows)",
         camera_bsp_collision_validated=True,renderer_source_unchanged=True,
         origin_player_spawn=[-192.,1664.,512.125],
@@ -154,9 +154,9 @@ def capture(source,retail,out):
     data=[]
     for name,eye,angles in VIEWS:
         a={s["variant"]:s for s in shots if s["view"]==name}
-        baseline=np.asarray(Image.open(out/a["baseline"]["png"]).convert("RGB"),dtype=np.int16)
-        repeat=np.asarray(Image.open(out/a["baseline_repeat"]["png"]).convert("RGB"),dtype=np.int16)
-        assert np.array_equal(baseline,repeat),("Non deterministic baseline",name)
+        baseline=np.asarray(Image.open(out/a["shadow_parity"]["png"]).convert("RGB"),dtype=np.int16)
+        repeat=np.asarray(Image.open(out/a["shadow_parity_repeat"]["png"]).convert("RGB"),dtype=np.int16)
+        assert np.array_equal(baseline,repeat),("Non deterministic shadow-parity capture",name)
         for variant,*_ in MODES[1:]:
             image=np.asarray(Image.open(out/a[variant]["png"]).convert("RGB"),dtype=np.int16)
             d=np.abs(image-baseline)
