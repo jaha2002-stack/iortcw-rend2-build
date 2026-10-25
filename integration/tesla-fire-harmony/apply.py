@@ -24,7 +24,7 @@ assert "DARKWOLF_REF_WORLD_OCCLUSION" not in (base/"qcommon/q_shared.h").read_te
 assert "DARKWOLF_UNIFIED_PRODUCTION_TESLA_TIMING_V1" not in (base/"cgame/cg_ents.c").read_text()
 
 t=original_patch.read_text()
-chunks=re.split(r'(?=^diff --git a/)',t,flags=re.M)
+chunks=[piece for piece in re.split(r'(?=^diff --git a/)',t,flags=re.M) if piece.strip()]
 assert len(chunks)==15 and all(x.startswith("diff --git a/") for x in chunks),len(chunks)
 headers=[x.splitlines()[0] for x in chunks]
 assert len(set(headers))==15
