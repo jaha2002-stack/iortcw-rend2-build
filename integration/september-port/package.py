@@ -9,11 +9,15 @@ from zipfile import ZipFile,ZipInfo,ZIP_DEFLATED
 p=argparse.ArgumentParser()
 for k in ("september","october","build","source_manifest","out"):
     p.add_argument("--"+k.replace("_","-"),type=Path,required=True)
+p.add_argument("--tesla-manifest",type=Path,required=True)
 args=p.parse_args()
+tesla_parity=json.loads(args.tesla_manifest.read_text())
+assert tesla_parity["behavior"]=="SEPTEMBER_ET_TESLA_EF_CG_EFX_BYTE_IDENTICAL"
+assert tesla_parity["september_tesla_branch_sha256"]==tesla_parity["clean_tesla_branch_sha256_after"]
 args.out.mkdir(parents=True,exist_ok=True)
 H=lambda b:hashlib.sha256(b).hexdigest()
 SEP_SHA="9b24185302c468b47b9c0125a31eb9b1edd9518e7cbd0084a80710c52d395a4b"
-NAME="DarkWolf_Rend2_v4.4.6_September_CleanPlus_FourWeek_V03_NoFireTesla_SSGI_Lightmap_Win64"
+NAME="DarkWolf_Rend2_Sept18_FourWeek_V03_OriginalTesla_NoContainment_SSGI_Win64"
 ACTUAL_SEP_SHA=H(args.september.read_bytes())
 assert ACTUAL_SEP_SHA in {SEP_SHA,"ff7d516dd77e17b7b77077824a5f952ae4f379ff6555e4f088238c1be07f80e9"}, "September baseline must be the identical official/user-uploaded Clean Production binary build"
 manifest=json.loads(args.source_manifest.read_text())
@@ -145,12 +149,23 @@ files["README_RELEASE_RU.txt"]=(
 "Actual Windows GPU color and FPS need user verification.\n"
 ).encode("utf-8")
 files["docs/SEPTEMBER_ORIGIN_AND_PORTED_OCTOBER_FEATURES.json"]=json.dumps(manifest,ensure_ascii=False,indent=2).encode("utf-8")
+files["docs/TESLA_EXACT_SEPTEMBER_PARITY_PROOF.json"]=json.dumps(tesla_parity,ensure_ascii=False,indent=2).encode("utf-8")
+files["README_TESLA_SEPTEMBER_PARITY_RU.txt"]=(
+"Tesla: STATIONARY LIGHTING AND BOLTS MATCH EXACT SEP18 C SOURCE.\\n"
+"The historical Sep18 continuous pulsed room light, bolt timer and crawl index\\n"
+"have been restored, rejecting the Oct15 intermittent timing and altered crawl.\\n"
+"Map shooter_tesla server functions and electric CVar registration are byte-identical.\\n"
+"No changes to non-Tesla FourWeek V03 effects and optimizations.\\n"
+"Fire/Tesla architectural containment remains absent; SSGI r_lightmap diagnostic guard on.\\n"
+"Source proof: docs/TESLA_EXACT_SEPTEMBER_PARITY_PROOF.json.\\n"
+"Real Windows gameplay still requires end-user visual confirmation.\\n"
+).encode("utf-8")
 proof={"status":"VALIDATED_FULL_WIN64_ARCHIVE",
        "september_base_zip_sha256":ACTUAL_SEP_SHA,"ported_source_files_count":manifest["ported_fourweek_source_files_count"],
        "runtime_new_binaries_sha256":binary_hashes,"all_accepted_feature_cvars_present":True,
        "original_september_ui_sdl_opengl1_libraries_preserved":True,
        "Fire_Tesla_containment":"NOT_INCLUDED","LUT_V03_startup_strength":"0.00",
-       "SSGI_lightmap_diag_guard":True,"gameplay_FPS":"PENDING_USER"}
+       "SSGI_lightmap_diag_guard":True,"tesla_stationary_source":"EXACT_SEPT18_RESTORED","gameplay_FPS":"PENDING_USER"}
 files["docs/BUILD_PROVENANCE.json"]=json.dumps(proof,indent=2).encode()
 files["docs/SHA256SUMS.txt"]="".join(H(v)+"  "+k+"\n" for k,v in sorted(files.items())).encode()
 target=args.out/(NAME+".zip")
