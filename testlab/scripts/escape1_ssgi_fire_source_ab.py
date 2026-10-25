@@ -25,8 +25,8 @@ FACTORY_VIEWS=[
  ("tunnel_lamp_start",[-368.,-1055.,-232.],[-34.,180.,0.]),
 ]
 MODES=[("ssgi_off",0,2,0),("factory_guard_v03",1,2,0),
-       ("fire_guard_v04",1,3,0),("fire_guard_repeat",1,3,0),
-       ("baked_lightmap",1,3,1),("baked_lightmap_off",0,3,1)]
+       ("fire_guard_v04",1,4,0),("fire_guard_repeat",1,4,0),
+       ("baked_lightmap",1,4,1),("baked_lightmap_off",0,4,1)]
 def read_map(retail,level):
  for file in sorted(retail.glob("*.pk3")):
   with zipfile.ZipFile(file) as z:
