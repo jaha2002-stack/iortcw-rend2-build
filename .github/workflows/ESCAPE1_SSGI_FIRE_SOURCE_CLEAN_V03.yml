@@ -1,0 +1,151 @@
+name: Escape1 SSGI Stove Fireplace Torches Lamps Factory Clean V03
+on:
+  push:
+    branches: [rend2-escape1-ssgi-fix-20261025]
+    paths: ['.github/workflows/ESCAPE1_SSGI_FIRE_SOURCE_CLEAN_V03.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  source-runtime-and-win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: v4.4.6-rc4-fourweek-master-sourcedefaultson-20261024
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native and Windows toolchain dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/ssgi dist release-base
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev libcurl4-openssl-dev xvfb xauth python3-pil python3-numpy python3-yaml gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+          python3 -m py_compile integration/ssgi-fire-source-guard/apply.py integration/ssgi-fire-source-guard/package_clean.py testlab/scripts/escape1_ssgi_fire_source_ab.py
+      - name: SHA-verified official released Oct24 FourWeek V03 entire source and game package
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*_Exact_Source.tar.gz' --dir release-base
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*_Clean_Win64.zip' --dir release-base
+          source_archive="$(find release-base -maxdepth 1 -name '*_Exact_Source.tar.gz' -print -quit)"
+          zip_archive="$(find release-base -maxdepth 1 -name '*_Clean_Win64.zip' -print -quit)"
+          test -s "$source_archive" && test -s "$zip_archive"
+          echo '9f6f4a79495154d7727384d94d96f57576ed9567015d45c1f21b7a6446480c22  ' "$source_archive" | sed 's/  /  /g' > /dev/null
+          test "$(sha256sum "$source_archive" | cut -d' ' -f1)" = 9f6f4a79495154d7727384d94d96f57576ed9567015d45c1f21b7a6446480c22
+          test "$(sha256sum "$zip_archive" | cut -d' ' -f1)" = 559d01d3815ef1d58b3f018d1c1f215cb37881d2756ad3508ae5cc891179b2e4
+          mkdir source
+          tar -xzf "$source_archive" -C source
+          test -f source/SP/code/rend2/glsl/ssgi_fp.glsl
+          cp -a source original
+          cp -a source candidate
+          python3 integration/ssgi-fire-source-guard/apply.py candidate | tee evidence/ssgi/SSGI_SOURCE_PATCH_PASS.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          a=Path('original/SP/code/rend2')
+          b=Path('candidate/SP/code/rend2')
+          before={str(p.relative_to(a)):hashlib.sha256(p.read_bytes()).hexdigest() for p in a.rglob('*') if p.is_file()}
+          after={str(p.relative_to(b)):hashlib.sha256(p.read_bytes()).hexdigest() for p in b.rglob('*') if p.is_file()}
+          changed=sorted(k for k in before if before[k]!=after.get(k))
+          assert changed==['glsl/ssgi_fp.glsl','tr_backend.c','tr_init.c'],changed
+          assert all(k in after for k in before)
+          m={'parent_release':'FourWeek Master SourceDefaultsON V03 2026-10-24',
+             'changed_renderer_files':changed,'files':{k:{'original':before[k],'fixed':after[k]} for k in changed},
+             'unmodified_renderer_files':len(before)-len(changed),
+             'sun_CSM_Fire_Tesla_CAS_A2C_LUT_Fidelity_Bloom_Volumetrics':'source-byte-identical'}
+          Path('evidence/ssgi/PATCHED_SOURCE_MANIFEST.json').write_text(json.dumps(m,indent=2))
+          print('EXACTLY_THREE_SSGI_RENDERER_FILES_CHANGED_PASS',changed)
+          PY
+      - name: Load licensed Escape1 and Factory maps, keep retail content private
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}"
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > evidence/ssgi/assets_location.log
+          tail -1 evidence/ssgi/assets_location.log > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+      - name: Native real game capture on Escape1 stove fireplace torches and lamps
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 testlab/scripts/escape1_ssgi_fire_source_ab.py instrument candidate
+          make -C candidate/SP -j2 release VERSION=1.51d-SP-DW-SSGI-FireClean BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/ssgi/native-build.log 2>&1 || { tail -110 evidence/ssgi/native-build.log; exit 1; }
+          python3 -u testlab/scripts/escape1_ssgi_fire_source_ab.py capture candidate "$(cat .retail_main)" evidence/ssgi/escape1 escape1 > evidence/ssgi/escape1-capture.log 2>&1 || { tail -130 evidence/ssgi/escape1-capture.log; exit 1; }
+          echo SSGI_ESCAPE1_FIRE_FIXTURE_REAL_GAME_CAPTURE_PASS
+      - name: Native real game regression capture on Factory tunnel lamps
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/escape1_ssgi_fire_source_ab.py capture candidate "$(cat .retail_main)" evidence/ssgi/factory factory > evidence/ssgi/factory-capture.log 2>&1 || { tail -130 evidence/ssgi/factory-capture.log; exit 1; }
+          echo SSGI_FACTORY_LAMP_REGRESSION_CAPTURE_PASS
+      - name: Confirm active SSGI, pure lightmap guard and emitter differences
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,numpy as np
+          from PIL import Image
+          root=Path('evidence/ssgi')
+          result={}
+          for level in ('escape1','factory'):
+              out=root/level
+              info=json.loads((out/'RESULT.json').read_text())
+              assert info['success'] and info['saved']==len(info['shots'])
+              changes=[]
+              for name,eye,angles,meta in info['views']:
+                  stem=level+'_'+name+'_'
+                  off=np.asarray(Image.open(out/(stem+'ssgi_off.png')).convert('RGB'),dtype=np.int16)
+                  old=np.asarray(Image.open(out/(stem+'factory_guard_v03.png')).convert('RGB'),dtype=np.int16)
+                  new=np.asarray(Image.open(out/(stem+'fire_guard_v04.png')).convert('RGB'),dtype=np.int16)
+                  lm_on=np.asarray(Image.open(out/(stem+'baked_lightmap.png')).convert('RGB'),dtype=np.int16)
+                  lm_off=np.asarray(Image.open(out/(stem+'baked_lightmap_off.png')).convert('RGB'),dtype=np.int16)
+                  assert np.array_equal(lm_on,lm_off),('SSGI contaminates lightmap',level,name)
+                  contrast=np.abs(new-off);d=np.abs(new-old)
+                  row={'name':name,'kind':meta.get('kind','lamp'),
+                       'ssgi_on_vs_off_pct':round(float(np.any(contrast>4,axis=2).mean()*100),4),
+                       'new_vs_factory_guard_pct':round(float(np.any(d>4,axis=2).mean()*100),4),
+                       'new_vs_factory_guard_mean_rgb':round(float(d.mean()),5),
+                       'lightmap_identity':True}
+                  changes.append(row)
+              result[level]=changes
+              for r in changes:print('SSGI_SOURCE_REALGAME',level,json.dumps(r))
+          assert len(result['escape1'])>=5
+          assert any(r['ssgi_on_vs_off_pct']>0.005 for r in result['escape1']), 'SSGI appears inactive'
+          (root/'REALGAME_SUMMARY.json').write_text(json.dumps(result,indent=2))
+          print('SSGI_EMITTER_AND_LIGHTMAP_ACTUAL_GAME_ASSERTIONS_PASS')
+          PY
+      - name: Cross compile release renderer Windows x64 from UNINSTRUMENTED candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # Camera instrumentation modified cgame only, not the renderer.
+          make -C candidate/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-Clean-RC4 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/ssgi/win64-build.log 2>&1 || { tail -110 evidence/ssgi/win64-build.log; exit 1; }
+          find candidate/SP/build -name renderer_sp_rend2_x64.dll -exec cp -v '{}' dist/renderer_sp_rend2_x64.dll \;
+          test -s dist/renderer_sp_rend2_x64.dll
+          file dist/renderer_sp_rend2_x64.dll | grep -F PE32+
+          sha256sum dist/renderer_sp_rend2_x64.dll > evidence/ssgi/NEW_RENDERER_WIN64_SHA256.txt
+          echo SSGI_FIRE_SOURCE_WIN64_RENDERER_BUILD_PASS
+      - name: Assemble full official-release-based clean Win64 ZIP and audit every retained file
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          archive="$(find release-base -maxdepth 1 -name '*_Clean_Win64.zip' -print -quit)"
+          python3 integration/ssgi-fire-source-guard/package_clean.py --base "$archive" --dll dist/renderer_sp_rend2_x64.dll --evidence evidence/ssgi --out dist
+          echo SSGI_FIRE_SOURCE_FULL_CLEAN_WIN64_PACKAGE_PASS
+      - name: Deliver real-map proof and complete Win64 package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-FourWeek-V03-SSGI-Escape1-Fire-Lamps-Fix-RealGame-Clean-Win64
+          path: |
+            evidence/ssgi/
+            dist/*.zip
+            dist/*.sha256
+            dist/*.json
+          retention-days: 90
