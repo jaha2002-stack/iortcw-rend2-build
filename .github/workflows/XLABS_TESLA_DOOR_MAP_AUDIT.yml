@@ -1,0 +1,67 @@
+name: Xlabs Tesla Door Authored Entities and Light Provenance
+on:
+  push:
+    branches: [rend2-xlabs-tesla-door-dlight-20261025]
+    paths: ['.github/workflows/XLABS_TESLA_DOOR_MAP_AUDIT.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  bsp-entity-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch authentic licensed Xlabs BSP privately
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}"
+          mkdir -p evidence
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > evidence/assets-log.txt 2>&1
+          tail -1 evidence/assets-log.txt > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+      - name: Inspect Xlabs map Tesla emitters and their native DLIGHT flags
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,struct,re,json,collections
+          root=Path(Path(".retail_main").read_text().strip())
+          result={}
+          for level in ("xlabs","escape1"):
+              raw=None
+              for p in root.glob("*.pk3"):
+                  with zipfile.ZipFile(p) as z:
+                      names={x.lower():x for x in z.namelist()}
+                      if "maps/"+level+".bsp" in names:
+                          raw=z.read(names["maps/"+level+".bsp"])
+                          break
+              assert raw is not None,level
+              off,size=struct.unpack_from("<ii",raw,8)
+              entities=[dict(re.findall(r'"([^"\\n]+)"\\s*"([^"\\n]*)"',block))
+                        for block in re.findall(r'\\{([^{}]*)\\}',raw[off:off+size].decode("latin1"))]
+              teslas=[{"index":i,"classname":e.get("classname"),
+                      "origin":e.get("origin"),"target":e.get("target"),
+                      "targetname":e.get("targetname"),"spawnflags":e.get("spawnflags","0"),
+                      "dlightsize":e.get("dlightsize"),"_color":e.get("_color"),
+                      "count":e.get("count"),"width":e.get("width"),
+                      "dlight_enabled_in_authoring":bool(int(e.get("spawnflags","0")) & 2),
+                      "start_on":bool(int(e.get("spawnflags","0")) & 1)}
+                      for i,e in enumerate(entities) if e.get("classname","").lower()=="shooter_tesla"]
+              result[level]={"entity_total":len(entities),"shooter_tesla":teslas,
+                             "tesla_count":len(teslas),
+                             "doors":sum("door" in e.get("classname","").lower() for e in entities)}
+              print("XLABS_TESLA_MAP_ENTITY_AUDIT",level,json.dumps(result[level]),flush=True)
+          assert result["xlabs"]["tesla_count"]>=1, "No actual authored Tesla in Xlabs map"
+          Path("evidence/Xlabs_Tesla_Authoring_Provenance.json").write_text(json.dumps(result,indent=2))
+          PY
+      - name: Upload factual map entity metadata only
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Xlabs-Tesla-Authored-DLight-Entity-Metadata
+          path: evidence/Xlabs_Tesla_Authoring_Provenance.json
+          retention-days: 30
