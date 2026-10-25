@@ -1,0 +1,73 @@
+name: FourWeek V03 No Fire Tesla Plus SSGI Clean Win64
+on:
+  push:
+    branches: [rend2-fourweek-v03-no-fire-tesla-ssgi-20261025]
+    paths: ['.github/workflows/FOURWEEK_V03_NO_FIRE_TESLA_SSGI_CLEAN.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  clean-win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 85
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native and Windows x64 dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 git unzip file
+          mkdir -p dist evidence
+      - name: Reconstruct EXACT official FourWeek V03 source and DLL
+        run: |
+          set -Eeuo pipefail
+          bash integration/cas-a2c-lut/ci_master_clean_4week.sh > evidence/parent-build.log 2>&1 || { tail -80 evidence/parent-build.log; exit 1; }
+          grep -Fq DARKWOLF_4WEEK_MASTER_WIN64_BUILD_OK evidence/parent-build.log
+          test "$(git -C source status --porcelain | wc -l)" -ge 1
+          unzip -p parent.zip DarkWolf-v446-RC4-BloomV2-Production-Win64-SP.zip > evidence/bloom-base.zip
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12552083888/zip" > evidence/master-dll-artifact.zip
+          test "$(sha256sum evidence/master-dll-artifact.zip | cut -d' ' -f1)" = f66a7788c8eccb4d7460eb3ce18c541e253a0ee367120710992ebc281b17f074
+          GITHUB_SHA=2ef7ad6bd9dbe8e03b561b4be6279953e51ceee1 python3 integration/fourweek-master-release/package.py --base parent.zip --master-dll evidence/master-dll-artifact.zip --out evidence > evidence/parent-package.log 2>&1 || { tail -90 evidence/parent-package.log; exit 1; }
+          test -s evidence/DarkWolf_Rend2_v4.4.6_RC4_FourWeek_Master_SourceDefaultsON_Clean_Win64.zip
+          echo OFFICIAL_V03_RECONSTRUCTED
+      - name: Exactly remove Fire Tesla containment and add SSGI diagnostic fix
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/11971637900/zip" > evidence/containment-artifact.zip
+          unzip -p evidence/containment-artifact.zip containment.patch > evidence/original-containment.patch
+          python3 integration/fourweek-no-fire-tesla/apply.py source evidence/original-containment.patch evidence/SOURCE_MANIFEST.json
+          git -C source diff --check
+          echo VERIFIED_EXACT_FIRE_TESLA_ROLLBACK_AND_SSGI_ISOLATION
+      - name: Compile renderer and Tesla-aware cgame, Win64
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-Clean-RC4 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/win64-build.log 2>&1 || { tail -100 evidence/win64-build.log; exit 1; }
+          find source/SP/build -name renderer_sp_rend2_x64.dll -exec cp '{}' dist/renderer_sp_rend2_x64.dll \;
+          find source/SP/build -name cgame_sp_x64.dll -exec cp '{}' dist/cgame_sp_x64.dll \;
+          test -s dist/renderer_sp_rend2_x64.dll && test -s dist/cgame_sp_x64.dll
+          file dist/*.dll | tee evidence/PE64_HEADERS.txt
+          sha256sum dist/*.dll | tee evidence/WIN64_SHA256.txt
+      - name: Package COMPLETE clean release with unmodified original other assets
+        run: |
+          set -Eeuo pipefail
+          python3 integration/fourweek-no-fire-tesla/package.py --base evidence/DarkWolf_Rend2_v4.4.6_RC4_FourWeek_Master_SourceDefaultsON_Clean_Win64.zip --renderer dist/renderer_sp_rend2_x64.dll --cgame dist/cgame_sp_x64.dll --source-manifest evidence/SOURCE_MANIFEST.json --out dist
+          test -s dist/RELEASE_VALIDATION.json
+          echo NO_FIRE_TESLA_V03_CLEAN_WIN64_COMPLETE_PASS
+      - name: Retain complete Win64 ZIP and verified source regression proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FourWeek-V03-NoFireTesla-SSGI-Lightmap-Full-Clean-Win64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            dist/RELEASE_VALIDATION.json
+            evidence/SOURCE_MANIFEST.json
+            evidence/WIN64_SHA256.txt
+            evidence/PE64_HEADERS.txt
+            evidence/win64-build.log
+            evidence/parent-package.log
+          retention-days: 90
