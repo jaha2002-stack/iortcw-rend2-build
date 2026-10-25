@@ -104,13 +104,13 @@ def capture(src,retail,out,level):
  shots=[];idx=0
  for name,eye,angles,_ in selected:
   scenario+=["set dw_proofFreeze 0","proofView "+" ".join("%.5f"%v for v in eye+angles),
-             "wait 36","set dw_proofFreeze 1","wait 5"]
+             "wait 18","set dw_proofFreeze 1","wait 3"]
   for mode,ssgi,bright,lightmap in MODES:
    idx+=1
    filename=level+"_"+name+"_"+mode
    scenario += ["set r_ssgi "+str(ssgi),"set r_ssgiBrightSourceFix "+str(bright),
-                "set r_lightmap "+str(lightmap),"wait 42",
-                "set dw_proofShot "+str(idx),"wait 6","screenshot "+filename,"wait 3"]
+                "set r_lightmap "+str(lightmap),"wait 12",
+                "set dw_proofShot "+str(idx),"wait 4","screenshot "+filename,"wait 2"]
    shots.append({"shot_id":idx,"scene":name,"mode":mode,"file":filename+".png",
                  "cvars":{"r_ssgi":ssgi,"r_ssgiBrightSourceFix":bright,"r_lightmap":lightmap}})
  scenario+=["set dw_proofFreeze 0","echo ESCAPE1_SSGI_SOURCE_TEST_COMPLETE","quit"]
