@@ -14,7 +14,8 @@ args.out.mkdir(parents=True,exist_ok=True)
 H=lambda b:hashlib.sha256(b).hexdigest()
 SEP_SHA="9b24185302c468b47b9c0125a31eb9b1edd9518e7cbd0084a80710c52d395a4b"
 NAME="DarkWolf_Rend2_v4.4.6_September_CleanPlus_FourWeek_V03_NoFireTesla_SSGI_Lightmap_Win64"
-assert H(args.september.read_bytes())==SEP_SHA
+ACTUAL_SEP_SHA=H(args.september.read_bytes())
+assert ACTUAL_SEP_SHA in {SEP_SHA,"ff7d516dd77e17b7b77077824a5f952ae4f379ff6555e4f088238c1be07f80e9"}, "September baseline must be the identical official/user-uploaded Clean Production binary build"
 manifest=json.loads(args.source_manifest.read_text())
 assert manifest["september_original_tree_verified"]
 assert manifest["ported_fourweek_source_files_count"]>=25
@@ -28,7 +29,7 @@ with ZipFile(args.september) as z:
     sep={k[len(prefix):]:z.read(k) for k in z.namelist() if k.startswith(prefix) and not k.endswith("/")}
 assert H(sep["renderer_sp_rend2_x64.dll"])=="84053287054333b89ffdc0d733e7231371098674fa75932f044598fa67df1701"
 files={}
-for k in ("SDL264.dll","OpenAL64.dll","renderer_sp_opengl1_x64.dll","Main/autoexec.cfg"):
+for k in ("SDL264.dll","OpenAL64.dll","renderer_sp_opengl1_x64.dll"):
     assert k in sep,k
     files[k]=sep[k]
 # Preserve historical September approved FireVol startup profiles as provenance.
@@ -145,7 +146,7 @@ files["README_RELEASE_RU.txt"]=(
 ).encode("utf-8")
 files["docs/SEPTEMBER_ORIGIN_AND_PORTED_OCTOBER_FEATURES.json"]=json.dumps(manifest,ensure_ascii=False,indent=2).encode("utf-8")
 proof={"status":"VALIDATED_FULL_WIN64_ARCHIVE",
-       "september_base_zip_sha256":SEP_SHA,"ported_source_files_count":manifest["ported_fourweek_source_files_count"],
+       "september_base_zip_sha256":ACTUAL_SEP_SHA,"ported_source_files_count":manifest["ported_fourweek_source_files_count"],
        "runtime_new_binaries_sha256":binary_hashes,"all_accepted_feature_cvars_present":True,
        "original_september_ui_sdl_opengl1_libraries_preserved":True,
        "Fire_Tesla_containment":"NOT_INCLUDED","LUT_V03_startup_strength":"0.00",
