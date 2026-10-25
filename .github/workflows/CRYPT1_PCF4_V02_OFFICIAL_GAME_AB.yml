@@ -1,0 +1,81 @@
+name: Crypt1 Official FourWeek V03 Guarded V02 Game AB
+on:
+  push:
+    branches: [rend2-crypt1-shadow-causal-20261024]
+    paths: ['.github/workflows/CRYPT1_PCF4_V02_OFFICIAL_GAME_AB.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native build and capture deps
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/v02
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev libcurl4-openssl-dev xvfb xauth python3-pil python3-numpy python3-yaml
+      - name: Reconstruct official V03 and prepare exact V02 source
+        run: |
+          set -Eeuo pipefail
+          bash integration/cas-a2c-lut/ci_master_clean_4week.sh > evidence/v02/reconstruct.log 2>&1 || { tail -90 evidence/v02/reconstruct.log; exit 1; }
+          grep -Fq DARKWOLF_4WEEK_MASTER_WIN64_BUILD_OK evidence/v02/reconstruct.log
+          cp -a source official
+          cp -a source candidate
+          python3 integration/crypt1-world-occlusion-pcf4/apply_guarded_v02.py candidate
+          python3 - <<'PY'
+          from pathlib import Path
+          a,b=Path('official/SP/code/rend2'),Path('candidate/SP/code/rend2')
+          changed=sorted(str(p.relative_to(a)) for p in a.rglob('*') if p.is_file() and p.read_bytes()!=(b/p.relative_to(a)).read_bytes())
+          assert changed==['glsl/dlight_fp.glsl','glsl/lightall_fp.glsl','tr_backend.c'],changed
+          print('V02_EXACT_THREE_FILES_PASS',changed)
+          PY
+      - name: Licensed retail Crypt1
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > evidence/v02/assets.log
+          tail -1 evidence/v02/assets.log > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+      - name: Real-game exact-camera original and guarded V02
+        run: |
+          set -Eeuo pipefail
+          for v in official candidate; do
+            python3 testlab/scripts/crypt1_shadow_causal_fast_capture.py instrument "$v"
+            make -C "$v/SP" -j2 release VERSION=1.51d-SP-Crypt1-V02 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > "evidence/v02/${v}-build.log" 2>&1 || { tail -70 "evidence/v02/${v}-build.log"; exit 1; }
+            python3 -u testlab/scripts/crypt1_shadow_causal_fast_capture.py capture "$v" "$(cat .retail_main)" "evidence/v02/$v" > "evidence/v02/${v}-capture.log" 2>&1 || { tail -80 "evidence/v02/${v}-capture.log"; exit 1; }
+          done
+      - name: Check visual difference and retained original game lighting
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          import numpy as np,json
+          root=Path('evidence/v02')
+          rows=[]
+          for view in ('grate_near48_pitch28','grate_near72_pitch42'):
+              for mode in ('baseline','no_dynamic_shadow','lightmap_only'):
+                  name=f'crypt1_{view}_{mode}.png'
+                  a=np.asarray(Image.open(root/'official'/name).convert('RGB'),dtype=np.int16)
+                  b=np.asarray(Image.open(root/'candidate'/name).convert('RGB'),dtype=np.int16)
+                  d=np.abs(a-b)
+                  row=dict(view=view,mode=mode,pixels_changed_gt4_pct=round(float(np.any(d>4,axis=2).mean()*100),4),mean_abs_rgb=round(float(d.mean()),6))
+                  rows.append(row)
+                  print('V02_CRYPT1_AB',row)
+          (root/'V02_CRYPT1_RESULT.json').write_text(json.dumps(rows,indent=2))
+          print('V02_REALGAME_COMPARE_PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Crypt1-Official-V03-Guarded-V02-Actual-Game
+          path: evidence/v02/
+          retention-days: 90
