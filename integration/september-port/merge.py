@@ -49,11 +49,21 @@ required={"r_dwLut":"1","r_dwLutStrength":"0.00","r_dwCas":"1",
  "r_dwCasStrength":"0.55","r_dwA2C":"1","r_dwTextureFidelity":"1",
  "r_dwMaterialFidelity":"1","r_bloom":"1","r_bloomMode":"2",
  "r_ssgi":"1","r_forceSun":"1","r_dlightMode":"2",
- "r_volumetricSun":"1","r_volumetricLocal":"1","r_volumetricFire":"1",
+ "r_volumetricSun":"1","r_volumetricLocal":"1",
  "r_ext_framebuffer_multisample":"4","r_hdr":"1"}
 for name,value in required.items():
     set_default(name,value,"accepted effect, LUT zero-strength avoids red grading")
 init.write_text(s)
+# The FireVol CVar is registered lazily in tr_backend.c rather than tr_init.c.
+backend=sep/"SP/code/rend2/tr_backend.c"
+back=backend.read_text()
+vol_pattern=re.compile(r'(ri\\.Cvar_Get\\(\\s*"r_volumetricFire"\\s*,\\s*)"([^"\\n]*)"')
+v=list(vol_pattern.finditer(back))
+assert len(v)==1,("r_volumetricFire registered outside tr_init; expected one",len(v))
+fire_old=v[0].group(2)
+back=vol_pattern.sub(lambda m:m.group(1)+'"1"',back,count=1)
+backend.write_text(back)
+changes["r_volumetricFire"]={"before":fire_old,"after":"1","why":"enable historically required FireVol at source registration"}
 for marker in ("DARKWOLF_CRYPT1_LIGHTMAP_SSGI_ISOLATION_V1","DARKWOLF_TEXTURE_MATERIAL_FIDELITY_V01","DARKWOLF_RC4_FORCE_SUN_CSM_REPRIME_V1"):
     assert any(marker in (sep/p).read_text() for p in ("SP/code/rend2/tr_backend.c","SP/code/rend2/tr_init.c","SP/code/rend2/tr_scene.c")),marker
 for rel in ("SP/code/rend2/glsl/lightall_fp.glsl","SP/code/rend2/glsl/dlight_fp.glsl",
