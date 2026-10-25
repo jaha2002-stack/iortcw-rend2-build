@@ -36,7 +36,7 @@ static void Cmd_DWProofActivateTesla_f(gentity_t *ent) {
     if (!g_cheats.integer || !ent || !ent->client) return;
     for (i=0;i<level.num_entities;i++) {
         gentity_t *e=&g_entities[i];
-        if (!e->inuse || !e->classname || Q_stricmp(e->classname,"shooter_tesla") || !e->use || e->r.linked)
+        if (!e->inuse || !e->classname || Q_stricmp(e->classname,"shooter_tesla") || !e->use || e->r.linked || count >= 1 || DistanceSquared(e->s.origin, ent->client->ps.origin) > 512.0f * 512.0f)
             continue;
         e->use(e,ent,ent);
         count++;
@@ -111,6 +111,27 @@ def game_capture(src,retail,out,mapname):
  data=retail_map(retail,mapname);w=World(data)
  if mapname=="escape1":poses=ESCAPE_POSES;teslas=[(e.get("classname"),e.get("origin")) for e in w.entities if "tesla" in e.get("classname","").lower()]
  else:poses,teslas=pick_xlabs(w)
+ # Never teleport into the map's solid collision brushes. On Escape1 the
+ # historical exterior target can intersect a wall and induce invalid
+ # client-side refEntities; pick a nearby in-world point if that happens.
+ checked=[]
+ for name,eye,angles,category in poses:
+  if w.solid(eye) or w.leaf(eye)[0]<0:
+   candidates=[]
+   for radius in (32.,56.,84.,112.,148.):
+    for ang in range(0,360,30):
+     for dz in (-16.,0.,28.,48.):
+      e=[round(eye[0]+radius*math.cos(math.radians(ang)),3),
+         round(eye[1]+radius*math.sin(math.radians(ang)),3),
+         round(eye[2]+dz,3)]
+      if w.solid(e) or w.leaf(e)[0]<0:continue
+      score=radius+abs(dz)*0.5
+      candidates.append((score,e))
+   if not candidates:raise RuntimeError("No physically traversable camera near "+name)
+   candidates.sort(key=lambda x:x[0])
+   eye=candidates[0][1]
+  checked.append((name,eye,angles,category))
+ poses=checked
  (out/"TESLA_MAP_FIXTURES.json").write_text(json.dumps({"map":mapname,"Tesla_entities":teslas,"views":poses},indent=2))
  runtime=Path("harmony-runtime-"+mapname).resolve()
  shutil.rmtree(runtime,ignore_errors=True)
@@ -136,13 +157,18 @@ def game_capture(src,retail,out,mapname):
  ]
  scenario=["set cg_draw2D 0","set cg_drawGun 0","set con_notifytime -1",
            "set cg_bobup 0","set cg_bobpitch 0","set cg_bobroll 0",
-           "god","notarget","wait 16","proofActivateTesla",
-           "proofUseTarget t1055","proofUseTarget t1012","proofUseTarget t1008","wait 30"]
+           "god","notarget","wait 18"]
  shots=[]
  counter=0
  for name,eye,angles,category in poses:
-  scenario+=["set dw_proofFreeze 0","proofView "+" ".join(f"{x:.4f}" for x in eye+angles),
-             "wait 28","set dw_proofFreeze 1","wait 5"]
+  scenario+=["set dw_proofFreeze 0","proofView "+" ".join(f"{x:.4f}" for x in eye+angles)]
+  # Only start ONE authored Tesla shooter when the camera actually reaches
+  # its fixture, never four remote emitters during the stove leak test.
+  if category=="tesla" or name.startswith("xlabs_tesla"):
+   scenario+=["wait 6","proofActivateTesla","wait 18"]
+  else:
+   scenario+=["wait 18"]
+  scenario+=["set dw_proofFreeze 1","wait 5"]
   for variant,mode in MODES:
    counter+=1
    shot=mapname+"_"+name+"_"+variant
