@@ -14,7 +14,7 @@ def branch(s):
     return begin,end
 
 def function(s,name):
-    m=re.search(r"\\b(?:void|int|qboolean|float)\\s+"+re.escape(name)+r"\\s*\\(",s)
+    m=re.search(r"\b(?:void|int|qboolean|float)\s+"+re.escape(name)+r"\s*\(",s)
     assert m is not None,name
     pos=s.index("{",m.end())
     depth=0
