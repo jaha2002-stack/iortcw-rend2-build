@@ -63,13 +63,54 @@ assert "DARKWOLF_UNIFIED_PRODUCTION_TESLA_TIMING_V1" not in cg.read_text()
 # Apply world-depth to existing, explicitly classified FireVol emitters instead,
 # and to the stationary Tesla effect via the opaque marker (above).
 scene=base/"rend2/tr_scene.c";text=scene.read_text()
+# World containment must NOT blindly adopt FireVol's intentionally narrow
+# 96-unit fire-speaker radius; Escape1 stove is ~129u, fireplace 104u and
+# torches ~110..191u away. Keep existing FireVol classification UNMODIFIED.
+# Link only exact author-supplied native dynamic sources to existing
+# target_speaker/noise=fire* and preserve the light RGB to original.
+helper='''// DARKWOLF_FIRE_TESLA_CONTAINMENT_SPEAKER_MATCH_V2
+// The approved FireVol uses PLR_V01_FIRE_PAIR_MAX_DIST (96). That strict
+// volumetric threshold misses Escape1's authored stove and most torches.
+// World-containment alone uses 192; it never changes FireVol volume or light
+// intensity, and does not include generic spotlights/promoted authored lamps.
+static qboolean R_DarkWolfWorldContainmentFireSourceMatch(
+    const vec3_t org, float r, float g, float b)
+{
+    vec3_t runtimeColor;
+    int i, j;
+    VectorSet(runtimeColor, r, g, b);
+    for (i=0; i<s_staticPromotePLRMarkerCount; ++i)
+    {
+        const staticPromotePLRMarker_t *native=&s_staticPromotePLRMarkers[i];
+        if (native->kind!=PLR_V01_MARKER_DLIGHT ||
+            R_StaticPromotePLRDistance(org,native->origin)>16.0f ||
+            R_StaticPromotePLRColorDelta(runtimeColor,native->color)>0.25f)
+            continue;
+        for (j=0; j<s_staticPromotePLRMarkerCount; ++j)
+        {
+            const staticPromotePLRMarker_t *speaker=&s_staticPromotePLRMarkers[j];
+            if (speaker->kind!=PLR_V01_MARKER_SPEAKER ||
+                !R_StaticPromotePLRNoiseIsFire(speaker->noise))
+                continue;
+            if (R_StaticPromotePLRDistance(native->origin,speaker->origin)<=192.0f)
+                return qtrue;
+        }
+    }
+    return qfalse;
+}
+
+'''
+insert_anchor="static void R_StaticPromotePLRAddMarker(int entityOrdinal, int kind,"
+assert text.count(insert_anchor)==1
+text=text.replace(insert_anchor,helper+insert_anchor,1)
 old="dl->worldOcclusion = worldOcclusionMarker || nativeAuthoredDlightMarker;"
-new='''// DARKWOLF_TESLA_SEPTEMBER_FIRE_HARMONY_V1:
-	// Never touch native authored lamps or promoted static lights.
-	// Fire speaker classification already uses the approved FireVol source matcher.
-	// A Tesla marker is passed only by ET_TESLA_EF, and does not change Tesla light energy.
+new='''// DARKWOLF_TESLA_SEPTEMBER_FIRE_HARMONY_V2:
+	// Preserve ordinary authored lamps. Firevol itself remains at 96u; architectural
+	// containment instead includes validated fire-sound paired native emitters
+	// within 192u (stove, fireplace, torch), but never other generic dlights.
 	dl->worldOcclusion = ((r_dlightWorldContainment->integer >= 2) && worldOcclusionMarker)
-		|| ((r_dlightWorldContainment->integer >= 1) && fireVolumetricSourceMarker);'''
+		|| ((r_dlightWorldContainment->integer >= 1) && nativeAuthoredDlightMarker
+		    && R_DarkWolfWorldContainmentFireSourceMatch(org, r, g, b));'''
 assert text.count(old)==1
 scene.write_text(text.replace(old,new,1))
 # Both modes are live-editable, not ROM/CHEAT/LATCH. CVar defaults for historical
@@ -112,6 +153,8 @@ assert "DlightWorldVisibility" in (base/"rend2/glsl/lightall_fp.glsl").read_text
 assert 'r_dlightWorldContainment", "2", CVAR_ARCHIVE' in ini.read_text()
 assert "worldOcclusionMarker || nativeAuthoredDlightMarker" not in scene.read_text()
 assert 'fireVolumetricSourceMarker' in scene.read_text()
+assert "R_DarkWolfWorldContainmentFireSourceMatch" in scene.read_text()
+assert "R_StaticPromotePLRDistance(native->origin,speaker->origin)<=192.0f" in scene.read_text()
 
 manifest={
  "base":"EXACT_SEPTEMBER_TESLA_PARITY_FOURWEEK_V03_RELEASE_40186479404",
@@ -125,7 +168,8 @@ manifest={
  "Tesla_light_radius_color_origin_pulse_bolt_timing_rhythm_unchanged":True,
  "cg_main_game_tesla_source_unchanged":True,
  "architectural_cubemap":"EXACT_ORIGINAL_BASIS_CAPTURE",
- "architectural_source_eligibility":"FIREVOL_MATCHED_NATIVE_FIRE_OR_EXPLICIT_ET_TESLA_EF_ONLY",
+ "architectural_source_eligibility":"BSP_NATIVE_DLIGHT_WITH_FIRE_SOUND_SPEAKER_WITHIN_192_OR_EXPLICIT_ET_TESLA_EF",
+ "fire_source_match":"Firevol 96-units remains untouched; containment-only 192-unit authored speaker correlation",
  "native_authored_lamps_shadowed_by_architecture":False,
  "other_light_sources_and_promoted_lamps_unchanged":True,
  "source_control_CVar":{"name":"r_dlightWorldContainment","default":"2","flags":"CVAR_ARCHIVE","runtime_editable":True,
