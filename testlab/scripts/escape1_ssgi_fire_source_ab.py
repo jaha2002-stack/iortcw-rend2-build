@@ -91,7 +91,7 @@ def capture(src,retail,out,level):
         "set r_dwCas 1","set r_dwCasStrength 0.55","set r_dwA2C 1",
         "set r_dwLut 1","set r_dwLutMode 1","set r_dwLutStrength 0.80",
         "set r_ssgi 1","set r_ssgiBrightSourceFix 2",
-        "set r_ssgiResolveMode 2","set r_ssgiEntityGuardMode 2",
+        "set r_ssgiResolveMode 0","set r_ssgiEntityGuardMode 2",
         "set r_forceSun 1","set r_sunShadows 1","set r_dlightMode 2",
         "set r_volumetricSun 1","set r_volumetricLocal 1","set r_volumetricFire 1",
         "set r_dwTextureFidelity 1","set r_dwMaterialFidelity 1",
