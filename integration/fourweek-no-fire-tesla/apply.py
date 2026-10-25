@@ -2,7 +2,7 @@
 """Exact original Oct 15 Fire/Tesla 15-file revert + diagnostic-only SSGI fix."""
 from pathlib import Path
 import sys,subprocess,hashlib,json,re
-root=Path(sys.argv[1]);patch=Path(sys.argv[2]);out=Path(sys.argv[3])
+root=Path(sys.argv[1]).resolve();patch=Path(sys.argv[2]).resolve();out=Path(sys.argv[3]).resolve()
 text=patch.read_bytes();assert hashlib.sha256(text).hexdigest()=="e3600847ed0d1def868439af0c94f5ce250e2e7afbb0584fbb151459ea009a2f"
 files=re.findall(rb"^diff --git a/([^ ]+) b/([^\n]+)$",text,re.M)
 assert len(files)==15 and all(a==b for a,b in files)
