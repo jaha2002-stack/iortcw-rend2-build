@@ -57,7 +57,7 @@ init.write_text(s)
 # The FireVol CVar is registered lazily in tr_backend.c rather than tr_init.c.
 backend=sep/"SP/code/rend2/tr_backend.c"
 back=backend.read_text()
-vol_pattern=re.compile(r'(ri\\.Cvar_Get\\(\\s*"r_volumetricFire"\\s*,\\s*)"([^"\\n]*)"')
+vol_pattern=re.compile(r'(ri\.Cvar_Get\(\s*"r_volumetricFire"\s*,\s*)"([^"\n]*)"')
 v=list(vol_pattern.finditer(back))
 assert len(v)==1,("r_volumetricFire registered outside tr_init; expected one",len(v))
 fire_old=v[0].group(2)
