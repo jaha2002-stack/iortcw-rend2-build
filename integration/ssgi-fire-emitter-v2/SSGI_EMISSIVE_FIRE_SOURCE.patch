@@ -1,0 +1,71 @@
+--- a/SP/code/rend2/glsl/ssgi_fp.glsl
++++ b/SP/code/rend2/glsl/ssgi_fp.glsl
+@@ -76,6 +76,25 @@
+ 	return mix(1.0, emitterFloor, reject);
+ }
+ 
++
++// DARKWOLF_SSGI_FIRE_EMISSIVE_DONOR_ISOLATION_V2
++// Fire is alpha-composited into the color FBO but has no corresponding opaque
++// depth at its screen UV. It must not become a world-space bounce donor.
++// The blue-deficit and hotspot gates deliberately preserve ordinary warm stone,
++// daylight, non-emissive diffuse GI and all modes 0..3.
++float SsgiFireEmissionLikelihood(const vec3 c, const float centerLuma)
++{
++    float l = SsgiLuma(c);
++    float warmR = smoothstep(0.08, 0.25, c.r - c.b);
++    float warmG = smoothstep(0.025, 0.09, c.g - c.b);
++    float blueRatio = c.b / max(c.g, 0.0001);
++    float lowBlue = 1.0 - smoothstep(0.24, 0.48, blueRatio);
++    float energy = smoothstep(0.12, 0.37, l);
++    float peak = smoothstep(0.28, 0.62, max(c.r, c.g));
++    float contrast = smoothstep(0.035, 0.16, l - centerLuma);
++    return clamp(warmR * warmG * lowBlue * energy * peak * contrast, 0.0, 1.0);
++}
++
+ // DARKWOLF_V446_OPT09_SHARED_RAW_DEPTH
+ float SsgiViewmodelMaskFromRaw(const float rawDepth)
+ {
+@@ -324,6 +343,14 @@
+ 		brightSourceScale = SsgiBrightSourceScale(sampleColor, centerLuma);
+ 		donor *= sqrt(brightSourceScale);
+ 	}
++	// DARKWOLF_SSGI_FIRE_EMISSIVE_DONOR_ISOLATION_V2: suppress fire-colored alpha emitter samples BEFORE
++	// they enter the SSGI donor sum. Do not alter world depth or other passes.
++	// Old Factory lamp and Tram donor paths for modes 0..3 stay intact.
++	if (u_ViewInfo.w >= 3.5)
++	{
++		float fireEmitter = SsgiFireEmissionLikelihood(sampleColor, centerLuma);
++		donor *= 1.0 - 0.998 * fireEmitter;
++	}
+ 	if (donor <= 0.0001)
+ 		return;
+ 
+@@ -430,6 +457,14 @@
+ 		float hotCore = smoothstep(0.72, 1.25, coreEnergy);
+ 		bounce *= 1.0 - 0.97 * hotCore;
+ 	}
++	// DARKWOLF_SSGI_FIRE_EMISSIVE_DONOR_ISOLATION_V2: reject residual self-illumination of the softer
++	// flame edge (below the old 0.72 hot-core threshold), without removing
++	// natural GI from ordinary non-emissive walls or floors.
++	if (u_ViewInfo.w >= 3.5)
++	{
++		float flameReceiver = SsgiFireEmissionLikelihood(centerColor, 0.0);
++		bounce *= 1.0 - 0.995 * flameReceiver;
++	}
+ 	bounce = min(bounce, vec3(clamp(u_Color.z, 0.0, 1.0)));
+ 
+ 	if (u_Color.w > 2.5)
+--- a/SP/code/rend2/tr_init.c
++++ b/SP/code/rend2/tr_init.c
+@@ -1649,8 +1649,8 @@
+ 	r_ssgiDebug = &s_darkwolfProductionDiagOffCvar;
+ 	r_ssgiTrace = &s_darkwolfProductionDiagOffCvar;
+ 	// DARKWOLF_SSGI_BRIGHT_SOURCE_HALO_FIX_V0_2: live A/B toggle; GI remains enabled.
+-	r_ssgiBrightSourceFix = ri.Cvar_Get( "r_ssgiBrightSourceFix", "3", CVAR_ARCHIVE ); // DARKWOLF_SSGI_EMITTER_DONOR_REJECTION_V0_3
+-	ri.Cvar_CheckRange( r_ssgiBrightSourceFix, 0, 3, qtrue );
++	r_ssgiBrightSourceFix = ri.Cvar_Get( "r_ssgiBrightSourceFix", "4", CVAR_ARCHIVE ); // DARKWOLF_SSGI_FIRE_EMISSIVE_DONOR_ISOLATION_V2 // DARKWOLF_SSGI_EMITTER_DONOR_REJECTION_V0_3
++	ri.Cvar_CheckRange( r_ssgiBrightSourceFix, 0, 4, qtrue );
+ 	// REND2_GI_2_DIAG_1_FRINGE_ROOT_CAUSE_MATRIX
+ 	r_ssgiResolveMode = ri.Cvar_Get( "r_ssgiResolveMode", "2", CVAR_ARCHIVE ); // DARKWOLF_SSGI_FIRE_RECEIVER_TRAM_DEPTH_GUARD_V1 defaults to depth-aware GI resolve
+ 	ri.Cvar_CheckRange( r_ssgiResolveMode, 0, 2, qtrue );
