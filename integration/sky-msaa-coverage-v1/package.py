@@ -52,7 +52,8 @@ files['renderer_sp_rend2_x64.dll']=dll
 files['README_SKY_MSAA_COVERAGE_GUARD_RU.txt']=(
  'DARKWOLF REND2 SKY MSAA COVERAGE GUARD - CLEAN WIN64 CANDIDATE\n'
  'Exact user-accepted base: GitHub Actions #40294211216.\n'
- 'Source: only SP/code/rend2/tr_sky.c. When rendering sky into main MSAA FBO,\n'\n 'temporarily use pixel-center sky coverage and restore GL_MULTISAMPLE.\n'
+ 'Source: only SP/code/rend2/tr_sky.c. When rendering sky into main MSAA FBO,\n'
+ 'temporarily use pixel-center sky coverage and restore GL_MULTISAMPLE.\n'
  'Sky mesh, cloud UV, fog, SSGI, CSM Primary AreaMask, volumetrics,\n'
  'Tesla, shadowmask, LUT, HDR, image fidelity and all configs are unchanged.\n'
  'Original game files remain byte-identical except renderer_sp_rend2_x64.dll\n'
