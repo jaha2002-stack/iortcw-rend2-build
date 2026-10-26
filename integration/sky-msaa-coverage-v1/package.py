@@ -9,7 +9,7 @@ BASE_DLL='11a67525c3f930165391912aced7358d8f827a1669700230c6b4672a253cf2f0'
 CGAME='52908cfeca0cf3d589ad8a84f083e100a4e2aa02757ee687d264946281947bcf'
 SKY_SRC='41247728dc418a4edd7c9a3ab84a43e9539983a71005b2d148ae761c634d7bc7'
 ROOT='DarkWolf_Rend2_Xlabs_CSM_Fix_Volumetric_SunRay_CascadeEdge_AA_Win64/'
-OUT='DarkWolf_Rend2_Trainyard_Sky_Seam_Fix_Clean_Exact40294211216_Win64'
+OUT='DarkWolf_Rend2_Sky_MSAA_Coverage_Clean_Exact40294211216_Win64'
 p=argparse.ArgumentParser()
 p.add_argument('--base',type=Path,required=True)
 p.add_argument('--renderer',type=Path,required=True)
@@ -49,7 +49,7 @@ tests=a.tests.read_text()
 assert 'DW_SKY_MSAA_COVERAGE_REGRESSION_PASS' in tests
 files=dict(original)
 files['renderer_sp_rend2_x64.dll']=dll
-files['README_SKY_MSAA_SEAM_FIX_RU.txt']=(
+files['README_SKY_MSAA_COVERAGE_GUARD_RU.txt']=(
  'DARKWOLF REND2 SKY MSAA COVERAGE GUARD - CLEAN WIN64 CANDIDATE\n'
  'Exact user-accepted base: GitHub Actions #40294211216.\n'
  'Source: only SP/code/rend2/tr_sky.c. When rendering sky into main MSAA FBO,\n'\n 'temporarily use pixel-center sky coverage and restore GL_MULTISAMPLE.\n'
