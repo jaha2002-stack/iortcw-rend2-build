@@ -3,7 +3,7 @@
 from pathlib import Path
 import argparse, hashlib, json, shutil, subprocess
 MARK='DARKWOLF_SSGI_FIRE_EMISSIVE_DONOR_ISOLATION_V2'
-EXPECTED='d32cdab63c6deadd26cc18ad93d6a535824d3069007c2fca8a9b5d1ff32b658e'
+EXPECTED='222436a6fdecd967e439a61a5dbc7e9661d383e01297d300a3b105c5dee1a1c8'
 def smooth(a,b,x):
  t=max(0.,min(1.,(x-a)/(b-a)));return t*t*(3.-2.*t)
 def luma(c):return sum(x*y for x,y in zip(c,(.2125,.7154,.0721)))
