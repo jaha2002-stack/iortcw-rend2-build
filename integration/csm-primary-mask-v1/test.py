@@ -10,6 +10,9 @@ def once(old,new,label):
     global source
     assert source.count(old)==1,(label,source.count(old))
     source=source.replace(old,new,1)
+once('#define Mat4Copy(a,b) memcpy((b),(a),sizeof(float)*16)',
+     '#define Mat4Copy(a,b) memcpy((b),(a),sizeof(float)*16)\n#define Com_Memcpy(a,b,n) memcpy((a),(b),(n))',
+     'native Com_Memcpy macro')
 once('typedef struct {int time,rdflags;float fov_x,fov_y;vec3_t vieworg;vec3_t viewaxis[3];} refdef_t;',
 '''typedef unsigned char byte;
 #define MAX_MAP_AREA_BYTES 32
