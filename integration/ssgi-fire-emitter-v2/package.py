@@ -42,7 +42,7 @@ assert b'dwSunTraceStart' not in dll
 proof=json.loads(a.proof.read_text())
 assert proof['parent_accepted_gameplay_run']==40294211216
 assert proof['source_modified']==['SP/code/rend2/glsl/ssgi_fp.glsl','SP/code/rend2/tr_init.c']
-assert proof['new_ssgi_shader_sha256']=='d32cdab63c6deadd26cc18ad93d6a535824d3069007c2fca8a9b5d1ff32b658e'
+assert proof['new_ssgi_shader_sha256']=='222436a6fdecd967e439a61a5dbc7e9661d383e01297d300a3b105c5dee1a1c8'
 log=a.test_log.read_text()
 for check in ('DW_SSGI_FIRE_EMISSIVE_V2_REGRESSION_PASS','PASS_SSGI_GLSLANG_130_COMPILE','PASS_SSGI_GLSLANG_150_COMPILE'):
  assert check in log,check
