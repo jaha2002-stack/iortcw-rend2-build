@@ -1,0 +1,269 @@
+name: DarkWolf Sky MSAA Coverage Guard Clean Win64 exact accepted 40294211216
+on:
+  push:
+    branches: [rend2-sky-msaa-coverage-guard-v1-20261026]
+    paths:
+      - '.github/workflows/DW_SKY_MSAA_COVERAGE_GUARD_EXACT_40294211216_WIN64.yml'
+      - 'integration/september-port/merge.py'
+      - 'integration/september-port/package.py'
+      - 'integration/tesla-september-parity/restore.py'
+      - 'integration/tesla-fire-harmony/apply.py'
+      - 'integration/tesla-fire-harmony/package.py'
+      - 'integration/csm-primary-mask-v1/**'
+      - 'integration/volumetric-edge-fix-v1/**'
+      - 'integration/trainyard-sky-face-v1/**'
+      - 'integration/sky-msaa-coverage-v1/**'
+      - 'integration/xlabs-tesla-door-light/apply.py'
+      - 'integration/xlabs-tesla-door-light/package.py'
+      - 'integration/tesla-fire-harmony/apply.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  september-ported-clean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install canonical release compilers and provenance tools
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 git unzip file zip ca-certificates brotli glslang-tools
+          mkdir -p evidence dist build-binaries sept-runtime
+          python3 -m py_compile integration/september-port/merge.py integration/tesla-september-parity/restore.py integration/tesla-fire-harmony/apply.py integration/xlabs-tesla-door-light/apply.py integration/xlabs-tesla-door-light/package.py
+      - name: Restore EXACT September 18 Clean Production user-accepted runtime and source
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/10555091293/zip" > evidence/sep-artifact.zip
+          test "$(sha256sum evidence/sep-artifact.zip | cut -d' ' -f1)" = 6cd0e66d9e8e68ac4499a2e41b9ab0286b40942e14106b4b6ddc92ba38e3abb1
+          unzip -p evidence/sep-artifact.zip iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1.zip > evidence/sep-original.zip
+          test "$(sha256sum evidence/sep-original.zip | cut -d' ' -f1)" = 9b24185302c468b47b9c0125a31eb9b1edd9518e7cbd0084a80710c52d395a4b
+          unzip -q evidence/sep-original.zip -d sept-runtime
+          stage=sept-runtime/iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1
+          test -s "$stage/renderer_sp_rend2_x64.dll"
+          cp "$stage/docs/darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch" evidence/sept-source.patch
+          test "$(sha256sum evidence/sept-source.patch | cut -d' ' -f1)" = 7041376f9dccc1be3a2172ef5834c73bb270cc76d768ad1ad115b0567c1077a0
+          git clone -q https://github.com/iortcw/iortcw.git sept-source
+          git -C sept-source checkout -q --detach 438e7d413b5f7277187c35b032eb0ef9093ae778
+          git -C sept-source apply --binary --whitespace=nowarn --check ../evidence/sept-source.patch
+          git -C sept-source apply --binary --whitespace=nowarn ../evidence/sept-source.patch
+          echo 'SEPTEMBER_CLEAN_18_SOURCE_AND_RUNTIME_SHA_PASS'
+      - name: Rebuild official October improvements, REVERSE the entire Fire Tesla source delta
+        run: |
+          set -Eeuo pipefail
+          bash integration/cas-a2c-lut/ci_master_clean_4week.sh > evidence/oct-source-reconstruction.log 2>&1 || { tail -90 evidence/oct-source-reconstruction.log; exit 1; }
+          grep -Fq DARKWOLF_4WEEK_MASTER_WIN64_BUILD_OK evidence/oct-source-reconstruction.log
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/11971637900/zip" > evidence/containment-artifact.zip
+          unzip -p evidence/containment-artifact.zip containment.patch > evidence/original-fire-tesla.patch
+          test "$(sha256sum evidence/original-fire-tesla.patch | cut -d' ' -f1)" = e3600847ed0d1def868439af0c94f5ce250e2e7afbb0584fbb151459ea009a2f
+          python3 integration/fourweek-no-fire-tesla/apply.py source evidence/original-fire-tesla.patch evidence/NO_FIRE_TESLA_SSGI_MANIFEST.json
+          git -C source diff --check
+          echo 'OCTOBER_FEATURE_DONOR_WITHOUT_FIRE_TESLA_VERIFIED'
+      - name: Rebase ALL accepted October features onto verified SEPTEMBER source with original color
+        run: |
+          set -Eeuo pipefail
+          mkdir -p sept-tesla-original/SP/code/cgame sept-tesla-original/SP/code/game sept-tesla-original/SP/code/rend2
+          for rel in SP/code/cgame/cg_ents.c SP/code/cgame/cg_main.c SP/code/game/g_misc.c SP/code/rend2/tr_main.c SP/code/rend2/tr_scene.c; do
+            mkdir -p "sept-tesla-original/$(dirname "$rel")"
+            cp "sept-source/$rel" "sept-tesla-original/$rel"
+          done
+          python3 integration/september-port/merge.py sept-source source evidence/SEPTEMBER_BASE_FEATURE_PORT_MANIFEST.json
+          python3 integration/tesla-september-parity/restore.py sept-tesla-original sept-source evidence/TESLA_PARITY_MANIFEST.json
+          grep -Fq '"behavior": "SEPTEMBER_ET_TESLA_EF_CG_EFX_BYTE_IDENTICAL"' evidence/TESLA_PARITY_MANIFEST.json
+          grep -Fq '"no_other_cgame_logic_changed": true' evidence/TESLA_PARITY_MANIFEST.json
+          echo VERIFIED_SEPTEMBER_TESLA_CODE_NO_POST_SEPTEMBER_TIMING_OR_CRAWL
+          python3 integration/tesla-fire-harmony/apply.py sept-source evidence/original-fire-tesla.patch evidence/TESLA_FIRE_SELECTIVE_CONTAINMENT_MANIFEST.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          a=json.loads(Path('evidence/TESLA_PARITY_MANIFEST.json').read_text())
+          b=json.loads(Path('evidence/TESLA_FIRE_SELECTIVE_CONTAINMENT_MANIFEST.json').read_text())
+          assert a['september_tesla_branch_sha256']==b['stationary_tesla_normalized_postpatch_SHA256']
+          assert b['Tesla_light_radius_color_origin_pulse_bolt_timing_rhythm_unchanged']
+          assert not b['native_authored_lamps_shadowed_by_architecture']
+          assert b['source_control_CVar']['default']=='2'
+          print('SEPTEMBER_TESLA_CG_EFX_TIMING_PULSE_IDENTICAL_WITH_2_FLAGS_PASS')
+          PY
+          git -C sept-source diff --check
+          python3 integration/xlabs-tesla-door-light/apply.py sept-source evidence/XLABS_TESLA_DOOR_DLIGHT_SOURCE_PROOF.json
+          echo 'XLABS_TESLA_DOOR_SINGLE_GROUP_BLUE_DLIGHT_SHADOWED_SOURCE_PASS'
+          echo 'SEPTEMBER_ORIGIN_COMPLETE_OCTOBER_FEATURES_EXCEPT_FIRE_TESLA_PASS'
+      - name: Apply precise CSM primary-world areamask fix and verify native regression matrix
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/csm-primary-mask-v1/apply.py integration/csm-primary-mask-v1/test.py integration/csm-primary-mask-v1/package.py
+          python3 integration/csm-primary-mask-v1/apply.py sept-source --proof evidence/CSM_PRIMARY_MASK_SOURCE_PROOF.json
+          python3 integration/csm-primary-mask-v1/test.py sept-source evidence/csm-main-mask-native 2>&1 | tee evidence/CSM_PRIMARY_MASK_TESTS.txt
+          grep -Fx DW_CSM_PRIMARY_MASK_NATIVE_REGRESSION_PASS evidence/CSM_PRIMARY_MASK_TESTS.txt
+          grep -Fq 'PASS secondary-skybox-mask-change-suppressed' evidence/CSM_PRIMARY_MASK_TESTS.txt
+          grep -Fq 'PASS real-primary-mask-door-reprimes' evidence/CSM_PRIMARY_MASK_TESTS.txt
+          git -C sept-source diff --check
+          echo CSM_PRIMARY_ONLY_VISIBILITY_VALIDATION_PASSED
+      - name: Apply exact 3-shader volumetric edge fix and run geometry GLSL tests
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/vol-edge-shader-tests
+          cat integration/volumetric-edge-fix-v1/payload.part{1,2,3,4} > evidence/vol-edge-payload.br.b64
+          test "$(sha256sum evidence/vol-edge-payload.br.b64 | cut -d' ' -f1)" = 2119c14ee969e9a02b968d05020af1fa38bb8acd94858f038f23bbc9d53e6156
+          base64 -d evidence/vol-edge-payload.br.b64 | brotli -d > evidence/vol-edge-payload.tar
+          test "$(sha256sum evidence/vol-edge-payload.tar | cut -d' ' -f1)" = 27f3b4d618ce5c12d9e540735cdc4e80e9bfa323c4206067bdbd7a0c3214e69c
+          tar -xf evidence/vol-edge-payload.tar -C integration/volumetric-edge-fix-v1
+          python3 -m py_compile integration/volumetric-edge-fix-v1/apply.py integration/volumetric-edge-fix-v1/test.py integration/volumetric-edge-fix-v1/package.py
+          mkdir -p evidence/volumetric-before
+          for file in volumetricsun_vp.glsl volumetricsun_fp.glsl volumetriclocal_upscale_fp.glsl; do
+            cp "sept-source/SP/code/rend2/glsl/$file" "evidence/volumetric-before/$file"
+          done
+          python3 integration/volumetric-edge-fix-v1/apply.py sept-source --proof evidence/VOLUMETRIC_FIX_SOURCE_PROOF.json | tee evidence/VOLUMETRIC_FIX_APPLY.txt
+          python3 integration/volumetric-edge-fix-v1/test.py sept-source --out evidence/vol-edge-shader-tests 2>&1 | tee evidence/VOLUMETRIC_FIX_TESTS.txt
+          grep -Fx DARKWOLF_VOL_EDGE_FIX_TESTS_PASS evidence/VOLUMETRIC_FIX_TESTS.txt
+          test "$(grep -c '^PASS_GLSLANG_130' evidence/VOLUMETRIC_FIX_TESTS.txt)" -eq 4
+          git -C sept-source diff --check
+          : > evidence/VOLUMETRIC_FIX_EXACT_SHADER.patch
+          for file in volumetricsun_vp.glsl volumetricsun_fp.glsl volumetriclocal_upscale_fp.glsl; do
+            diff -u --label "a/SP/code/rend2/glsl/$file" --label "b/SP/code/rend2/glsl/$file" "evidence/volumetric-before/$file" "sept-source/SP/code/rend2/glsl/$file" >> evidence/VOLUMETRIC_FIX_EXACT_SHADER.patch || test "$?" -eq 1
+          done
+          test -s evidence/VOLUMETRIC_FIX_EXACT_SHADER.patch
+          echo VOLUMETRIC_CASCADE_RAY_AND_SAME_SURFACE_GLSL_PASS
+      - name: Apply sky-only GL multisample coverage guard and verify protected effects
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/sky-msaa
+          python3 -m py_compile integration/sky-msaa-coverage-v1/package.py
+          test "$(sha256sum sept-source/SP/code/rend2/tr_sky.c | cut -d' ' -f1)" = 43dfc3b54eef5b2487d460f94a97cd71cb91b706e7ae292709a8f319040d0ff1
+          cp sept-source/SP/code/rend2/tr_sky.c evidence/sky-msaa/BEFORE_tr_sky.c
+          for f in tr_scene.c tr_main.c tr_backend.c tr_shade.c tr_shader.c tr_init.c tr_glsl.c tr_fbo.c; do
+            sha256sum "sept-source/SP/code/rend2/$f"
+          done > evidence/sky-msaa/PROTECTED_C_BEFORE.sha256
+          for f in volumetricsun_fp.glsl volumetricsun_vp.glsl volumetriclocal_upscale_fp.glsl ssgi_fp.glsl; do
+            sha256sum "sept-source/SP/code/rend2/glsl/$f"
+          done > evidence/sky-msaa/PROTECTED_GLSL_BEFORE.sha256
+          patch -d sept-source -p1 --forward < integration/sky-msaa-coverage-v1/SKY_MSAA_COVERAGE_GUARD_V1.patch
+          test "$(sha256sum sept-source/SP/code/rend2/tr_sky.c | cut -d' ' -f1)" = 41247728dc418a4edd7c9a3ab84a43e9539983a71005b2d148ae761c634d7bc7
+          (
+            for f in tr_scene.c tr_main.c tr_backend.c tr_shade.c tr_shader.c tr_init.c tr_glsl.c tr_fbo.c; do
+              sha256sum "sept-source/SP/code/rend2/$f"
+            done
+          ) | diff -u evidence/sky-msaa/PROTECTED_C_BEFORE.sha256 -
+          (
+            for f in volumetricsun_fp.glsl volumetricsun_vp.glsl volumetriclocal_upscale_fp.glsl ssgi_fp.glsl; do
+              sha256sum "sept-source/SP/code/rend2/glsl/$f"
+            done
+          ) | diff -u evidence/sky-msaa/PROTECTED_GLSL_BEFORE.sha256 -
+          python3 - <<'PY' 2>&1 | tee evidence/sky-msaa/TESTS.txt
+          import json,hashlib
+          from pathlib import Path
+          path=Path('sept-source/SP/code/rend2/tr_sky.c')
+          before=Path('evidence/sky-msaa/BEFORE_tr_sky.c')
+          source=path.read_text(encoding='latin-1')
+          baseline=before.read_text(encoding='latin-1')
+          h=hashlib.sha256(path.read_bytes()).hexdigest()
+          assert h=='41247728dc418a4edd7c9a3ab84a43e9539983a71005b2d148ae761c634d7bc7'
+          assert hashlib.sha256(before.read_bytes()).hexdigest()=='43dfc3b54eef5b2487d460f94a97cd71cb91b706e7ae292709a8f319040d0ff1'
+          assert source.count('DARKWOLF_SKY_MSAA_COVERAGE_GUARD_V1')==1
+          assert 'DARKWOLF_SKYBOX_FACE_EDGE_OVERLAP_V1' not in source
+          header=Path('sept-source/SP/code/rend2/qgl.h').read_text()
+          for method in ('GLE(void, GetBooleanv,', 'GLE(void, Disable,', 'GLE(void, Enable,'):
+            assert method in header,method
+          oldfunc=baseline[baseline.index('void RB_StageIteratorSky( void ) {'):]
+          newfunc=source[source.index('void RB_StageIteratorSky( void ) {'):]
+          for call in ('qglGetBooleanv( GL_MULTISAMPLE, &skyMsaaWasEnabled );','qglDisable( GL_MULTISAMPLE );','qglEnable( GL_MULTISAMPLE );'):
+            assert newfunc.count(call)==1,call
+          assert 'if ( tr.renderFbo && tr.msaaResolveFbo && glState.currentFBO == tr.renderFbo )' in newfunc
+          assert newfunc.index('qglEnable( GL_MULTISAMPLE );') > newfunc.index('RB_StageIteratorGeneric();')
+          assert 'return;' not in newfunc[newfunc.index('qglDisable( GL_MULTISAMPLE );'):]
+          for anchor in ('R_BuildCloudData( &tess );','RB_StageIteratorGeneric();',
+                         'DrawSkyBox( tess.shader );','DrawSkyBoxInner( tess.shader );',
+                         'qglDepthRange( 0.0, 1.0 );'):
+            assert anchor in newfunc and anchor in oldfunc,anchor
+          assert source[:source.index('void RB_StageIteratorSky( void ) {')]==baseline[:baseline.index('void RB_StageIteratorSky( void ) {')]
+          assert source.count('MakeSkyVec(')==baseline.count('MakeSkyVec(')
+          assert source.count('FillCloudBox(')==baseline.count('FillCloudBox(')
+          assert source.count('DrawSkySide(')==baseline.count('DrawSkySide(')
+          print('PASS_MAINTAIN_FULL_MULTISAMPLE_SCENE_FBO_AND_RESTORE_GL_STATE')
+          print('PASS_SKY_COLOR_DEPTH_FOG_CLOUD_CSM_SSGI_VOLUMETRIC_UNTOUCHED')
+          print('PASS_NO_GEOMETRY_OVERLAP_PATCH_OR_NEW_CVARS')
+          print('PASS_SKY_PASS_NO_EARLY_RETURN_AFTER_MULTISAMPLE_DISABLE')
+          proof={'marker':'DARKWOLF_SKY_MSAA_COVERAGE_GUARD_V1',
+           'source_parent_run':40294211216,
+           'source_before_sha256':'43dfc3b54eef5b2487d460f94a97cd71cb91b706e7ae292709a8f319040d0ff1',
+           'patched_src_sha256':h,
+           'modified_source':['SP/code/rend2/tr_sky.c'],
+           'sky_draw_multisample_coverage':'PIXEL_CENTER_WHILE_SCENE_IS_MSAA',
+           'MSAA_color_depth_attachments':'UNCHANGED',
+           'MSAA_resolve':'UNCHANGED',
+           'restore_prior_GL_multisample_state':True,
+           'all_other_effects_shader_and_source_byte_exact':True,
+           'GPU_Trainyard_Factory_visual_acceptance':'PENDING_USER'}
+          Path('evidence/sky-msaa/SOURCE_PROOF.json').write_text(json.dumps(proof,indent=2)+'\n')
+          print('DW_SKY_MSAA_COVERAGE_REGRESSION_PASS')
+          PY
+          git -C sept-source diff --check
+          echo DW_SKY_MSAA_COVERAGE_SOURCE_ISOLATION_PASS
+      - name: Cross-compile ALL five game and renderer Win64 binaries from September base
+        run: |
+          set -Eeuo pipefail
+          make -C sept-source/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-SepBase-FourWeek-NoFire PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/september-ported-win64-build.log 2>&1 || { tail -130 evidence/september-ported-win64-build.log; exit 1; }
+          for name in ioWolfSP.x64.exe renderer_sp_rend2_x64.dll cgame_sp_x64.dll qagame_sp_x64.dll ui_sp_x64.dll; do
+            list="$(find sept-source/SP/build -type f -name "$name" -print)"
+            test "$(printf '%s\n' "$list" | grep -c .)" -eq 1 || { echo "AMBIGUOUS_BUILD_OUTPUT: $name $list"; exit 1; }
+            cp "$list" build-binaries/"$name"
+            file build-binaries/"$name" | grep -F PE32+
+          done
+          sha256sum build-binaries/* | tee evidence/NEW_SEPTEMBER_BASE_BINARIES_SHA256.txt
+          echo 'SEPTEMBER_PORTED_COMPLETE_WIN64_BINARIES_PASS'
+      - name: Package exact accepted #40294211216 runtime with only new sky-only MSAA renderer DLL
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12636784509/zip" > evidence/sky-msaa/ACCEPTED_PARENT_ARTIFACT.zip
+          unzip -p evidence/sky-msaa/ACCEPTED_PARENT_ARTIFACT.zip dist/DarkWolf_Rend2_Xlabs_CSM_Fix_Volumetric_Edge_AA_Clean_Win64.zip > evidence/sky-msaa/EXACT_ACCEPTED_BASE.zip
+          test "$(sha256sum evidence/sky-msaa/EXACT_ACCEPTED_BASE.zip | cut -d' ' -f1)" = cabbf853370ba544cc13eca4467dba3be855cf9525b36bd610620e1777a2ead5
+          python3 integration/sky-msaa-coverage-v1/package.py \
+            --base evidence/sky-msaa/EXACT_ACCEPTED_BASE.zip \
+            --renderer build-binaries/renderer_sp_rend2_x64.dll \
+            --proof evidence/sky-msaa/SOURCE_PROOF.json \
+            --tests evidence/sky-msaa/TESTS.txt \
+            --out dist_skymsaa 2>&1 | tee evidence/sky-msaa/PACKAGE.log
+          grep -Fq DW_SKY_MSAA_COVERAGE_CLEAN_WIN64_PACKAGE_PASS evidence/sky-msaa/PACKAGE.log
+          test -s dist_skymsaa/SKY_MSAA_RELEASE_VALIDATION.json
+          echo DW_SKY_MSAA_COVERAGE_CLEAN_WIN64_CANDIDATE_PASS
+      - name: Upload full Clean Production Windows archive and exact code provenance
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DarkWolf-Sky-MSAA-Coverage-Exact40294211216-Clean-Win64
+          path: |
+            dist_skymsaa/*.zip
+            dist_skymsaa/*.sha256
+            dist_skymsaa/*.json
+            evidence/SEPTEMBER_BASE_FEATURE_PORT_MANIFEST.json
+            evidence/NO_FIRE_TESLA_SSGI_MANIFEST.json
+            evidence/TESLA_PARITY_MANIFEST.json
+            evidence/XLABS_TESLA_DOOR_DLIGHT_SOURCE_PROOF.json
+            evidence/TESLA_FIRE_SELECTIVE_CONTAINMENT_MANIFEST.json
+            evidence/CSM_PRIMARY_MASK_SOURCE_PROOF.json
+            evidence/CSM_PRIMARY_MASK_TESTS.txt
+            evidence/csm-main-mask-native/native/native-test-results.log
+            evidence/VOLUMETRIC_FIX_SOURCE_PROOF.json
+            evidence/VOLUMETRIC_FIX_APPLY.txt
+            evidence/VOLUMETRIC_FIX_TESTS.txt
+            evidence/VOLUMETRIC_FIX_EXACT_SHADER.patch
+            evidence/volumetric-archive-package.log
+            evidence/vol-edge-shader-tests/*.log
+            evidence/vol-edge-shader-tests/QA_SUMMARY.json
+            integration/volumetric-edge-fix-v1/apply.py
+            integration/volumetric-edge-fix-v1/test.py
+            integration/volumetric-edge-fix-v1/package.py
+            evidence/sky-msaa/SOURCE_PROOF.json
+            evidence/sky-msaa/TESTS.txt
+            evidence/sky-msaa/PACKAGE.log
+            evidence/sky-msaa/PROTECTED_RENDERER_C_BEFORE.sha256
+            evidence/sky-msaa/PROTECTED_GLSL_BEFORE.sha256
+            integration/sky-msaa-coverage-v1/SKY_MSAA_COVERAGE_GUARD_V1.patch
+            integration/sky-msaa-coverage-v1/package.py
+            evidence/NEW_SEPTEMBER_BASE_BINARIES_SHA256.txt
+            evidence/september-ported-win64-build.log
+          retention-days: 90
