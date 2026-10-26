@@ -1,0 +1,48 @@
+--- a/SP/code/rend2/tr_sky.c
++++ b/SP/code/rend2/tr_sky.c
+@@ -1094,6 +1094,16 @@
+ ================
+ */
+ void RB_StageIteratorSky( void ) {
++	/* DARKWOLF_SKY_MSAA_COVERAGE_GUARD_V1
++	 * Skybox/cloud meshes use independently tessellated faces. With per-sample
++	 * MSAA coverage their shared edges may leave tiny unresolved clear samples.
++	 * Render ONLY the sky geometry with pixel-center coverage while preserving
++	 * the full multisample color/depth FBO for every other object and pass.
++	 * Restore the prior GL_MULTISAMPLE bit before leaving this sky iterator.
++	 */
++	GLboolean skyMsaaWasEnabled = GL_FALSE;
++	qboolean skyMsaaCoverageGuard = qfalse;
++
+ 	if ( r_fastsky->integer ) {
+ 		return;
+ 	}
+@@ -1115,6 +1125,16 @@
+ 	}
+ 
+ 
++	/* Only touch the actual multisample scene render target. No state changes
++	 * for depth prepasses, shadow maps, portal FBOs or non-MSAA framebuffers. */
++	if ( tr.renderFbo && tr.msaaResolveFbo && glState.currentFBO == tr.renderFbo ) {
++		qglGetBooleanv( GL_MULTISAMPLE, &skyMsaaWasEnabled );
++		if ( skyMsaaWasEnabled ) {
++			qglDisable( GL_MULTISAMPLE );
++			skyMsaaCoverageGuard = qtrue;
++		}
++	}
++
+ 	backEnd.refdef.rdflags |= RDF_DRAWINGSKY;
+ 
+ 
+@@ -1191,6 +1211,11 @@
+ 	// back to normal depth range
+ 	qglDepthRange( 0.0, 1.0 );
+ 
++	/* Never leave the sky pass with changed multisample coverage. */
++	if ( skyMsaaCoverageGuard ) {
++		qglEnable( GL_MULTISAMPLE );
++	}
++
+ 	backEnd.refdef.rdflags &= ~RDF_DRAWINGSKY;
+ 
+ 	// note that sky was drawn so we will draw a sun later
