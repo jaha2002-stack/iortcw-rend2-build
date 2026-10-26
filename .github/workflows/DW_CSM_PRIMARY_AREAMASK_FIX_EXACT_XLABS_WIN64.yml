@@ -1,0 +1,148 @@
+name: DarkWolf CSM Skybox Primary Areamask Clean Candidate from Xlabs 40189858429
+on:
+  push:
+    branches: [rend2-csm-primary-areamask-fix-20261026]
+    paths:
+      - '.github/workflows/DW_CSM_PRIMARY_AREAMASK_FIX_EXACT_XLABS_WIN64.yml'
+      - 'integration/september-port/merge.py'
+      - 'integration/september-port/package.py'
+      - 'integration/tesla-september-parity/restore.py'
+      - 'integration/tesla-fire-harmony/apply.py'
+      - 'integration/tesla-fire-harmony/package.py'
+      - 'integration/csm-primary-mask-v1/**'
+      - 'integration/xlabs-tesla-door-light/apply.py'
+      - 'integration/xlabs-tesla-door-light/package.py'
+      - 'integration/tesla-fire-harmony/apply.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  september-ported-clean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install canonical release compilers and provenance tools
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 git unzip file zip ca-certificates
+          mkdir -p evidence dist build-binaries sept-runtime
+          python3 -m py_compile integration/september-port/merge.py integration/tesla-september-parity/restore.py integration/tesla-fire-harmony/apply.py integration/xlabs-tesla-door-light/apply.py integration/xlabs-tesla-door-light/package.py
+      - name: Restore EXACT September 18 Clean Production user-accepted runtime and source
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/10555091293/zip" > evidence/sep-artifact.zip
+          test "$(sha256sum evidence/sep-artifact.zip | cut -d' ' -f1)" = 6cd0e66d9e8e68ac4499a2e41b9ab0286b40942e14106b4b6ddc92ba38e3abb1
+          unzip -p evidence/sep-artifact.zip iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1.zip > evidence/sep-original.zip
+          test "$(sha256sum evidence/sep-original.zip | cut -d' ' -f1)" = 9b24185302c468b47b9c0125a31eb9b1edd9518e7cbd0084a80710c52d395a4b
+          unzip -q evidence/sep-original.zip -d sept-runtime
+          stage=sept-runtime/iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1
+          test -s "$stage/renderer_sp_rend2_x64.dll"
+          cp "$stage/docs/darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch" evidence/sept-source.patch
+          test "$(sha256sum evidence/sept-source.patch | cut -d' ' -f1)" = 7041376f9dccc1be3a2172ef5834c73bb270cc76d768ad1ad115b0567c1077a0
+          git clone -q https://github.com/iortcw/iortcw.git sept-source
+          git -C sept-source checkout -q --detach 438e7d413b5f7277187c35b032eb0ef9093ae778
+          git -C sept-source apply --binary --whitespace=nowarn --check ../evidence/sept-source.patch
+          git -C sept-source apply --binary --whitespace=nowarn ../evidence/sept-source.patch
+          echo 'SEPTEMBER_CLEAN_18_SOURCE_AND_RUNTIME_SHA_PASS'
+      - name: Rebuild official October improvements, REVERSE the entire Fire Tesla source delta
+        run: |
+          set -Eeuo pipefail
+          bash integration/cas-a2c-lut/ci_master_clean_4week.sh > evidence/oct-source-reconstruction.log 2>&1 || { tail -90 evidence/oct-source-reconstruction.log; exit 1; }
+          grep -Fq DARKWOLF_4WEEK_MASTER_WIN64_BUILD_OK evidence/oct-source-reconstruction.log
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/11971637900/zip" > evidence/containment-artifact.zip
+          unzip -p evidence/containment-artifact.zip containment.patch > evidence/original-fire-tesla.patch
+          test "$(sha256sum evidence/original-fire-tesla.patch | cut -d' ' -f1)" = e3600847ed0d1def868439af0c94f5ce250e2e7afbb0584fbb151459ea009a2f
+          python3 integration/fourweek-no-fire-tesla/apply.py source evidence/original-fire-tesla.patch evidence/NO_FIRE_TESLA_SSGI_MANIFEST.json
+          git -C source diff --check
+          echo 'OCTOBER_FEATURE_DONOR_WITHOUT_FIRE_TESLA_VERIFIED'
+      - name: Rebase ALL accepted October features onto verified SEPTEMBER source with original color
+        run: |
+          set -Eeuo pipefail
+          mkdir -p sept-tesla-original/SP/code/cgame sept-tesla-original/SP/code/game sept-tesla-original/SP/code/rend2
+          for rel in SP/code/cgame/cg_ents.c SP/code/cgame/cg_main.c SP/code/game/g_misc.c SP/code/rend2/tr_main.c SP/code/rend2/tr_scene.c; do
+            mkdir -p "sept-tesla-original/$(dirname "$rel")"
+            cp "sept-source/$rel" "sept-tesla-original/$rel"
+          done
+          python3 integration/september-port/merge.py sept-source source evidence/SEPTEMBER_BASE_FEATURE_PORT_MANIFEST.json
+          python3 integration/tesla-september-parity/restore.py sept-tesla-original sept-source evidence/TESLA_PARITY_MANIFEST.json
+          grep -Fq '"behavior": "SEPTEMBER_ET_TESLA_EF_CG_EFX_BYTE_IDENTICAL"' evidence/TESLA_PARITY_MANIFEST.json
+          grep -Fq '"no_other_cgame_logic_changed": true' evidence/TESLA_PARITY_MANIFEST.json
+          echo VERIFIED_SEPTEMBER_TESLA_CODE_NO_POST_SEPTEMBER_TIMING_OR_CRAWL
+          python3 integration/tesla-fire-harmony/apply.py sept-source evidence/original-fire-tesla.patch evidence/TESLA_FIRE_SELECTIVE_CONTAINMENT_MANIFEST.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          a=json.loads(Path('evidence/TESLA_PARITY_MANIFEST.json').read_text())
+          b=json.loads(Path('evidence/TESLA_FIRE_SELECTIVE_CONTAINMENT_MANIFEST.json').read_text())
+          assert a['september_tesla_branch_sha256']==b['stationary_tesla_normalized_postpatch_SHA256']
+          assert b['Tesla_light_radius_color_origin_pulse_bolt_timing_rhythm_unchanged']
+          assert not b['native_authored_lamps_shadowed_by_architecture']
+          assert b['source_control_CVar']['default']=='2'
+          print('SEPTEMBER_TESLA_CG_EFX_TIMING_PULSE_IDENTICAL_WITH_2_FLAGS_PASS')
+          PY
+          git -C sept-source diff --check
+          python3 integration/xlabs-tesla-door-light/apply.py sept-source evidence/XLABS_TESLA_DOOR_DLIGHT_SOURCE_PROOF.json
+          echo 'XLABS_TESLA_DOOR_SINGLE_GROUP_BLUE_DLIGHT_SHADOWED_SOURCE_PASS'
+          echo 'SEPTEMBER_ORIGIN_COMPLETE_OCTOBER_FEATURES_EXCEPT_FIRE_TESLA_PASS'
+      - name: Apply precise CSM primary-world areamask fix and verify native regression matrix
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/csm-primary-mask-v1/apply.py integration/csm-primary-mask-v1/test.py integration/csm-primary-mask-v1/package.py
+          python3 integration/csm-primary-mask-v1/apply.py sept-source --proof evidence/CSM_PRIMARY_MASK_SOURCE_PROOF.json
+          python3 integration/csm-primary-mask-v1/test.py sept-source evidence/csm-main-mask-native 2>&1 | tee evidence/CSM_PRIMARY_MASK_TESTS.txt
+          grep -Fx DW_CSM_PRIMARY_MASK_NATIVE_REGRESSION_PASS evidence/CSM_PRIMARY_MASK_TESTS.txt
+          grep -Fq 'PASS secondary-skybox-mask-change-suppressed' evidence/CSM_PRIMARY_MASK_TESTS.txt
+          grep -Fq 'PASS real-primary-mask-door-reprimes' evidence/CSM_PRIMARY_MASK_TESTS.txt
+          git -C sept-source diff --check
+          echo CSM_PRIMARY_ONLY_VISIBILITY_VALIDATION_PASSED
+      - name: Cross-compile ALL five game and renderer Win64 binaries from September base
+        run: |
+          set -Eeuo pipefail
+          make -C sept-source/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-SepBase-FourWeek-NoFire PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/september-ported-win64-build.log 2>&1 || { tail -130 evidence/september-ported-win64-build.log; exit 1; }
+          for name in ioWolfSP.x64.exe renderer_sp_rend2_x64.dll cgame_sp_x64.dll qagame_sp_x64.dll ui_sp_x64.dll; do
+            list="$(find sept-source/SP/build -type f -name "$name" -print)"
+            test "$(printf '%s\n' "$list" | grep -c .)" -eq 1 || { echo "AMBIGUOUS_BUILD_OUTPUT: $name $list"; exit 1; }
+            cp "$list" build-binaries/"$name"
+            file build-binaries/"$name" | grep -F PE32+
+          done
+          sha256sum build-binaries/* | tee evidence/NEW_SEPTEMBER_BASE_BINARIES_SHA256.txt
+          echo 'SEPTEMBER_PORTED_COMPLETE_WIN64_BINARIES_PASS'
+      - name: Package clean exact Xlabs runtime with ONLY corrected renderer CSM guard
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/\${GITHUB_REPOSITORY}/actions/artifacts/12597905344/zip" > evidence/Xlabs_40189858429.zip
+          test "$(sha256sum evidence/Xlabs_40189858429.zip | cut -d' ' -f1)" = 1ab999f0b0a994b5c2d41039a2c46195262c2378bfe14462e40bab580ce0c1da
+          python3 integration/csm-primary-mask-v1/package.py \
+            --base-artifact evidence/Xlabs_40189858429.zip \
+            --renderer build-binaries/renderer_sp_rend2_x64.dll \
+            --proof evidence/CSM_PRIMARY_MASK_SOURCE_PROOF.json \
+            --test-log evidence/CSM_PRIMARY_MASK_TESTS.txt \
+            --out dist
+          test -s dist/CSM_PRIMARY_AREA_RELEASE_VALIDATION.json
+          grep -Fq DW_CSM_PRIMARY_MASK_NATIVE_REGRESSION_PASS evidence/CSM_PRIMARY_MASK_TESTS.txt
+          echo EXACT_XLABS_ONE_FILE_CSM_GUARD_CLEAN_WIN64_PACKAGE_PASS
+      - name: Upload full Clean Production Windows archive and exact code provenance
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DarkWolf-Xlabs-40189858429-CSM-Skybox-PrimaryMask-CleanCandidate-Win64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            dist/*.json
+            evidence/SEPTEMBER_BASE_FEATURE_PORT_MANIFEST.json
+            evidence/NO_FIRE_TESLA_SSGI_MANIFEST.json
+            evidence/TESLA_PARITY_MANIFEST.json
+            evidence/XLABS_TESLA_DOOR_DLIGHT_SOURCE_PROOF.json
+            evidence/TESLA_FIRE_SELECTIVE_CONTAINMENT_MANIFEST.json
+            evidence/CSM_PRIMARY_MASK_SOURCE_PROOF.json
+            evidence/CSM_PRIMARY_MASK_TESTS.txt
+            evidence/csm-main-mask-native/native/native-test-results.log
+            evidence/NEW_SEPTEMBER_BASE_BINARIES_SHA256.txt
+            evidence/september-ported-win64-build.log
+          retention-days: 90
