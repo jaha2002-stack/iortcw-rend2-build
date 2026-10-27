@@ -17,7 +17,7 @@ assert newdll[:2]==b'MZ' and len(newdll)>2000000
 assert H(newdll)!=accepted_renderer_sha
 proof=json.loads(a.proof.read_text())
 assert proof['marker']=='DARKWOLF_VOLUMETRIC_WAVE_CLEAN_V2_20261027'
-assert proof['before_sha256']['tr_backend.c']=='505ef716a0e316a99f00f0ce8d2e4e81ecef650424bfd22a537227ffbfbb37ba'
+assert proof['sha256_before']['tr_backend.c']=='505ef716a0e316a99f00f0ce8d2e4e81ecef650424bfd22a537227ffbfbb37ba'
 assert sorted(proof['modified_files'])==sorted(['SP/code/rend2/'+p for p in ('tr_backend.c','tr_init.c','glsl/volumetricsun_fp.glsl','glsl/volumetriclocal_fp.glsl','glsl/volumetriclocal_upscale_fp.glsl')])
 with zipfile.ZipFile(io.BytesIO(base)) as z:
  original={i.filename:z.read(i) for i in z.infolist() if not i.is_dir()}
