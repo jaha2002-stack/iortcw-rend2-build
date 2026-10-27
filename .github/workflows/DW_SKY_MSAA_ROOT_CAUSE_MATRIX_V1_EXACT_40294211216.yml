@@ -1,0 +1,335 @@
+name: DarkWolf Sky MSAA Root Cause Matrix V1 over accepted 40294211216
+on:
+  push:
+    branches: [rend2-sky-msaa-root-cause-matrix-v1-20261027]
+    paths:
+      - '.github/workflows/DW_SKY_MSAA_ROOT_CAUSE_MATRIX_V1_EXACT_40294211216.yml'
+      - 'integration/september-port/merge.py'
+      - 'integration/september-port/package.py'
+      - 'integration/tesla-september-parity/restore.py'
+      - 'integration/tesla-fire-harmony/apply.py'
+      - 'integration/tesla-fire-harmony/package.py'
+      - 'integration/csm-primary-mask-v1/**'
+      - 'integration/volumetric-edge-fix-v1/**'
+      - 'integration/xlabs-tesla-door-light/apply.py'
+      - 'integration/xlabs-tesla-door-light/package.py'
+      - 'integration/tesla-fire-harmony/apply.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  september-ported-clean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install canonical release compilers and provenance tools
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 git unzip file zip ca-certificates brotli glslang-tools
+          mkdir -p evidence dist build-binaries sept-runtime
+          python3 -m py_compile integration/september-port/merge.py integration/tesla-september-parity/restore.py integration/tesla-fire-harmony/apply.py integration/xlabs-tesla-door-light/apply.py integration/xlabs-tesla-door-light/package.py
+      - name: Restore EXACT September 18 Clean Production user-accepted runtime and source
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/10555091293/zip" > evidence/sep-artifact.zip
+          test "$(sha256sum evidence/sep-artifact.zip | cut -d' ' -f1)" = 6cd0e66d9e8e68ac4499a2e41b9ab0286b40942e14106b4b6ddc92ba38e3abb1
+          unzip -p evidence/sep-artifact.zip iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1.zip > evidence/sep-original.zip
+          test "$(sha256sum evidence/sep-original.zip | cut -d' ' -f1)" = 9b24185302c468b47b9c0125a31eb9b1edd9518e7cbd0084a80710c52d395a4b
+          unzip -q evidence/sep-original.zip -d sept-runtime
+          stage=sept-runtime/iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1
+          test -s "$stage/renderer_sp_rend2_x64.dll"
+          cp "$stage/docs/darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch" evidence/sept-source.patch
+          test "$(sha256sum evidence/sept-source.patch | cut -d' ' -f1)" = 7041376f9dccc1be3a2172ef5834c73bb270cc76d768ad1ad115b0567c1077a0
+          git clone -q https://github.com/iortcw/iortcw.git sept-source
+          git -C sept-source checkout -q --detach 438e7d413b5f7277187c35b032eb0ef9093ae778
+          git -C sept-source apply --binary --whitespace=nowarn --check ../evidence/sept-source.patch
+          git -C sept-source apply --binary --whitespace=nowarn ../evidence/sept-source.patch
+          echo 'SEPTEMBER_CLEAN_18_SOURCE_AND_RUNTIME_SHA_PASS'
+      - name: Rebuild official October improvements, REVERSE the entire Fire Tesla source delta
+        run: |
+          set -Eeuo pipefail
+          bash integration/cas-a2c-lut/ci_master_clean_4week.sh > evidence/oct-source-reconstruction.log 2>&1 || { tail -90 evidence/oct-source-reconstruction.log; exit 1; }
+          grep -Fq DARKWOLF_4WEEK_MASTER_WIN64_BUILD_OK evidence/oct-source-reconstruction.log
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/11971637900/zip" > evidence/containment-artifact.zip
+          unzip -p evidence/containment-artifact.zip containment.patch > evidence/original-fire-tesla.patch
+          test "$(sha256sum evidence/original-fire-tesla.patch | cut -d' ' -f1)" = e3600847ed0d1def868439af0c94f5ce250e2e7afbb0584fbb151459ea009a2f
+          python3 integration/fourweek-no-fire-tesla/apply.py source evidence/original-fire-tesla.patch evidence/NO_FIRE_TESLA_SSGI_MANIFEST.json
+          git -C source diff --check
+          echo 'OCTOBER_FEATURE_DONOR_WITHOUT_FIRE_TESLA_VERIFIED'
+      - name: Rebase ALL accepted October features onto verified SEPTEMBER source with original color
+        run: |
+          set -Eeuo pipefail
+          mkdir -p sept-tesla-original/SP/code/cgame sept-tesla-original/SP/code/game sept-tesla-original/SP/code/rend2
+          for rel in SP/code/cgame/cg_ents.c SP/code/cgame/cg_main.c SP/code/game/g_misc.c SP/code/rend2/tr_main.c SP/code/rend2/tr_scene.c; do
+            mkdir -p "sept-tesla-original/$(dirname "$rel")"
+            cp "sept-source/$rel" "sept-tesla-original/$rel"
+          done
+          python3 integration/september-port/merge.py sept-source source evidence/SEPTEMBER_BASE_FEATURE_PORT_MANIFEST.json
+          python3 integration/tesla-september-parity/restore.py sept-tesla-original sept-source evidence/TESLA_PARITY_MANIFEST.json
+          grep -Fq '"behavior": "SEPTEMBER_ET_TESLA_EF_CG_EFX_BYTE_IDENTICAL"' evidence/TESLA_PARITY_MANIFEST.json
+          grep -Fq '"no_other_cgame_logic_changed": true' evidence/TESLA_PARITY_MANIFEST.json
+          echo VERIFIED_SEPTEMBER_TESLA_CODE_NO_POST_SEPTEMBER_TIMING_OR_CRAWL
+          python3 integration/tesla-fire-harmony/apply.py sept-source evidence/original-fire-tesla.patch evidence/TESLA_FIRE_SELECTIVE_CONTAINMENT_MANIFEST.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          a=json.loads(Path('evidence/TESLA_PARITY_MANIFEST.json').read_text())
+          b=json.loads(Path('evidence/TESLA_FIRE_SELECTIVE_CONTAINMENT_MANIFEST.json').read_text())
+          assert a['september_tesla_branch_sha256']==b['stationary_tesla_normalized_postpatch_SHA256']
+          assert b['Tesla_light_radius_color_origin_pulse_bolt_timing_rhythm_unchanged']
+          assert not b['native_authored_lamps_shadowed_by_architecture']
+          assert b['source_control_CVar']['default']=='2'
+          print('SEPTEMBER_TESLA_CG_EFX_TIMING_PULSE_IDENTICAL_WITH_2_FLAGS_PASS')
+          PY
+          git -C sept-source diff --check
+          python3 integration/xlabs-tesla-door-light/apply.py sept-source evidence/XLABS_TESLA_DOOR_DLIGHT_SOURCE_PROOF.json
+          echo 'XLABS_TESLA_DOOR_SINGLE_GROUP_BLUE_DLIGHT_SHADOWED_SOURCE_PASS'
+          echo 'SEPTEMBER_ORIGIN_COMPLETE_OCTOBER_FEATURES_EXCEPT_FIRE_TESLA_PASS'
+      - name: Apply precise CSM primary-world areamask fix and verify native regression matrix
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/csm-primary-mask-v1/apply.py integration/csm-primary-mask-v1/test.py integration/csm-primary-mask-v1/package.py
+          python3 integration/csm-primary-mask-v1/apply.py sept-source --proof evidence/CSM_PRIMARY_MASK_SOURCE_PROOF.json
+          python3 integration/csm-primary-mask-v1/test.py sept-source evidence/csm-main-mask-native 2>&1 | tee evidence/CSM_PRIMARY_MASK_TESTS.txt
+          grep -Fx DW_CSM_PRIMARY_MASK_NATIVE_REGRESSION_PASS evidence/CSM_PRIMARY_MASK_TESTS.txt
+          grep -Fq 'PASS secondary-skybox-mask-change-suppressed' evidence/CSM_PRIMARY_MASK_TESTS.txt
+          grep -Fq 'PASS real-primary-mask-door-reprimes' evidence/CSM_PRIMARY_MASK_TESTS.txt
+          git -C sept-source diff --check
+          echo CSM_PRIMARY_ONLY_VISIBILITY_VALIDATION_PASSED
+      - name: Apply exact 3-shader volumetric edge fix and run geometry GLSL tests
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/vol-edge-shader-tests
+          cat integration/volumetric-edge-fix-v1/payload.part{1,2,3,4} > evidence/vol-edge-payload.br.b64
+          test "$(sha256sum evidence/vol-edge-payload.br.b64 | cut -d' ' -f1)" = 2119c14ee969e9a02b968d05020af1fa38bb8acd94858f038f23bbc9d53e6156
+          base64 -d evidence/vol-edge-payload.br.b64 | brotli -d > evidence/vol-edge-payload.tar
+          test "$(sha256sum evidence/vol-edge-payload.tar | cut -d' ' -f1)" = 27f3b4d618ce5c12d9e540735cdc4e80e9bfa323c4206067bdbd7a0c3214e69c
+          tar -xf evidence/vol-edge-payload.tar -C integration/volumetric-edge-fix-v1
+          python3 -m py_compile integration/volumetric-edge-fix-v1/apply.py integration/volumetric-edge-fix-v1/test.py integration/volumetric-edge-fix-v1/package.py
+          mkdir -p evidence/volumetric-before
+          for file in volumetricsun_vp.glsl volumetricsun_fp.glsl volumetriclocal_upscale_fp.glsl; do
+            cp "sept-source/SP/code/rend2/glsl/$file" "evidence/volumetric-before/$file"
+          done
+          python3 integration/volumetric-edge-fix-v1/apply.py sept-source --proof evidence/VOLUMETRIC_FIX_SOURCE_PROOF.json | tee evidence/VOLUMETRIC_FIX_APPLY.txt
+          python3 integration/volumetric-edge-fix-v1/test.py sept-source --out evidence/vol-edge-shader-tests 2>&1 | tee evidence/VOLUMETRIC_FIX_TESTS.txt
+          grep -Fx DARKWOLF_VOL_EDGE_FIX_TESTS_PASS evidence/VOLUMETRIC_FIX_TESTS.txt
+          test "$(grep -c '^PASS_GLSLANG_130' evidence/VOLUMETRIC_FIX_TESTS.txt)" -eq 4
+          git -C sept-source diff --check
+          : > evidence/VOLUMETRIC_FIX_EXACT_SHADER.patch
+          for file in volumetricsun_vp.glsl volumetricsun_fp.glsl volumetriclocal_upscale_fp.glsl; do
+            diff -u --label "a/SP/code/rend2/glsl/$file" --label "b/SP/code/rend2/glsl/$file" "evidence/volumetric-before/$file" "sept-source/SP/code/rend2/glsl/$file" >> evidence/VOLUMETRIC_FIX_EXACT_SHADER.patch || test "$?" -eq 1
+          done
+          test -s evidence/VOLUMETRIC_FIX_EXACT_SHADER.patch
+          echo VOLUMETRIC_CASCADE_RAY_AND_SAME_SURFACE_GLSL_PASS
+      - name: Apply ONLY sky MSAA root-cause instrumentation to exact accepted source
+        run: |
+          set -Eeuo pipefail
+          cat > evidence/sky-diag-payload.b64 <<'SKY_DIAG_V1_PAYLOAD'
+          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
+          SKY_DIAG_V1_PAYLOAD
+          echo '34d25dce1a76e08bcd95116253c5beb61a0faea5d7cb2a61748c315cc7cc7285  evidence/sky-diag-payload.b64' | sha256sum -c -
+          base64 -d evidence/sky-diag-payload.b64 > evidence/sky-diag-payload.tar.gz
+          echo 'd7e86d9affdda505b296af10329e2c544d8ef1517c90485d66be752cf5fd590e  evidence/sky-diag-payload.tar.gz' | sha256sum -c -
+          tar -xzf evidence/sky-diag-payload.tar.gz
+          python3 -m py_compile integration/sky-msaa-diag-v1/apply.py integration/sky-msaa-diag-v1/package.py
+          mkdir -p evidence/sky-diag-before
+          cp sept-source/SP/code/rend2/tr_backend.c evidence/sky-diag-before/tr_backend.c
+          cp sept-source/SP/code/rend2/tr_sky.c evidence/sky-diag-before/tr_sky.c
+          python3 integration/sky-msaa-diag-v1/apply.py sept-source --check-only --manifest evidence/SKY_DIAG_PREFLIGHT.json
+          python3 integration/sky-msaa-diag-v1/apply.py sept-source --manifest evidence/SKY_DIAG_SOURCE_PROOF.json
+          test -s sept-source/SP/code/rend2/tr_sky_diag.h
+          grep -Fq 'DARKWOLF_SKY_MSAA_ROOT_CAUSE_MATRIX_V1' sept-source/SP/code/rend2/tr_sky_diag.h
+          git -C sept-source diff --check
+          python3 - <<'SKY_PATCH_PROOF'
+          from pathlib import Path
+          from difflib import unified_diff
+          result=''
+          for name in ('tr_backend.c','tr_sky.c'):
+              bef=Path('evidence/sky-diag-before')/name
+              aft=Path('sept-source/SP/code/rend2')/name
+              result+=''.join(unified_diff(bef.read_text().splitlines(True),aft.read_text().splitlines(True),fromfile='a/SP/code/rend2/'+name,tofile='b/SP/code/rend2/'+name))
+          new=Path('sept-source/SP/code/rend2/tr_sky_diag.h')
+          result+=''.join(unified_diff([],new.read_text().splitlines(True),fromfile='/dev/null',tofile='b/SP/code/rend2/tr_sky_diag.h'))
+          assert result and result.count('--- ')==3
+          Path('evidence/SKY_DIAG_SOURCE_ONLY.patch').write_text(result)
+          print('DARKWOLF_SKY_DIAG_MINIMAL_PATCH_CREATED')
+          SKY_PATCH_PROOF
+          git -C sept-source apply --reverse --check ../evidence/SKY_DIAG_SOURCE_ONLY.patch
+          mkdir -p evidence/sky-replay/SP/code/rend2/glsl
+          cp evidence/sky-diag-before/tr_backend.c evidence/sky-replay/SP/code/rend2/tr_backend.c
+          cp evidence/sky-diag-before/tr_sky.c evidence/sky-replay/SP/code/rend2/tr_sky.c
+          cp sept-source/SP/code/rend2/glsl/volumetricsun_fp.glsl evidence/sky-replay/SP/code/rend2/glsl/volumetricsun_fp.glsl
+          python3 integration/sky-msaa-diag-v1/apply.py evidence/sky-replay --check-only
+          python3 integration/sky-msaa-diag-v1/apply.py evidence/sky-replay
+          for rel in tr_backend.c tr_sky.c tr_sky_diag.h; do cmp "evidence/sky-replay/SP/code/rend2/$rel" "sept-source/SP/code/rend2/$rel"; done
+          if python3 integration/sky-msaa-diag-v1/apply.py sept-source --check-only >/dev/null 2>&1; then echo 'ERROR repeat apply permitted'; exit 1; fi
+          git -C sept-source diff --check
+          echo DARKWOLF_SKY_DIAG_PRECI_SOURCE_REPLAY_PASS
+      - name: Cross-compile ALL five game and renderer Win64 binaries from September base
+        run: |
+          set -Eeuo pipefail
+          make -C sept-source/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-SepBase-FourWeek-NoFire PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/september-ported-win64-build.log 2>&1 || { tail -130 evidence/september-ported-win64-build.log; exit 1; }
+          for name in ioWolfSP.x64.exe renderer_sp_rend2_x64.dll cgame_sp_x64.dll qagame_sp_x64.dll ui_sp_x64.dll; do
+            list="$(find sept-source/SP/build -type f -name "$name" -print)"
+            test "$(printf '%s\n' "$list" | grep -c .)" -eq 1 || { echo "AMBIGUOUS_BUILD_OUTPUT: $name $list"; exit 1; }
+            cp "$list" build-binaries/"$name"
+            file build-binaries/"$name" | grep -F PE32+
+          done
+          sha256sum build-binaries/* | tee evidence/NEW_SEPTEMBER_BASE_BINARIES_SHA256.txt
+          echo 'SEPTEMBER_PORTED_COMPLETE_WIN64_BINARIES_PASS'
+      - name: Package exact 40294211216 accepted SP runtime with ONLY diagnostic renderer DLL
+        run: |
+          set -Eeuo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12636784509/zip" > evidence/SKY_40294211216_artifact.zip
+          echo '1a694bf1d176f69ba2ca364d1e978fa4530f05ff134da79704e9e65e0bc232a5  evidence/SKY_40294211216_artifact.zip' | sha256sum -c -
+          unzip -p evidence/SKY_40294211216_artifact.zip dist/DarkWolf_Rend2_Xlabs_CSM_Fix_Volumetric_Edge_AA_Clean_Win64.zip > evidence/SKY_40294211216_accepted.zip
+          echo 'cabbf853370ba544cc13eca4467dba3be855cf9525b36bd610620e1777a2ead5  evidence/SKY_40294211216_accepted.zip' | sha256sum -c -
+          python3 integration/sky-msaa-diag-v1/package.py --base-zip evidence/SKY_40294211216_accepted.zip --renderer build-binaries/renderer_sp_rend2_x64.dll --manifest evidence/SKY_DIAG_SOURCE_PROOF.json --out dist | tee evidence/SKY_DIAG_PACKAGE.txt
+          grep -Fq DARKWOLF_SKY_DIAG_FULL_SP_CLEAN_PACKAGE_PASS evidence/SKY_DIAG_PACKAGE.txt
+          echo DARKWOLF_SKY_DIAG_WIN64_FULL_SP_PACKAGE_PASS
+      - name: Upload ONE comprehensive 5-mode diagnostic Win64 release and proofs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DarkWolf-Sky-MSAA-Root-Cause-Matrix-V1-Win64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            dist/*.json
+            evidence/SEPTEMBER_BASE_FEATURE_PORT_MANIFEST.json
+            evidence/NO_FIRE_TESLA_SSGI_MANIFEST.json
+            evidence/TESLA_PARITY_MANIFEST.json
+            evidence/XLABS_TESLA_DOOR_DLIGHT_SOURCE_PROOF.json
+            evidence/TESLA_FIRE_SELECTIVE_CONTAINMENT_MANIFEST.json
+            evidence/CSM_PRIMARY_MASK_SOURCE_PROOF.json
+            evidence/CSM_PRIMARY_MASK_TESTS.txt
+            evidence/csm-main-mask-native/native/native-test-results.log
+            evidence/VOLUMETRIC_FIX_SOURCE_PROOF.json
+            evidence/VOLUMETRIC_FIX_APPLY.txt
+            evidence/VOLUMETRIC_FIX_TESTS.txt
+            evidence/VOLUMETRIC_FIX_EXACT_SHADER.patch
+            evidence/volumetric-archive-package.log
+            evidence/vol-edge-shader-tests/*.log
+            evidence/vol-edge-shader-tests/QA_SUMMARY.json
+            integration/volumetric-edge-fix-v1/apply.py
+            integration/volumetric-edge-fix-v1/test.py
+            integration/volumetric-edge-fix-v1/package.py
+            evidence/SKY_DIAG_PREFLIGHT.json
+            evidence/SKY_DIAG_SOURCE_PROOF.json
+            evidence/SKY_DIAG_SOURCE_ONLY.patch
+            evidence/SKY_DIAG_PACKAGE.txt
+            evidence/NEW_SEPTEMBER_BASE_BINARIES_SHA256.txt
+            evidence/september-ported-win64-build.log
+            evidence/sky-diag-payload.tar.gz
+            integration/sky-msaa-diag-v1/apply.py
+            integration/sky-msaa-diag-v1/package.py
+            integration/sky-msaa-diag-v1/sky_diag_runtime.h
+          retention-days: 90
