@@ -1,0 +1,113 @@
+diff --git a/SP/code/rend2/glsl/volumetriclocal_fp.glsl b/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+index b0120dc..1ff0f01 100644
+--- a/SP/code/rend2/glsl/volumetriclocal_fp.glsl
++++ b/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+@@ -210,7 +210,10 @@ float localDlightVisibility(vec3 fragmentToLight, float currentDepth, int pcfMod
+     vec3 dir = normalize(fragmentToLight);
+     float bias = max(u_DlightShadowParams.y, 0.0);
+     float filtered;
+-    bool shadowedFire = pcfMode >= 2 && u_EnableTextures.w >= 5.0 && u_EnableTextures.w <= 7.5;
++    // DARKWOLF_VOL_OVERLAP_DIAG_V1_20261027: 9-tap on shadowed local lamps only when separately opted in.
++    bool shadowedFire = pcfMode >= 2 &&
++        ((u_EnableTextures.w >= 5.0 && u_EnableTextures.w <= 7.5) ||
++         (u_EnableTextures.w >= 2.5 && u_EnableTextures.w <= 3.5));
+     if (pcfMode <= 0)
+         filtered = compareDlightShadow(dir, currentDepth, bias);
+     else
+diff --git a/SP/code/rend2/tr_backend.c b/SP/code/rend2/tr_backend.c
+index 1ddec44..fa786d0 100644
+--- a/SP/code/rend2/tr_backend.c
++++ b/SP/code/rend2/tr_backend.c
+@@ -4041,6 +4041,10 @@ static void RB_VolumetricUpscaleInputs(FBO_t *srcFbo, const ivec4_t srcBox, cons
+     GLSL_SetUniformVec4(&tr.volumetricLocalUpscaleShader, UNIFORM_ENABLETEXTURES, depthRect);
+ }
+ 
++// DARKWOLF_VOL_OVERLAP_DIAG_V1_20261027: diagnostic modes default to accepted baseline; no new FBO allocation.
++static cvar_t *s_dwVolSunFullresDiag;
++static cvar_t *s_dwVolLocalSpatialDiag;
++static cvar_t *s_dwVolLocalLampPcfDiag;
+ static void RB_VolumetricSun(FBO_t *srcFbo, ivec4_t srcBox)
+ {
+ 	vec4_t viewInfo, sunDir, params, qualityParams, energyParams;
+@@ -4065,6 +4069,8 @@ static void RB_VolumetricSun(FBO_t *srcFbo, ivec4_t srcBox)
+ 	if (!r_volumetricSun || !r_volumetricSun->integer ||
+ 		!r_volumetricSunMode || !r_volumetricSunMode->integer)
+ 		return; // DARKWOLF_SUN_VOLUMETRIC_PERF_ISOLATION_V0_3: true live raymarch bypass
++	if (!s_dwVolSunFullresDiag)
++		s_dwVolSunFullresDiag = ri.Cvar_Get("r_dwVolSunFullresDiag", "0", CVAR_ARCHIVE);
+ 
+ 	sunDirLenSq = DotProduct(backEnd.refdef.sunDir, backEnd.refdef.sunDir);
+ 	sunPeak = MAX(backEnd.refdef.sunCol[0], MAX(backEnd.refdef.sunCol[1], backEnd.refdef.sunCol[2]));
+@@ -4151,6 +4157,13 @@ static void RB_VolumetricSun(FBO_t *srcFbo, ivec4_t srcBox)
+ 
+ 	tr.volumetricSunPerfRaymarchThisFrame = 1; // DARKWOLF_SUN_VOLUMETRIC_PERF_ISOLATION_V0_3
+ 	// DARKWOLF_VOLUMETRIC_COVERAGE_AA_PRODUCTION_V443
++	// DARKWOLF_VOL_OVERLAP_DIAG_V1_20261027: isolate producer quarter resolution without changing CSM or the shader.
++	if (s_dwVolSunFullresDiag && s_dwVolSunFullresDiag->integer == 1 && tr.volumetricFullresFbo)
++	{
++		FBO_Blit(srcFbo, srcBox, NULL, tr.volumetricFullresFbo, srcBox, &tr.volumetricSunShader, params, 0);
++		FBO_Blit(tr.volumetricFullresFbo, srcBox, NULL, srcFbo, srcBox, NULL, NULL, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
++		return;
++	}
+ 	FBO_Blit(srcFbo, srcBox, NULL, tr.quarterFbo[0], NULL, &tr.volumetricSunShader, params, 0);
+ 	if (tr.volumetricFullresFbo && tr.volumetricLocalUpscaleShader.program)
+ 	{
+@@ -5323,6 +5336,11 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ 
+ 	if (!srcFbo || !tr.quarterFbo[0] || !tr.renderDepthImage || !tr.volumetricLocalShader.program)
+ 		return;
++	// DARKWOLF_VOL_OVERLAP_DIAG_V1_20261027: separate Local quality from the user-accepted Fire E path.
++	if (!s_dwVolLocalSpatialDiag)
++		s_dwVolLocalSpatialDiag = ri.Cvar_Get("r_dwVolLocalSpatialDiag", "0", CVAR_ARCHIVE);
++	if (!s_dwVolLocalLampPcfDiag)
++		s_dwVolLocalLampPcfDiag = ri.Cvar_Get("r_dwVolLocalLampPcfDiag", "1", CVAR_ARCHIVE);
+ 
+ 	if ((mode >= 1 && mode <= 3) || (mode >= 5 && mode <= 9))
+ 	{
+@@ -5424,7 +5442,9 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ 	VectorSet4(qualityParams,
+ 		(float)((mode == 4) ? Com_Clamp(8, 48, r_volumetricLocalSpotSamples->integer) :
+ 			((mode >= 5 && mode <= 8) ? Com_Clamp(8, 64, s_rVolumetricFireSamples->integer) : Com_Clamp(4, 32, r_volumetricLocalSamples->integer))), // DARKWOLF_FIRE_VOLUMETRIC_V0_5_VISIBILITY_PROOF
+-		(float)Com_Clamp(0, 2, r_volumetricLocalShadowPcf->integer),
++		(mode == 3 && s_dwVolLocalLampPcfDiag) ?
++			(float)Com_Clamp(0, 2, s_dwVolLocalLampPcfDiag->integer) :
++			(float)Com_Clamp(0, 2, r_volumetricLocalShadowPcf->integer),
+ 		(mode == 4) ? Com_Clamp(0.0f, 0.50f, r_volumetricLocalSpotJitter->value) : Com_Clamp(0.0f, 0.50f, r_volumetricLocalJitter->value),
+ 		(float)mode);
+ 	if (useShadow)
+@@ -5444,6 +5464,13 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ 	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_ENABLETEXTURES, qualityParams);
+ 	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_BASECOLOR, energyParams);
+ 
++	// DARKWOLF_VOL_OVERLAP_DIAG_V1_20261027: expensive full-res Local is diagnostic-only, never applied to Fire.
++	if (mode <= 4 && s_dwVolLocalSpatialDiag && s_dwVolLocalSpatialDiag->integer >= 2 && tr.volumetricFullresFbo)
++	{
++		FBO_Blit(srcFbo, srcBox, NULL, tr.volumetricFullresFbo, srcBox, &tr.volumetricLocalShader, params, 0);
++		FBO_Blit(tr.volumetricFullresFbo, srcBox, NULL, srcFbo, srcBox, NULL, NULL, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
++		return;
++	}
+ 	FBO_Blit(srcFbo, srcBox, NULL, tr.quarterFbo[0], NULL, &tr.volumetricLocalShader, params, 0);
+ 	{
+ 		int reconstructionMode = 0;
+@@ -5463,14 +5490,18 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ 		}
+ 
+ 		if (tr.volumetricFullresFbo && tr.volumetricLocalUpscaleShader.program &&
+-			((mode >= 1 && mode <= 3) || reconstructionMode > 0))
++			((mode >= 1 && mode <= 3) || reconstructionMode > 0 ||
++			 (mode == 4 && s_dwVolLocalSpatialDiag && s_dwVolLocalSpatialDiag->integer == 1)))
+ 		{
+ 			vec4_t upscaleParams;
+ 			// DARKWOLF_VOLUMETRIC_WAVE_CLEAN_V2_20261027: honor the Fire upscale 2/3 depth-aware 5x5 choice.
++            // DARKWOLF_VOL_OVERLAP_DIAG_V1_20261027: opt-in existing depth-aware 5x5 for lamps and spotlights.
+             VectorSet4(upscaleParams,
+-                (mode >= 5 && mode <= 8 && reconstructionMode >= 2) ?
++                ((mode >= 5 && mode <= 8 && reconstructionMode >= 2) ||
++                 (mode <= 4 && s_dwVolLocalSpatialDiag && s_dwVolLocalSpatialDiag->integer == 1)) ?
+                     Com_Clamp(0.0f, 64.0f, reconstructionDepthReject) : 0.0f,
+-                (mode >= 5 && mode <= 8 && reconstructionMode >= 2) ? 2.0f : 4.0f,
++                ((mode >= 5 && mode <= 8 && reconstructionMode >= 2) ||
++                 (mode <= 4 && s_dwVolLocalSpatialDiag && s_dwVolLocalSpatialDiag->integer == 1)) ? 2.0f : 4.0f,
+                 1.0f, 0.0f);
+ 			RB_VolumetricUpscaleInputs(srcFbo, srcBox, viewInfo);
+ 			FBO_Blit(tr.quarterFbo[0], NULL, NULL, tr.volumetricFullresFbo, srcBox, &tr.volumetricLocalUpscaleShader, upscaleParams, 0);
