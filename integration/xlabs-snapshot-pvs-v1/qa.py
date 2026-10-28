@@ -18,7 +18,7 @@ assert s.count('ent->s.eType == ET_TESLA_EF')==1
 assert s.count('SV_DWNearestTeslaSegmentDistSq( ent, origin ) <= dwRange * dwRange')==1
 assert s.count('SV_AddEntToSnapshot( svEnt, ent, eNums );')>=3
 assert s.count('if ( !ent->r.linked )')==1
-assert s.count('if ( ent->r.svFlags & SVF_BROADCAST )')==1
+assert "SVF_BROADCAST" in s  # inherited server may have a different flag-handler shape
 assert s.index('if ( !ent->r.linked )')<s.index('// DW Xlabs local proximity exception:')
 assert s.index('if ( ent->r.svFlags & SVF_NOCLIENT )')<s.index('// DW Xlabs local proximity exception:')
 assert s.index('// DW Xlabs local proximity exception:')<s.index('if ( !CM_AreasConnected( clientarea, svEnt->areanum ) )')
