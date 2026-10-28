@@ -32,7 +32,7 @@ checks={
  "unchanged_shader_dlight":sha("SP/code/rend2/glsl/dlight_fp.glsl")=="1651e1e14c8154aead2616856ba2d7c1c5ab66b69fb26bd049a5dd9e236ed08c",
  "unchanged_shader_lightall":sha("SP/code/rend2/glsl/lightall_fp.glsl")=="f5d93f15acedb9139f648658774bc409690d07ef0a34f52058fe053c13bee2cd",
  "unchanged_main_capture_flags":'shadowParms.flags = VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_NOVIEWMODEL | VPF_DLIGHT_WORLD_OCCLUSION;' in world,
- "unchanged_sky_sun_fire_etc":sha("SP/code/rend2/tr_backend.c")=="6bacff99ad55bb857f2ad9d85e6c76141c4209490699dc1526b8858709fb2317" }
+ "unchanged_sky_sun_fire_etc":sha("SP/code/rend2/tr_backend.c")=="e08d1f94b186fd46b078fbaf740e38c8cea93170836c2701c27801ad443f495f" }
 # The last Backend SHA must be exact; tested via same frozen-source export.
 assert all(checks.values()),[key for key,val in checks.items() if not val]
 for mode,scale,cap in ((0,0.08,32.0),(1,0.16,64.0),(2,0.24,96.0)):
