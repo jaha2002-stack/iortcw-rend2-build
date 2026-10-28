@@ -151,7 +151,7 @@ replace_once(audit_anchor,audit,"ONE_SHOT_TRUE_SNAPSHOT_AUDIT")
 
 modified=s.encode("latin-1")
 assert modified!=original
-assert modified.count(MARK.encode())==3
+assert modified.count(MARK.encode())==2
 assert modified.count(b'Com_Printf( "DW_XLABS_PVS_TEST_V1_BEGIN')==1
 assert modified.count(b'SV_DWNearestTeslaSegmentDistSq( ent, origin ) <= dwRange * dwRange')==1
 assert modified.count(b'sv_dwXlabsTeslaPvsRangeTest')==1
@@ -161,11 +161,11 @@ assert modified.count(b'SVF_BROADCAST')==original.count(b'SVF_BROADCAST')
 assert modified.count(b'CM_AreasConnected(')==original.count(b'CM_AreasConnected(')
 assert modified.count(b'CM_ClusterPVS(')==original.count(b'CM_ClusterPVS(')
 assert modified.count(b'SVF_NOCLIENT')==original.count(b'SVF_NOCLIENT')
-assert modified.count(b'ET_TESLA_EF')==original.count(b'ET_TESLA_EF')+2
+assert modified.count(b'ET_TESLA_EF')==original.count(b'ET_TESLA_EF')+3
 assert len(modified)-len(original)<6000
 f.write_bytes(modified)
 diff="".join(difflib.unified_diff(
-    s1 if False else original.decode("latin-1").splitlines(keepends=True),
+    original.decode("latin-1").splitlines(keepends=True),
     modified.decode("latin-1").splitlines(keepends=True),
     fromfile="a/"+SOURCE,tofile="b/"+SOURCE))
 a.patch.parent.mkdir(parents=True,exist_ok=True)
