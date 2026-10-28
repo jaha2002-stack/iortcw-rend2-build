@@ -1,0 +1,148 @@
+--- a/SP/code/rend2/tr_main.c
++++ b/SP/code/rend2/tr_main.c
+@@ -2742,10 +2742,35 @@
+ // This cache is independent of optional moving-object shadow slots and FireVol.
+ // It never uses camera PVS, source displacement, per-frame update quotas or
+ // partial cubemaps. Every scene has enough slots for all MAX_DLIGHTS emitters.
+-static qboolean R_DlightWorldCacheMatches(const dlightWorldCache_t *cache, const dlight_t *dl)
++// DW_XLABS_ESCAPE1_WORLD_CAPTURE_MAIN_SCENE_AUDIT_V4_20261028
++// TEMPORARY test: move only the world-depth cubemap capture for the native
++// blue Xlabs Tesla. Keep its physical light, point-shadow and bolt unchanged.
++// Positive X is the known generator-to-bolt direction from previous tests.
++static void R_DWTestTeslaWorldCaptureOrigin(const dlight_t *dl, vec3_t capture)
+ {
+-	return cache->valid && VectorCompare(cache->origin, dl->origin)
+-		&& cache->radius >= dl->radius;
++	static cvar_t *captureOffsetX = NULL;
++	int offset;
++	VectorCopy(dl->origin, capture);
++	if (!captureOffsetX)
++		captureOffsetX = ri.Cvar_Get("r_dwTeslaWorldCaptureXTest", "0", 0);
++	if (!captureOffsetX || !captureOffsetX->integer || !tr.world ||
++		Q_stricmp(tr.world->baseName, "xlabs") || !dl->worldOcclusion ||
++		dl->fireVolumetricSource || dl->radius < 500.0f ||
++		dl->color[2] < dl->color[1] * 1.35f ||
++		dl->color[1] < dl->color[0] * 1.5f)
++		return;
++	offset = captureOffsetX->integer;
++	if (offset > 96) offset = 96;
++	if (offset < -96) offset = -96;
++	capture[0] += (float)offset;
++}
++
++// Key the cache by the ACTUAL depth-capture origin, never the physical light.
++static qboolean R_DlightWorldCacheMatches(const dlightWorldCache_t *cache,
++	const vec3_t captureOrigin, float radius)
++{
++	return cache->valid && VectorCompare(cache->origin, captureOrigin)
++		&& cache->radius >= radius;
+ }
+ 
+ void R_RenderDlightWorldOcclusion(const refdef_t *fd)
+@@ -2766,9 +2791,13 @@
+ 	for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i)
+ 	{
+ 		dlight_t *dl = &tr.refdef.dlights[i];
++		vec3_t testCaptureOrigin;
++		float requiredRadius;
+ 		if (!dl->worldOcclusion || !(dl->radius > 0.0f)) continue;
++		R_DWTestTeslaWorldCaptureOrigin(dl, testCaptureOrigin);
++		requiredRadius = dl->radius + fabs(testCaptureOrigin[0] - dl->origin[0]);
+ 		for (j = 0; j < DLIGHT_WORLD_CACHE_MAX; ++j)
+-			if (R_DlightWorldCacheMatches(&tr.dlightWorldCache[j], dl))
++			if (R_DlightWorldCacheMatches(&tr.dlightWorldCache[j], testCaptureOrigin, requiredRadius))
+ 			{
+ 				active[j] = qtrue;
+ 				tr.refdef.dlightWorldSlot[i] = j;
+@@ -2779,12 +2808,16 @@
+ 	{
+ 		dlight_t *dl = &tr.refdef.dlights[i];
+ 		dlightWorldCache_t *cache;
++		vec3_t testCaptureOrigin;
++		float requiredRadius;
+ 		int slot = tr.refdef.dlightWorldSlot[i];
+ 		if (!dl->worldOcclusion || !(dl->radius > 0.0f)) continue;
++		R_DWTestTeslaWorldCaptureOrigin(dl, testCaptureOrigin);
++		requiredRadius = dl->radius + fabs(testCaptureOrigin[0] - dl->origin[0]);
+ 		// A preceding miss can have populated the same exact origin this scene.
+ 		if (slot < 0)
+ 			for (j = 0; j < DLIGHT_WORLD_CACHE_MAX; ++j)
+-				if (R_DlightWorldCacheMatches(&tr.dlightWorldCache[j], dl)) { slot = j; break; }
++				if (R_DlightWorldCacheMatches(&tr.dlightWorldCache[j], testCaptureOrigin, requiredRadius)) { slot = j; break; }
+ 		if (slot < 0)
+ 		{
+ 			unsigned int oldest = ~0u;
+@@ -2802,8 +2835,8 @@
+ 			if (slot < 0 || !tr.dlightWorldCubemaps[slot])
+ 				ri.Error(ERR_DROP, "Dlight architectural visibility cache exhausted");
+ 			// Stable radius bucket avoids recapturing flicker. No source-radius change.
+-			while (range < dl->radius && range < 65536.0f) range *= 2.0f;
+-			range = MAX(range, dl->radius);
++			while (range < requiredRadius && range < 65536.0f) range *= 2.0f;
++			range = MAX(range, requiredRadius);
+ 			Com_Memset(&shadowParms, 0, sizeof(shadowParms));
+ 			shadowParms.viewportWidth = shadowParms.viewportHeight = DLIGHT_WORLD_SIZE;
+ 			shadowParms.targetFbo = tr.dlightWorldFbo;
+@@ -2811,7 +2844,7 @@
+ 			shadowParms.fovX = shadowParms.fovY = 90.0f;
+ 			shadowParms.flags = VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_NOVIEWMODEL | VPF_DLIGHT_WORLD_OCCLUSION;
+ 			shadowParms.zFar = range;
+-			VectorCopy(dl->origin, shadowParms.or.origin);
++			VectorCopy(testCaptureOrigin, shadowParms.or.origin);
+ 			// Cold-cache captures may exceed the shared command/surface rings.
+ 			// Consume earlier views before reusing their storage; submit each new
+ 			// face completely before declaring the cache entry valid. No glFinish.
+@@ -2829,7 +2862,7 @@
+ 			}
+ 			cache = &tr.dlightWorldCache[slot];
+ 			cache->valid = qtrue;
+-			VectorCopy(dl->origin, cache->origin);
++			VectorCopy(testCaptureOrigin, cache->origin);
+ 			cache->radius = range;
+ 		}
+ 		active[slot] = qtrue;
+--- a/SP/code/rend2/tr_scene.c
++++ b/SP/code/rend2/tr_scene.c
+@@ -6658,6 +6658,42 @@
+ 		R_RenderDlightCubemaps(fd);
+ 	}
+ 	R_RenderDlightWorldOcclusion(fd); // Required solid-world visibility, not the optional 3+2 object-shadow pool.
++	// DW_XLABS_ESCAPE1_WORLD_CAPTURE_MAIN_SCENE_AUDIT_V4_20261028: ONE SHOT after world slots are assigned on the real
++	// main-world view. Sky-portal and UI views cannot consume this audit request.
++	{
++		static cvar_t *mainAuditOnce = NULL;
++		if (!mainAuditOnce)
++			mainAuditOnce = ri.Cvar_Get("r_dwMainSceneLightAuditOnce", "0", 0);
++		if (mainAuditOnce && mainAuditOnce->integer &&
++			!(fd->rdflags & (RDF_SKYBOXPORTAL | RDF_NOWORLDMODEL)))
++		{
++			int k;
++			ri.Printf(PRINT_ALL, "DW_MAIN_SCENE_AUDIT_V4_BEGIN map=%s rdflags=%d scene=%d dlights=%d raw=%d start=%d containment=%d\n",
++				tr.world ? tr.world->baseName : "none", fd->rdflags, tr.frameSceneNum,
++				tr.refdef.num_dlights, r_numdlights, r_firstSceneDlight,
++				r_dlightWorldContainment ? r_dlightWorldContainment->integer : -1);
++			for (k = 0; k < tr.refdef.num_dlights && k < MAX_DLIGHTS; ++k)
++			{
++				const dlight_t *dl = &tr.refdef.dlights[k];
++				vec3_t delta;
++				float cameraDistance;
++				VectorSubtract(dl->origin, fd->vieworg, delta);
++				cameraDistance = VectorLength(delta);
++				ri.Printf(PRINT_ALL, "DW_MAIN_SCENE_AUDIT_V4_LIGHT i=%d xyz=%.2f,%.2f,%.2f rgb=%.3f,%.3f,%.3f radius=%.1f dist=%.1f world=%d slot=%d capture=%.2f,%.2f,%.2f invRange=%.7f native=%d fire=%d class=%d fireNative=%d speaker=%d\n",
++					k, dl->origin[0], dl->origin[1], dl->origin[2],
++					dl->color[0], dl->color[1], dl->color[2], dl->radius,
++					cameraDistance, (int)dl->worldOcclusion,
++					(int)tr.refdef.dlightWorldSlot[k],
++					tr.refdef.dlightWorldOrigin[k][0], tr.refdef.dlightWorldOrigin[k][1],
++					tr.refdef.dlightWorldOrigin[k][2], tr.refdef.dlightWorldOrigin[k][3],
++					(int)dl->nativeAuthoredDlight, (int)dl->fireVolumetricSource,
++					(int)dl->shadowSourceClass, dl->fireVolumetricNativeOrdinal,
++					dl->fireVolumetricSpeakerOrdinal);
++			}
++			ri.Printf(PRINT_ALL, "DW_MAIN_SCENE_AUDIT_V4_END\n");
++			ri.Cvar_Set("r_dwMainSceneLightAuditOnce", "0");
++		}
++	}
+ 	// DARKWOLF_FIREVOL_OCCLUSION_PRODUCTION_V1: uses only previous-frame accepted selections and never changes FireVol residency/priority.
+ 	if (!(fd->rdflags & RDF_NOWORLDMODEL) && r_dlightMode->integer >= 2)
+ 		R_RenderFireVolumetricSyntheticShadows(fd);
