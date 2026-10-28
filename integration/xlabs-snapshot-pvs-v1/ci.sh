@@ -23,9 +23,9 @@ if git -C sept-source apply --check ../evidence/XLABS_SNAPSHOT_V1_EXACT_SOURCE.p
 fi
 # Independent patch replay in a separate directory, byte-compare result,
 # then undo and verify every byte matches untouched upstream server source.
-(cd evidence/xlabs-snapshot-v1-replay && git apply --check ../../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch && git apply ../../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch)
+(cd evidence/xlabs-snapshot-v1-replay && git apply --check ../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch && git apply ../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch)
 cmp sept-source/SP/code/server/sv_snapshot.c evidence/xlabs-snapshot-v1-replay/SP/code/server/sv_snapshot.c
-(cd evidence/xlabs-snapshot-v1-replay && git apply --reverse --check ../../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch && git apply --reverse ../../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch)
+(cd evidence/xlabs-snapshot-v1-replay && git apply --reverse --check ../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch && git apply --reverse ../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch)
 cmp evidence/XLABS_PVS_UPSTREAM_SNAPSHOT_ORIGINAL.c evidence/xlabs-snapshot-v1-replay/SP/code/server/sv_snapshot.c
 git -C sept-source diff --name-only > evidence/XLABS_PVS_ALL_CHANGES_AFTER.txt
 python3 - <<'PY'
