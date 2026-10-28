@@ -119,7 +119,7 @@ Any accepted production change must remove diagnostic test cvars.
  files["docs/XLABS_ESCAPE1_V5_TEST_MANIFEST.json"]=(json.dumps(manifest,indent=2)+"\n").encode()
  files["docs/SHA256SUMS.txt"]="".join(SHA(v)+"  "+k+"\n" for k,v in sorted(files.items())
                                        if k!="docs/SHA256SUMS.txt").encode("ascii")
- assert len(configs)==14 and len(files)==56
+ assert len(configs)==14 and len(files)==57
  assert not any(re.search(r'(^|/)pak[0-9]*\.pk3$',k,re.I) for k in files)
  a.out.mkdir(parents=True,exist_ok=True)
  path=a.out/(NEW_ROOT+".zip")
