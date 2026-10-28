@@ -9,6 +9,7 @@ python3 -m py_compile "$name/apply.py" "$name/qa.py" "$name/package.py"
 git -C sept-source show 438e7d413b5f7277187c35b032eb0ef9093ae778:SP/code/server/sv_snapshot.c > evidence/XLABS_PVS_UPSTREAM_SNAPSHOT_ORIGINAL.c
 diff -u evidence/XLABS_PVS_UPSTREAM_SNAPSHOT_ORIGINAL.c sept-source/SP/code/server/sv_snapshot.c > evidence/XLABS_PVS_ACCEPTED_UPSTREAM_DELTA.diff || test "$?" -eq 1
 sha256sum sept-source/SP/code/server/sv_snapshot.c | tee evidence/XLABS_PVS_SERVER_BEFORE_SHA256.txt
+printf '%s\n' '64751b3af59b0e5a8274eb44ecc723f65db908153c4e961bdfc454ba8c242a07  sept-source/SP/code/server/sv_snapshot.c' | sha256sum -c -
 test -s sept-source/SP/code/server/sv_snapshot.c
 grep -Fq '#include "server.h"' sept-source/SP/code/server/sv_snapshot.c
 grep -Fq 'SV_AddEntitiesVisibleFromPoint' sept-source/SP/code/server/sv_snapshot.c
@@ -38,10 +39,13 @@ python3 - <<'PY'
 from pathlib import Path
 before=set(Path("evidence/XLABS_PVS_ALL_CHANGES_BEFORE.txt").read_text().splitlines())
 after=set(Path("evidence/XLABS_PVS_ALL_CHANGES_AFTER.txt").read_text().splitlines())
-assert after-before=={"SP/code/server/sv_snapshot.c"},("PVS_SOURCE_SCOPE_DRIFT",after-before)
+allowed={"SP/code/server/sv_snapshot.c"}
+assert after-before<=allowed,("PVS_SOURCE_SCOPE_DRIFT",after-before)
+assert "SP/code/server/sv_snapshot.c" in before and "SP/code/server/sv_snapshot.c" in after,("EXPECTED_INHERITED_SERVER_MODIFICATIONS",before,after)
 assert not (before-after),("REMOVED_ACCEPTED_FEATURE_FILES",before-after)
 print("DW_XLABS_PVS_SERVER_ONLY_PATCH_SOURCE_ALLOWLIST_PASS")
 PY
+printf '%s\n' '280266b9662268dddd206dd6500af0f84cce4cc5ff41e19964f82549b715d70e  sept-source/SP/code/server/sv_snapshot.c' | sha256sum -c -
 python3 "$name/qa.py" sept-source \
   --proof evidence/XLABS_SNAPSHOT_V1_SOURCE_PROOF.json \
   --out evidence/xlabs-snapshot-v1-qa | tee evidence/XLABS_SNAPSHOT_V1_QA.txt
