@@ -42,8 +42,8 @@ for xlabs in (False,True):
   for portal in (False,True):
    for linked in (False,True):
     for etype in ("ET_TESLA_EF","ET_PLAYER","ET_SPEAKER"):
-     for dist_sq in (0,200**2,500**2,768**2,800**2,1024**2,1200**2):
-      for r in (0,256,512,768,1024):
+     for dist_sq in tuple(x*x for x in (0,64,128,192,256,320,384,448,512,640,768,800,896,1024,1152,1400)):
+      for r in (0,128,256,384,512,640,768,896,960,1024):
        for pvs in (False,True):
         actual=decide(xlabs,local,portal,linked,etype,r,dist_sq,pvs)
         N+=1
