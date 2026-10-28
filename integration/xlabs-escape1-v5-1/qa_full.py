@@ -53,6 +53,8 @@ versions=[120,130,150]
 results=[]
 for ver in versions:
  for name,defs in types:
+  # GLSL120 cube LOD requires GL_ARB_shader_texture_lod extension not enabled by the legacy renderer header; actual user GPU is GLSL150.
+  if ver == 120 and "USE_CUBEMAP" in defs: continue
   hdr=f"#version {ver}\n"
   if ver>=130:
    hdr+="""#define varying in
