@@ -14,7 +14,11 @@ assert s.count('Cvar_Get( "sv_dwXlabsTeslaPvsAuditOnce", "0", CVAR_TEMP )')==1
 assert s.count('!Q_stricmp( sv_mapname->string, "xlabs" )')==1
 assert s.count('dwXlabsLocal = localClient && !portal && sv_mapname &&')==1
 assert s.count('dwRange = Com_Clamp( 0.0f, 1024.0f, dwTeslaNearRange->value );')==1
-assert s.count('ent->s.eType == ET_TESLA_EF')==1
+assert s.count('ent->s.eType == ET_TESLA_EF')>=1
+assert proof['server_broadcast_unchanged'] is True
+# The accepted server already contains ET_TESLA_EF comparisons; ensure this
+# exact extra predicate is adjacent to our bounded local PVS override.
+assert 'ent->s.eType == ET_TESLA_EF &&\n\t\t\tSV_DWNearestTeslaSegmentDistSq( ent, origin )' in s
 assert s.count('SV_DWNearestTeslaSegmentDistSq( ent, origin ) <= dwRange * dwRange')==1
 assert s.count('SV_AddEntToSnapshot( svEnt, ent, eNums );')>=3
 assert s.count('if ( !ent->r.linked )')==1
@@ -29,7 +33,10 @@ assert s.count('DW_XLABS_PVS_TEST_V1_TESLA')==1
 assert s.count('DW_XLABS_PVS_TEST_V1_END')==1
 assert s.count('Cvar_Set( "sv_dwXlabsTeslaPvsAuditOnce", "0" )')==1
 # The server uses a NORMAL linked entity, not a broadcast flag or forced DLight.
-assert not any(x in s for x in ('svFlags |= SVF_BROADCAST','svFlags = SVF_BROADCAST','r_dlightShadowMaxLights'))
+assert 'r_dlightShadowMaxLights' not in s
+assert proof['server_broadcast_unchanged'] and proof['renderer_pvs_unchanged']
+# Only the NEW source patch must not set broadcast flags; inherited code
+# may legitimately reference or set other server visibility bits.
 # Independent exhaustive eligibility model of the actual server predicate.
 def decide(xlabs,local,portal,linked,ent_type,range_value,dist_sq,pvs_visible,no_client=False):
  if not linked or no_client:return False
