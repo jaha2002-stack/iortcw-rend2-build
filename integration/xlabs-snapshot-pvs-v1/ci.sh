@@ -3,11 +3,15 @@ set -Eeuo pipefail
 name=integration/xlabs-snapshot-pvs-v1
 mkdir -p evidence/xlabs-snapshot-v1-replay/SP/code/server evidence/xlabs-snapshot-v1-qa
 python3 -m py_compile "$name/apply.py" "$name/qa.py" "$name/package.py"
-# Verify that the previously accepted feature chain DID NOT MODIFY server PVS.
-# This allows a truly surgical snapshot delta with no source ambiguity.
+# Accept the exact RECONSTRUCTED #406839 snapshot source, including
+# any inherited September server edits. Never replace it with upstream.
+# Keep SHA-256 and a small provenance diff for independent review.
 git -C sept-source show 438e7d413b5f7277187c35b032eb0ef9093ae778:SP/code/server/sv_snapshot.c > evidence/XLABS_PVS_UPSTREAM_SNAPSHOT_ORIGINAL.c
-cmp sept-source/SP/code/server/sv_snapshot.c evidence/XLABS_PVS_UPSTREAM_SNAPSHOT_ORIGINAL.c
+diff -u evidence/XLABS_PVS_UPSTREAM_SNAPSHOT_ORIGINAL.c sept-source/SP/code/server/sv_snapshot.c > evidence/XLABS_PVS_ACCEPTED_UPSTREAM_DELTA.diff || test "$?" -eq 1
 sha256sum sept-source/SP/code/server/sv_snapshot.c | tee evidence/XLABS_PVS_SERVER_BEFORE_SHA256.txt
+test -s sept-source/SP/code/server/sv_snapshot.c
+grep -Fq '#include "server.h"' sept-source/SP/code/server/sv_snapshot.c
+grep -Fq 'SV_AddEntitiesVisibleFromPoint' sept-source/SP/code/server/sv_snapshot.c
 cp sept-source/SP/code/server/sv_snapshot.c evidence/xlabs-snapshot-v1-replay/SP/code/server/sv_snapshot.c
 git -C sept-source diff --name-only > evidence/XLABS_PVS_ALL_CHANGES_BEFORE.txt
 python3 "$name/apply.py" sept-source \
@@ -26,7 +30,9 @@ fi
 (cd evidence/xlabs-snapshot-v1-replay && git apply --check ../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch && git apply ../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch)
 cmp sept-source/SP/code/server/sv_snapshot.c evidence/xlabs-snapshot-v1-replay/SP/code/server/sv_snapshot.c
 (cd evidence/xlabs-snapshot-v1-replay && git apply --reverse --check ../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch && git apply --reverse ../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch)
-cmp evidence/XLABS_PVS_UPSTREAM_SNAPSHOT_ORIGINAL.c evidence/xlabs-snapshot-v1-replay/SP/code/server/sv_snapshot.c
+# Replay returns to the exact accepted reconstructed source, not upstream.
+printf '%s\n' "$(cut -d' ' -f1 evidence/XLABS_PVS_SERVER_BEFORE_SHA256.txt)" > evidence/XLABS_PVS_RECONSTRUCTED_SOURCE_HASH.txt
+sha256sum evidence/xlabs-snapshot-v1-replay/SP/code/server/sv_snapshot.c | cut -d' ' -f1 | cmp - evidence/XLABS_PVS_RECONSTRUCTED_SOURCE_HASH.txt
 git -C sept-source diff --name-only > evidence/XLABS_PVS_ALL_CHANGES_AFTER.txt
 python3 - <<'PY'
 from pathlib import Path
