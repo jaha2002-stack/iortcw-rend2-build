@@ -84,18 +84,13 @@ init=r'''\tplayerEnt = SV_GentityNum( frame->ps.clientNum );
 	for ( e = 0 ; e < sv.num_entities ; e++ ) {'''.replace("\\t","\t")
 replace_once(init_anchor,init,"XLABS_LOCAL_MAP_TEST_CVARS")
 
-branch_anchor="\t\tbitvector = clientpvs;\n\n\t\t// check individual leafs"
-# PVS/area checks appear before this anchor: must bypass BEFORE area connectivity,
-# not here. Place immediately after SVF_BROADCAST branch, before CM_AreasConnected.
-branch_anchor="\t\tif ( ent->r.svFlags & SVF_BROADCAST ) {\n\t\t\tSV_AddEntToSnapshot( svEnt, ent, eNums );\n\t\t\tcontinue;\n\t\t}\n\n\t\t// ignore if not touching a PV leaf"
-branch=r'''\t\tif ( ent->r.svFlags & SVF_BROADCAST ) {
-			SV_AddEntToSnapshot( svEnt, ent, eNums );
-			continue;
-		}
-
-		// DW Xlabs local proximity exception: only linked, client-visible
+# Insert immediately before the existing area-visibility gate. This is a
+# stable semantic location in the accepted September/October server snapshot,
+# regardless of extra code that precedes the original SVF_BROADCAST handler.
+branch_anchor="\t\tif ( !CM_AreasConnected( clientarea, svEnt->areanum ) ) {"
+branch=r'''		// DW Xlabs local proximity exception: only linked, client-visible
 		// active Tesla bolt emitters. Unlinked/trigger-OFF entities were
-		// rejected above, before this check. Every other entity stays PVS-bound.
+		// rejected above. Every other entity stays PVS-bound.
 		if ( dwXlabsLocal && dwRange > 0.0f &&
 			ent->s.eType == ET_TESLA_EF &&
 			SV_DWNearestTeslaSegmentDistSq( ent, origin ) <= dwRange * dwRange ) {
@@ -103,7 +98,7 @@ branch=r'''\t\tif ( ent->r.svFlags & SVF_BROADCAST ) {
 			continue;
 		}
 
-		// ignore if not touching a PV leaf'''.replace("\\t","\t")
+		if ( !CM_AreasConnected( clientarea, svEnt->areanum ) ) {'''
 replace_once(branch_anchor,branch,"BEFORE_AREA_AND_CLUSTER_PVS")
 
 audit_anchor="\t}\n}\n\n/*\n=============\nSV_BuildClientSnapshot"
