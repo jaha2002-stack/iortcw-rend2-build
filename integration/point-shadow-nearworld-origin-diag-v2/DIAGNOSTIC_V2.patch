@@ -1,0 +1,96 @@
+--- a/SP/code/rend2/tr_local.h
++++ b/SP/code/rend2/tr_local.h
+@@ -2379,6 +2379,9 @@
+ extern cvar_t  *r_dlightShadowStrength;
+ extern cvar_t  *r_dwPointCasterScope; // DARKWOLF_POINT_SHADOW_SCOPE_DIAGNOSTIC_V1_41019985033: 0 all, 1 BSP world, 2 entities
+ extern cvar_t  *r_dwPointReceiverPath; // DARKWOLF_POINT_SHADOW_SCOPE_DIAGNOSTIC_V1_41019985033: 0 all, 1 legacy without point shadow
++extern cvar_t  *r_dwPointNearWorldClip; // DARKWOLF_POINT_SHADOW_NEARWORLD_ORIGIN_DIAG_V2_41019985033; radius units
++extern cvar_t  *r_dwPointOriginAxis; // DARKWOLF_POINT_SHADOW_NEARWORLD_ORIGIN_DIAG_V2_41019985033; 0 off, 1 X, 2 Y, 3 Z
++extern cvar_t  *r_dwPointOriginShift; // DARKWOLF_POINT_SHADOW_NEARWORLD_ORIGIN_DIAG_V2_41019985033; signed units
+ extern cvar_t  *r_dlightShadowHysteresis;
+ extern cvar_t  *r_dlightShadowHoldFrames;
+ // REND2_DLIGHT_SHADOW_QUALITY_DIAG_V8_6
+--- a/SP/code/rend2/tr_init.c
++++ b/SP/code/rend2/tr_init.c
+@@ -293,6 +293,9 @@
+ cvar_t  *r_dlightShadowStrength;
+ cvar_t  *r_dwPointCasterScope; // DARKWOLF_POINT_SHADOW_SCOPE_DIAGNOSTIC_V1_41019985033
+ cvar_t  *r_dwPointReceiverPath; // DARKWOLF_POINT_SHADOW_SCOPE_DIAGNOSTIC_V1_41019985033
++cvar_t  *r_dwPointNearWorldClip; // DARKWOLF_POINT_SHADOW_NEARWORLD_ORIGIN_DIAG_V2_41019985033
++cvar_t  *r_dwPointOriginAxis; // DARKWOLF_POINT_SHADOW_NEARWORLD_ORIGIN_DIAG_V2_41019985033
++cvar_t  *r_dwPointOriginShift; // DARKWOLF_POINT_SHADOW_NEARWORLD_ORIGIN_DIAG_V2_41019985033
+ cvar_t  *r_dlightShadowHysteresis;
+ cvar_t  *r_dlightShadowHoldFrames;
+ // REND2_DLIGHT_SHADOW_QUALITY_DIAG_V8_6
+@@ -1890,6 +1893,13 @@
+ 	ri.Cvar_CheckRange( r_dwPointCasterScope, 0, 2, qtrue );
+ 	r_dwPointReceiverPath = ri.Cvar_Get( "r_dwPointReceiverPath", "0", 0 );
+ 	ri.Cvar_CheckRange( r_dwPointReceiverPath, 0, 1, qtrue );
++	// DARKWOLF_POINT_SHADOW_NEARWORLD_ORIGIN_DIAG_V2_41019985033: test-only and non-archived; restart resets cubemap history.
++	r_dwPointNearWorldClip = ri.Cvar_Get( "r_dwPointNearWorldClip", "0", CVAR_LATCH );
++	ri.Cvar_CheckRange( r_dwPointNearWorldClip, 0.0f, 32.0f, qfalse );
++	r_dwPointOriginAxis = ri.Cvar_Get( "r_dwPointOriginAxis", "0", CVAR_LATCH );
++	ri.Cvar_CheckRange( r_dwPointOriginAxis, 0, 3, qtrue );
++	r_dwPointOriginShift = ri.Cvar_Get( "r_dwPointOriginShift", "0", CVAR_LATCH );
++	ri.Cvar_CheckRange( r_dwPointOriginShift, -16.0f, 16.0f, qfalse );
+ 	r_dlightShadowHysteresis = ri.Cvar_Get( "r_dlightShadowHysteresis", "0.25", CVAR_ARCHIVE );
+ 	r_dlightShadowHoldFrames = ri.Cvar_Get( "r_dlightShadowHoldFrames", "12", CVAR_ARCHIVE );
+ 	// REND2_DLIGHT_SHADOW_QUALITY_DIAG_V8_6: all defaults preserve V8.5 production output.
+--- a/SP/code/rend2/tr_main.c
++++ b/SP/code/rend2/tr_main.c
+@@ -3926,6 +3926,22 @@
+ 			shadowParms.zFar = physicalGroupRadius;
+ 		}
+ 
++		// DARKWOLF_POINT_SHADOW_NEARWORLD_ORIGIN_DIAG_V2_41019985033: fixed-world-axis shadow-capture origin test only.
++		// The light's DIRECT origin/color/radius and shadow eligibility are untouched.
++		// Receiver shader already samples using dlightShadowCaptureOrigin assigned
++		// below, so cubemap generation and sampling use the SAME shifted origin.
++		// No player-camera direction here (avoids moving pseudo-shadows).
++		if (r_dwPointOriginAxis && r_dwPointOriginShift &&
++			r_dwPointOriginAxis->integer >= 1 && r_dwPointOriginAxis->integer <= 3 &&
++			r_dwPointOriginShift->value != 0.0f)
++		{
++			int diagAxis = r_dwPointOriginAxis->integer - 1;
++			float diagShift = r_dwPointOriginShift->value;
++			shadowParms.or.origin[diagAxis] += diagShift;
++			// Retain far clipping coverage despite changed capture position.
++			shadowParms.zFar += fabsf(diagShift);
++		}
++
+ 		for (j = 0; j < 6; j++)
+ 		{
+ 			switch (j)
+--- a/SP/code/rend2/tr_shade.c
++++ b/SP/code/rend2/tr_shade.c
+@@ -2623,6 +2623,14 @@
+ 
+ 		VectorCopy(backEnd.viewParms.or.origin, vector);
+ 		vector[3] = (backEnd.viewParms.flags & VPF_DLIGHT_WORLD_OCCLUSION) ? 2.0f : 1.0f;
++		// DARKWOLF_POINT_SHADOW_NEARWORLD_ORIGIN_DIAG_V2_41019985033: negative w carries a BSP-only fragment clip radius.
++		// Fire/Tesla world mask keeps w=2; synthetic FireVol and model casters w=1.
++		if (r_dwPointNearWorldClip && r_dwPointNearWorldClip->value > 0.0f &&
++			(backEnd.viewParms.flags & (VPF_SHADOWMAP | VPF_DEPTHSHADOW)) ==
++				(VPF_SHADOWMAP | VPF_DEPTHSHADOW) &&
++			!(backEnd.viewParms.flags & (VPF_DLIGHT_WORLD_OCCLUSION | VPF_FIREVOL_SYNTHETIC_SHADOW)) &&
++			backEnd.currentEntity == &tr.worldEntity)
++			vector[3] = -r_dwPointNearWorldClip->value;
+ 		GLSL_SetUniformVec4(sp, UNIFORM_LIGHTORIGIN, vector);
+ 		GLSL_SetUniformFloat(sp, UNIFORM_LIGHTRADIUS, backEnd.viewParms.zFar);
+ 
+--- a/SP/code/rend2/glsl/shadowfill_fp.glsl
++++ b/SP/code/rend2/glsl/shadowfill_fp.glsl
+@@ -18,7 +18,12 @@
+ 	}
+ #if defined(USE_DEPTH)
+ 	// REND2_DYNAMIC_LIGHTING_RELEASE_V2: prevent packed-depth wrap at the far plane.
+-	float depth = clamp(length(u_LightOrigin.xyz - var_Position) / u_LightRadius, 0.0, 1.0);
++	// DARKWOLF_POINT_SHADOW_NEARWORLD_ORIGIN_DIAG_V2_41019985033: exact per-fragment radial clipping of BSP near the capture origin.
++	// Do NOT remove whole walls/meshes; all far fragments remain eligible.
++	// Positive w retains original point-shadow and architectural mask paths.
++	float dwRadius = length(u_LightOrigin.xyz - var_Position);
++	if (u_LightOrigin.w < -0.001 && dwRadius < -u_LightOrigin.w) discard;
++	float depth = clamp(dwRadius / u_LightRadius, 0.0, 1.0);
+ 	// Private architectural cube: base-255 packing is exact in RGBA8 UNORM.
+ 	// Preserve the historical encoding for every existing shadow / FireVol pass.
+ 	if (u_LightOrigin.w > 1.5)
