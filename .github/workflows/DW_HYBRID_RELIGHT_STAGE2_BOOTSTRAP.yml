@@ -1,0 +1,37 @@
+name: Hybrid Relight V2 Stage2 Source Bootstrap (single-use)
+on:
+  push:
+    branches: [rend2-hybrid-relight-v2-from-41019985033-20261030]
+    paths: [bootstrap/stage2-payload/READY]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import-tested-stage2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Reconstruct and verify Stage2 source-only patch
+        run: |
+          set -Eeuo pipefail
+          test -f bootstrap/stage2-payload/READY
+          cat bootstrap/stage2-payload/part*.txt | base64 -d > /tmp/hybrid-stage2.patch.gz
+          echo 'cef0967b9d9c05ceb3820d36205ef02340c99e1bf222fe0c6c60a0be0758148f  /tmp/hybrid-stage2.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/hybrid-stage2.patch.gz > /tmp/hybrid-stage2.patch
+          git apply --check --binary /tmp/hybrid-stage2.patch
+          git apply --binary /tmp/hybrid-stage2.patch
+          rm -rf bootstrap/stage2-payload
+          g++ -std=c++17 -O2 -Werror=return-type integration/hybrid-relight-v2/tagged_bake_core.cpp -o /tmp/hybrid-stage2
+          python3 -m unittest discover -s integration/hybrid-relight-v2/tests -v |& tee /tmp/hybrid-stage2-tests.txt
+          grep -Fq 'Ran 31 tests' /tmp/hybrid-stage2-tests.txt
+          grep -Fq OK /tmp/hybrid-stage2-tests.txt
+          python3 integration/hybrid-relight-v2/tests/generate_synthetic_stage2_demo.py --out /tmp/hybrid-stage2-demo
+          git config user.name 'DarkWolf Hybrid Stage2 CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'DarkWolf Hybrid Relight V2 Stage2: tagged CPU bake, real BSP proof, 31 tests'
+          git push origin HEAD:rend2-hybrid-relight-v2-from-41019985033-20261030
+          echo HYBRID_STAGE2_BOOTSTRAP_SOURCE_PUSH_PASS
