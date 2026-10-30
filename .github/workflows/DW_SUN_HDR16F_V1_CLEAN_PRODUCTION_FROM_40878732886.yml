@@ -1,0 +1,72 @@
+name: DarkWolf Sun HDR16F V1 Clean Production from accepted 40878732886
+on:
+  push:
+    branches: [rend2-sun-hdr16f-v1-clean-production-20261030]
+    paths:
+      - '.github/workflows/DW_SUN_HDR16F_V1_CLEAN_PRODUCTION_FROM_40878732886.yml'
+      - 'integration/sun-hdr16f-precision-v1/package_clean_release.py'
+      - 'docs/DW_SUN_HDR16F_V1_FACTORY_VISUAL_PASS_20261030.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  clean-production:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact base #40878732886 and accepted HDR16F #41013202896
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence dist
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12899612623/zip" > evidence/base.zip
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12958870751/zip" > evidence/accepted.zip
+          python3 - <<'PY'
+          import hashlib,zipfile
+          for path,want in (('evidence/base.zip','4a782194c6d8122fc44897609b6b08a78a99030b3152c02484bab3803cdb91ec'),('evidence/accepted.zip','de82a5d22cadbe5a9f91d2c96cff9c1c246a07165d1ff974e17f56af005590ae')):
+              with zipfile.ZipFile(path) as z:
+                  assert z.testzip() is None
+                  names=[n for n in z.namelist() if n.startswith('dist/') and n.endswith('.zip')]
+                  assert len(names)==1
+                  got=hashlib.sha256(z.read(names[0])).hexdigest()
+                  assert got==want,(path,got,want)
+                  print('PINNED_ACCEPTED_ARTIFACT_SHA256_PASS',path,got)
+          PY
+      - name: Package byte-verified Clean Production with five optional all-effects-on profiles
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/sun-hdr16f-precision-v1/package_clean_release.py
+          python3 integration/sun-hdr16f-precision-v1/package_clean_release.py evidence/base.zip evidence/accepted.zip dist | tee evidence/PRODUCTION_PACKAGING_LOG.txt
+          grep -Fq DW_SUN_HDR16F_CLEAN_PRODUCTION_PACKAGING_PASS evidence/PRODUCTION_PACKAGING_LOG.txt
+          sha256sum -c dist/DarkWolf_Volumetric_Sun_HDR16F_Precision_V1_Clean_Production_Win64.zip.sha256
+          python3 - <<'PY'
+          import json,zipfile
+          name='DarkWolf_Volumetric_Sun_HDR16F_Precision_V1_Clean_Production_Win64'
+          with zipfile.ZipFile('dist/'+name+'.zip') as z:
+              assert z.testzip() is None and len(z.namelist())==57
+              manifest=json.loads(z.read(name+'/docs/DW_SUN_HDR16F_V1_RELEASE_MANIFEST.json'))
+              assert manifest['base_run']==40878732886 and manifest['hdr16f_run']==41013202896
+              assert manifest['new_dither'] is False and manifest['new_telemetry'] is False
+              assert manifest['original_runtime_changed_only']==['renderer_sp_rend2_x64.dll']
+              for tier in ('PERFORMANCE','BALANCED','QUALITY','HIGH','ULTRA'):
+                  data=z.read(name+'/Main/DW_HDR16F_V1_'+tier+'.cfg').decode()
+                  for effect in ('r_volumetricSun','r_volumetricLocal','r_volumetricFire','r_bloom','r_ssgi','r_dwCas','r_dwLut','r_dwA2C'):
+                      assert 'seta '+effect+' "1"' in data,(tier,effect)
+          print('DW_SUN_HDR16F_CLEAN_PRODUCTION_RUNTIME_AND_PROFILE_GATES_PASS')
+          PY
+      - name: Upload clean accepted production archive, manifest, and reproducible packager
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-VolumetricSun-HDR16F-Precision-V1-Clean-Production-Win64
+          path: |
+            dist/DarkWolf_Volumetric_Sun_HDR16F_Precision_V1_Clean_Production_Win64.zip
+            dist/DarkWolf_Volumetric_Sun_HDR16F_Precision_V1_Clean_Production_Win64.zip.sha256
+            dist/DW_SUN_HDR16F_CLEAN_PRODUCTION_AUDIT.json
+            evidence/PRODUCTION_PACKAGING_LOG.txt
+            integration/sun-hdr16f-precision-v1/package_clean_release.py
+            integration/sun-hdr16f-precision-v1/apply.py
+            docs/DW_SUN_HDR16F_V1_FACTORY_VISUAL_PASS_20261030.md
+          retention-days: 90
