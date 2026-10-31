@@ -36,7 +36,9 @@ def main():
                 'python3 integration/hybrid-relight-v2-native/renderer_integration.py sept-source --check-only --proof evidence/NATIVE_PREFLIGHT.json')
             run('NATIVE_PATCH',
                 'python3 integration/hybrid-relight-v2-native/renderer_integration.py sept-source --proof evidence/NATIVE_SOURCE_PROOF.json')
-            run('VERIFY_NATIVE_SOURCE','git -C sept-source diff --check && grep -Fq "DW_HYBRID_V2:" sept-source/SP/code/rend2/tr_bsp.c')
+            run('NATIVE_HDR_BODY_LENGTH_HOTFIX',
+                'python3 integration/hybrid-relight-v2-native/hdrfix.py sept-source --proof evidence/HDR_BODY_LENGTH_HOTFIX.json')
+            run('VERIFY_NATIVE_SOURCE','git -C sept-source diff --check && grep -Fq "DW_HYBRID_V2:" sept-source/SP/code/rend2/tr_bsp.c && grep -Fq "end - (hybridActive ? buf_p : hdrLightmap)" sept-source/SP/code/rend2/tr_bsp.c')
             patched=True
         if name==COMP:
             compiled=True

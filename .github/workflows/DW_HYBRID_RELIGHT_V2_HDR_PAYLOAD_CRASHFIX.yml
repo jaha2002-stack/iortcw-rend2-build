@@ -1,0 +1,69 @@
+name: DarkWolf Hybrid Relight V2 HDR Header Payload Crashfix from exact 41019985033
+on:
+  push:
+    branches: [rend2-hybrid-v2-hdr-payload-crashfix-20261031]
+    paths:
+      - '.github/workflows/DW_HYBRID_RELIGHT_V2_NATIVE_FROM_41019985033.yml'
+      - 'integration/hybrid-relight-v2-native/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  native-rend2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 125
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check approved base and native integration scripts
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence dist build-binaries
+          python3 -m unittest discover -s integration/hybrid-relight-v2-native/tests -p 'test_hdrfix.py' -v
+          python3 -m py_compile integration/hybrid-relight-v2-native/*.py
+          gh api repos/$GITHUB_REPOSITORY/actions/runs/41019985033 > evidence/accepted_run.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('evidence/accepted_run.json'))
+          assert r['conclusion']=='success'
+          assert r['head_sha']=='c653433e1b0a29b2f43f29a240b96a8192acb617'
+          print('ACCEPTED_41019985033_PROVENANCE_PASS')
+          PY
+      - name: Reconstruct pinned source, apply native Hybrid Relight, cross-compile Win64
+        run: |
+          set -Eeuo pipefail
+          python3 integration/hybrid-relight-v2-native/ci_rebuild.py |& tee evidence/native_build.log
+          grep -Fq DW_HYBRID_V2_NATIVE_SOURCE_REBUILD_PASS evidence/native_build.log
+          grep -Fq DW_HYBRID_NATIVE_SOURCE_APPLY_PASS evidence/native_build.log
+          grep -Fq DW_HYBRID_V2_HDR_PAYLOAD_SIZE_HOTFIX_SOURCE_PASS evidence/native_build.log
+          test -s evidence/HDR_BODY_LENGTH_HOTFIX.json
+          test -s build-binaries/renderer_sp_rend2_x64.dll
+          test -s evidence/NATIVE_SOURCE_PROOF.json
+      - name: Package only changed native DLL with 56 byte-identical accepted files
+        run: |
+          set -Eeuo pipefail
+          gh api repos/$GITHUB_REPOSITORY/actions/artifacts/12960988233/zip > evidence/accepted.zip
+          python3 integration/hybrid-relight-v2-native/package_win64.py evidence/accepted.zip build-binaries/renderer_sp_rend2_x64.dll dist/DarkWolf_Hybrid_Relight_V2_Native_Rend2_Win64.zip | tee evidence/native_package.log
+          grep -Fq DW_HYBRID_NATIVE_PRODUCTION_PACKAGE_PASS evidence/native_package.log
+          ( cd dist && sha256sum -c DarkWolf_Hybrid_Relight_V2_Native_Rend2_Win64.zip.sha256 )
+      - name: Publish candidate without licensed BSP or HDR data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-HybridRelight-V2-HDR-Payload-Crashfix-Win64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            dist/*.json
+            evidence/native_build.log
+            evidence/native_package.log
+            evidence/NATIVE_SOURCE_PROOF.json
+            evidence/HDR_BODY_LENGTH_HOTFIX.json
+            evidence/NATIVE_PREFLIGHT.json
+            evidence/NATIVE_SOURCE_REPLAY_STAGES.txt
+            evidence/accepted_run.json
+            integration/hybrid-relight-v2-native/*.py
+          if-no-files-found: warn
+          retention-days: 90
