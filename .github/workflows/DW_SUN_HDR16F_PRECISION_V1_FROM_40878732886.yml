@@ -1,11 +1,12 @@
-name: DarkWolf Texture Material Quality V2 exact accepted 41019985033
+name: DarkWolf Texture Material Fidelity V3 Model Scope from V2 41200040113
 on:
   push:
-    branches: [rend2-texture-material-quality-v2-exact-41019985033-20261031]
+    branches: [rend2-texture-material-fidelity-v3-modelscope-20261031]
     paths:
       - '.github/workflows/DW_SUN_HDR16F_PRECISION_V1_FROM_40878732886.yml'
       - 'integration/sun-hdr16f-precision-v1/apply.py'
       - 'integration/texture-material-quality-v2/**'
+      - 'integration/texture-material-v3/**'
       - 'integration/september-port/merge.py'
       - 'integration/september-port/package.py'
       - 'integration/tesla-september-parity/restore.py'
@@ -267,6 +268,35 @@ jobs:
           PY
           glslangValidator -S frag evidence/DW_FINAL_SHADER_V2_120.frag > evidence/DW_FINAL_SHADER_V2_120.log 2>&1 || { cat evidence/DW_FINAL_SHADER_V2_120.log; exit 1; }
           echo DW_TEXTURE_MATERIAL_QUALITY_V2_GLSL120_PASS
+      - name: Apply V3 model-only quality extension with native negative tests
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/texture-material-v3/apply.py integration/texture-material-v3/test.py integration/texture-material-v3/package.py
+          mkdir -p evidence/v3-scope-native
+          cp sept-source/SP/code/rend2/tr_backend.c evidence/v3-scope-native/tr_backend.v2.before.c
+          cp sept-source/SP/code/rend2/tr_shade.c evidence/v3-scope-native/tr_shade.v2.before.c
+          cp sept-source/SP/code/rend2/tr_shader.c evidence/v3-scope-native/tr_shader.v2.before.c
+          cp sept-source/SP/code/rend2/glsl/dwfinal_fp.glsl evidence/v3-scope-native/dwfinal.v2.before.glsl
+          python3 integration/texture-material-v3/apply.py sept-source --check-only
+          python3 integration/texture-material-v3/apply.py sept-source --proof evidence/DW_MODEL_V3_SOURCE_PROOF.json
+          python3 integration/texture-material-v3/test.py sept-source --out evidence/v3-scope-native | tee evidence/DW_MODEL_V3_NATIVE_TEST.log
+          grep -Fxq DW_MODEL_FIDELITY_V3_STATIC_SCOPE_AUDIT_PASS evidence/DW_MODEL_V3_NATIVE_TEST.log
+          cmp evidence/v3-scope-native/tr_backend.v2.before.c sept-source/SP/code/rend2/tr_backend.c
+          cmp evidence/v3-scope-native/tr_shade.v2.before.c sept-source/SP/code/rend2/tr_shade.c
+          cmp evidence/v3-scope-native/tr_shader.v2.before.c sept-source/SP/code/rend2/tr_shader.c
+          cmp evidence/v3-scope-native/dwfinal.v2.before.glsl sept-source/SP/code/rend2/glsl/dwfinal_fp.glsl
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('evidence/DW_MODEL_V3_SOURCE_PROOF.json').read_text())
+          expected={'SP/code/rend2/tr_init.c','SP/code/rend2/tr_local.h','SP/code/rend2/tr_image.c'}
+          assert set(d['changed_files'])==expected,sorted(d['changed_files'])
+          assert d['defaults']['r_dwModelTextureScope']=='0'
+          assert d['cas_a2c_lut']=='unchanged from V2'
+          print('V3_EXACT_3_FILE_PATCH_SCOPE_GATES_PASS')
+          PY
+          git -C sept-source diff --check
+          echo DW_V3_MODEL_FIDELITY_SOURCE_AND_NATIVE_TEST_PASS
       - name: Cross-compile ALL five game and renderer Win64 binaries from September base
         run: |
           set -Eeuo pipefail
@@ -279,102 +309,34 @@ jobs:
           done
           sha256sum build-binaries/* | tee evidence/NEW_SEPTEMBER_BASE_BINARIES_SHA256.txt
           echo 'SEPTEMBER_PORTED_COMPLETE_WIN64_BINARIES_PASS'
-      - name: Package byte-preserved accepted 41019985033 with only revised renderer and additive test CFGs
+      - name: Package experimental V3 from immutable V2 with strict unchanged-component audit
         run: |
           set -Eeuo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12960988233/zip" > evidence/accepted_410199_outer.zip
-          python3 - <<'PY'
-          import io,zipfile,hashlib,json,struct
-          from pathlib import Path
-          H=lambda b: hashlib.sha256(b).hexdigest()
-          outer=zipfile.ZipFile('evidence/accepted_410199_outer.zip')
-          names=[x for x in outer.namelist() if x.endswith('.zip') and x.startswith('dist/')]
-          assert len(names)==1,names
-          originalzip=outer.read(names[0])
-          base=zipfile.ZipFile(io.BytesIO(originalzip))
-          assert base.testzip() is None
-          original={k:base.read(k) for k in base.namelist() if not k.endswith('/')}
-          files=dict(original)
-          dll=[k for k in files if k.endswith('/renderer_sp_rend2_x64.dll')]
-          assert len(dll)==1,dll
-          oldhash='d7423e8648e2de556f79c7cddecf1a8df16b9f60a46c503d1440089876116b45'
-          assert H(original[dll[0]])==oldhash
-          newdll=Path('build-binaries/renderer_sp_rend2_x64.dll').read_bytes()
-          assert len(newdll)>2800000 and newdll[:2]==b'MZ'
-          pe=struct.unpack_from('<I',newdll,60)[0]
-          assert newdll[pe:pe+4]==b'PE\x00\x00'
-          assert b'r_dwA2C' in newdll and b'r_dwTextureFidelity' in newdll
-          files[dll[0]]=newdll
-          root=dll[0].split('/')[0]+'/'
-          # Existing launchers/quality presets/volumetrics/SSGI/CSM profiles byte-identical.
-          for k in original:
-              if k not in (dll[0],root+'docs/SHA256SUMS.txt'):
-                  assert files[k]==original[k],k
-          proof=json.loads(Path('evidence/DW_TEXTURE_MATERIAL_V2_SOURCE.json').read_text())
-          proof.update({'accepted_run':41019985033,'parent_renderer_sha256':oldhash,
-              'new_renderer_sha256':H(newdll),'visual_gpu_acceptance':'PENDING_USER',
-              'original_57_files_preserved_except_renderer_and_checksum':True,
-              'new_debug_cvars':False,'unrelated_effects_modified':False})
-          files[root+'docs/DW_TEXTURE_MATERIAL_V2_SOURCE_AUDIT.json']=json.dumps(proof,indent=2).encode()
-          files[root+'Main/DW_TEXTURE_MATERIAL_V2_OFF_TEST.cfg']=(
-              '// Same accepted base, isolate material and A2C for OFF screenshot\n'
-              'exec DW_SEPTEMBER_FOURWEEK_VISUAL_BASE.cfg\n'
-              'seta r_dwTextureFidelity "0"\n'
-              'seta r_dwMaterialFidelity "0"\n'
-              'seta r_dwA2C "0"\n'
-              'seta r_dwLutStrength "0.00"\n'
-              'vid_restart\n').encode()
-          files[root+'Main/DW_TEXTURE_MATERIAL_V2_ON_TEST.cfg']=(
-              '// Same accepted base, scoped model texture/material and safe A2C ON\n'
-              'exec DW_SEPTEMBER_FOURWEEK_VISUAL_BASE.cfg\n'
-              'seta r_dwTextureFidelity "1"\n'
-              'seta r_dwMaterialFidelity "1"\n'
-              'seta r_dwA2C "1"\n'
-              'seta r_dwLutStrength "0.00"\n'
-              'vid_restart\n').encode()
-          files[root+'Main/DW_LUT_ANALYTIC_V2_OPTIONAL_TEST.cfg']=(
-              '// Optional third test: keep all original effects, evaluate graded LUT only\n'
-              'exec DW_TEXTURE_MATERIAL_V2_ON_TEST.cfg\n'
-              'seta r_dwLut "1"\n'
-              'seta r_dwLutMode "1"\n'
-              'seta r_dwLutStrength "0.25"\n'
-              'vid_restart\n').encode()
-          files[root+'README_TEXTURE_MATERIAL_V2_RU.txt']=(
-              'DarkWolf Texture/Material V2, exact Clean Production Actions 41019985033.\n'
-              'Other original renderer effects and game binaries preserved.\n'
-              'World texture sizing is restored. Only named players/weapons use fidelity.\n'
-              'A2C retained for named model shaders, not BSP world grates.\n'
-              'Unsafe binary cutout CPU mips and implicit upsample retired.\n'
-              'LUT atlas removed; bounded procedural post grade optional (default neutral).\n'
-              'All original CFG presets unchanged; testing CFGs are optional.\n'
-              'Windows GPU real map/fps and color acceptance NOT YET VERIFIED.\n').encode()
-          files[root+'docs/SHA256SUMS.txt']="".join(H(v)+"  "+k[len(root):]+"\n"
-              for k,v in sorted(files.items()) if k!=root+'docs/SHA256SUMS.txt').encode()
-          target=Path('dist/DarkWolf_Texture_Material_Quality_V2_Exact_41019985033_Win64.zip')
-          with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED,compresslevel=7) as z:
-              for k,v in sorted(files.items()):z.writestr(k,v)
-          with zipfile.ZipFile(target) as z:
-              assert z.testzip() is None and z.read(dll[0])==newdll
-              for k in original:
-                  if k not in (dll[0],root+'docs/SHA256SUMS.txt'):
-                      assert z.read(k)==original[k],k
-              for line in z.read(root+'docs/SHA256SUMS.txt').decode().splitlines():
-                  h,k=line.split('  ',1)
-                  assert H(z.read(root+k))==h,k
-          Path(str(target)+'.sha256').write_text(H(target.read_bytes())+'  '+target.name+'\n')
-          Path('dist/DW_TEXTURE_MATERIAL_V2_PROOF.json').write_text(json.dumps(proof,indent=2))
-          print('DW_TEXTURE_MATERIAL_V2_EXACT_PARENT_PRESERVATION_AND_PACKAGING_PASS',H(target.read_bytes()))
-          PY
-      - name: Publish exact-parent texture material V2 diagnostic Clean Candidate and proof
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/13041644854/zip" > evidence/exact_v2_41200040113_outer.zip
+          python3 integration/texture-material-v3/package.py \
+            --v2-artifact evidence/exact_v2_41200040113_outer.zip \
+            --renderer build-binaries/renderer_sp_rend2_x64.dll \
+            --source-proof evidence/DW_MODEL_V3_SOURCE_PROOF.json \
+            --native-proof evidence/v3-scope-native/DW_MODEL_V3_TEST_REPORT.json \
+            --out dist | tee evidence/DW_V3_PACKAGE_LOG.txt
+          grep -Fq DW_V3_MODEL_SCOPE_ZIP_INTEGRITY_AND_55_FILE_PARITY_PASS evidence/DW_V3_PACKAGE_LOG.txt
+          ( cd dist && sha256sum -c DarkWolf_Texture_Material_Fidelity_V3_Experimental_From_41019985033_Win64.zip.sha256 )
+          echo DW_MODEL_FIDELITY_V3_EXPERIMENTAL_RELEASE_CANDIDATE_PASS
+      - name: Upload V3 experimental Win64 package, exact source and native evidence
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: DarkWolf-Texture-Material-Quality-V2-Exact-41019985033-Win64
+          name: DarkWolf-Texture-Material-Fidelity-V3-ModelScope-ExactV2-Win64
           path: |
-            dist/DarkWolf_Texture_Material_Quality_V2_Exact_41019985033_Win64.zip
-            dist/DarkWolf_Texture_Material_Quality_V2_Exact_41019985033_Win64.zip.sha256
-            dist/DW_TEXTURE_MATERIAL_V2_PROOF.json
-            evidence/DW_TEXTURE_MATERIAL_V2_SOURCE.json
-            evidence/DW_FINAL_SHADER_V2_120.log
+            dist/DarkWolf_Texture_Material_Fidelity_V3_Experimental_From_41019985033_Win64.zip
+            dist/DarkWolf_Texture_Material_Fidelity_V3_Experimental_From_41019985033_Win64.zip.sha256
+            dist/DW_V3_MODEL_SCOPE_FINAL_AUDIT.json
+            evidence/DW_MODEL_V3_SOURCE_PROOF.json
+            evidence/v3-scope-native/DW_MODEL_V3_TEST_REPORT.json
+            evidence/DW_MODEL_V3_NATIVE_TEST.log
+            evidence/DW_V3_PACKAGE_LOG.txt
             evidence/september-ported-win64-build.log
+            integration/texture-material-v3/apply.py
+            integration/texture-material-v3/test.py
+            integration/texture-material-v3/package.py
           retention-days: 90
