@@ -1,10 +1,12 @@
-name: DarkWolf Sun HDR16F Precision V1 from exact 40878732886
+name: DarkWolf Texture A2C CAS LUT Safety V1 exact 41019985033
 on:
   push:
-    branches: [rend2-volsun-hdr16f-v1-from-408787-20261030]
+    branches: [rend2-texture-a2c-cas-lut-safety-v1-from-41019985033-20261031]
     paths:
       - '.github/workflows/DW_SUN_HDR16F_PRECISION_V1_FROM_40878732886.yml'
       - 'integration/sun-hdr16f-precision-v1/apply.py'
+      - 'integration/texture-quality-repair-v1/**'
+      - '.github/workflows/DW_SUN_HDR16F_PRECISION_V1_FROM_40878732886.yml'
       - 'integration/september-port/merge.py'
       - 'integration/september-port/package.py'
       - 'integration/tesla-september-parity/restore.py'
@@ -234,6 +236,23 @@ jobs:
           grep -Fq DARKWOLF_PORTAL_SKY_SINGLE_SAMPLE_UNIVERSAL_V1 sept-source/SP/code/rend2/tr_backend.c
           git -C sept-source diff --check
           echo DW_SUN_HDR16F_V1_PRODUCTION_SOURCE_READY
+      - name: Apply bounded quality repair to exact accepted Sun HDR16F source, source test 1
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/texture-quality-repair-v1/apply.py
+          python3 integration/texture-quality-repair-v1/apply.py sept-source --check-only
+          python3 integration/texture-quality-repair-v1/apply.py sept-source --proof evidence/DW_QUALITY_REPAIR_V1_SOURCE.json
+          git -C sept-source diff --check
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          d=json.loads(Path('evidence/DW_QUALITY_REPAIR_V1_SOURCE.json').read_text())
+          assert d['accepted_parent_run']==41019985033
+          assert len(d['changes'])==9
+          assert all('r_dwA2C' not in (Path('sept-source/SP/code/rend2')/n).read_text()
+                     for n in ('tr_init.c','tr_local.h','tr_shade.c'))
+          print('DW_QUALITY_REPAIR_SOURCE_AND_A2C_REMOVAL_PASS')
+          PY
       - name: Cross-compile ALL five game and renderer Win64 binaries from September base
         run: |
           set -Eeuo pipefail
@@ -246,25 +265,86 @@ jobs:
           done
           sha256sum build-binaries/* | tee evidence/NEW_SEPTEMBER_BASE_BINARIES_SHA256.txt
           echo 'SEPTEMBER_PORTED_COMPLETE_WIN64_BINARIES_PASS'
-      - name: Package exact runtime accepted #40822067963 with Alarm-only rebuilt Rend2 DLL
+      - name: Package clean isolated repair on immutable #41019985033 ZIP, provenance and QA
         run: |
-          bash integration/dw-alarm-clean-v1/ci-package.sh
-      - name: Upload Alarm-only Clean Production Candidate V1 and exact source provenance
+          set -Eeuo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12960988233/zip" > evidence/accepted_410199_outer.zip
+          python3 - <<'PY'
+          import io,zipfile,hashlib,json
+          from pathlib import Path
+          H=lambda b: hashlib.sha256(b).hexdigest()
+          outer=zipfile.ZipFile('evidence/accepted_410199_outer.zip')
+          names=[x for x in outer.namelist() if x.endswith('.zip') and x.startswith('dist/')]
+          assert len(names)==1,names
+          blob=outer.read(names[0])
+          base=zipfile.ZipFile(io.BytesIO(blob))
+          assert base.testzip() is None
+          files={k:base.read(k) for k in base.namelist() if not k.endswith('/')}
+          dll=[k for k in files if k.endswith('/renderer_sp_rend2_x64.dll')]
+          assert len(dll)==1,dll
+          assert H(files[dll[0]])=='d7423e8648e2de556f79c7cddecf1a8df16b9f60a46c503d1440089876116b45'
+          bins=list(Path('build-binaries').glob('renderer_sp_rend2_x64.dll'))
+          assert len(bins)==1
+          newdll=bins[0].read_bytes()
+          assert newdll[:2]==b'MZ' and len(newdll)>2500000
+          files[dll[0]]=newdll
+          root=dll[0].split('/')[0]+'/'
+          for k in list(files):
+              if k.endswith('.cfg') and (k.endswith('DW_SEPTEMBER_FOURWEEK_VISUAL_BASE.cfg') or '/DW_HDR16F_V1_' in k):
+                  s=files[k].decode()
+                  for var,value in {'r_dwTextureFidelity':'0','r_dwMaterialFidelity':'0',
+                      'r_dwAdaptiveUpsample':'0','r_dwCutoutMip':'0','r_dwA2C':'0',
+                      'r_dwCas':'1','r_dwCasStrength':'0.35','r_dwLut':'0',
+                      'r_dwLutMode':'0','r_dwLutStrength':'0.00'}.items():
+                      import re
+                      s=re.sub(r'(?m)^seta '+var+r' "[^"]+"',f'seta {var} "{value}"',s)
+                  files[k]=s.encode()
+          proof=json.loads(Path('evidence/DW_QUALITY_REPAIR_V1_SOURCE.json').read_text())
+          proof.update({'source_run':41019985033,'original_renderer_sha256':'d7423e8648e2de556f79c7cddecf1a8df16b9f60a46c503d1440089876116b45',
+              'new_renderer_sha256':H(newdll),'runtime_gpu_user_acceptance':'PENDING',
+              'compiled_success_not_visual_acceptance':True})
+          files[root+'docs/DW_QUALITY_REPAIR_SOURCE_AUDIT.json']=json.dumps(proof,indent=2).encode()
+          files[root+'Main/DW_QUALITY_REPAIR_SAFE.cfg']=b'''// Safe production config - restart render after applying
+          seta r_dwTextureFidelity "0"
+          seta r_dwMaterialFidelity "0"
+          seta r_dwCas "1"
+          seta r_dwCasStrength "0.35"
+          seta r_dwLut "0"
+          seta r_dwLutStrength "0.00"
+          seta r_dwLutMode "0"
+          seta r_ext_framebuffer_multisample "4"
+          '''
+          files[root+'Main/DW_QUALITY_REPAIR_LUT_DIAGNOSTIC.cfg']=b'''exec DW_QUALITY_REPAIR_SAFE.cfg
+          seta r_dwLut "1"
+          seta r_dwLutMode "1"
+          seta r_dwLutStrength "0.25"
+          '''
+          files[root+'README_QUALITY_REPAIR.txt']=b'''DarkWolf texture quality safety V1 from exact 41019985033.
+          Only the renderer DLL and selected test CFGs are changed; other binaries are preserved.
+          Retired A2C, adaptive image upsample, CPU binary cutout mips, GPU LUT atlas.
+          Preserved CAS with conservative strength, LUT analytic grade optional, other effects.
+          Original retail pak*.pk3 required. Requires local Windows GPU image and FPS acceptance.
+          '''
+          files[root+'docs/SHA256SUMS.txt']="".join(H(v)+"  "+k[len(root):]+"\n" for k,v in sorted(files.items()) if k!=root+'docs/SHA256SUMS.txt').encode()
+          out=Path('dist/DarkWolf_Quality_Repair_V1_From_41019985033_Win64.zip')
+          with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED,compresslevel=7) as z:
+              for k,v in sorted(files.items()):z.writestr(k,v)
+          with zipfile.ZipFile(out) as z:
+              assert z.testzip() is None
+              assert z.read(dll[0])==newdll
+          Path(str(out)+'.sha256').write_text(H(out.read_bytes())+'  '+out.name+'\n')
+          Path('dist/DW_QUALITY_REPAIR_V1_PROOF.json').write_text(json.dumps(proof,indent=2))
+          print('DW_QUALITY_REPAIR_V1_PRODUCTION_PACKAGE_PASS',H(out.read_bytes()))
+          PY
+      - name: Publish quality repair V1 Windows release candidate and proof
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: DarkWolf-Alarm-Red-LocalVol-Clean-Production-Candidate-V1-From-408220-Win64
+          name: DarkWolf-Quality-Repair-V1-Exact-41019985033-Win64
           path: |
-            dist/DarkWolf_Alarm_Red_StaticPromote_Occlusion_Clean_Production_Candidate_V1_Win64.zip
-            dist/DarkWolf_Alarm_Red_StaticPromote_Occlusion_Clean_Production_Candidate_V1_Win64.zip.sha256
-            dist/DW_ALARM_CLEAN_V1_FINAL_AUDIT.json
-            evidence/DW_ALARM_CLEAN_V1_APPLY.txt
-            evidence/DW_ALARM_CLEAN_V1_UNIT.txt
-            evidence/DW_ALARM_CLEAN_V1_ALL_BEFORE.txt
-            evidence/DW_ALARM_CLEAN_V1_PACKAGE.txt
-            evidence/DW_ALARM_CLEAN_V1_GLSL_120.log
-            evidence/DW_ALARM_CLEAN_V1_GLSL_130.log
-            evidence/DW_ALARM_CLEAN_V1_GLSL_150.log
+            dist/DarkWolf_Quality_Repair_V1_From_41019985033_Win64.zip
+            dist/DarkWolf_Quality_Repair_V1_From_41019985033_Win64.zip.sha256
+            dist/DW_QUALITY_REPAIR_V1_PROOF.json
+            evidence/DW_QUALITY_REPAIR_V1_SOURCE.json
             evidence/september-ported-win64-build.log
-            integration/dw-alarm-clean-v1/payload.tar.gz.b64
-            docs/DarkWolf_Fire_Volumetric_V1-V6_Handoff_2026-10-29.md
           retention-days: 90
