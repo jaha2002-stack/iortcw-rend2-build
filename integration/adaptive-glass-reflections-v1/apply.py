@@ -24,15 +24,15 @@ def run(root,check=False):
       "cvar_t *r_dwGlassReflect, *r_dwGlassIntensity, *r_dwGlassAutoDetect; // "+M+"\ncvar_t  *r_cubeMapping;","vars")
     # Register immediately before existing cube mapping without modifying its value.
     # Historical DarkWolf cvars may have altered formatting/defaults.
-    patt=r'(?m)^(\\s*)r_cubeMapping\\s*=\\s*ri\\.Cvar_Get\\(\\s*"r_cubeMapping"[^;]*;'
+    patt=r'(?m)^(\s*)r_cubeMapping\s*=\s*ri\.Cvar_Get\(\s*"r_cubeMapping"[^;]*;'
     hits=list(re.finditer(patt,b["tr_init.c"]))
     if len(hits)!=1:raise ValueError("r_cubeMapping registration occurrences "+str(len(hits)))
     m=hits[0]
-    reg=('r_dwGlassReflect = ri.Cvar_Get("r_dwGlassReflect", "1", CVAR_ARCHIVE | CVAR_LATCH);\\n'
-         'r_dwGlassIntensity = ri.Cvar_Get("r_dwGlassIntensity", "0.60", CVAR_ARCHIVE);\\n'
-         'r_dwGlassAutoDetect = ri.Cvar_Get("r_dwGlassAutoDetect", "1", CVAR_ARCHIVE);\\n')
+    reg=('r_dwGlassReflect = ri.Cvar_Get("r_dwGlassReflect", "1", CVAR_ARCHIVE | CVAR_LATCH);\n'
+         'r_dwGlassIntensity = ri.Cvar_Get("r_dwGlassIntensity", "0.60", CVAR_ARCHIVE);\n'
+         'r_dwGlassAutoDetect = ri.Cvar_Get("r_dwGlassAutoDetect", "1", CVAR_ARCHIVE);\n')
     indent=m.group(1)
-    b["tr_init.c"]=b["tr_init.c"][:m.start()]+indent+reg.replace('\\n','\\n'+indent)+b["tr_init.c"][m.start():]
+    b["tr_init.c"]=b["tr_init.c"][:m.start()]+indent+reg.replace('\n','\n'+indent)+b["tr_init.c"][m.start():]
     # Static cubemap allocation only; legacy lightall / Norway water remain gated by original r_cubeMapping.
     b["tr_image.c"]=rep(b["tr_image.c"],
         "if (r_cubeMapping->integer)",
@@ -118,14 +118,14 @@ static void DW_LoadAutoGlassProbes(void)
 '''
     b["tr_bsp.c"]=rep(b["tr_bsp.c"],
         "void R_AssignCubemapsToWorldSurfaces(void)",
-        glassSource+"\\nvoid R_AssignCubemapsToWorldSurfaces(void)","auto probe helper")
+        glassSource+"\nvoid R_AssignCubemapsToWorldSurfaces(void)","auto probe helper")
     b["tr_bsp.c"]=rep(b["tr_bsp.c"],
-        "if (r_cubeMapping->integer)\\n\\t{\\n\\t\\t// Try loading an env.json file first",
-        "if (r_cubeMapping->integer || (r_dwGlassReflect && r_dwGlassReflect->integer && DW_MapHasGlass()))\\n\\t{\\n\\t\\t// Try loading an env.json file first",
+        "if (r_cubeMapping->integer)\n\t{\n\t\t// Try loading an env.json file first",
+        "if (r_cubeMapping->integer || (r_dwGlassReflect && r_dwGlassReflect->integer && DW_MapHasGlass()))\n\t{\n\t\t// Try loading an env.json file first",
         "probe gating")
     b["tr_bsp.c"]=rep(b["tr_bsp.c"],
         'R_LoadCubemapEntities("ai_marker");',
-        'if (r_cubeMapping->integer) R_LoadCubemapEntities("ai_marker");\\n'
+        'if (r_cubeMapping->integer) R_LoadCubemapEntities("ai_marker");\n'
         '            else DW_LoadAutoGlassProbes();',"auto fallback")
     b["tr_bsp.c"]=rep(b["tr_bsp.c"],
         "if (r_cubeMapping->integer && tr.numCubemaps && glRefConfig.framebufferObject)",
