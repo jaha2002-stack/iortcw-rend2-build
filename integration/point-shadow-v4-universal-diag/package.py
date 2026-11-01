@@ -36,6 +36,8 @@ def package(artifact,renderer,proof,outdir):
         "integration/point-shadow-v4-universal-diag/README_GPU_TEST_RU.md").read_bytes()
     for cfg_name in ("DW_PS_V4_AUTOTEST.cfg","DW_PS_V4_RESET.cfg"):
         files["Main/"+cfg_name]=Path("integration/point-shadow-v4-universal-diag/"+cfg_name).read_bytes()
+    for collector_name in ("COLLECT_DW_PS_V4.cmd","COLLECT_DW_PS_V4.ps1"):
+        files[collector_name]=Path("integration/point-shadow-v4-universal-diag/"+collector_name).read_bytes()
     manifest={"type":"V4_DIAGNOSTIC_ATTEMPT_1_OF_2_NOT_PRODUCTION","accepted_release_run":41019985033,"accepted_artifact_id":12960988233,
        "accepted_release_zip_sha256":sha(payload),"accepted_renderer_sha256":BASE_SHA,
        "diagnostic_renderer_sha256":sha(newdll),"new_cvars":{"r_dwPointV4Scan":"0=OFF default; 1=source-local scan/report","r_dwPointV4Mode":"0=baseline,1=emitter-linked one,2=nearest one,3=top-three; latched","r_dwPointV4FocusMap":"auto-generated map identity and source-bound coordinates","r_dwPointV4FocusId1_Id3":"map/source-local BSP surfaces selected automatically; no global materials"},
@@ -46,7 +48,7 @@ def package(artifact,renderer,proof,outdir):
        "change_to_glsl":"V2 diagnostic base unchanged; V4 modifies no shader","gpu_visual_validation":"PENDING","patch_proof":patch}
     files["docs/DW_POINT_SHADOW_V4_UNIVERSAL_DIAGNOSTIC_MANIFEST.json"]=(json.dumps(manifest,indent=2)+"\n").encode()
     files["docs/SHA256SUMS.txt"]="".join(f"{sha(files[n])}  {n}\n" for n in sorted(files) if n!="docs/SHA256SUMS.txt").encode()
-    assert len(files)==61
+    assert len(files)==63
     assert all(files[n]==original[n] for n in original if n not in ("renderer_sp_rend2_x64.dll","docs/SHA256SUMS.txt"))
     outdir=Path(outdir);outdir.mkdir(parents=True,exist_ok=True)
     out=outdir/(NAME+".zip")
@@ -57,7 +59,7 @@ def package(artifact,renderer,proof,outdir):
             info.external_attr=0o644<<16
             z.writestr(info,files[n],compress_type=zipfile.ZIP_DEFLATED,compresslevel=6)
     with zipfile.ZipFile(out) as z:
-        assert z.testzip() is None and len(z.namelist())==61
+        assert z.testzip() is None and len(z.namelist())==63
         for line in z.read(NAME+"/docs/SHA256SUMS.txt").decode().splitlines():
             h,n=line.split("  ",1)
             assert sha(z.read(NAME+"/"+n))==h,n
