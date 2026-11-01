@@ -27,6 +27,7 @@ static const msurface_t *dwBoss1CleanSurfaces = NULL;
 static const surfaceType_t *dwBoss1CleanCandidate = NULL;
 static int dwBoss1CleanCount = -1;
 static int dwBoss1CleanMainCount = -1;
+static int dwBoss1CleanIndex = -1;
 static qboolean dwBoss1CleanUnique = qfalse;
 
 static qboolean DW_Boss1CleanAabbMatch(const msurface_t *s)
@@ -59,6 +60,7 @@ static void DW_Boss1CleanResolve(void)
     dwBoss1CleanCount=tr.world->numsurfaces;
     dwBoss1CleanMainCount=tr.world->numWorldSurfaces;
     dwBoss1CleanCandidate=NULL;
+    dwBoss1CleanIndex=-1;
     dwBoss1CleanUnique=qfalse;
     if(tr.world->numsurfaces!=7791 ||
        tr.world->numWorldSurfaces!=7274)return;
@@ -69,7 +71,8 @@ static void DW_Boss1CleanResolve(void)
         {
             ++matched;
             dwBoss1CleanCandidate=s->data;
-            if(matched>1){dwBoss1CleanCandidate=NULL;return;}
+            dwBoss1CleanIndex=i;
+            if(matched>1){dwBoss1CleanCandidate=NULL;dwBoss1CleanIndex=-1;return;}
         }
     }
     dwBoss1CleanUnique=(matched==1)?qtrue:qfalse;
@@ -97,13 +100,10 @@ static qboolean DW_Boss1CleanSkipSourceLocalCaster(const drawSurf_t *ds)
     DW_Boss1CleanResolve();
     if(!dwBoss1CleanUnique || ds->surface!=dwBoss1CleanCandidate)
         return qfalse;
-    /* Revalidate cached signature: no stale pointer can cause a broad skip. */
-    {
-        int i;
-        for(i=0;i<tr.world->numWorldSurfaces;i++)
-            if(tr.world->surfaces[i].data==ds->surface)
-                return DW_Boss1CleanAabbMatch(&tr.world->surfaces[i]);
-    }
+    /* Revalidate the unique cached map-local fingerprint in O(1). */
+    if(dwBoss1CleanIndex>=0 && dwBoss1CleanIndex<tr.world->numWorldSurfaces &&
+       tr.world->surfaces[dwBoss1CleanIndex].data==ds->surface)
+        return DW_Boss1CleanAabbMatch(&tr.world->surfaces[dwBoss1CleanIndex]);
     return qfalse;
 }
 '''
