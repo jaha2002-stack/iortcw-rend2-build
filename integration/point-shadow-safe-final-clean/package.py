@@ -101,7 +101,6 @@ def main():
     pe=struct.unpack_from("<I",dll,60)[0]
     assert dll[pe:pe+4]==b"PE\x00\x00"
     for feature in (
-        b"DARKWOLF_BOSS1_PROVEN_SOURCE_LOCAL_FIX_CLEAN_PRODUCTION_V1",
         b"r_dwTextureFidelity",b"r_dwMaterialFidelity",b"r_dwA2C",
         b"r_dwCas",b"r_dwLut",b"_dwSunHalfRGBA16F",
         b"textures/metal_misc/ametal_m03dm"):
