@@ -28,7 +28,7 @@ def main():
  pe=struct.unpack_from("<I",dll,60)[0]
  assert dll[pe:pe+4]==b"PE\0\0"
  for required in (b"dw_ps_lights",b"dw_ps_picklight",b"dw_ps_pickcaster",b"dw_ps_light_off",
-                  b"dw_ps_caster_off",b"DARKWOLF_BOSS1_PROVEN_SOURCE_LOCAL_FIX_CLEAN_PRODUCTION_V1",
+                  b"dw_ps_caster_off",b"textures/metal_misc/ametal_m03dm",
                   b"r_dwA2C",b"r_dwLut",b"r_dwCas"):
   assert required in dll,required
  for banned in (b"DW_PS_V5_SOURCE_LOCAL_SKIP",b"r_dwPointV5ProofMode",b"r_dwPointV4Mode"):
