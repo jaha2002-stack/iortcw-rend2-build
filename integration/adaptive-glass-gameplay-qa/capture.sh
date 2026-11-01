@@ -30,9 +30,11 @@ echo "dbff5ea928802b1bddfd4c171bf08ed4294b2da0273e1cf0802fdcedc40c23c3  evidence
 7z x -y -oqa-unpack evidence/rtcw-demo-installer.run > evidence/demo_extract_7z.txt 2>&1 || true
 pakfile="$(find qa-unpack -type f -path '*/demomain/pak0.pk3' -print -quit)"
 if [[ -z "$pakfile" ]]; then
+  # 7z extracts the .run's GZIP into a TAR named after the local installer,
+  # not after the original upstream filename. Recursively unpack large TAR.
   while IFS= read -r -d '' f; do
     7z x -y -oqa-unpack "$f" >> evidence/demo_extract_7z.txt 2>&1 || true
-  done < <(find qa-unpack -maxdepth 3 -type f -name 'wolfspdemo-linux-*' -print0)
+  done < <(find qa-unpack -maxdepth 3 -type f -size +100M -print0)
   pakfile="$(find qa-unpack -type f -path '*/demomain/pak0.pk3' -print -quit)"
 fi
 test -n "$pakfile" || { echo UNABLE_TO_EXTRACT_DEMO_PK3; tail -50 evidence/demo_extract_7z.txt; exit 1; }
