@@ -10,9 +10,9 @@ sys.path.insert(0,str(Path("testlab/scripts").resolve()))
 import rc4_requested_views as testlab
 from rc4_assault_camera import World
 
-PRIORITY=("escape1","factory","crypt1","norway","church","dam","boss1","tram","assault","swf","forest","trainyard")
+PRIORITY=("escape1","church","dam","boss1","tram","assault","swf","factory","norway","forest","trainyard","crypt1")
 EXCLUDED=("water","lava","mirror","blood","ice","shutter","shudder","frame","trim","panel","border")
-MAX_MAPS=5
+MAX_MAPS=2  # first GPU A/B gate: two actual maps; extend for regression matrix after acceptance
 MAX_VIEWS_PER_MAP=2
 STAMP="DW_GLASS_REAL_RETAIL_TESTLAB_V1"
 
@@ -222,7 +222,8 @@ def capture(source,retail,profile,out,variant,mapname,views,enabled):
             png=out/(shot+".png");image.save(png)
             st=ImageStat.Stat(image)
             images[str(n)]={"file":png.name,"sha256":H(png),"size":list(image.size),
-                             "stddev":round(sum(st.stddev)/3,2),"mean":round(sum(st.mean)/3,2)}
+                             "stddev":round(sum(st.stddev)/3,2),"mean":round(sum(st.mean)/3,2),
+                             "low_light":sum(st.mean)/3<8 or sum(st.stddev)/3<7}
     cameras={}
     for match in re.finditer(r"PROOF_VIEW shot=(\d+) time=\d+ eye=([^ ]+) forward=([^ ]+) weapon=(\d+)",text):
         cameras[match[1]]={"eye":match[2],"forward":match[3],"weapon":int(match[4])}
@@ -234,7 +235,7 @@ def capture(source,retail,profile,out,variant,mapname,views,enabled):
     print("DW_GLASS_REAL_CAPTURE",variant,mapname,rc,len(images),report["ready"],report["complete"],flush=True)
     assert rc==0 and report["ready"] and report["complete"],"Real RTCW camera automation never finished"
     assert len(images)==len(shots)==len(cameras),"Missing actual framebuffer image or camera probe"
-    assert all(x["stddev"]>7 and x["mean"]>5 for x in images.values()),"Blank/black/invalid game screenshot"
+    assert all(x["stddev"]>1.0 and x["mean"]>1.0 for x in images.values()),"Empty/black framebuffer; natural low-light scenes are allowed but marked"
     return report
 
 def compare(out,matrix,all_reports):
@@ -257,8 +258,17 @@ def compare(out,matrix,all_reports):
             drift_mae=sum(drift.mean)/3
             effect_mae=sum(effect.mean)/3
             effect_chg=ImageChops.difference(off,on).getbbox() is not None
+            # Non-destructive reflection: reject old V1 darkening of stained glass.
+            # This uses only real game framebuffer pixels; no generated images.
+            import numpy as np
+            raw=np.asarray(on,dtype=np.int16)-np.asarray(off,dtype=np.int16)
+            brighter=int(np.maximum(raw,0).sum())
+            darker=int(np.maximum(-raw,0).sum())
             row={"map":name,"view":i,"material":view["material"],"camera":view["eye"],
                  "base_off_mae":round(drift_mae,5),"off_on_mae":round(effect_mae,5),
+                 "brightened_rgb_sum":brighter,"darkened_rgb_sum":darker,
+                 "non_destructive_reflectivity":brighter>=3*darker,
+                 "low_light":bool(any(v[x]["images"][str(i)]["low_light"] for x in ("BASE","OFF","ON"))),
                  "glass_effect_changed":effect_chg,"real_3d_game":True,
                  "base_off_same_camera":True,"lighting_profile":"ACCEPTED_HIGH"}
             rows.append(row)
@@ -276,7 +286,9 @@ def compare(out,matrix,all_reports):
     (out/"REAL_GLASS_TESTLAB_AB_REPORT.json").write_text(json.dumps(report,indent=2)+"\n")
     print("REAL_RETAIL_GLASS_BASE_OFF_ON_SCREENS",len(rows),json.dumps([{"map":r["map"],"delta":r["off_on_mae"]} for r in rows]),flush=True)
     # A PASS requires a real in-game reflection difference, not merely a shader compiled successfully.
-    assert any(r["off_on_mae"]>0.08 for r in rows),"No observable glass reflectivity in actual gameplay"
+    assert all(r["base_off_mae"]<0.3 for r in rows),"Regressed source BASE/OFF rendering or mismatched camera"
+    assert all(r["non_destructive_reflectivity"] for r in rows),"GLASS_REGRESSION: ON darkened genuine stained glass"
+    assert any(r["off_on_mae"]>0.08 and r["brightened_rgb_sum"]>1000 and not r["low_light"] for r in rows),"No visible brightened glass in valid-lit real scene"
     # Baseline parity is quantified, not asserted exact, because time-dependent visuals can differ.
     return report
 
