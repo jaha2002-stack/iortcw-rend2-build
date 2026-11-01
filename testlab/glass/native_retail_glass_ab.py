@@ -150,6 +150,9 @@ def prepare(source,retail,variant,mapname,profile):
     for p in retail.iterdir():
         if p.is_file() and p.suffix.lower()==".pk3":
             (main/p.name.lower()).symlink_to(p.resolve())
+    # Preserve the HIGH cfg's original exec dependencies from the accepted parent package.
+    for cfg in profile.parent.glob("*.cfg"):
+        shutil.copy2(cfg,main/cfg.name)
     shutil.copy2(profile,main/"DW_ACCEPTED_HIGH.cfg")
     exe=next((p for p in runtime.iterdir() if p.is_file() and p.name.lower().startswith("iowolfsp")),None)
     if not exe:raise RuntimeError("Native game exe absent")
@@ -241,7 +244,7 @@ def compare(out,matrix,all_reports):
         for i,view in enumerate(views,1):
             b,o,n=(v[x] for x in ("BASE","OFF","ON"))
             assert b["cameras"][str(i)]["eye"]==o["cameras"][str(i)]["eye"]==n["cameras"][str(i)]["eye"],"Camera mismatch"
-            images=[Image.open(out/name/x/x["images"][str(i)]["file"]).convert("RGB") for x in ()] if False else []
+            images=[]
             for mode in ("BASE","OFF","ON"):
                 record=v[mode]["images"][str(i)]
                 images.append(Image.open(out/name/mode/record["file"]).convert("RGB"))
