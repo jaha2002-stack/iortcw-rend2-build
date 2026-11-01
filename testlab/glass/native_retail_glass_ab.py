@@ -166,10 +166,10 @@ def instrument(source):
     # This changes CG test instrumentation only, never accepted renderer bytes.
     syscall_path=source/"SP/code/cgame/cg_syscalls.c"
     content=syscall_path.read_text()
-    old="void    trap_R_AddRefEntityToScene( const refEntity_t *re ) {\\n\\tsyscall( CG_R_ADDREFENTITYTOSCENE, re );"
-    new="void    trap_R_AddRefEntityToScene( const refEntity_t *re ) {\\n\\tif (re && re->reType == RT_POLY) return; /* TESTLAB only: invalid refEntity type */\\n\\tsyscall( CG_R_ADDREFENTITYTOSCENE, re );"
-    old=old.replace("\\\\n","\\n").replace("\\\\t","\\t")
-    new=new.replace("\\\\n","\\n").replace("\\\\t","\\t")
+    old=("void    trap_R_AddRefEntityToScene( const refEntity_t *re ) {" + chr(10) +
+         chr(9) + "syscall( CG_R_ADDREFENTITYTOSCENE, re );")
+    new=old.replace("{" + chr(10), "{" + chr(10) +
+        chr(9) + "if (re && re->reType == RT_POLY) return; /* TESTLAB only: invalid refEntity */" + chr(10),1)
     if content.count(old)!=1:raise RuntimeError("RT_POLY test-only guard anchor mismatch")
     syscall_path.write_text(content.replace(old,new,1))
     after={str(p.relative_to(source)):H(p) for p in (source/"SP/code/rend2").rglob("*") if p.is_file()}
