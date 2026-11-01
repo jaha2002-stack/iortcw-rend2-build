@@ -93,26 +93,26 @@ void DW_V31_ModelFidelityReport_f(void) {
         if (DW_V31IsCompressedFormat(im->internalFormat)) ++compressed;
         if (newModel && !tracked) ++untraced;
         ++visible;
+        // Three compact records per texture avoid console wrapping in condump.
         ri.Printf(PRINT_ALL,
-           "[DWV31] class=%s policy=%s source=%ix%i uploaded=%ix%i "
-           "srcFormat=0x%x gpuFormat=0x%x compressed=%i mip=%i "
-           "v3eligible=%i v3NoCompFlagAdded=%i originalNoCompFlag=%i "
-           "NPOTinput=%i NPOTretained=%i name=%s\n",
-           oldModel ? "V2" : "V3",
-           tracked ? (ev->noCompressionFlagAddedByV3 ? "FLAG_ADDED" : "NO_NEW_FLAG") : "UNTRACED",
-           tracked ? ev->sourceWidth : im->width,
-           tracked ? ev->sourceHeight : im->height,
-           im->uploadWidth, im->uploadHeight,
-           tracked ? ev->originalFormat : 0, im->internalFormat,
-           DW_V31IsCompressedFormat(im->internalFormat) ? 1 : 0,
-           (im->flags & IMGFLAG_MIPMAP) ? 1 : 0,
-           elig ? 1 : 0,
+           "[DWV31] ix=%i c=%s e=%i add=%i origNo=%i mip=%i src=%ix%i up=%ix%i\n",
+           i, oldModel ? "V2" : "V3", elig ? 1 : 0,
            (tracked && ev->noCompressionFlagAddedByV3) ? 1 : 0,
            (tracked && (ev->originalFlags & IMGFLAG_NO_COMPRESSION)) ? 1 : 0,
+           (im->flags & IMGFLAG_MIPMAP) ? 1 : 0,
+           tracked ? ev->sourceWidth : im->width,
+           tracked ? ev->sourceHeight : im->height,
+           im->uploadWidth, im->uploadHeight);
+        ri.Printf(PRINT_ALL,
+           "[DWV31] ix=%i gpu=0x%x raw=0x%x cmp=%i npot=%i kept=%i traced=%i\n",
+           i, (unsigned int)im->internalFormat,
+           tracked ? (unsigned int)ev->originalFormat : 0,
+           DW_V31IsCompressedFormat(im->internalFormat) ? 1 : 0,
            isNPOT ? 1 : 0,
            (isNPOT && im->uploadWidth == ev->sourceWidth &&
             im->uploadHeight == ev->sourceHeight) ? 1 : 0,
-           im->imgName);
+           tracked ? 1 : 0);
+        ri.Printf(PRINT_ALL, "[DWV31] ix=%i name=%s\n", i, im->imgName);
     }
     ri.Printf(PRINT_ALL,
       "[DWV31] SUMMARY loadedV2=%i loadedV3=%i shown=%i eligibleV3=%i "
@@ -205,7 +205,9 @@ def apply(root,dry=False):
     if dry:
         with tempfile.TemporaryDirectory() as td:
             dst=Path(td)
-            for k in names:
+            protected=("tr_backend.c","tr_shade.c","tr_shader.c",
+                       "tr_fbo.c","glsl/dwfinal_fp.glsl")
+            for k in tuple(names) + protected:
                 out=dst/ROOT/k
                 out.parent.mkdir(parents=True,exist_ok=True)
                 shutil.copy2(root/ROOT/k,out)

@@ -1,69 +1,81 @@
 #!/usr/bin/env python3
-"""Compare two DW V3.1 reports; no unsupported GPU/visual-quality claims."""
+"""Compare V3.1 compact three-line per-image console records across two scopes."""
 import argparse, json, re
 from pathlib import Path
 
 KV=re.compile(r"(\w+)=([^\s]+)")
-ROW_FIELDS=("class","policy","source","uploaded","srcFormat","gpuFormat","compressed",
-            "mip","v3eligible","v3NoCompFlagAdded","originalNoCompFlag",
-            "NPOTinput","NPOTretained","name")
 def extract(path):
     lines=Path(path).read_text(encoding="utf-8",errors="replace").splitlines()
-    rows={}
-    headers=[]
-    for line in lines:
-        if line.startswith("[DWV31] scope="): headers.append(dict(KV.findall(line)))
-        if not line.startswith("[DWV31] class="): continue
-        r=dict(KV.findall(line))
-        missing=[k for k in ROW_FIELDS if k not in r]
-        if missing: raise ValueError(f"Missing fields {missing}: {line}")
-        rows[r["name"].lower().replace("\\","/")]=r
-    if not headers: raise ValueError(f"No DWV31 scope header in {path}; run console command first")
-    return rows,headers[-1]
+    scopes=[i for i,x in enumerate(lines) if x.startswith("[DWV31] scope=")]
+    if not scopes:raise ValueError(f"Missing DWV31 report in {path}; use r_dwModelFidelityReport first.")
+    start=scopes[-1]
+    header=dict(KV.findall(lines[start]))
+    by_index={}
+    last_name_index=None
+    for line in lines[start+1:]:
+        if line.startswith("[DWV31] ix="):
+            fields=dict(KV.findall(line))
+            ix=fields.pop("ix",None)
+            if ix is None:raise ValueError("Bad image record: "+line)
+            row=by_index.setdefault(ix,{})
+            row.update(fields)
+            last_name_index=ix if "name" in fields else None
+        elif line.startswith("[DWV31]"):
+            last_name_index=None
+        elif last_name_index is not None and line.strip() and "name" in by_index[last_name_index]:
+            # Engine condump can wrap a long texture path between arbitrary letters.
+            by_index[last_name_index]["name"]+=line.strip()
+    entries={}
+    required=("c","e","add","origNo","mip","src","up","gpu","raw","cmp","npot","kept","traced","name")
+    for ix,row in by_index.items():
+        missing=[k for k in required if k not in row]
+        if missing:raise ValueError(f"Malformed/partial texture entry {ix}: {missing}")
+        name=row["name"].lower().replace("\\","/")
+        entries[name]=row
+    if not entries:raise ValueError(f"No texture records for selected filter in {path}")
+    return entries,header
 
 def compare(off,on):
-    before,bh=extract(off)
-    after,ah=extract(on)
-    if bh.get("scope")!="0" or ah.get("scope")!="1":
-        raise ValueError("Expected scope0 first and scope1 second: "+str((bh.get("scope"),ah.get("scope"))))
-    names=sorted(set(before)|set(after))
-    changes=[]
-    for name in names:
-        a=before.get(name)
-        b=after.get(name)
-        if a is None or b is None:
-            changes.append({"name":name,"kind":"LOAD_SET_DIFF","scope0_loaded":bool(a),"scope1_loaded":bool(b)})
+    before,bh=extract(off);after,ah=extract(on)
+    if (bh.get("scope"),ah.get("scope"))!=("0","1"):
+        raise ValueError("Scope0 then scope1 required; got "+str((bh.get("scope"),ah.get("scope"))))
+    common=before.keys()&after.keys()
+    edits=[]
+    for name in sorted(set(before)|set(after)):
+        x=before.get(name);y=after.get(name)
+        if x is None or y is None:
+            edits.append({"name":name,"reason":"LOADED_IN_ONLY_ONE_SCOPE","in0":bool(x),"in1":bool(y)})
             continue
-        altered={k:{"scope0":a[k],"scope1":b[k]}
-                 for k in ("uploaded","gpuFormat","compressed","mip","source","policy","v3NoCompFlagAdded")
-                 if a[k]!=b[k]}
-        if altered:changes.append({"name":name,"kind":"POLICY_OR_FORMAT_CHANGE","fields":altered})
-    results={
-      "status":"DIAGNOSTIC_COMPARISON_ONLY",
-      "scope0_total":len(before),
-      "scope1_total":len(after),
-      "scope1_newly_added_no_compression_flags":sorted(n for n,r in after.items()
-            if r["v3NoCompFlagAdded"]=="1"),
-      "scope1_gpu_format_differences":sorted(n for n in before.keys() & after.keys()
-            if before[n]["gpuFormat"]!=after[n]["gpuFormat"]),
-      "scope1_upload_dimension_differences":sorted(n for n in before.keys() & after.keys()
-            if before[n]["uploaded"]!=after[n]["uploaded"]),
-      "unmatched_or_modified_records":changes,
-      "note":"This measures actual load policy and GPU internal format, not whether visual quality improved."
+        diff={k:{"scope0":x[k],"scope1":y[k]} for k in
+              ("e","add","up","gpu","cmp","src","mip","npot","kept","origNo")
+              if x[k]!=y[k]}
+        if diff:edits.append({"name":name,"reason":"REPORTED_POLICY_OR_FORMAT_DIFFERENCE","differences":diff})
+    return {
+        "mode":"V3.1_DIAGNOSTIC_AB_ONLY",
+        "scope0_count":len(before),
+        "scope1_count":len(after),
+        "newly_injected_no_compression_flags":sorted(k for k,x in after.items() if x["add"]=="1"),
+        "actual_gpu_format_changes":sorted(k for k in common if before[k]["gpu"]!=after[k]["gpu"]),
+        "actual_uploaded_dimension_changes":sorted(k for k in common if before[k]["up"]!=after[k]["up"]),
+        "changes":edits,
+        "interpretation":"A policy flag or GPU format difference does not establish any visual-quality improvement."
     }
-    return results
 
 def selftest(tmp):
     p=tmp/"off.txt";q=tmp/"on.txt"
-    h="[DWV31] scope=0 textureFidelity=1 picmip=0 picmip2=0 minFilter=0x1 magFilter=0x1 anisoConfigured=2\n"
-    row="[DWV31] class=V3 policy=NO_NEW_FLAG source=128x128 uploaded=128x128 srcFormat=0x8058 gpuFormat=0x8051 compressed=0 mip=1 v3eligible=0 v3NoCompFlagAdded=0 originalNoCompFlag=0 NPOTinput=0 NPOTretained=0 name=models/powerups/health/health_l.tga\n"
-    p.write_text(h+row)
-    q.write_text(h.replace("scope=0","scope=1")+row.replace("policy=NO_NEW_FLAG","policy=FLAG_ADDED").replace("v3eligible=0","v3eligible=1").replace("v3NoCompFlagAdded=0","v3NoCompFlagAdded=1"))
-    x=compare(p,q)
-    assert x["scope0_total"]==x["scope1_total"]==1
-    assert x["scope1_newly_added_no_compression_flags"]==["models/powerups/health/health_l.tga"]
-    assert not x["scope1_gpu_format_differences"]
-    print("DW_V31_REPORT_PAIR_PARSER_NEGATIVE_QUALITY_CLAIM_TEST_PASS")
+    def mk(scope,add):
+        return (f"[DWV31] scope={scope} textureFidelity=1 picmip=1\n"
+                f"[DWV31] ix=23 c=V3 e={scope} add={add} origNo=0 mip=1 src=128x128 up=128x128\n"
+                "[DWV31] ix=23 gpu=0x8051 raw=0x8058 cmp=0 npot=0 kept=0 traced=1\n"
+                "[DWV31] ix=23 name=models/powerups/health/health_l.tga\n"
+                "[DWV31] SUMMARY loadedV2=0 loadedV3=1 shown=1\n")
+    p.write_text(mk(0,0));q.write_text(mk(1,1))
+    r=compare(p,q)
+    assert r["scope0_count"]==r["scope1_count"]==1
+    assert len(r["newly_injected_no_compression_flags"])==1
+    assert not r["actual_gpu_format_changes"]
+    assert "visual-quality" in r["interpretation"]
+    print("DW_V31_COMPACT_REPORT_PARSER_AB_SELFTEST_PASS")
 
 def main():
     a=argparse.ArgumentParser()
@@ -71,14 +83,13 @@ def main():
     a.add_argument("--scope1",type=Path)
     a.add_argument("--out",type=Path)
     a.add_argument("--selftest",action="store_true")
-    args=a.parse_args()
-    if args.selftest:
+    x=a.parse_args()
+    if x.selftest:
         from tempfile import TemporaryDirectory
         with TemporaryDirectory() as tmp:selftest(Path(tmp))
-        return
-    if not args.scope0 or not args.scope1:a.error("--scope0 and --scope1 required")
-    out=compare(args.scope0,args.scope1)
-    s=json.dumps(out,indent=2,ensure_ascii=False)+"\n"
-    if args.out:args.out.write_text(s)
-    else:print(s)
+    else:
+        if not x.scope0 or not x.scope1:a.error("--scope0 and --scope1 required")
+        result=json.dumps(compare(x.scope0,x.scope1),indent=2,ensure_ascii=False)+"\n"
+        if x.out:x.out.write_text(result)
+        else:print(result)
 if __name__=="__main__":main()
