@@ -179,11 +179,15 @@ static void DW_DrawGlassReflection(shaderCommands_t *input)
 \t\treturn;
 \tif (backEnd.depthFill || backEnd.projection2D ||
 \t    (backEnd.viewParms.flags & (VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_NOCUBEMAPS)) ||
-\t    backEnd.currentEntity != &tr.worldEntity ||
+\t    (backEnd.currentEntity && backEnd.currentEntity != &tr.worldEntity &&
+\t     (!tr.currentModel || tr.currentModel->type != MOD_BRUSH)) ||
 \t    input->shader->sort <= SS_PORTAL || input->shader->sort >= SS_NEAREST ||
 \t    input->shader->numDeforms || !tr.renderCubeFbo)
 \t\treturn;
 \tindex = input->cubemapIndex;
+\t// BSP brush glass (including breakable panes) uses nearest static environment probe.
+\tif (index <= 0 && backEnd.currentEntity && backEnd.currentEntity != &tr.worldEntity)
+\t\tindex = R_CubemapForPoint(backEnd.currentEntity->e.origin);
 \tif (index <= 0 || index > tr.numCubemaps) return;
 \tprobe = &tr.cubemaps[index-1];
 \tif (!probe->image) return;
@@ -219,6 +223,13 @@ static void DW_DrawGlassReflection(shaderCommands_t *input)
     b["tr_shade.c"]=rep(b["tr_shade.c"],
         '\tRB_IterateStagesGeneric( input );\n\n\t//\n\t// pshadows!',
         '\tRB_IterateStagesGeneric( input );\n\tDW_DrawGlassReflection(input);\n\n\t//\n\t// pshadows!',"draw hook")
+    b["tr_shade.c"]=rep(b["tr_shade.c"],
+        "\tvertexAttribs = RB_CalcShaderVertexAttribs( input );",
+        "\tvertexAttribs = RB_CalcShaderVertexAttribs( input );\n"
+        "\t// Glass-only normal attribute for BSP world and brush surfaces.\n"
+        "\tif (r_dwGlassReflect && r_dwGlassReflect->integer &&\n"
+        "\t    input->shader && DW_GlassCandidate(input->shader)) vertexAttribs |= ATTR_NORMAL;",
+        "normal attribute")
     if not check:
         for f in files:(root/f).write_text(b[f])
     return {"marker":M,"base_run":41297344177,"changed":files,"dynamic_reflections":False,"automatic_map_agnostic_probes_limit":12,
