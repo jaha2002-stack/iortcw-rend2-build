@@ -23,7 +23,9 @@ void main() {
     float roughness = clamp(u_SpecularScale.z, 0.0, 1.0);
     float f0 = mix(0.035, 0.14, opacity);
     float fresnel = f0 + (1.0 - f0) * pow(1.0 - ndv, 5.0);
-    float blendAlpha = clamp(fresnel * u_SpecularScale.x, 0.0, 0.82);
+    // V1.1: additive dielectric specular lobe, never replace transmitted
+    // stained glass with a dark/black cubemap. Preserves authored colors.
+    float reflectance = clamp(fresnel * u_SpecularScale.x, 0.0, 0.65);
     vec3 reflected = reflect(-eye, normal);
     // Keep local-probe parallax conservative: (probe-world_position)/radius.
     vec3 probeOffset = u_CubeMapInfo.xyz +
@@ -36,5 +38,8 @@ void main() {
                     textureCube(u_CubeMap, normalize(dir + vec3(0.09, -0.18, 0.29))).rgb +
                     env) * 0.25;
     env = mix(env, blurred, roughness * roughness);
-    gl_FragColor = vec4(max(env, vec3(0.0)), blendAlpha);
+    // Renderer uses GL_ONE, GL_ONE: black probe is a strict NO-OP.
+    // Keep even a sunlit probe bounded to prevent HDR/bloom explosions.
+    vec3 highlight = min(max(env, vec3(0.0)) * reflectance, vec3(0.45));
+    gl_FragColor = vec4(highlight, 0.0);
 }
