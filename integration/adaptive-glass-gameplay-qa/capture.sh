@@ -55,7 +55,7 @@ for mode in off on; do
   if [[ "$mode" == off ]]; then flag=0; else flag=1; fi
   (cd "$game" && timeout 75 "$winebinary" ioWolfSP.x64.exe \
     +set fs_basepath "$PWD" +set fs_homepath "$PWD" \
-    +set r_renderer rend2 +set r_fullscreen 0 +set r_mode -1 \
+    +set cl_renderer rend2 +set r_fullscreen 0 +set r_mode -1 \
     +set r_customwidth 1280 +set r_customheight 720 \
     +set r_cubeMapping 0 +set r_dwGlassReflect "$flag" \
     +set r_externalGLSL 0 +set r_hdr 1 +set developer 1 \
