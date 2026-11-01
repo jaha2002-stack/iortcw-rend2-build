@@ -234,7 +234,7 @@ static void DW_DrawGlassReflection(shaderCommands_t *input)
 '''
     # GLS_DEPTHFUNC_EQUAL may not exist: prefer default LEQUAL with zero depth writes.
     overlay=overlay.replace('GL_State(GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHTEST_DISABLE);\n\t// IMPORTANT: use depth testing to prevent seeing glass through walls.\n\tGL_State(GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHFUNC_EQUAL);',
-    '// Preserve depth test (LEQUAL), suppress writes through the state mask.\n\tGL_State(GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);')
+    '// Keep LEQUAL depth test and depth writes OFF. Additive reflection is non-destructive.\n\tGL_State(GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);')
     b["tr_shade.c"]=rep(b["tr_shade.c"],'void RB_StageIteratorGeneric( void )',
         overlay+'\nvoid RB_StageIteratorGeneric( void )',"overlay")
     b["tr_shade.c"]=rep(b["tr_shade.c"],
