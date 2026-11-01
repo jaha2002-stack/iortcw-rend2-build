@@ -90,8 +90,8 @@ def main():
              if n.startswith(PARENT_NAME+"/") and not n.endswith("/")}
     assert len(old)==61,len(old)
     assert H(old["renderer_sp_rend2_x64.dll"])==PARENT_DLL_SHA
-    for n in ("ioWolfSP.x64.exe","cgame_sp_x64.dll","qagame_sp_x64.dll",
-              "ui_sp_x64.dll","RUN_DARKWOLF_TEXTURE_MATERIAL_FINAL_CLEAN.bat"):
+    for n in ("ioWolfSP.x64.exe","Main/cgame_sp_x64.dll","Main/qagame_sp_x64.dll",
+              "Main/ui_sp_x64.dll","RUN_DARKWOLF_TEXTURE_MATERIAL_FINAL_CLEAN.bat"):
         assert n in old,n
     profile_names=["PERFORMANCE","BALANCED","QUALITY","HIGH","ULTRA"]
     for p in profile_names:
