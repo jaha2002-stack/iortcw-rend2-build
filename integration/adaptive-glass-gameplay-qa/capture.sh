@@ -80,7 +80,16 @@ for mode in off on; do
   convert "evidence/real-$mode.xwd" "dist/REAL_RTCW_ESCAPE1_Glass_$mode.png"
   # On a REAL engine fatal dialog, retrieve actual console data rather than
   # pretending the popup is a gameplay screenshot.
-  errwin="$(xdotool search --name '^Error
+  errwin="$(xdotool search --name '^Error$' 2>/dev/null | head -1 || true)"
+  if [[ -n "$errwin" ]]; then
+    echo "WINE_GAME_ENGINE_ERROR_WINDOW: $errwin" >> "evidence/gui-error-$mode.log"
+    xdotool windowactivate --sync "$errwin" >/dev/null 2>&1 || true
+    xdotool key --window "$errwin" Return >/dev/null 2>&1 || true
+    sleep 2
+    timeout 6 xclip -selection clipboard -o > "evidence/gui-error-console-$mode.log" 2>&1 || true
+    qconsole="$(find "$game" -type f -iname qconsole.log -print -quit)"
+    if [[ -n "$qconsole" ]]; then cp "$qconsole" "evidence/engine-qconsole-$mode.log"; fi
+  fi
   kill "$gamepid" 2>/dev/null || true
   wait "$gamepid" 2>/dev/null || true
 done
