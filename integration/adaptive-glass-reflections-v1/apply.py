@@ -53,12 +53,16 @@ static qboolean DW_MapHasGlass(void)
         const shader_t *sh=s_worldData.surfaces[i].shader;
         const char *n;
         if (!sh) continue;
-        n=sh->name;
+        n=strrchr(sh->name,'/');
+        n=n?n+1:sh->name; // basename only: avoid false glass on 'castle_window/cashudder'
         if (Q_stristr(n,"water") || Q_stristr(n,"lava") ||
-            Q_stristr(n,"mirror") || Q_stristr(n,"blood") || Q_stristr(n,"ice")) continue;
+            Q_stristr(n,"mirror") || Q_stristr(n,"blood") || Q_stristr(n,"ice") ||
+            Q_stristr(n,"shutter") || Q_stristr(n,"shudder") ||
+            Q_stristr(n,"frame") || Q_stristr(n,"trim") ||
+            Q_stristr(n,"panel") || Q_stristr(n,"border")) continue;
         if ((sh->surfaceFlags & SURF_GLASS) ||
             (r_dwGlassAutoDetect->integer && (Q_stristr(n,"glass") ||
-                Q_stristr(n,"window") || Q_stristr(n,"/pane")))) return qtrue;
+                Q_stristr(n,"window")))) return qtrue;
     }
     return qfalse;
 }
@@ -158,13 +162,16 @@ static void DW_LoadAutoGlassProbes(void)
     overlay='''\n// '''+M+''': conservative classifier; exclude water and non-glass.
 static qboolean DW_GlassCandidate(const shader_t *sh)
 {
-\tconst char *name = sh->name;
+\tconst char *name = strrchr(sh->name,'/');
 \tqboolean hint = (sh->surfaceFlags & SURF_GLASS) != 0;
-\tif (!r_dwGlassAutoDetect || !r_dwGlassAutoDetect->integer) return hint;
+\tname = name ? name + 1 : sh->name; // shader basename; not directory paths
 \tif (Q_stristr(name, "water") || Q_stristr(name, "lava") || Q_stristr(name, "mirror") ||
-\t    Q_stristr(name, "ice") || Q_stristr(name, "blood"))
-\t\treturn qfalse;
-\treturn hint || Q_stristr(name, "glass") || Q_stristr(name, "window") || Q_stristr(name, "/pane");
+\t    Q_stristr(name, "ice") || Q_stristr(name, "blood") ||
+\t    Q_stristr(name, "shutter") || Q_stristr(name, "shudder") ||
+\t    Q_stristr(name, "frame") || Q_stristr(name, "trim") ||
+\t    Q_stristr(name, "panel") || Q_stristr(name, "border")) return qfalse;
+\tif (!r_dwGlassAutoDetect || !r_dwGlassAutoDetect->integer) return hint;
+\treturn hint || Q_stristr(name, "glass") || Q_stristr(name, "window");
 }
 static void DW_DrawGlassReflection(shaderCommands_t *input)
 {
