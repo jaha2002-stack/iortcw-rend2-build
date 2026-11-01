@@ -150,8 +150,8 @@ static void DWPointV31MaybeDump(void)
     size_t cap=2*1024*1024,remain;
     const vec3_t *lightOrigin;
     if(!DWPointV31Enabled()||!DWPointV3CaptureSelected())return;
-    /* Last cubemap face (+Z). Disallow depth prepass and repeated reports. */
-    if(backEnd.depthFill||dwPointV31Dumped ||
+    /* Last cubemap face (+Z). The sole shadow geometry pass may be depthFill. */
+    if(dwPointV31Dumped ||
        fabsf(backEnd.viewParms.or.axis[0][0])>0.01f||
        fabsf(backEnd.viewParms.or.axis[0][1])>0.01f||
        backEnd.viewParms.or.axis[0][2]<0.99f)return;
@@ -292,7 +292,7 @@ def apply(root,check=False,proof=None):
        "lookup world when logging")
     insert_before="            if (dwId >= 0 && dwId == r_dwPointV3InspectSurface->integer &&"
     backend=replace_once(backend,insert_before,
-       "            if (DWPointV31Enabled() && dwId >= 0 && !backEnd.depthFill)\n"
+       "            if (DWPointV31Enabled() && dwId >= 0)\n"
        "                DWPointV31Record(dwId);\n"+insert_before,"submission mark")
     anchor_end=("\t// go back to the world modelview matrix\n"
                 "\tbackEnd.currentEntity = &tr.worldEntity;")
