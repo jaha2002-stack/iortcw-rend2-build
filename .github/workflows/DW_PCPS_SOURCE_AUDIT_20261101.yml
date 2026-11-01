@@ -1,9 +1,10 @@
-name: DarkWolf PCPS Source Audit 2026-11-01
+name: DarkWolf PCPS V1 Opt-in Shadow Controls 2026-11-01
 on:
   push:
     branches: [rend2-physically-correct-point-shadow-tool-20261101]
     paths:
       - '.github/workflows/DW_PCPS_SOURCE_AUDIT_20261101.yml'
+      - 'integration/pcps-v1/**'
       - 'integration/sun-hdr16f-precision-v1/apply.py'
       - 'integration/texture-material-quality-v2/**'
       - 'integration/point-shadow-safe-final-clean/**'
@@ -305,6 +306,17 @@ jobs:
             sept-source/SP/code/rend2/tr_shade.c
             sept-source/SP/code/rend2/tr_world.c
           retention-days: 14
+      - name: Apply PCPS opt-in shadow controls and assert accepted SAFE signatures
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/pcps-v1/apply.py integration/pcps-v1/package.py
+          python3 integration/pcps-v1/apply.py sept-source --check-only > evidence/PCPS_PREFLIGHT.json
+          python3 integration/pcps-v1/apply.py sept-source > evidence/PCPS_SOURCE_PROOF.json
+          git -C sept-source diff --check
+          grep -Fq 'DARKWOLF_PCPS_RUNTIME_V1' sept-source/SP/code/rend2/tr_main.c
+          grep -Fq 'pendingLightsMask = DWPS_ApplyPendingMask(pendingLightsMask)' sept-source/SP/code/rend2/tr_main.c
+          grep -Fq 'if(DWPS_ShouldSkipCaster(drawSurf))continue' sept-source/SP/code/rend2/tr_backend.c
+          echo PCPS_V1_OPTIN_SOURCE_PREFLIGHT_PASS
       - name: Cross-compile ALL five game and renderer Win64 binaries from September base
         run: |
           set -Eeuo pipefail
@@ -317,30 +329,27 @@ jobs:
           done
           sha256sum build-binaries/* | tee evidence/NEW_SEPTEMBER_BASE_BINARIES_SHA256.txt
           echo 'SEPTEMBER_PORTED_COMPLETE_WIN64_BINARIES_PASS'
-      - name: Package byte-preserved accepted final Texture V2 Production with source-local Boss1 correction only
+      - name: Package PCPS V1 OPT-IN experimental release from verified SAFE Clean
         run: |
           set -Eeuo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/13074798665/zip" > evidence/DW_ACCEPTED_TEXTURE_FINAL_41286257713_OUTER.zip
-          python3 integration/point-shadow-safe-final-clean/package.py \
-            --parent-artifact evidence/DW_ACCEPTED_TEXTURE_FINAL_41286257713_OUTER.zip \
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/13079039927/zip" > evidence/PCPS_PARENT_SAFE_ARTIFACT.zip
+          python3 integration/pcps-v1/package.py \
+            --outer-artifact evidence/PCPS_PARENT_SAFE_ARTIFACT.zip \
             --renderer build-binaries/renderer_sp_rend2_x64.dll \
-            --proof evidence/DW_BOSS1_CLEAN_PROOF.json --out dist \
-            | tee evidence/DW_POINT_SHADOW_FINAL_SAFE_CLEAN_LOG.txt
-          grep -Fq DW_POINT_SHADOW_SAFE_CLEAN_FINAL_ALL_PROFILES_AND_59_PARENT_FILES_PASS evidence/DW_POINT_SHADOW_FINAL_SAFE_CLEAN_LOG.txt
-          ( cd dist && sha256sum -c DarkWolf_PointShadow_SAFE_Clean_Production_TextureV2_Boss1_2026-11-01_Win64.zip.sha256 )
-          echo DW_POINT_SHADOW_FINAL_SAFE_CLEAN_RELEASE_PASS
-      - name: Upload final SAFE Clean release and signed reconstruction evidence
+            --out dist | tee evidence/PCPS_V1_PACKAGE_LOG.txt
+          ( cd dist && sha256sum -c DarkWolf_PCPS_V1_OPTIN_SHADOW_TOOL_Win64.zip.sha256 )
+      - name: Upload PCPS V1 experiment with build and source evidence
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: DarkWolf-PointShadow-SAFE-FINAL-CleanProduction-TextureV2-Boss1-20261101
+          name: DarkWolf-PCPS-V1-OPTIN-Shadow-Tool-Win64
           path: |
-            dist/DarkWolf_PointShadow_SAFE_Clean_Production_TextureV2_Boss1_2026-11-01_Win64.zip
-            dist/DarkWolf_PointShadow_SAFE_Clean_Production_TextureV2_Boss1_2026-11-01_Win64.zip.sha256
-            evidence/DW_BOSS1_CLEAN_PROOF.json
-            evidence/DW_POINT_SHADOW_FINAL_SAFE_CLEAN_LOG.txt
-            evidence/DW_TEXTURE_MATERIAL_V2_SOURCE.json
+            dist/DarkWolf_PCPS_V1_OPTIN_SHADOW_TOOL_Win64.zip
+            dist/DarkWolf_PCPS_V1_OPTIN_SHADOW_TOOL_Win64.zip.sha256
+            evidence/PCPS_SOURCE_PROOF.json
+            evidence/PCPS_V1_PACKAGE_LOG.txt
             evidence/september-ported-win64-build.log
-            integration/point-shadow-safe-final-clean/apply.py
-            integration/point-shadow-safe-final-clean/package.py
+            integration/pcps-v1/apply.py
+            integration/pcps-v1/runtime.inc
+            integration/pcps-v1/README.md
           retention-days: 90
