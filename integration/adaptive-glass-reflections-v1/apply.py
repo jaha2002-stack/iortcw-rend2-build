@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """DARKWOLF_ADAPTIVE_GLASS_V1: isolated BSP-only static cubemap/Fresnel pass."""
-import argparse,json
+import argparse,json,re
 from pathlib import Path
 M="DARKWOLF_ADAPTIVE_GLASS_V1"
 BASE=Path(__file__).resolve().parent
@@ -12,7 +12,7 @@ def cstring(s):
     return "\n".join('"'+line.replace("\\","\\\\").replace('"','\\"')+'\\n"' for line in s.splitlines())
 def run(root,check=False):
     root=Path(root)/"SP/code/rend2"
-    files=["tr_init.c","tr_local.h","tr_glsl.c","tr_bsp.c","tr_image.c","tr_shade.c"]
+    files=["tr_init.c","tr_local.h","tr_glsl.c","tr_bsp.c","tr_image.c","tr_shade.c","tr_light.c"]
     a={k:(root/k).read_text() for k in files}
     if any(M in x for x in a.values()): raise ValueError("Already patched")
     b=dict(a)
@@ -22,25 +22,115 @@ def run(root,check=False):
       "shaderProgram_t textureColorShader;\n\tshaderProgram_t dwGlassShader; // "+M,"program")
     b["tr_init.c"]=rep(b["tr_init.c"],"cvar_t  *r_cubeMapping;",
       "cvar_t *r_dwGlassReflect, *r_dwGlassIntensity, *r_dwGlassAutoDetect; // "+M+"\ncvar_t  *r_cubeMapping;","vars")
-    b["tr_init.c"]=rep(b["tr_init.c"],
-      'r_cubeMapping = ri.Cvar_Get( "r_cubeMapping", "0", CVAR_ARCHIVE | CVAR_LATCH );',
-      'r_dwGlassReflect = ri.Cvar_Get("r_dwGlassReflect", "1", CVAR_ARCHIVE | CVAR_LATCH);\n\t'
-      'r_dwGlassIntensity = ri.Cvar_Get("r_dwGlassIntensity", "0.60", CVAR_ARCHIVE);\n\t'
-      'r_dwGlassAutoDetect = ri.Cvar_Get("r_dwGlassAutoDetect", "1", CVAR_ARCHIVE);\n\t'
-      'r_cubeMapping = ri.Cvar_Get( "r_cubeMapping", "0", CVAR_ARCHIVE | CVAR_LATCH );',
-      "register")
-    # Cubemap allocation separate from r_cubeMapping; never change r_cubeMapping itself or normal water shading.
-    for f,old,new in [
-        ("tr_bsp.c","if (r_cubeMapping->integer)","if (r_cubeMapping->integer || r_dwGlassReflect->integer)"),
-        ("tr_bsp.c","if (r_cubeMapping->integer && tr.numCubemaps && glRefConfig.framebufferObject)",
-          "if ((r_cubeMapping->integer || r_dwGlassReflect->integer) && tr.numCubemaps && glRefConfig.framebufferObject)"),
-        ("tr_image.c","if (r_cubeMapping->integer)","if (r_cubeMapping->integer || r_dwGlassReflect->integer)")
-    ]:
-        b[f]=rep(b[f],old,new,f+" cube")
-    # On maps without authored probes, reuse one player start. Never synthesize a probe in a solid wall.
+    # Register immediately before existing cube mapping without modifying its value.
+    # Historical DarkWolf cvars may have altered formatting/defaults.
+    patt=r'(?m)^(\\s*)r_cubeMapping\\s*=\\s*ri\\.Cvar_Get\\(\\s*"r_cubeMapping"[^;]*;'
+    hits=list(re.finditer(patt,b["tr_init.c"]))
+    if len(hits)!=1:raise ValueError("r_cubeMapping registration occurrences "+str(len(hits)))
+    m=hits[0]
+    reg=('r_dwGlassReflect = ri.Cvar_Get("r_dwGlassReflect", "1", CVAR_ARCHIVE | CVAR_LATCH);\\n'
+         'r_dwGlassIntensity = ri.Cvar_Get("r_dwGlassIntensity", "0.60", CVAR_ARCHIVE);\\n'
+         'r_dwGlassAutoDetect = ri.Cvar_Get("r_dwGlassAutoDetect", "1", CVAR_ARCHIVE);\\n')
+    indent=m.group(1)
+    b["tr_init.c"]=b["tr_init.c"][:m.start()]+indent+reg.replace('\\n','\\n'+indent)+b["tr_init.c"][m.start():]
+    # Static cubemap allocation only; legacy lightall / Norway water remain gated by original r_cubeMapping.
+    b["tr_image.c"]=rep(b["tr_image.c"],
+        "if (r_cubeMapping->integer)",
+        "if (r_cubeMapping->integer || r_dwGlassReflect->integer)","glass resource")
+    b["tr_light.c"]=rep(b["tr_light.c"],
+        "if (r_cubeMapping->integer && tr.numCubemaps)",
+        "if ((r_cubeMapping->integer || (r_dwGlassReflect && r_dwGlassReflect->integer)) && tr.numCubemaps)",
+        "nearest probe independent from global shading cvar")
+    # All maps: preserve authored cubemap path exactly, limit only glass-specific automatic probes.
+    # Source-level classifier mirrored in tr_shade; no map-name whitelist anywhere.
+    glassSource=r'''
+// DARKWOLF_ADAPTIVE_GLASS_V1: map-agnostic, conservative BSP material recognition.
+static qboolean DW_MapHasGlass(void)
+{
+    int i;
+    for (i=0; i<s_worldData.numsurfaces; ++i)
+    {
+        const shader_t *sh=s_worldData.surfaces[i].shader;
+        const char *n;
+        if (!sh) continue;
+        n=sh->name;
+        if (Q_stristr(n,"water") || Q_stristr(n,"lava") ||
+            Q_stristr(n,"mirror") || Q_stristr(n,"blood") || Q_stristr(n,"ice")) continue;
+        if ((sh->surfaceFlags & SURF_GLASS) ||
+            (r_dwGlassAutoDetect->integer && (Q_stristr(n,"glass") ||
+                Q_stristr(n,"window") || Q_stristr(n,"/pane")))) return qtrue;
+    }
+    return qfalse;
+}
+// Select at most 12 evenly spaced map-authored safe AI markers (or player starts).
+// No per-frame updates and no uncontrolled hundreds-of-probes startup work.
+static void DW_LoadAutoGlassProbes(void)
+{
+    const int limit=12;
+    const char *kind="ai_marker";
+    char spawnChars[2048];
+    char *vars[MAX_SPAWN_VARS][2];
+    int pass, nv, total=0, nselected=0, seen=0, i;
+    for (pass=0; pass<2; ++pass)
+    {
+        int found=0;
+        const char *candidate=pass==0?"ai_marker":"info_player_start";
+        while(R_ParseSpawnVars(spawnChars,sizeof(spawnChars),&nv,vars))
+        {
+            qboolean match=qfalse, haveOrigin=qfalse;
+            for(i=0;i<nv;i++) {
+                if (!Q_stricmp(vars[i][0],"classname") &&
+                    !Q_stricmp(vars[i][1],candidate)) match=qtrue;
+                if (!Q_stricmp(vars[i][0],"origin")) haveOrigin=qtrue;
+            }
+            if (match && haveOrigin) found++;
+        }
+        if (found) {kind=candidate;total=found;break;}
+    }
+    if (!total) return;
+    tr.numCubemaps=total<limit?total:limit;
+    tr.cubemaps=ri.Hunk_Alloc(tr.numCubemaps*sizeof(*tr.cubemaps),h_low);
+    memset(tr.cubemaps,0,tr.numCubemaps*sizeof(*tr.cubemaps));
+    while(R_ParseSpawnVars(spawnChars,sizeof(spawnChars),&nv,vars))
+    {
+        qboolean match=qfalse, haveOrigin=qfalse;
+        vec3_t origin;
+        for(i=0;i<nv;i++) {
+            if (!Q_stricmp(vars[i][0],"classname") &&
+                !Q_stricmp(vars[i][1],kind)) match=qtrue;
+            if (!Q_stricmp(vars[i][0],"origin")) {
+                haveOrigin=(sscanf(vars[i][1],"%f %f %f",
+                                    &origin[0],&origin[1],&origin[2])==3);
+            }
+        }
+        if (!match || !haveOrigin) continue;
+        if (nselected < tr.numCubemaps &&
+            seen == ((2*nselected+1)*total)/(2*tr.numCubemaps)) {
+            VectorCopy(origin,tr.cubemaps[nselected].origin);
+            tr.cubemaps[nselected].parallaxRadius=1000.0f;
+            nselected++;
+        }
+        seen++;
+    }
+    tr.numCubemaps=nselected;
+    ri.Printf(PRINT_ALL,"DarkWolf glass: automatic static probes %d from %s\n",nselected,kind);
+}
+'''
     b["tr_bsp.c"]=rep(b["tr_bsp.c"],
-      'R_LoadCubemapEntities("ai_marker");',
-      'R_LoadCubemapEntities("ai_marker");', "ai probe") # do not change base fallback
+        "void R_AssignCubemapsToWorldSurfaces(void)",
+        glassSource+"\\nvoid R_AssignCubemapsToWorldSurfaces(void)","auto probe helper")
+    b["tr_bsp.c"]=rep(b["tr_bsp.c"],
+        "if (r_cubeMapping->integer)\\n\\t{\\n\\t\\t// Try loading an env.json file first",
+        "if (r_cubeMapping->integer || (r_dwGlassReflect && r_dwGlassReflect->integer && DW_MapHasGlass()))\\n\\t{\\n\\t\\t// Try loading an env.json file first",
+        "probe gating")
+    b["tr_bsp.c"]=rep(b["tr_bsp.c"],
+        'R_LoadCubemapEntities("ai_marker");',
+        'if (r_cubeMapping->integer) R_LoadCubemapEntities("ai_marker");\\n'
+        '            else DW_LoadAutoGlassProbes();',"auto fallback")
+    b["tr_bsp.c"]=rep(b["tr_bsp.c"],
+        "if (r_cubeMapping->integer && tr.numCubemaps && glRefConfig.framebufferObject)",
+        "if ((r_cubeMapping->integer || (r_dwGlassReflect && r_dwGlassReflect->integer)) && tr.numCubemaps && glRefConfig.framebufferObject)",
+        "static probe captures")
     vp=cstring((BASE/"glass_vp.glsl").read_text())
     fp=cstring((BASE/"glass_fp.glsl").read_text())
     snippet="\n// "+M+": compile-time embedded, independent of PK3 and r_externalGLSL.\nstatic const char *dwGlassVP =\n"+vp+";\nstatic const char *dwGlassFP =\n"+fp+";\n"
@@ -70,10 +160,10 @@ static qboolean DW_GlassCandidate(const shader_t *sh)
 \tconst char *name = sh->name;
 \tqboolean hint = (sh->surfaceFlags & SURF_GLASS) != 0;
 \tif (!r_dwGlassAutoDetect || !r_dwGlassAutoDetect->integer) return hint;
-\tif (strstr(name, "water") || strstr(name, "lava") || strstr(name, "mirror") ||
-\t    strstr(name, "ice") || strstr(name, "glassbreak") || strstr(name, "blood"))
+\tif (Q_stristr(name, "water") || Q_stristr(name, "lava") || Q_stristr(name, "mirror") ||
+\t    Q_stristr(name, "ice") || Q_stristr(name, "blood"))
 \t\treturn qfalse;
-\treturn hint || strstr(name, "glass") || strstr(name, "window") || strstr(name, "pane");
+\treturn hint || Q_stristr(name, "glass") || Q_stristr(name, "window") || Q_stristr(name, "/pane");
 }
 static void DW_DrawGlassReflection(shaderCommands_t *input)
 {
@@ -102,7 +192,7 @@ static void DW_DrawGlassReflection(shaderCommands_t *input)
 \t\tunsigned int bits=input->xstages[i]->stateBits;
 \t\tif (bits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS)) { opacity=0.25f; break; }
 \t}
-\tif (strstr(input->shader->name,"dirty") || strstr(input->shader->name,"frost"))
+\tif (Q_stristr(input->shader->name,"dirty") || Q_stristr(input->shader->name,"frost"))
 \t\troughness=0.72f;
 \tGLSL_BindProgram(sp);
 \tGLSL_SetUniformMat4(sp, UNIFORM_MODELVIEWPROJECTIONMATRIX, glState.modelviewProjection);
@@ -131,7 +221,7 @@ static void DW_DrawGlassReflection(shaderCommands_t *input)
         '\tRB_IterateStagesGeneric( input );\n\tDW_DrawGlassReflection(input);\n\n\t//\n\t// pshadows!',"draw hook")
     if not check:
         for f in files:(root/f).write_text(b[f])
-    return {"marker":M,"base_run":41297344177,"changed":files,"dynamic_reflections":False,
+    return {"marker":M,"base_run":41297344177,"changed":files,"dynamic_reflections":False,"automatic_map_agnostic_probes_limit":12,
             "global_cubemap_cvar_unchanged":True,"status":"source-only until CI and GPU testing"}
 if __name__=="__main__":
     ap=argparse.ArgumentParser()
