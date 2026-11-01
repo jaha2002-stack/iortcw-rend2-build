@@ -2,8 +2,8 @@
 """Inspect genuine id Tech 3 BSP from an ORIGINAL RTCW demo .pk3; no image synthesis."""
 import argparse,json,struct,zipfile,hashlib,math
 from pathlib import Path
-EXCLUDE=("water","lava","ice","mirror","blood")
-INCLUDE=("glass","window","/pane")
+EXCLUDE=("water","lava","ice","mirror","blood","shutter","shudder","frame","trim","panel","border")
+INCLUDE=("glass","window")
 def inspect(path):
     with zipfile.ZipFile(path) as z:
         maps=[n for n in z.namelist() if n.lower().startswith("maps/") and n.lower().endswith(".bsp")]
@@ -22,7 +22,8 @@ def inspect(path):
                 name=b[off:off+64].split(b"\0",1)[0].decode("ascii","replace").lower()
                 surfaceflags,contentflags=struct.unpack_from("<ii",b,off+64)
                 # Never assume one shader name identifies an entire glass surface.
-                ok=(any(x in name for x in INCLUDE) and not any(x in name for x in EXCLUDE))
+                base=name.rsplit("/",1)[-1]
+                ok=(any(x in base for x in INCLUDE) and not any(x in base for x in EXCLUDE))
                 shader.append((name,ok,surfaceflags,contentflags))
             counts={}
             for off in range(suroff,suroff+surlen,104):
