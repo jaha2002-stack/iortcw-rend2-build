@@ -198,7 +198,21 @@ def capture(source,retail,profile,out,variant,mapname,views,enabled):
           "set r_autoExposure 0","set r_forceAutoExposure 0","set r_forceSunPause 1",
           "god","notarget","wait 22"]
     shots=[]
+    paired=variant=="PAIRED"
     for i,view in enumerate(views,1):
+        if paired:
+            cmds += ["set dw_proofFreeze 0",
+                "proofView "+" ".join(f"{x:.4f}" for x in view["eye"]+view["angles"]),
+                "wait 50","set dw_proofFreeze 1","wait 8"]
+            # Single engine instance: zero shader intensity is exactly glass OFF
+            # and then glass ON. Return to OFF to catch temporal false positives.
+            for label,value in (("OFF",0),("ON",1),("OFF2",0)):
+                shot=f"dwglass_{mapname}_{label}_{i}"
+                cmds += [f"set r_dwGlassIntensity {value}.0","wait 16",
+                         f"set dw_proofShot {len(shots)+1}","wait 7",
+                         f"screenshot {shot}","wait 7"]
+                shots.append(shot)
+            continue
         shot=f"dwglass_{mapname}_{variant}_{i}"
         cmds +=["set dw_proofFreeze 0",
                 "proofView "+" ".join(f"{x:.4f}" for x in view["eye"]+view["angles"]),
@@ -257,7 +271,7 @@ def capture(source,retail,profile,out,variant,mapname,views,enabled):
     report={"variant":variant,"map":mapname,"run_exit":rc,"ready":"PROOF_READY" in text,
             "complete":"DW_GLASS_REALGAME_COMPLETE" in text,
             "renderer":"native-linux-ioRTCW-Rend2-Mesa","base":41297344177,
-            "glass_on":enabled,"images":images,"cameras":cameras}
+            "glass_on":enabled,"paired_toggle_within_same_game_instance":paired,"images":images,"cameras":cameras}
     (out/"capture.json").write_text(json.dumps(report,indent=2)+"\n")
     print("DW_GLASS_REAL_CAPTURE",variant,mapname,rc,len(images),report["ready"],report["complete"],flush=True)
     assert rc==0 and report["ready"] and report["complete"],"Real RTCW camera automation never finished"
@@ -319,15 +333,81 @@ def compare(out,matrix,all_reports):
     # Baseline parity is quantified, not asserted exact, because time-dependent visuals can differ.
     return report
 
+def compare_paired(out,matrix,reports):
+    """Raw renderer framebuffers only: OFF, ON, OFF again, same frozen camera."""
+    from PIL import Image,ImageChops,ImageStat,ImageDraw
+    import numpy as np
+    rows=[]
+    nrows=sum(len(v) for v in matrix.values())
+    sheet=Image.new("RGB",(1200,nrows*350),(20,20,20))
+    pen=ImageDraw.Draw(sheet)
+    line=0
+    for name,views in matrix.items():
+        captured=reports[name]
+        for i,view in enumerate(views,1):
+            keys=[str(3*i-2),str(3*i-1),str(3*i)]
+            cams=[captured["cameras"][x] for x in keys]
+            assert len({x["eye"] for x in cams})==1,"OFF/ON/OFF2 camera changed"
+            assert len({x["forward"] for x in cams})==1,"OFF/ON/OFF2 direction changed"
+            images=[Image.open(out/name/"PAIRED"/captured["images"][k]["file"]).convert("RGB") for k in keys]
+            off,on,off2=images
+            assert off.size==on.size==off2.size,"Capture resolutions differ"
+            source_drift=sum(ImageStat.Stat(ImageChops.difference(off,off2)).mean)/3
+            delta=sum(ImageStat.Stat(ImageChops.difference(off,on)).mean)/3
+            d=np.asarray(on,dtype=np.int16)-np.asarray(off,dtype=np.int16)
+            lighter=int(np.maximum(d,0).sum());darker=int(np.maximum(-d,0).sum())
+            # Camera points to the actual chosen BSP glass surface at screen center.
+            w,h=off.size;region=(int(w*.31),int(h*.20),int(w*.69),int(h*.80))
+            a=off.crop(region);b=on.crop(region)
+            glass_delta=sum(ImageStat.Stat(ImageChops.difference(a,b)).mean)/3
+            row={"map":name,"view":i,"material":view["material"],
+                 "camera":view["eye"],"angle_deg":view["fresnel_incidence_deg"],
+                 "OFF_ON_MAE":round(delta,5),"glass_center_MAE":round(glass_delta,5),
+                 "OFF_OFF2_temporal_drift_MAE":round(source_drift,5),
+                 "brightened_rgb_sum":lighter,"darkened_rgb_sum":darker,
+                 "non_destructive":lighter>=3*darker,
+                 "OFF_ON_OFF2_same_game_instance":True,
+                 "real_game_native_screenshot":True,"glass_intensity_on":1.0,
+                 "cube_mapping_global":0}
+            rows.append(row)
+            for k,(im,label) in enumerate(zip(images,("Glass OFF","Glass ON (1.00)","OFF after ON"))):
+                x=k*400; yy=line*350
+                pen.text((x+5,yy+8),f"{name.upper()}: {label}",fill=(255,255,255))
+                pen.text((x+5,yy+22),f"{view['material'].rsplit('/',1)[-1]} / angle={view['fresnel_incidence_deg']} deg",fill=(230,230,230))
+                im.thumbnail((400,310))
+                sheet.paste(im,(x,yy+40))
+            line+=1
+    sheet.save(out/"DW_GLASS_REAL_RETAIL_AB_CONTACT_SHEET.png")
+    sheet.save(out/"DW_GLASS_XLABS_CHATEAU_OFF_ON_PROOF.png")
+    report={"type":"REAL_RTCW_RETAIL_GAMEPLAY_XLABS_CHATEAU_SINGLE_INSTANCE_OFF_ON_OFF2",
+        "base_run":41297344177,"maps":list(matrix),"proof_is_raw_game_framebuffer":True,
+        "OFF_is_r_dwGlassIntensity_0_ON_is_1_without_renderer_restart":True,
+        "r_cubeMapping":0,"gpu":"Linux native Mesa llvmpipe","pairs":rows,
+        "windows_driver_visually_untested":True}
+    (out/"REAL_GLASS_TESTLAB_AB_REPORT.json").write_text(json.dumps(report,indent=2)+"\n")
+    print("DW_REAL_XLABS_CHATEAU_GLASS_OFF_ON_OFF2_PROOF",json.dumps(rows),flush=True)
+    assert len({x["map"] for x in rows})==2,"Missing requested map"
+    assert all(r["OFF_OFF2_temporal_drift_MAE"]<0.3 for r in rows),"Temporal images changed independently of reflection"
+    assert all(r["non_destructive"] for r in rows),"Glass shader darkened original material"
+    assert any(r["glass_center_MAE"]>0.1 for r in rows),"Glass effect absent in actual gameplay"
+    return report
+
 def main():
     p=argparse.ArgumentParser();sub=p.add_subparsers(dest="action",required=True)
     a=sub.add_parser("instrument");a.add_argument("source",type=Path)
     a=sub.add_parser("capture");a.add_argument("baseline",type=Path);a.add_argument("candidate",type=Path)
+    a=sub.add_parser("capture-paired");a.add_argument("baseline",type=Path);a.add_argument("candidate",type=Path)
     a.add_argument("retail",type=Path);a.add_argument("profile",type=Path);a.add_argument("output",type=Path)
     args=p.parse_args()
     if args.action=="instrument":return instrument(args.source)
     out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
     matrix=make_camera_matrix(args.retail,out)
+    if args.action=="capture-paired":
+        reports={}
+        for mapname,views in matrix.items():
+            reports[mapname]=capture(args.candidate,args.retail,args.profile,
+                out/mapname/"PAIRED","PAIRED",mapname,views,1)
+        return compare_paired(out,matrix,reports)
     reports={}
     for mapname,views in matrix.items():
         reports[mapname]={}
