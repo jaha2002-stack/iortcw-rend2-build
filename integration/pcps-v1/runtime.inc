@@ -16,6 +16,7 @@ typedef struct {
     vec3_t origin;
     float radius;
     int sourceClass;
+    int fixtureId;
     qboolean shadowOff;
     int numCasters;
     dwpsCaster_t casters[DWPS_MAX_CASTERS];
@@ -52,6 +53,8 @@ static qboolean DWPS_SameSource(const dwpsRule_t *r,const dlight_t *l)
     VectorSubtract(r->origin,l->origin,delta);
     if (DotProduct(delta,delta)>2.25f) return qfalse;
     if (r->sourceClass!=l->shadowSourceClass) return qfalse;
+    if(r->fixtureId>=0 && l->staticPromoteFixtureId>=0)
+        return (r->fixtureId==l->staticPromoteFixtureId) ? qtrue : qfalse;
     if (fabsf(r->radius-l->radius)>32.0f) return qfalse;
     return qtrue;
 }
@@ -83,6 +86,7 @@ static int DWPS_SelectLightIndex(int index)
         VectorCopy(l->origin,dwpsRules[r].origin);
         dwpsRules[r].radius=l->radius;
         dwpsRules[r].sourceClass=l->shadowSourceClass;
+        dwpsRules[r].fixtureId=l->staticPromoteFixtureId;
     }
     dwpsSelected=r;
     dwpsLastSurface=-1;
@@ -300,7 +304,7 @@ static void DWPS_Info_f(void)
     r=&dwpsRules[dwpsSelected];
     ri.Printf(PRINT_ALL,"PCPS: %s source (%.2f %.2f %.2f), shadow %s, casters removed %d\n",
         dwpsMap,r->origin[0],r->origin[1],r->origin[2],
-        r->shadowOff?"OFF / SLOT RELEASED":"ON",r->numCasters);
+        r->shadowOff?"OFF / NOT ELIGIBLE FOR SLOT":"ON",r->numCasters);
     for(i=0;i<r->numCasters;i++)
         ri.Printf(PRINT_ALL,"  BSP %d: %s\n",r->casters[i].id,r->casters[i].material);
 }
@@ -344,12 +348,27 @@ void DWPS_Unregister(void)
 }
 unsigned int DWPS_ApplyPendingMask(unsigned int mask)
 {
-    int i;
+    int i,j,k;
     DWPS_CheckWorld();
     if(!tr.world || !dwpsNumRules)return mask;
-    for(i=0;i<tr.refdef.num_dlights && i<32;i++) {
-        int j=DWPS_FindRuleForLight(&tr.refdef.dlights[i]);
-        if(j>=0 && dwpsRules[j].shadowOff) mask&=~(1u<<i);
+    for(j=0;j<dwpsNumRules;j++) {
+        const dwpsRule_t *r=&dwpsRules[j];
+        int matches=0;
+        if(!r->shadowOff)continue;
+        for(i=0;i<tr.refdef.num_dlights && i<32;i++) {
+            if(DWPS_SameSource(r,&tr.refdef.dlights[i]))matches++;
+        }
+        /* A named StaticPromote fixture can own several dlights. Explicitly
+         * release the entire fixture's shadow residency; keep direct light.
+         * For non-fixture sources, refuse ambiguous geometric matches. */
+        if(matches==0 || (r->fixtureId<0 && matches!=1))continue;
+        for(k=0;k<tr.refdef.num_dlights && k<32;k++) {
+            const dlight_t *l=&tr.refdef.dlights[k];
+            if((r->fixtureId>=0 && l->staticPromoteFixtureId==r->fixtureId &&
+                l->shadowSourceClass==r->sourceClass)
+               ||(r->fixtureId<0 && DWPS_SameSource(r,l)))
+                mask&=~(1u<<k);
+        }
     }
     return mask;
 }
@@ -368,7 +387,12 @@ qboolean DWPS_ShouldSkipCaster(const drawSurf_t *ds)
         vec3_t d;
         const dwpsRule_t *r=&dwpsRules[i];
         VectorSubtract(r->origin,backEnd.viewParms.or.origin,d);
+        int currentMatches=0,k;
         if(DotProduct(d,d)>2.25f || r->shadowOff)continue;
+        for(k=0;k<tr.refdef.num_dlights;k++)
+            if(DWPS_SameSource(r,&tr.refdef.dlights[k]))currentMatches++;
+        if(r->fixtureId<0 && currentMatches!=1)continue;
+        if(r->fixtureId>=0 && currentMatches<1)continue;
         for(j=0;j<r->numCasters;j++) {
             const dwpsCaster_t *c=&r->casters[j];
             if(c->surface==ds->surface && DWPS_CasterValid(c))return qtrue;
