@@ -5,14 +5,20 @@ export DEBIAN_FRONTEND=noninteractive
 mkdir -p evidence dist qa-unpack qa-installed
 sudo apt-get install -y --no-install-recommends curl p7zip-full x11-apps xvfb imagemagick wine64 python3-pil mesa-utils libgl1-mesa-dri unzip >/tmp/qa-apt.log 2>&1 || { tail -60 /tmp/qa-apt.log; exit 1; }
 # Pin candidate to source commit 7cae5e67; never substitute unrelated builds.
-run_id=41332242795
+# Exact source revision with safe basename-based material classifier.
+# Do not consume previous #41332242795 binary: that version misclassifies shutters.
+source_sha=cee0c6ba893d0cfc98916ec31312a780a6d015f7
+run_id=41333112870
 artifact_id=""
 for attempt in $(seq 1 20); do
+  conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq .conclusion 2>/dev/null || true)"
+  if [[ "$conclusion" == "failure" ]]; then echo TARGET_BUILD_FAILED; exit 1; fi
   artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts[] | select(.name=="DarkWolf-AdaptiveGlass-Cubemap-Fresnel-V1-from-41297344177") | .id' 2>/dev/null | head -1 || true)"
-  if [[ -n "$artifact_id" ]]; then break; fi
+  if [[ -n "$artifact_id" && "$conclusion" == "success" ]]; then break; fi
   sleep 25
 done
 test -n "$artifact_id" || { echo NO_SUCCESSFUL_PINNED_CANDIDATE; exit 1; }
+test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq .head_sha)" = "$source_sha" || { echo WRONG_SOURCE_SHA; exit 1; }
 gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > evidence/glass-ci-outer.zip
 release_name=DarkWolf_Adaptive_Glass_Reflections_V1_Clean_Candidate_Win64
 unzip -p evidence/glass-ci-outer.zip "dist/$release_name.zip" > evidence/glass-release.zip
@@ -46,10 +52,16 @@ if [[ -z "$winebinary" && -x /usr/lib/wine/wine64 ]]; then winebinary=/usr/lib/w
 test -n "$winebinary"
 export DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3COMPAT
 export WINEDEBUG=-all WINEPREFIX="$PWD/.wine-glass-qa" SDL_AUDIODRIVER=dummy
+export WINEARCH=win64 WINEDLLOVERRIDES="mscoree,mshtml="
 Xvfb :99 -screen 0 1280x720x24 -nolisten tcp > evidence/xvfb.log 2>&1 &
 xvfbpid=$!
 trap 'kill "$xvfbpid" 2>/dev/null || true' EXIT
 sleep 4
+# Initialize Wine's prefix and all Microsoft Windows system files BEFORE timed A/B.
+# Initial startup can take >32 seconds and otherwise yields misleading empty screens.
+timeout 120 wineboot -u > evidence/wineboot.log 2>&1 || true
+timeout 30 wineserver -w >> evidence/wineboot.log 2>&1 || true
+echo "WINE_PREFIX_INITIALIZED" >> evidence/wineboot.log
 set +e
 for mode in off on; do
   if [[ "$mode" == off ]]; then flag=0; else flag=1; fi
@@ -61,7 +73,8 @@ for mode in off on; do
     +set r_externalGLSL 0 +set r_hdr 1 +set developer 1 \
     +set logfile 2 +devmap escape1 ) > "evidence/real-game-$mode.log" 2>&1 &
   gamepid=$!
-  sleep 32
+  sleep 46
+  xwininfo -root -tree -display "$DISPLAY" > "evidence/x11-windows-$mode.txt" 2>&1 || true
   xwd -root -silent -display "$DISPLAY" -out "evidence/real-$mode.xwd"
   convert "evidence/real-$mode.xwd" "dist/REAL_RTCW_ESCAPE1_Glass_$mode.png"
   kill "$gamepid" 2>/dev/null || true
@@ -84,6 +97,7 @@ for mode in ("off","on"):
  avg=sum(st.mean)/3
  assert a.width>=640 and a.height>=480 and std>8 and avg>6,(mode,"empty frame")
  log=Path(f"evidence/real-game-{mode}.log").read_text(errors="replace")
+ assert ("rend2" in log.lower() or "renderer_sp_rend2" in log.lower()),(mode,"Rend2 renderer not proven")
  assert "escape1" in log.lower() and (
     "loadworldmap" in log.lower() or "world map" in log.lower()
     or "maps/escape1.bsp" in log.lower()
