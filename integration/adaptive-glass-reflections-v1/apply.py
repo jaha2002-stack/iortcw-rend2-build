@@ -140,12 +140,13 @@ static void DW_LoadAutoGlassProbes(void)
     # Note GPU shader compile cannot happen unless GPU supports GLSL + FBO. Same existing render requirement.
     insert='''\n\t// '''+M+''': one separate glass program; no modifications to lightall or generic permutations.
 \t{
-\t\tint glassAttribs = ATTR_POSITION | ATTR_NORMAL;
+\t\tint glassAttribs = ATTR_POSITION | ATTR_NORMAL | ATTR_TEXCOORD;
 \t\tif (!GLSL_InitGPUShader(&tr.dwGlassShader, "dwglass", glassAttribs, qtrue,
 \t\t\t"", qtrue, dwGlassVP, dwGlassFP))
 \t\t\tri.Error(ERR_FATAL, "Could not load DarkWolf glass shader");
 \t\tGLSL_InitUniforms(&tr.dwGlassShader);
 \t\tGLSL_SetUniformInt(&tr.dwGlassShader, UNIFORM_CUBEMAP, TB_CUBEMAP);
+\t\tGLSL_SetUniformInt(&tr.dwGlassShader, UNIFORM_DIFFUSEMAP, TB_DIFFUSEMAP);
 \t\tGLSL_FinishGPUShader(&tr.dwGlassShader);
 \t}
 '''
@@ -172,7 +173,8 @@ static void DW_DrawGlassReflection(shaderCommands_t *input)
 \tvec4_t probeInfo, params;
 \tshaderProgram_t *sp = &tr.dwGlassShader;
 \tfloat opacity = 1.0f, roughness = 0.18f;
-\tint i;
+\tint i, alphaTest = 0;
+\tshaderStage_t *firstStage = input->xstages[0];
 \tif (!r_dwGlassReflect || !r_dwGlassReflect->integer ||
 \t    !r_dwGlassIntensity || r_dwGlassIntensity->value <= 0.0f ||
 \t    !tr.world || !input->shader || !DW_GlassCandidate(input->shader))
@@ -190,7 +192,7 @@ static void DW_DrawGlassReflection(shaderCommands_t *input)
 \t\tindex = R_CubemapForPoint(backEnd.currentEntity->e.origin);
 \tif (index <= 0 || index > tr.numCubemaps) return;
 \tprobe = &tr.cubemaps[index-1];
-\tif (!probe->image) return;
+\tif (!probe->image || !firstStage) return;
 \t// Blended shaders are treated as see-through: stronger glancing reflection.
 \tfor (i=0;i<MAX_SHADER_STAGES && input->xstages[i];i++) {
 \t\tunsigned int bits=input->xstages[i]->stateBits;
@@ -206,8 +208,16 @@ static void DW_DrawGlassReflection(shaderCommands_t *input)
 \tprobeInfo[3]=1.0f;
 \tVectorScale4(probeInfo, 1.0f / ((probe->parallaxRadius>1.0f)?probe->parallaxRadius:1000.0f), probeInfo);
 \tGLSL_SetUniformVec4(sp, UNIFORM_CUBEMAPINFO, probeInfo);
-\tVectorSet4(params, Com_Clamp(0.0f,1.0f,r_dwGlassIntensity->value), opacity, roughness, 1.0f);
+\tVectorSet4(params, Com_Clamp(0.0f,1.0f,r_dwGlassIntensity->value), opacity, roughness, opacity < 1.0f ? 1.0f : 0.0f);
 \tGLSL_SetUniformVec4(sp, UNIFORM_SPECULARSCALE, params);
+\tif ((firstStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GT_0) alphaTest=1;
+\telse if ((firstStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_LT_80) alphaTest=2;
+\telse if ((firstStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GE_80) alphaTest=3;
+\tGLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, alphaTest);
+\tif (firstStage->bundle[0].image[0])
+\t\tR_BindAnimatedImageToTMU(&firstStage->bundle[0], TB_DIFFUSEMAP);
+\telse
+\t\tGL_BindToTMU(tr.whiteImage,TB_DIFFUSEMAP);
 \tGL_BindToTMU(probe->image,TB_CUBEMAP);
 \tGL_State(GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHTEST_DISABLE);
 \t// IMPORTANT: use depth testing to prevent seeing glass through walls.
