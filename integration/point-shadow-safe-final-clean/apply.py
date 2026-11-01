@@ -134,7 +134,7 @@ def apply(root,check=False,proof=None):
       "\t\t/* "+MARK+": narrowly scoped Boss1 ordinary point cubemap only. */\n"+
       "\t\tif(DW_Boss1CleanSkipSourceLocalCaster(drawSurf))continue;\n","drawlist loop")
     assert "DARKWOLF_STAGE11_UNIFIED_ASSET_SHADOW_COVERAGE_CLEAN_PRODUCTION_V1" in changed
-    assert changed.count(MARK)>=3
+    assert changed.count(MARK)==2  # definition comment and narrow drawlist guard
     assert 'r_dwPointV5ProofMode' not in changed
     if not check:
         f.write_text(changed,encoding="utf-8")
