@@ -332,9 +332,25 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/13079039927/zip" > evidence/DW_BASE_41297344177_OUTER_GLASS_QA.zip
           unzip -p evidence/DW_BASE_41297344177_OUTER_GLASS_QA.zip dist/DarkWolf_PointShadow_SAFE_Clean_Production_TextureV2_Boss1_2026-11-01_Win64.zip > evidence/DW_41297344177_PARENT_REALGAME.zip
           test "$(sha256sum evidence/DW_41297344177_PARENT_REALGAME.zip | cut -d' ' -f1)" = 887cc7c7e8b6b66bed039aebda80486b10b80596c9990eeac720fd0d9ca32885
-          unzip -p evidence/DW_41297344177_PARENT_REALGAME.zip DarkWolf_PointShadow_SAFE_Clean_Production_TextureV2_Boss1_2026-11-01_Win64/Main/DW_HDR16F_V1_HIGH.cfg > evidence/DW_ACCEPTED_HIGH.cfg
-          test -s evidence/DW_ACCEPTED_HIGH.cfg
-          sha256sum evidence/DW_ACCEPTED_HIGH.cfg > evidence/DW_ACCEPTED_HIGH.sha256
+          mkdir -p evidence/profiles
+          python3 - <<'DW_ACCEPTED_PROFILES'
+          from pathlib import Path
+          import zipfile
+          with zipfile.ZipFile("evidence/DW_41297344177_PARENT_REALGAME.zip") as z:
+              names=[n for n in z.namelist() if "/Main/" in n and n.endswith(".cfg")]
+              assert len(names)>=8,(len(names),names)
+              for n in names:
+                  p=Path("evidence/profiles")/Path(n).name
+                  p.write_bytes(z.read(n))
+              pk3=[n for n in z.namelist() if "/Main/" in n and n.endswith(".pk3")]
+              for n in pk3:
+                  p=Path("evidence/profiles")/Path(n).name
+                  p.write_bytes(z.read(n))
+          print("DW_ACCEPTED_PROFILES_RESTORED",len(names),len(pk3))
+          DW_ACCEPTED_PROFILES
+          test -s evidence/profiles/DW_ACCEPTED_HIGH.cfg || cp evidence/profiles/DW_HDR16F_V1_HIGH.cfg evidence/profiles/DW_ACCEPTED_HIGH.cfg
+          for n in DW_HDR16F_V1_HIGH.cfg DW_SEPTEMBER_FOURWEEK_VISUAL_BASE.cfg DW_SUN3_FIRE_E_PRODUCTION.cfg; do test -s "evidence/profiles/$n"; done
+          sha256sum evidence/profiles/*.cfg > evidence/DW_ACCEPTED_HIGH.sha256
           echo DW_GLASS_ACCEPTED_PRODUCTION_HIGH_PROFILE_EXACT_PASS
       - name: Retrieve protected licensed retail game data with existing TestLab provider
         env:
@@ -349,7 +365,7 @@ jobs:
       - name: Capture actual RTCW glass gameplay frames with identical camera and full effects
         run: |
           set -Eeuo pipefail
-          python3 -u testlab/glass/native_retail_glass_ab.py capture sept-baseline sept-source "$(cat .retail-main)" evidence/DW_ACCEPTED_HIGH.cfg glass-lab-out > evidence/DW_GLASS_NATIVE_CAPTURE_DRIVER.log 2>&1 || {
+          python3 -u testlab/glass/native_retail_glass_ab.py capture sept-baseline sept-source "$(cat .retail-main)" evidence/profiles/DW_HDR16F_V1_HIGH.cfg glass-lab-out > evidence/DW_GLASS_NATIVE_CAPTURE_DRIVER.log 2>&1 || {
             tail -170 evidence/DW_GLASS_NATIVE_CAPTURE_DRIVER.log
             find glass-lab-out -name 'stdout.log' -o -name 'capture.json' | head -35
             exit 1
