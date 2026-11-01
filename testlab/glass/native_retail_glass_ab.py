@@ -153,6 +153,8 @@ def prepare(source,retail,variant,mapname,profile):
     # Preserve the HIGH cfg's original exec dependencies from the accepted parent package.
     for cfg in profile.parent.glob("*.cfg"):
         shutil.copy2(cfg,main/cfg.name)
+    for add in profile.parent.glob("*.pk3"):
+        shutil.copy2(add,main/add.name)
     shutil.copy2(profile,main/"DW_ACCEPTED_HIGH.cfg")
     exe=next((p for p in runtime.iterdir() if p.is_file() and p.name.lower().startswith("iowolfsp")),None)
     if not exe:raise RuntimeError("Native game exe absent")
