@@ -10,9 +10,9 @@ sys.path.insert(0,str(Path("testlab/scripts").resolve()))
 import rc4_requested_views as testlab
 from rc4_assault_camera import World
 
-PRIORITY=("escape1","church","dam","boss1","tram","assault","swf","factory","norway","forest","trainyard","crypt1")
+PRIORITY=("xlabs","chateau","dam","factory","tram","escape1","church","assault","swf","norway","forest","trainyard","crypt1")
 EXCLUDED=("water","lava","mirror","blood","ice","shutter","shudder","frame","trim","panel","border")
-MAX_MAPS=2  # first GPU A/B gate: two actual maps; extend for regression matrix after acceptance
+MAX_MAPS=2  # Requested visual evidence: prioritize actual Xlabs and Chateau glass only
 MAX_VIEWS_PER_MAP=2
 STAMP="DW_GLASS_REAL_RETAIL_TESTLAB_V1"
 
@@ -32,7 +32,7 @@ def glass_candidate(shader_name):
     n=shader_name.rsplit("/",1)[-1].lower()
     return not any(w in n for w in EXCLUDED) and any(w in n for w in ("glass","window"))
 
-def surface_views(data, world, max_views=2):
+def surface_views(data, world, max_views=2, mapname=""):
     # RTCW Q3 BSP: texture(1) x72, vertices(10) x44, surfaces(13) x104.
     def lump(n):
         off,length=struct.unpack_from("<ii",data,8+n*8)
@@ -68,37 +68,64 @@ def surface_views(data, world, max_views=2):
         extent=math.sqrt(sum((max(p[i] for p in coords)-min(p[i] for p in coords))**2 for i in range(3)))
         if extent<4:continue
         candidates.append((min(extent,4096),material,center,norm))
-    # Largest glazed surfaces first, not area-specific hardcoded list.
-    candidates.sort(reverse=True,key=lambda x:x[0])
+    # User-requested real glass objects: lab safety doors/vessels and Chateau windows.
+    # This chooses MATERIALS only, never invents or modifies framebuffer pixels.
+    preferred = {"xlabs":("saftey_glass","freeze_glass","xwindow_c02","fwindow1","tramglass2"),
+                 "chateau":("window_c03a_750","tramglass2","window_c04a","window_c07a")}
+    pref=preferred.get(mapname,())
+    def weight(candidate):
+        size,material,center,normal=candidate
+        match=next((len(pref)-i for i,n in enumerate(pref) if n in material),0)
+        return (match,min(size,512.0))
+    candidates.sort(reverse=True,key=weight)
     chosen=[];invalid={"solid":0,"trace":0,"cluster":0,"too_near":0}
-    for size,material,center,normal in candidates[:250]:
-        for sign in (1.,-1.):
-            for dist in (68.,116.,192.):
-                eye=[center[i]+sign*dist*normal[i] for i in range(3)]
-                if world.solid(eye):
-                    invalid["solid"]+=1;continue
-                if world.leaf(eye)[0]<0:
-                    invalid["cluster"]+=1;continue
-                # A glass brush may itself stop trace at the surface. Allow only a
-                # near-target obstruction, not opaque walls between eye and pane.
-                target=[center[i]+sign*3.0*normal[i] for i in range(3)]
-                tr=world.trace(eye,target)
-                if tr and (tr.get("startsolid") or tr.get("fraction",1.0)<0.90):
-                    invalid["trace"]+=1;continue
-                if any(math.dist(eye,v["eye"])<155 for v in chosen):
-                    invalid["too_near"]+=1;continue
-                vec=[center[i]-eye[i] for i in range(3)]
-                yaw=math.degrees(math.atan2(vec[1],vec[0]))%360
-                pitch=-math.degrees(math.atan2(vec[2],math.hypot(vec[0],vec[1])))
-                if abs(pitch)>78:continue
-                selected={"name":"glass_view_"+str(len(chosen)+1),"eye":[round(n,4) for n in eye],
-                    "angles":[round(pitch,4),round(yaw,4),0.0],
-                    "material":material,"surface_extent":round(size,2),
-                    "glass_surface_center":[round(x,4) for x in center],
-                    "distance":dist}
-                chosen.append(selected)
-                break
+    selected_materials=set()
+    for priority_pass in (0,1):
+        for size,material,center,normal in candidates[:450]:
             if len(chosen)>=max_views:break
+            # First require distinct glass kinds; second pass fills from remaining geometry.
+            if priority_pass==0 and material in selected_materials:continue
+            if priority_pass==1 and any(math.dist(center,v["glass_surface_center"])<72 for v in chosen):continue
+            # Tangential offset is essential: head-on cameras produced almost invisible
+            # Fresnel and falsely suggested effective reflections on stained glass.
+            tangent=[normal[1],-normal[0],0.0]
+            length=math.hypot(tangent[0],tangent[1])
+            if length<0.1:tangent=[1.0,0.0,0.0]
+            else:tangent=[x/length for x in tangent]
+            found=False
+            for sign in (1.,-1.):
+                if found:break
+                for dist in (116.,68.,192.,256.):
+                    if found:break
+                    for skew in (1.85,1.35,1.05,0.80,0.0):
+                        if found:break
+                        for lateral in (1.,-1.):
+                            eye=[center[i]+sign*dist*normal[i]+lateral*skew*dist*tangent[i] for i in range(3)]
+                            if world.solid(eye):
+                                invalid["solid"]+=1;continue
+                            if world.leaf(eye)[0]<0:
+                                invalid["cluster"]+=1;continue
+                            target=[center[i]+sign*3.0*normal[i] for i in range(3)]
+                            tr=world.trace(eye,target)
+                            if tr and (tr.get("startsolid") or tr.get("fraction",1.0)<0.90):
+                                invalid["trace"]+=1;continue
+                            if any(math.dist(eye,v["eye"])<145 for v in chosen):
+                                invalid["too_near"]+=1;continue
+                            vec=[center[i]-eye[i] for i in range(3)]
+                            yaw=math.degrees(math.atan2(vec[1],vec[0]))%360
+                            pitch=-math.degrees(math.atan2(vec[2],math.hypot(vec[0],vec[1])))
+                            if abs(pitch)>78:continue
+                            angle=math.degrees(math.atan(abs(skew)))
+                            selected={"name":"glass_view_"+str(len(chosen)+1),
+                                "eye":[round(n,4) for n in eye],
+                                "angles":[round(pitch,4),round(yaw,4),0.0],
+                                "material":material,"surface_extent":round(size,2),
+                                "glass_surface_center":[round(x,4) for x in center],
+                                "distance":round(math.dist(eye,center),2),
+                                "fresnel_incidence_deg":round(angle,2),
+                                "real_bsp_surface":True}
+                            chosen.append(selected);selected_materials.add(material);found=True
+                            break
         if len(chosen)>=max_views:break
     return {"candidate_material_counts":catalog,"candidate_surfaces":sum(catalog.values()),
         "camera_selection_rejections":invalid,"views":chosen}
@@ -113,7 +140,7 @@ def make_camera_matrix(retail,out):
         if bsp[:4]!=b"IBSP":continue
         try:
             w=World(bsp)
-            info=surface_views(bsp,w,MAX_VIEWS_PER_MAP)
+            info=surface_views(bsp,w,MAX_VIEWS_PER_MAP,name)
             info["bsp_sha256"]=hashlib.sha256(bsp).hexdigest()
             info["map"]=name
             matrix[name]=info
@@ -185,7 +212,7 @@ def capture(source,retail,profile,out,variant,mapname,views,enabled):
         "set r_mode -1","set r_customwidth 1280","set r_customheight 720","set r_fullscreen 0",
         "set cl_renderer rend2","set r_renderer rend2","set r_cubeMapping 0",
         "set r_dwGlassReflect "+str(enabled),
-        "set r_dwGlassIntensity 0.60","set r_dwGlassAutoDetect 1",
+        "set r_dwGlassIntensity 1.00","set r_dwGlassAutoDetect 1",
         "set s_initsound 0","set r_swapInterval 0","set com_fixedtime 100",
         "set r_autoExposure 0","set r_forceAutoExposure 0",
         "set cg_draw2D 0","set con_notifytime -1"]
@@ -264,7 +291,7 @@ def compare(out,matrix,all_reports):
             raw=np.asarray(on,dtype=np.int16)-np.asarray(off,dtype=np.int16)
             brighter=int(np.maximum(raw,0).sum())
             darker=int(np.maximum(-raw,0).sum())
-            row={"map":name,"view":i,"material":view["material"],"camera":view["eye"],
+            row={"map":name,"view":i,"material":view["material"],"camera":view["eye"],"incidence_deg":view.get("fresnel_incidence_deg",0),"glass_intensity":1.0,
                  "base_off_mae":round(drift_mae,5),"off_on_mae":round(effect_mae,5),
                  "brightened_rgb_sum":brighter,"darkened_rgb_sum":darker,
                  "non_destructive_reflectivity":brighter>=3*darker,
