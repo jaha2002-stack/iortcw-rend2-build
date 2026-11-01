@@ -125,7 +125,7 @@ def apply(root,check=False,proof=None):
         assert banned not in before,("debug source leaked",banned)
     assert "DARKWOLF_SUN_HDR16F_PRECISION_V1_40878732886" in before
     assert "DARKWOLF_PORTAL_SKY_SINGLE_SAMPLE_UNIVERSAL_V1" in before
-    assert "DARKWOLF_TEXTURE_MATERIAL_QUALITY_V2_41019985033" in before
+    assert "VectorSet4(parms, cas, lut, (float)lutIndex, 0.0f);" in before
     signature="void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs )"
     # Use an exact proven C anchor; no direct editing of GLSL.
     loop="\tfor (i = 0, drawSurf = drawSurfs ; i < numDrawSurfs ; i++, drawSurf++) {\n"
