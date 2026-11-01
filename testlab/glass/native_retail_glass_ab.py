@@ -10,7 +10,7 @@ sys.path.insert(0,str(Path("testlab/scripts").resolve()))
 import rc4_requested_views as testlab
 from rc4_assault_camera import World
 
-PRIORITY=("xlabs","chateau","dam","factory","tram","escape1","church","assault","swf","norway","forest","trainyard","crypt1")
+PRIORITY=("chateau","xlabs","dam","factory","tram","escape1","church","assault","swf","norway","forest","trainyard","crypt1")
 EXCLUDED=("water","lava","mirror","blood","ice","shutter","shudder","frame","trim","panel","border")
 MAX_MAPS=2  # Requested visual evidence: prioritize actual Xlabs and Chateau glass only
 MAX_VIEWS_PER_MAP=2
@@ -70,7 +70,7 @@ def surface_views(data, world, max_views=2, mapname=""):
         candidates.append((min(extent,4096),material,center,norm))
     # User-requested real glass objects: lab safety doors/vessels and Chateau windows.
     # This chooses MATERIALS only, never invents or modifies framebuffer pixels.
-    preferred = {"xlabs":("saftey_glass","freeze_glass","xwindow_c02","fwindow1","tramglass2"),
+    preferred = {"xlabs":("freeze_glass","xwindow_c02","fwindow1","tramglass2","saftey_glass"),
                  "chateau":("window_c03a_750","tramglass2","window_c04a","window_c07a")}
     pref=preferred.get(mapname,())
     def weight(candidate):
@@ -161,6 +161,17 @@ def make_camera_matrix(retail,out):
 def instrument(source):
     before={str(p.relative_to(source)):H(p) for p in (source/"SP/code/rend2").rglob("*") if p.is_file()}
     testlab.instrument(source)
+    # TEST-ONLY crash guard: R_AddEntitySurfaces does not handle RT_POLY refentities.
+    # Polygons must use trap_R_AddPolyToScene instead; leave valid objects untouched.
+    # This changes CG test instrumentation only, never accepted renderer bytes.
+    syscall_path=source/"SP/code/cgame/cg_syscalls.c"
+    content=syscall_path.read_text()
+    old="void    trap_R_AddRefEntityToScene( const refEntity_t *re ) {\\n\\tsyscall( CG_R_ADDREFENTITYTOSCENE, re );"
+    new="void    trap_R_AddRefEntityToScene( const refEntity_t *re ) {\\n\\tif (re && re->reType == RT_POLY) return; /* TESTLAB only: invalid refEntity type */\\n\\tsyscall( CG_R_ADDREFENTITYTOSCENE, re );"
+    old=old.replace("\\\\n","\\n").replace("\\\\t","\\t")
+    new=new.replace("\\\\n","\\n").replace("\\\\t","\\t")
+    if content.count(old)!=1:raise RuntimeError("RT_POLY test-only guard anchor mismatch")
+    syscall_path.write_text(content.replace(old,new,1))
     after={str(p.relative_to(source)):H(p) for p in (source/"SP/code/rend2").rglob("*") if p.is_file()}
     assert before==after,"TestLab changed a production renderer source byte"
     print("GLASS_NATIVE_TESTLAB_CAMERA_ISOLATION_PASS",len(before),flush=True)
@@ -196,7 +207,7 @@ def capture(source,retail,profile,out,variant,mapname,views,enabled):
     cmds=["set cg_draw2D 0","set cg_drawGun 0","set con_notifytime -1",
           "set cg_bobup 0","set cg_bobpitch 0","set cg_bobroll 0",
           "set r_autoExposure 0","set r_forceAutoExposure 0","set r_forceSunPause 1",
-          "god","notarget","wait 22"]
+          "god","notarget"]  # Immediately relocate away from dangerous XLabs startup actors
     shots=[]
     paired=variant=="PAIRED"
     for i,view in enumerate(views,1):
@@ -403,11 +414,18 @@ def main():
     out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
     matrix=make_camera_matrix(args.retail,out)
     if args.action=="capture-paired":
-        reports={}
+        reports={};errors=[]
         for mapname,views in matrix.items():
-            reports[mapname]=capture(args.candidate,args.retail,args.profile,
-                out/mapname/"PAIRED","PAIRED",mapname,views,1)
-        return compare_paired(out,matrix,reports)
+            try:
+                reports[mapname]=capture(args.candidate,args.retail,args.profile,
+                    out/mapname/"PAIRED","PAIRED",mapname,views,1)
+            except Exception as e:
+                errors.append({"map":mapname,"error":type(e).__name__+":"+str(e)})
+                print("DW_GLASS_CAMERA_MAP_FAILURE",mapname,errors[-1]["error"],flush=True)
+        if errors:(out/"CAMERA_CAPTURE_ERRORS.json").write_text(json.dumps(errors,indent=2)+"\\n")
+        if reports:compare_paired(out,{name:matrix[name] for name in reports},reports)
+        if errors:raise RuntimeError("One or more requested actual-game glass scenes crashed; see diagnostics")
+        return
     reports={}
     for mapname,views in matrix.items():
         reports[mapname]={}
