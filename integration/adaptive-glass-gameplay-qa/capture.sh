@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 mkdir -p evidence dist qa-unpack qa-installed
-sudo apt-get install -y --no-install-recommends curl p7zip-full x11-apps xvfb imagemagick wine wine64 python3-pil mesa-utils libgl1-mesa-dri x11-utils unzip >/tmp/qa-apt.log 2>&1 || { tail -60 /tmp/qa-apt.log; exit 1; }
+sudo apt-get install -y --no-install-recommends curl p7zip-full x11-apps xvfb imagemagick wine wine64 python3-pil mesa-utils libgl1-mesa-dri x11-utils xdotool xclip unzip >/tmp/qa-apt.log 2>&1 || { tail -60 /tmp/qa-apt.log; exit 1; }
 # Pin candidate to source commit 7cae5e67; never substitute unrelated builds.
 # Exact source revision with safe basename-based material classifier.
 # Do not consume previous #41332242795 binary: that version misclassifies shutters.
@@ -78,6 +78,54 @@ for mode in off on; do
   xwininfo -root -tree -display "$DISPLAY" > "evidence/x11-windows-$mode.txt" 2>&1 || true
   xwd -root -silent -display "$DISPLAY" -out "evidence/real-$mode.xwd"
   convert "evidence/real-$mode.xwd" "dist/REAL_RTCW_ESCAPE1_Glass_$mode.png"
+  # On a REAL engine fatal dialog, retrieve actual console data rather than
+  # pretending the popup is a gameplay screenshot.
+  errwin="$(xdotool search --name '^Error
+  kill "$gamepid" 2>/dev/null || true
+  wait "$gamepid" 2>/dev/null || true
+done
+set -e
+python3 - <<'PY'
+from PIL import Image,ImageStat,ImageChops
+from pathlib import Path
+import json,hashlib
+imgs=[]
+proof={"origin":"ORIGINAL_RTCW_SP_DEMO_RUNTIME","engine":"DarkWolf Windows renderer via Wine Xvfb Mesa llvmpipe",
+       "full_game_maps_tested":False,"gameplay_confirmed":False,"screenshots":[]}
+for mode in ("off","on"):
+ p=Path(f"dist/REAL_RTCW_ESCAPE1_Glass_{mode}.png")
+ assert p.exists(),p
+ a=Image.open(p).convert("RGB")
+ st=ImageStat.Stat(a)
+ std=sum(st.stddev)/3
+ avg=sum(st.mean)/3
+ assert a.width>=640 and a.height>=480 and std>8 and avg>6,(mode,"empty frame")
+ log=Path(f"evidence/real-game-{mode}.log").read_text(errors="replace")
+ assert ("rend2" in log.lower() or "renderer_sp_rend2" in log.lower()),(mode,"Rend2 renderer not proven")
+ assert "escape1" in log.lower() and (
+    "loadworldmap" in log.lower() or "world map" in log.lower()
+    or "maps/escape1.bsp" in log.lower()
+ ),(mode,"BSP world loading not proven")
+ imgs.append(a)
+ proof["screenshots"].append({"mode":mode,"sha256":hashlib.sha256(p.read_bytes()).hexdigest(),
+                             "size":[a.width,a.height],"stddev":std,"mean":avg})
+dif=ImageChops.difference(imgs[0],imgs[1])
+proof["ab_mean_absolute_difference"]=sum(ImageStat.Stat(dif).mean)/3
+proof["gameplay_confirmed"]=True
+Path("evidence/REAL_GAMEPLAY_CAPTURE_PROOF.json").write_text(json.dumps(proof,indent=2)+"\n")
+print("REAL_RTCW_DEMO_ENGINE_SCREENSHOTS_VERIFIED",proof["ab_mean_absolute_difference"])
+PY
+# Never upload the installer, extracted game data or copyrighted PK3.
+rm -f "$game/Main/pak0.pk3" evidence/rtcw-demo-installer.run evidence/real-*.xwd
+ 2>/dev/null | head -1 || true)"
+  if [[ -n "$errwin" ]]; then
+    echo "WINE_GAME_ENGINE_ERROR_WINDOW: $errwin" >> "evidence/gui-error-$mode.log"
+    xdotool windowactivate --sync "$errwin" >/dev/null 2>&1 || true
+    xdotool key --window "$errwin" Return >/dev/null 2>&1 || true
+    sleep 2
+    timeout 6 xclip -selection clipboard -o > "evidence/gui-error-console-$mode.log" 2>&1 || true
+    find "$game" -iname qconsole.log -type f -exec sh -c 'cp "$1" "$2"' sh '{}' "evidence/engine-qconsole-$mode.log" \; 2>/dev/null || true
+  fi
   kill "$gamepid" 2>/dev/null || true
   wait "$gamepid" 2>/dev/null || true
 done
