@@ -1,0 +1,43 @@
+name: DarkWolf Glass ALL Retail BSP Probe Coverage (read only)
+on:
+  push:
+    branches: [rend2-adaptive-glass-reflections-v1-from-41297344177]
+    paths:
+      - '.github/workflows/DW_GLASS_ALLMAP_PROBE_COVERAGE.yml'
+      - 'testlab/probe_audit/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-all-retail-probes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify self-contained original game BSP audit script
+        run: |
+          python3 -m py_compile testlab/probe_audit/real_retail_allmap_glass_probes.py
+          mkdir -p evidence
+      - name: Read-only licensed RTCW retail asset import
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}" || { echo ASSETS_NOT_AUTHORIZED > evidence/probe-gate-status.txt; exit 1; }
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > evidence/release-fetch-status.txt 2>&1
+          tail -1 evidence/release-fetch-status.txt > .mainpath
+      - name: Validate all map-agnostic static probe fallback sources for actual glass
+        run: |
+          set -Eeuo pipefail
+          python3 testlab/probe_audit/real_retail_allmap_glass_probes.py "$(cat .mainpath)" --out evidence/allmap-glass-probe-inventory.json
+          echo REAL_WORLD_GLASS_PROBE_COVERAGE_COMPLETE > evidence/probe-gate-status.txt
+      - name: Upload metadata-only universal glass source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-Glass-ALL-REAL-RTCW-BSP-Probe-Coverage
+          path: |
+            evidence/allmap-glass-probe-inventory.json
+            evidence/probe-gate-status.txt
+          if-no-files-found: warn
+          retention-days: 90
