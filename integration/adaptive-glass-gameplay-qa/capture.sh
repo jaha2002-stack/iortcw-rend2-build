@@ -83,8 +83,8 @@ for mode in off on; do
   errwin="$(xdotool search --name '^Error$' 2>/dev/null | head -1 || true)"
   if [[ -n "$errwin" ]]; then
     echo "WINE_GAME_ENGINE_ERROR_WINDOW: $errwin" >> "evidence/gui-error-$mode.log"
-    xdotool windowactivate --sync "$errwin" >/dev/null 2>&1 || true
-    xdotool key --window "$errwin" Return >/dev/null 2>&1 || true
+    timeout 3 xdotool windowactivate "$errwin" >/dev/null 2>&1 || true
+    timeout 3 xdotool key --window "$errwin" Return >/dev/null 2>&1 || true
     sleep 2
     timeout 6 xclip -selection clipboard -o > "evidence/gui-error-console-$mode.log" 2>&1 || true
     qconsole="$(find "$game" -type f -iname qconsole.log -print -quit)"
