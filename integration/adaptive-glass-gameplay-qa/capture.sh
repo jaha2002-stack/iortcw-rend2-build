@@ -26,7 +26,7 @@ test -s "$game/renderer_sp_rend2_x64.dll"
 curl -fLsS --retry 2 --connect-timeout 20 --max-time 300 \
   https://www.gamers.org/pub/idgames/idstuff/wolf/linux/wolfspdemo-linux-1.1b.x86.run \
   -o evidence/rtcw-demo-installer.run
-echo "dbff5ea928802b1bddf4c171bf08ed4294b2da0273e1cf0802fdcedc40c23c3  evidence/rtcw-demo-installer.run" | sha256sum -c -
+echo "dbff5ea928802b1bddfd4c171bf08ed4294b2da0273e1cf0802fdcedc40c23c3  evidence/rtcw-demo-installer.run" | sha256sum -c -
 7z x -y -oqa-unpack evidence/rtcw-demo-installer.run > evidence/demo_extract_7z.txt 2>&1 || true
 pakfile="$(find qa-unpack -type f -path '*/demomain/pak0.pk3' -print -quit)"
 if [[ -z "$pakfile" ]]; then
