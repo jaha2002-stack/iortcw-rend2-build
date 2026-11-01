@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 mkdir -p evidence dist qa-unpack qa-installed
-sudo apt-get install -y --no-install-recommends curl p7zip-full x11-apps xvfb imagemagick wine64 python3-pil mesa-utils libgl1-mesa-dri unzip >/tmp/qa-apt.log 2>&1 || { tail -60 /tmp/qa-apt.log; exit 1; }
+sudo apt-get install -y --no-install-recommends curl p7zip-full x11-apps xvfb imagemagick wine wine64 python3-pil mesa-utils libgl1-mesa-dri x11-utils unzip >/tmp/qa-apt.log 2>&1 || { tail -60 /tmp/qa-apt.log; exit 1; }
 # Pin candidate to source commit 7cae5e67; never substitute unrelated builds.
 # Exact source revision with safe basename-based material classifier.
 # Do not consume previous #41332242795 binary: that version misclassifies shutters.
@@ -50,6 +50,8 @@ cp "$pakfile" "$game/Main/pak0.pk3"
 winebinary="$(command -v wine || command -v wine64 || true)"
 if [[ -z "$winebinary" && -x /usr/lib/wine/wine64 ]]; then winebinary=/usr/lib/wine/wine64; fi
 test -n "$winebinary"
+command -v wineboot || { echo WINE_BOOT_WRAPPER_MISSING; exit 1; }
+command -v wineserver || { echo WINE_SERVER_WRAPPER_MISSING; exit 1; }
 export DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3COMPAT
 export WINEDEBUG=-all WINEPREFIX="$PWD/.wine-glass-qa" SDL_AUDIODRIVER=dummy
 export WINEARCH=win64 WINEDLLOVERRIDES="mscoree,mshtml="
@@ -59,14 +61,13 @@ trap 'kill "$xvfbpid" 2>/dev/null || true' EXIT
 sleep 4
 # Initialize Wine's prefix and all Microsoft Windows system files BEFORE timed A/B.
 # Initial startup can take >32 seconds and otherwise yields misleading empty screens.
-timeout 120 wineboot -u > evidence/wineboot.log 2>&1 || true
+timeout 120 wineboot -u > evidence/wineboot.log 2>&1 || { tail -50 evidence/wineboot.log; echo WINE_BOOT_FAILURE; exit 1; }
 timeout 30 wineserver -w >> evidence/wineboot.log 2>&1 || true
 echo "WINE_PREFIX_INITIALIZED" >> evidence/wineboot.log
 set +e
 for mode in off on; do
   if [[ "$mode" == off ]]; then flag=0; else flag=1; fi
   (cd "$game" && timeout 75 "$winebinary" ioWolfSP.x64.exe \
-    +set fs_basepath "$PWD" +set fs_homepath "$PWD" \
     +set cl_renderer rend2 +set r_fullscreen 0 +set r_mode -1 \
     +set r_customwidth 1280 +set r_customheight 720 \
     +set r_cubeMapping 0 +set r_dwGlassReflect "$flag" \
