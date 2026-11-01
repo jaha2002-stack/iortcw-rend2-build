@@ -137,7 +137,7 @@ static void DW5BuildClassifiedSource(void)
         {
             dwV4Candidate_t *c=&src->candidates[i];
             float apparent=c->halfDiag/(c->centerDist>8?c->centerDist:8);
-            if(!c->linked || c->seenDraws==0 ||
+            if(!c->linked ||
                c->nearDist>16 || c->halfDiag<12 ||
                apparent<0.70f)continue;
             if(c->score>bestScore){bestScore=c->score;best=c->id;}
@@ -214,8 +214,7 @@ static void DW5BuildClassifiedSource(void)
         float ac=0.5f*(a->lower[0]+a->upper[0]),bc=0.5f*(b->lower[0]+b->upper[0]);
         float ayc=0.5f*(a->lower[1]+a->upper[1]);
         float byc=0.5f*(b->lower[1]+b->upper[1]);
-        if(strcmp(a->material,b->material)==0 && a->seenDraws>0 &&
-           b->seenDraws>0 && ax<=8 && bx<=8 && ay<=3 && by<=3 &&
+        if(strcmp(a->material,b->material)==0 && ax<=8 && bx<=8 && ay<=3 && by<=3 &&
            a->upper[2]-a->lower[2]>=60 &&
            b->upper[2]-b->lower[2]>=60 &&
            fabsf(ac-bc)>=20 && fabsf(ac-bc)<=72 &&
