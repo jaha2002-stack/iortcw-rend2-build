@@ -65,7 +65,8 @@ static void R_DWFireMotionApply(const refdef_t *fd, dlight_t *dl)
 {
     float t, phase, amplitude, magnitude;
     vec3_t delta, moved;
-    if (!fd || !dl || !r_dwFireShadowMotion || !r_dwFireShadowMotion->integer ||
+    if (!fd || !dl || !r_dwFireMotionV15Gate || !r_dwFireMotionV15Gate->integer ||
+        !r_dwFireShadowMotion || !r_dwFireShadowMotion->integer ||
         !r_dwFireShadowMotionMap || !r_dwFireShadowMotionMap->string[0] ||
         !r_dwFireShadowMotionTargetOrdinal ||
         r_dwFireShadowMotionTargetOrdinal->integer < 0 || !tr.world ||
@@ -114,6 +115,7 @@ def patch(source):
     s = exact_replace(s, 'extern  cvar_t  *r_dlightWorldContainment;',
         'extern  cvar_t  *r_dlightWorldContainment;\n'
         'extern cvar_t *r_dwFireShadowMotion;\n'
+        'extern cvar_t *r_dwFireMotionV15Gate;\n'
         'extern cvar_t *r_dwFireShadowMotionMap;\n'
         'extern cvar_t *r_dwFireShadowMotionTargetOrdinal;\n'
         'extern cvar_t *r_dwFireShadowMotionAmplitude;', 'extern cvars')
@@ -132,12 +134,15 @@ def patch(source):
     s = exact_replace(s, 'cvar_t  *r_dlightWorldContainment; // user-adjustable: 0 off, 1 fire, 2 fire+stationary Tesla',
         'cvar_t  *r_dlightWorldContainment; // user-adjustable: 0 off, 1 fire, 2 fire+stationary Tesla\n'
         'cvar_t *r_dwFireShadowMotion;\n'
+        'cvar_t *r_dwFireMotionV15Gate;\n'
         'cvar_t *r_dwFireShadowMotionMap;\n'
         'cvar_t *r_dwFireShadowMotionTargetOrdinal;\n'
         'cvar_t *r_dwFireShadowMotionAmplitude; // '+MARK, 'cvar defs')
     s = exact_replace(s, '\tri.Cvar_CheckRange( r_dlightWorldContainment, 0, 2, qtrue );',
         '\tri.Cvar_CheckRange( r_dlightWorldContainment, 0, 2, qtrue );\n'
         '\t// '+MARK+': TEST ONLY, all movement OFF by default.\n'
+        '\tr_dwFireMotionV15Gate = ri.Cvar_Get("r_dwFireMotionV15Gate", "0", CVAR_TEMP);\n'
+        '\tri.Cvar_CheckRange(r_dwFireMotionV15Gate, 0, 1, qtrue);\n'
         '\tr_dwFireShadowMotion = ri.Cvar_Get("r_dwFireShadowMotion", "0", CVAR_TEMP);\n'
         '\tri.Cvar_CheckRange(r_dwFireShadowMotion, 0, 1, qtrue);\n'
         '\tr_dwFireShadowMotionMap = ri.Cvar_Get("r_dwFireShadowMotionMap", "", CVAR_TEMP);\n'
