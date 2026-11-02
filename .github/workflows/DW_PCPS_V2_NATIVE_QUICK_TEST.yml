@@ -1,0 +1,34 @@
+name: DarkWolf PCPS V2 native persistence quick-check
+on:
+  push:
+    branches: [rend2-pcps-v2-persistent-shadow-profiles-20261102]
+    paths:
+      - '.github/workflows/DW_PCPS_V2_NATIVE_QUICK_TEST.yml'
+      - 'integration/pcps-v2/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  persist-native:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and execute actual C journal native test
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/pcps-v2/apply.py integration/pcps-v2/package.py
+          gcc -std=gnu99 -O1 -Wall -Wextra -pedantic integration/pcps-v2/test_native.c -lm -o /tmp/pcps-v2-native-test
+          /tmp/pcps-v2-native-test | tee /tmp/PCPS_V2_NATIVE_TESTS.txt
+          grep -Fxq DW_PCPS_V2_NATIVE_JOURNAL_REPLAY_AND_SAFETY_PASS /tmp/PCPS_V2_NATIVE_TESTS.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          patch=Path("integration/pcps-v2/apply.py").read_text()
+          persistence=Path("integration/pcps-v2/persistence.inc").read_text()
+          for x in ("DWPS_LoadCurrentMap();", "DWPS_PersistAfterChange();",
+                    "DWPS_Unregister", "dw_ps_save", "dw_ps_reload", "dw_ps_file"):
+              assert x in patch,x
+          for x in ("DWPS_MapHash", "DWPS_ReadSlot", "DWPS_SaveCurrentMap",
+                    "DWPCPS_V2", "CHECKSUM", "DWPS_CasterValid"):
+              assert x in persistence,x
+          print("DW_PCPS_V2_NATIVE_PERSISTENCE_QUICK_GATE_PASS")
+          PY
