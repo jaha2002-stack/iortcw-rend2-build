@@ -1,0 +1,48 @@
+name: PCPS V3 source and native folder quick-check
+on:
+  push:
+    branches: [rend2-pcps-v3-aim-pick-visual-overlay-folder-20261102]
+    paths:
+      - 'integration/pcps-v3/**'
+      - '.github/workflows/DW_PCPS_V3_QUICK_SOURCE_NATIVE.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  native-and-source-replay:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native C journal folder/migration regression
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/pcps-v3/apply.py integration/pcps-v3/package.py
+          gcc -std=gnu99 -O1 -Wall -Wextra -pedantic -Iintegration/pcps-v3 integration/pcps-v3/test_native.c -lm -o /tmp/pcps-v3-native
+          /tmp/pcps-v3-native | tee /tmp/pcps-v3-native.log
+          grep -Fxq DW_PCPS_V3_NATIVE_JOURNAL_MIGRATION_AND_SAFETY_PASS /tmp/pcps-v3-native.log
+      - name: Replay strict PCPS V1 V2 V3 source on EXACT accepted SAFE C files
+        run: |
+          set -Eeuo pipefail
+          mkdir -p sept-source/SP/code/rend2
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/13132283705/zip" > /tmp/safe-reconstructed.zip
+          unzip -oq /tmp/safe-reconstructed.zip -d sept-source/SP/code/rend2
+          test -s sept-source/SP/code/rend2/tr_main.c
+          test -s sept-source/SP/code/rend2/tr_scene.c
+          python3 integration/pcps-v1/apply.py sept-source >/tmp/pcps-v1-source.log
+          python3 integration/pcps-v2/apply.py sept-source >/tmp/pcps-v2-source.log
+          python3 integration/pcps-v3/apply.py sept-source --check-only --proof /tmp/pcps-v3-preflight.json
+          python3 integration/pcps-v3/apply.py sept-source --proof /tmp/pcps-v3-proof.json
+          grep -Fq DARKWOLF_PCPS_V3_PICK_VISUAL_20261102 sept-source/SP/code/rend2/tr_main.c
+          grep -Fq DWPS3_DrawOverlay sept-source/SP/code/rend2/tr_scene.c
+          grep -Fq 'dw_pcps/' sept-source/SP/code/rend2/tr_main.c
+          python3 - <<'PY'
+          import json
+          p=json.load(open("/tmp/pcps-v3-proof.json"))
+          assert p["modified_renderer_sources"]==["SP/code/rend2/tr_main.c","SP/code/rend2/tr_scene.c"]
+          assert not p["new_CVar"] and not p["new_GLSL_shaders"]
+          assert p["saved_profile_directory"]=="active fs_homepath/Main/dw_pcps"
+          print("DW_PCPS_V3_SOURCE_AND_NATIVE_QUICK_PASS")
+          PY
