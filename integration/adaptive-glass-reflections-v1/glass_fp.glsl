@@ -42,7 +42,9 @@ void main()
     vec3 reflectance = DW_GlassEnvironmentBRDF(rough, NE, specularF0);
 
     // Exact existing-metal directional cubemap + parallax recipe.
-    vec3 R = reflect(-E, N);
+    // The original Rend2 metal path uses reflect(E,N). It pairs with the
+    // engine's cubemap face orientation; reflect(-E,N) sampled the wrong side.
+    vec3 R = reflect(E, N);
     vec3 parallax = u_CubeMapInfo.xyz + u_CubeMapInfo.w * E;
     vec3 direction = normalize(R + parallax);
     vec3 environment = max(DW_GlassMetalCube(u_CubeMap, direction, 8.0 * rough).rgb, vec3(0.0));
@@ -53,7 +55,13 @@ void main()
     if (u_SpecularScale.w > 0.5)
         mask = max(clamp((1.0 - alpha) * 3.2, 0.0, 1.0), 0.05);
 
-    // Add the captured-world IBL (not undirected bloom), never darken old art.
-    vec3 reflection = environment * reflectance * mask * (2.0 * u_SpecularScale.x);
-    gl_FragColor = vec4(min(reflection, vec3(0.85)), 0.0);
+    // Metal cubemaps are captured in display space: strong lights can have
+    // 1.0 RGB. Additive blending previously washed out opaque frosted panes.
+    // Composite the same cubemap scene over glass with bounded Fresnel alpha.
+    // A dark/empty probe is a no-op rather than a black glass rectangle.
+    float luminosity = dot(environment, vec3(0.2126, 0.7152, 0.0722));
+    float probeValid = smoothstep(0.025, 0.15, luminosity);
+    float weight = clamp(reflectance.r * u_SpecularScale.x * 1.25, 0.0, 0.52);
+    weight *= probeValid * mask;
+    gl_FragColor = vec4(min(environment, vec3(1.0)), weight);
 }
