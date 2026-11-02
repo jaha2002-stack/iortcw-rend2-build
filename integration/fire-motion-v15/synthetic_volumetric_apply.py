@@ -14,8 +14,8 @@ needle=b'if (!fd || !hint || !hint->valid || !hint->dwSyntheticOnly ||'
 assert source.count(needle)==1
 source=source.replace(needle,needle+b'\n        !r_dwFireMotionV15Gate || !r_dwFireMotionV15Gate->integer ||')
 # Exact backend receiver gate: prior wolfconfig values cannot select moving cubes.
-needle2=b'\ttargetOn = r_dwFireShadowMotion && r_dwFireShadowMotion->integer &&\n'
-replacement2=b'\ttargetOn = r_dwFireMotionV15Gate && r_dwFireMotionV15Gate->integer &&\n' + b"'\n        '" + b'\t    r_dwFireShadowMotion && r_dwFireShadowMotion->integer &&\n'
+needle2=b'\\ttargetOn = r_dwFireShadowMotion && r_dwFireShadowMotion->integer &&\\n'
+replacement2=b'\\ttargetOn = r_dwFireMotionV15Gate && r_dwFireMotionV15Gate->integer &&\\n' + b"'\n        '" + b'\\t    r_dwFireShadowMotion && r_dwFireShadowMotion->integer &&\\n'
 assert source.count(needle2)==1
 source=source.replace(needle2,replacement2)
 exec(compile(source.decode("utf-8"),"apply_v11_unpacked.py","exec"))
