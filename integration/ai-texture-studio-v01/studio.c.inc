@@ -315,14 +315,15 @@ static void DW_TexRequest_f( void ) {
         return;
     }
     ++dwTexRequestId;
-    n = Com_sprintf(job,sizeof(job),
+    Com_sprintf(job,sizeof(job),
         "{\"version\":1,\"id\":%u,\"map\":\"%s\",\"shader\":\"%s\","
         "\"texture\":\"%s\",\"width\":%d,\"height\":%d,"
         "\"mode\":\"%s\",\"scale\":%d,\"hit_uv\":[%.6f,%.6f]}\n",
         dwTexRequestId,dwTexPickedMap,dwTexPickedShader,
         dwTexPicked->imgName,dwTexPicked->width,dwTexPicked->height,
         mode,scale,dwTexPickedUV[0],dwTexPickedUV[1]);
-    if (n <= 0 || n >= (int)sizeof(job)) {
+    n = (int)strlen(job);
+    if (n <= 0 || n >= (int)sizeof(job) - 1) {
         ri.Printf(PRINT_ALL,"DW Texture Studio: request too large.\n");
         return;
     }
