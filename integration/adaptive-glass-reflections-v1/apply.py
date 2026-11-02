@@ -162,16 +162,27 @@ static void DW_LoadAutoGlassProbes(void)
     overlay='''\n// '''+M+''': conservative classifier; exclude water and non-glass.
 static qboolean DW_GlassCandidate(const shader_t *sh)
 {
-\tconst char *name = strrchr(sh->name,'/');
-\tqboolean hint = (sh->surfaceFlags & SURF_GLASS) != 0;
-\tname = name ? name + 1 : sh->name; // shader basename; not directory paths
-\tif (Q_stristr(name, "water") || Q_stristr(name, "lava") || Q_stristr(name, "mirror") ||
-\t    Q_stristr(name, "ice") || Q_stristr(name, "blood") ||
-\t    Q_stristr(name, "shutter") || Q_stristr(name, "shudder") ||
-\t    Q_stristr(name, "frame") || Q_stristr(name, "trim") ||
-\t    Q_stristr(name, "panel") || Q_stristr(name, "border")) return qfalse;
-\tif (!r_dwGlassAutoDetect || !r_dwGlassAutoDetect->integer) return hint;
-\treturn hint || Q_stristr(name, "glass") || Q_stristr(name, "window");
+    const char *name = strrchr(sh->name, '/');
+    qboolean hint = (sh->surfaceFlags & SURF_GLASS) != 0;
+    int stage;
+    name = name ? name + 1 : sh->name;
+    if (Q_stristr(name, "water") || Q_stristr(name, "lava") ||
+        Q_stristr(name, "mirror") || Q_stristr(name, "ice") ||
+        Q_stristr(name, "blood") || Q_stristr(name, "shutter") ||
+        Q_stristr(name, "shudder") || Q_stristr(name, "frame") ||
+        Q_stristr(name, "trim") || Q_stristr(name, "panel") ||
+        Q_stristr(name, "border")) return qfalse;
+    if (hint) return qtrue;
+    if (!r_dwGlassAutoDetect || !r_dwGlassAutoDetect->integer) return qfalse;
+    if (Q_stristr(name, "glass")) return qtrue;
+    // Opaque painted windows and metal frames must not be glass mirrors.
+    if (!Q_stristr(name, "window")) return qfalse;
+    for (stage=0; stage<MAX_SHADER_STAGES && sh->stages[stage]; ++stage) {
+        unsigned int bits = sh->stages[stage]->stateBits;
+        if (bits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS | GLS_ATEST_BITS))
+            return qtrue;
+    }
+    return qfalse;
 }
 static void DW_DrawGlassReflection(shaderCommands_t *input)
 {
@@ -179,7 +190,7 @@ static void DW_DrawGlassReflection(shaderCommands_t *input)
 \tcubemap_t *probe;
 \tvec4_t probeInfo, params;
 \tshaderProgram_t *sp = &tr.dwGlassShader;
-\tfloat opacity = 1.0f, roughness = 0.18f;
+\tfloat opacity = 1.0f, roughness = 0.075f, compositeWindow = 0.0f;
 \tint i, alphaTest = 0;
 \tshaderStage_t *firstStage = input->xstages[0];
 \tif (!r_dwGlassReflect || !r_dwGlassReflect->integer ||
@@ -206,7 +217,7 @@ static void DW_DrawGlassReflection(shaderCommands_t *input)
 \t\tif (bits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS)) { opacity=0.25f; break; }
 \t}
 \tif (Q_stristr(input->shader->name,"dirty") || Q_stristr(input->shader->name,"frost"))
-\t\troughness=0.72f;
+\t\troughness=0.55f;\n\tif (Q_stristr(input->shader->name,\"window\") &&\n\t    !Q_stristr(input->shader->name,\"glass\")) compositeWindow=1.0f;
 \tGLSL_BindProgram(sp);
 \tGLSL_SetUniformMat4(sp, UNIFORM_MODELVIEWPROJECTIONMATRIX, glState.modelviewProjection);
 \tGLSL_SetUniformMat4(sp, UNIFORM_MODELMATRIX, backEnd.or.transformMatrix);
@@ -215,7 +226,7 @@ static void DW_DrawGlassReflection(shaderCommands_t *input)
 \tprobeInfo[3]=1.0f;
 \tVectorScale4(probeInfo, 1.0f / ((probe->parallaxRadius>1.0f)?probe->parallaxRadius:1000.0f), probeInfo);
 \tGLSL_SetUniformVec4(sp, UNIFORM_CUBEMAPINFO, probeInfo);
-\tVectorSet4(params, Com_Clamp(0.0f,1.0f,r_dwGlassIntensity->value), opacity, roughness, opacity < 1.0f ? 1.0f : 0.0f);
+\tVectorSet4(params, Com_Clamp(0.0f,1.0f,r_dwGlassIntensity->value), opacity, roughness, compositeWindow);
 \tGLSL_SetUniformVec4(sp, UNIFORM_SPECULARSCALE, params);
 \tif ((firstStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GT_0) alphaTest=1;
 \telse if ((firstStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_LT_80) alphaTest=2;

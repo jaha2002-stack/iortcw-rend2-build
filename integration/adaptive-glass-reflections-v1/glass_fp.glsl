@@ -1,51 +1,59 @@
-// DARKWOLF_ADAPTIVE_GLASS_V1; static environment, Fresnel, roughness; NO SSR.
+// DARKWOLF_ADAPTIVE_GLASS_V2_METAL_IBL: use existing metal cubemap reflection.
 uniform samplerCube u_CubeMap;
 uniform sampler2D u_DiffuseMap;
 uniform int u_AlphaTest;
 uniform vec3 u_ViewOrigin;
 uniform vec4 u_CubeMapInfo;
-// x: user intensity, y: apparent glass opacity, z: roughness, w: 1 (reserved)
+// x: reflection strength; y: opacity; z: roughness; w: composite window atlas.
 uniform vec4 u_SpecularScale;
 varying vec3 v_DWGlassWorldPos;
 varying vec3 v_DWGlassWorldNormal;
 varying vec2 v_DWGlassTex;
-// NVIDIA GLSL 150 core forbids deprecated textureCube; use texture() for 130+.
-#if __VERSION__ >= 130
-#define DW_GlassCubeSample(cube, direction) texture(cube, direction)
+
+// Source-shared with Rend2 metallic lightall path: mipmapped cubemap
+// and EnvironmentBRDF shape. Legacy GLSL fallbacks compile independently.
+#if __VERSION__ >= 150
+#define DW_GlassMetalCube(cube, direction, lod) textureLod(cube, direction, lod)
+#elif __VERSION__ >= 130
+#define DW_GlassMetalCube(cube, direction, lod) texture(cube, direction)
 #else
-#define DW_GlassCubeSample(cube, direction) textureCube(cube, direction)
+#define DW_GlassMetalCube(cube, direction, lod) textureCube(cube, direction)
 #endif
-void main() {
-    vec3 eye = normalize(u_ViewOrigin - v_DWGlassWorldPos);
-    vec3 normal = normalize(v_DWGlassWorldNormal);
-    if (dot(normal, eye) < 0.0) normal = -normal;
-    float ndv = clamp(dot(normal, eye), 0.0, 1.0);
-    float textureAlpha = texture2D(u_DiffuseMap, v_DWGlassTex).a;
-    if (u_AlphaTest == 1 && textureAlpha <= 0.0) discard;
-    if (u_AlphaTest == 2 && textureAlpha >= 0.5) discard;
-    if (u_AlphaTest == 3 && textureAlpha < 0.5) discard;
-    // Original material alpha controls reflection on blended panes; opaque glass retains 1.0.
-    float opacity = clamp(mix(u_SpecularScale.y, textureAlpha, u_SpecularScale.w), 0.0, 1.0);
-    float roughness = clamp(u_SpecularScale.z, 0.0, 1.0);
-    float f0 = mix(0.035, 0.14, opacity);
-    float fresnel = f0 + (1.0 - f0) * pow(1.0 - ndv, 5.0);
-    // V1.1: additive dielectric specular lobe, never replace transmitted
-    // stained glass with a dark/black cubemap. Preserves authored colors.
-    float reflectance = clamp(fresnel * u_SpecularScale.x, 0.0, 0.65);
-    vec3 reflected = reflect(-eye, normal);
-    // Keep local-probe parallax conservative: (probe-world_position)/radius.
-    vec3 probeOffset = u_CubeMapInfo.xyz +
-                       (u_ViewOrigin - v_DWGlassWorldPos) * u_CubeMapInfo.w;
-    vec3 dir = normalize(reflected + 0.20 * probeOffset);
-    vec3 env = DW_GlassCubeSample(u_CubeMap, dir).rgb;
-    // Compatible GLSL 120 fallback: low-cost, directionally averaged rough glass.
-    vec3 blurred = (DW_GlassCubeSample(u_CubeMap, normalize(dir + vec3(0.28, 0.08, -0.16))).rgb +
-                    DW_GlassCubeSample(u_CubeMap, normalize(dir + vec3(-0.13, 0.23, 0.12))).rgb +
-                    DW_GlassCubeSample(u_CubeMap, normalize(dir + vec3(0.09, -0.18, 0.29))).rgb +
-                    env) * 0.25;
-    env = mix(env, blurred, roughness * roughness);
-    // Renderer uses GL_ONE, GL_ONE: black probe is a strict NO-OP.
-    // Keep even a sunlit probe bounded to prevent HDR/bloom explosions.
-    vec3 highlight = min(max(env, vec3(0.0)) * reflectance, vec3(0.45));
-    gl_FragColor = vec4(highlight, 0.0);
+vec3 DW_GlassEnvironmentBRDF(float roughness, float NE, vec3 specular)
+{
+    float v = 1.0 - max(roughness, NE);
+    v *= v * v;
+    return vec3(v) + specular;
+}
+void main()
+{
+    vec3 E = normalize(u_ViewOrigin - v_DWGlassWorldPos);
+    vec3 N = normalize(v_DWGlassWorldNormal);
+    if (dot(N, E) < 0.0) N = -N;
+    float NE = clamp(dot(N, E), 0.0, 1.0);
+    float alpha = texture2D(u_DiffuseMap, v_DWGlassTex).a;
+    if (u_AlphaTest == 1 && alpha <= 0.0) discard;
+    if (u_AlphaTest == 2 && alpha >= 0.5) discard;
+    if (u_AlphaTest == 3 && alpha < 0.5) discard;
+
+    float rough = clamp(u_SpecularScale.z, 0.035, 0.95);
+    float opacity = clamp(u_SpecularScale.y, 0.0, 1.0);
+    vec3 specularF0 = vec3(mix(0.055, 0.19, opacity));
+    vec3 reflectance = DW_GlassEnvironmentBRDF(rough, NE, specularF0);
+
+    // Exact existing-metal directional cubemap + parallax recipe.
+    vec3 R = reflect(-E, N);
+    vec3 parallax = u_CubeMapInfo.xyz + u_CubeMapInfo.w * E;
+    vec3 direction = normalize(R + parallax);
+    vec3 environment = max(DW_GlassMetalCube(u_CubeMap, direction, 8.0 * rough).rgb, vec3(0.0));
+
+    // Composite window texture can contain a metal frame. Reflect chiefly
+    // its translucent texels. A separate pure glass shader remains unrestricted.
+    float mask = 1.0;
+    if (u_SpecularScale.w > 0.5)
+        mask = max(clamp((1.0 - alpha) * 3.2, 0.0, 1.0), 0.05);
+
+    // Add the captured-world IBL (not undirected bloom), never darken old art.
+    vec3 reflection = environment * reflectance * mask * (2.0 * u_SpecularScale.x);
+    gl_FragColor = vec4(min(reflection, vec3(0.85)), 0.0);
 }
