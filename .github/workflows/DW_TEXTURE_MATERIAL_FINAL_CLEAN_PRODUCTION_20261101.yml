@@ -1,0 +1,62 @@
+name: DarkWolf Texture Material Fidelity FINAL Clean Production accepted V2 2026-11-01
+
+on:
+  push:
+    branches:
+      - rend2-texture-material-final-clean-production-20261101
+    paths:
+      - '.github/workflows/DW_TEXTURE_MATERIAL_FINAL_CLEAN_PRODUCTION_20261101.yml'
+      - 'integration/texture-material-final-v2/**'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  freeze-final-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Freeze from accepted SHA-verified V2, not experimental V3
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/texture-material-final-v2/package_final.py
+          mkdir -p evidence dist
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/12960988233/zip" > evidence/accepted_base_41019985033_outer.zip
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/13041644854/zip" > evidence/frozen_V2_41200040113_outer.zip
+          python3 integration/texture-material-final-v2/package_final.py \
+            --base-artifact evidence/accepted_base_41019985033_outer.zip \
+            --v2-artifact evidence/frozen_V2_41200040113_outer.zip \
+            --out dist | tee evidence/DW_FINAL_CLEAN_FREEZE_LOG.txt
+          grep -Fq "DW_FINAL_CLEAN_V2_EXACT_ALL_PROFILES_AND_55_BASE_FILES_PASS" evidence/DW_FINAL_CLEAN_FREEZE_LOG.txt
+          ( cd dist && sha256sum -c DarkWolf_Texture_Material_Fidelity_FINAL_Clean_Production_2026-11-01_Win64.zip.sha256 )
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("dist/DW_TEXTURE_MATERIAL_FINAL_CLEAN_AUDIT.json")
+          d=json.loads(p.read_text())
+          assert d["final_renderer_sha256"] == "83e492871751cc4c37baf9909350a71ce0c90f3c21b895c2e8d572aa21b40acc"
+          assert d["baseline_bytewise_unchanged_except_renderer_and_sha256_index"] == 55
+          assert d["renderer_new_build"] is False
+          assert len(d["preserved_quality_cfgs"]) == 5
+          assert d["experimental_v3_v31_v32_code_included"] is False
+          assert d["neutral_LUT_strength"] == "0.00"
+          assert d["archive_file_count"] >= 55
+          print("DW_TEXTURE_AND_MATERIAL_FINAL_CLEAN_ACCEPTED_V2_PRODUCTION_FREEZE_PASS")
+          PY
+      - name: Publish final Clean Production binary ZIP and audit evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-Texture-Material-Fidelity-FINAL-Clean-Production-Win64
+          path: |
+            dist/DarkWolf_Texture_Material_Fidelity_FINAL_Clean_Production_2026-11-01_Win64.zip
+            dist/DarkWolf_Texture_Material_Fidelity_FINAL_Clean_Production_2026-11-01_Win64.zip.sha256
+            dist/DW_TEXTURE_MATERIAL_FINAL_CLEAN_AUDIT.json
+            evidence/DW_FINAL_CLEAN_FREEZE_LOG.txt
+            integration/texture-material-final-v2/package_final.py
+          retention-days: 90

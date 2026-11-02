@@ -1,0 +1,242 @@
+name: DarkWolf ioRTCW Rend2 v4.4.5 Dam Spotlight Halo Candidate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ rend2-dam-spotlight-halo-testlab-v0.1 ]
+    paths:
+      - '.github/workflows/DARKWOLF_IORTCW_REND2_V4_4_5_DAM_SPOTLIGHT_HALO_CANDIDATE.yml'
+      - 'integration/dam-spotlight-halo-v4-4-5-candidate/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-rend2-v4-4-5-dam-spotlight-halo-candidate
+  cancel-in-progress: true
+
+jobs:
+  build-windows-x64-sp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+
+      BASE_RUN_ID: "37248863490"
+      BASE_HEAD_SHA: 185f190f8886eb3f721342128d7fe05d27e0b692
+      BASE_ARTIFACT_ID: "11320785081"
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-v4.4.4-Sun-Perf-Candidate-Win64
+      BASE_ARTIFACT_DIGEST: sha256:b3b8ffeb96bca86a83ebf4c37d7b858e4351c7ccb462bc100e198721f611c177
+      BASE_INNER_SHA256: 965ccdb585105e8da80daeea62e8d9455f1539618297d1d5e88eb706985baf23
+      BASE_RENDERER_SHA256: fe840163dad9f16f8d4a88464988ab341290d9397bd7992977771d98b3729b37
+      BASE_CGAME_SHA256: 81adb7d4b2686e8fb4185bf3243b81b6fb9a4d668ab709f480e5b27e5298a04e
+      BASE_QAGAME_SHA256: 04f91be7a666245441415758e68d2a194d1585fb6ff5672750a20702f908f74c
+      BASE_UI_SHA256: 54ae87dbef7426e2d439adf01e2be415aec2eb05501e5d3d1029d42378886959
+      BASE_EXE_SHA256: d5fad5fa49d6dca642b3509900785cb4078d233480a387189c8a94bf4c9c561d
+      BASE_IGNITION_SHA256: 63f468e4edcb1fc6f2059b153c165f66b2c0b1237e93ea3b9518ef76358af5ee
+      BASE_CUMULATIVE_NAME: darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch
+      BASE_CUMULATIVE_SHA256: 2c1da09485d489bca253eef8c7626d7417d5493fee493c2d83ffb7c6b7048d0c
+      BASE_SUN_PATCH_NAME: darkwolf-force-sun-csm-smart-v4-4-4-production.patch
+      BASE_SUN_PATCH_SHA256: e59d16b008044a71e9ebb1988a5aea3c2d1cd12e4a329eda762a4a08a2d3bb6e
+
+      FIXER: integration/dam-spotlight-halo-v4-4-5-candidate/apply_darkwolf_spotlight_death_sync_v4_4_5.py
+      RELEASE_BASENAME: DarkWolf-ioRTCW-Rend2-v4.4.5-Dam-Spotlight-Halo-Candidate-Win64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencies and static validation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64 build-essential ca-certificates g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git make mingw-w64 python3 unzip zip jq file
+          python3 -m py_compile "$FIXER"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("integration/dam-spotlight-halo-v4-4-5-candidate/apply_darkwolf_spotlight_death_sync_v4_4_5.py").read_text()
+          required = [
+              "DARKWOLF_SPOTLIGHT_DEATH_LOCALVOL_SYNC_V445",
+              "cent->currentState.frame != 1",
+              "DARKWOLF_LOCAL_VOLUMETRIC_V0_1",
+              "SP/code/cgame/cg_ents.c",
+              "SP/code/cgame/cg_effects.c",
+          ]
+          for marker in required:
+              assert marker in p, marker
+          assert "SP/code/rend2/" not in p
+          print("One-layer cgame fixer contract PASS")
+          PY
+
+      - name: Verify exact v4.4.4 Sun Performance candidate base
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run")" = "$BASE_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run")" = success
+          art="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${BASE_ARTIFACT_ID}")"
+          test "$(jq -r .name <<<"$art")" = "$BASE_ARTIFACT_NAME"
+          test "$(jq -r .expired <<<"$art")" = false
+          test "$(jq -r .digest <<<"$art")" = "$BASE_ARTIFACT_DIGEST"
+
+          rm -rf base-artifact base-release
+          mkdir -p base-artifact base-release
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          z="base-artifact/${BASE_ARTIFACT_NAME}.zip"
+          test -s "$z"
+          test "$(sha256sum "$z" | awk '{print $1}')" = "$BASE_INNER_SHA256"
+          unzip -tq "$z"
+          unzip -q "$z" -d base-release
+          mapfile -t roots < <(find base-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1
+          base="${roots[0]}"
+          echo "$base" > .base_release
+          (cd "$base" && sha256sum -c docs/SHA256SUMS.txt)
+
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$base/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$base/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$base/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$base/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$base/Main/darkwolf_ignition_rc_v0_6.pk3" | awk '{print $1}')" = "$BASE_IGNITION_SHA256"
+          test "$(sha256sum "$base/docs/$BASE_CUMULATIVE_NAME" | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          test "$(sha256sum "$base/docs/$BASE_SUN_PATCH_NAME" | awk '{print $1}')" = "$BASE_SUN_PATCH_SHA256"
+          echo "Exact v4.4.4 package provenance PASS"
+
+      - name: Reconstruct exact spotlight cgame source contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_release)"
+          rm -rf source replay
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          cp "$base/docs/$BASE_CUMULATIVE_NAME" cumulative.patch
+          test "$(sha256sum cumulative.patch | awk '{print $1}')" = "$BASE_CUMULATIVE_SHA256"
+          git -C source apply --check --binary --whitespace=nowarn ../cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../cumulative.patch
+
+          grep -Fq 'DARKWOLF_LOCAL_VOLUMETRIC_V0_1' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'DARKWOLF_REF_LOCALVOL_SPOTLIGHT' source/SP/code/cgame/cg_ents.c
+          grep -Fq 'CG_Spotlight( cent, color, cent->currentState.origin, normalized_direction, 999, 4096, 10, fov, 0 );' source/SP/code/cgame/cg_ents.c
+          grep -Fq "if (localVolEnabled[0] == '1')" source/SP/code/cgame/cg_ents.c
+          grep -Fq 'if ( cent->currentState.frame == 1 ) {    // dead' source/SP/code/cgame/cg_effects.c
+          grep -Fq 'self->s.frame   = 1;    // 1 == dead' source/SP/code/game/g_misc.c
+
+          git -C source config user.name 'DarkWolf Candidate CI'
+          git -C source config user.email 'ci@example.invalid'
+          git -C source add -A
+          git -C source commit -q -m 'Exact cumulative cgame source contract'
+          git -C source rev-parse HEAD > .base_source_commit
+          echo "Spotlight death-state / LocalVol mismatch reproduced in source"
+
+      - name: Apply clean spotlight death LocalVol sync fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          basecommit="$(cat .base_source_commit)"
+          python3 "$FIXER" source
+          git -C source diff --check "$basecommit" --
+          mapfile -t changed < <(git -C source diff --name-only "$basecommit" -- | LC_ALL=C sort)
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = SP/code/cgame/cg_ents.c
+
+          grep -Fq 'DARKWOLF_SPOTLIGHT_DEATH_LOCALVOL_SYNC_V445' source/SP/code/cgame/cg_ents.c
+          grep -Fq "if (cent->currentState.frame != 1 && localVolEnabled[0] == '1')" source/SP/code/cgame/cg_ents.c
+          grep -Fq 'if ( cent->currentState.frame == 1 ) {    // dead' source/SP/code/cgame/cg_effects.c
+          grep -Fq 'self->s.frame   = 1;    // 1 == dead' source/SP/code/game/g_misc.c
+
+          git -C source diff --binary "$basecommit" -- > darkwolf-dam-spotlight-halo-v4-4-5.patch
+          git -C source apply --reverse --check --binary ../darkwolf-dam-spotlight-halo-v4-4-5.patch
+          git -C source worktree add -q ../replay "$basecommit"
+          git -C replay apply --check --binary ../darkwolf-dam-spotlight-halo-v4-4-5.patch
+          git -C replay apply --binary ../darkwolf-dam-spotlight-halo-v4-4-5.patch
+          cmp source/SP/code/cgame/cg_ents.c replay/SP/code/cgame/cg_ents.c
+          echo "One-file apply/reverse/replay proof PASS"
+
+      - name: Build Windows x64 SP cgame
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          (cd source/SP && ./cross-make-mingw64.sh -j2 BUILD_CLIENT=0 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=0 USE_RENDERER_DLOPEN=1)
+          cgame=source/SP/build/release-mingw32-x86_64/main/cgame_sp_x64.dll
+          test -s "$cgame"
+          file "$cgame" | grep -Eiq 'PE32\+|x86-64'
+          test "$(sha256sum "$cgame" | awk '{print $1}')" != "$BASE_CGAME_SHA256"
+          echo "$cgame" > .cgame
+          echo "Windows x64 cgame compile + hash delta PASS"
+
+      - name: Package no-regression v4.4.5 candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base_release)"
+          cgame="$(cat .cgame)"
+          rm -rf dist
+          mkdir -p "dist/$RELEASE_BASENAME"
+          stage="dist/$RELEASE_BASENAME"
+          cp -a "$base/." "$stage/"
+          cp "$cgame" "$stage/Main/cgame_sp_x64.dll"
+          cp darkwolf-dam-spotlight-halo-v4-4-5.patch "$stage/docs/"
+
+          cat > "$stage/docs/DARKWOLF_V4_4_5_DAM_SPOTLIGHT_HALO_AUDIT.txt" <<EOF
+          EXACT_BASE_RUN=$BASE_RUN_ID
+          EXACT_BASE_HEAD_SHA=$BASE_HEAD_SHA
+          EXACT_BASE_ARTIFACT_ID=$BASE_ARTIFACT_ID
+          PINNED_UPSTREAM_SHA=$UPSTREAM_SHA
+          MAP_REPRO=dam
+          DEFECT=DAM_SPOTLIGHT_LOCAL_VOLUMETRIC_HALO_PERSISTS_AFTER_DESTRUCTION
+          ROOT_CAUSE=CG_SPOTLIGHT_DEAD_RETURN_STOPS_LEGACY_BEAM_FLARE_AND_DLIGHT_BUT_DARKWOLF_LOCALVOL_MARKER_IS_SUBMITTED_AFTER_THE_CALL_WITHOUT_DEAD_STATE_GUARD
+          AUTHORITATIVE_DEAD_STATE=ET_SPOTLIGHT_EF_CURRENTSTATE_FRAME_EQUALS_1
+          FIX=SUPPRESS_DATA_ONLY_LOCALVOL_SPOTLIGHT_SUBMISSION_WHEN_FRAME_EQUALS_1
+          CHANGED_SOURCE=SP/code/cgame/cg_ents.c
+          RUNTIME_MODULE_CHANGED=Main/cgame_sp_x64.dll
+          RENDERER=UNCHANGED
+          QAGAME=UNCHANGED
+          UI=UNCHANGED
+          EXE=UNCHANGED
+          IGNITION_PK3=UNCHANGED
+          ALIVE_SPOTLIGHT_BEAM=UNCHANGED
+          ALIVE_SPOTLIGHT_HALO=UNCHANGED
+          SPOTLIGHT_FOV_RANGE_DIRECTION=UNCHANGED
+          SUN_PERF_V4_4_4=UNCHANGED
+          SUN_SHADOWS=UNCHANGED
+          LOCAL_VOLUMETRIC_SETTINGS=UNCHANGED
+          MSAA_AA=UNCHANGED
+          BLOOM_TONEMAP_EXPOSURE=UNCHANGED
+          DYNAMIC_SHADOWS=UNCHANGED
+          DIAGNOSTIC_CVARS=NONE
+          TELEMETRY=NONE
+          EXPECTED_DEATH_BEHAVIOR=BEAM_AND_LOCAL_VOLUMETRIC_HALO_STOP_ON_THE_SAME_DEAD_STATE
+          STATUS=CLEAN_PRODUCTION_CANDIDATE_NOT_PROMOTED
+          EOF
+
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$BASE_RENDERER_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" != "$BASE_CGAME_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$BASE_QAGAME_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$BASE_UI_SHA256"
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$BASE_EXE_SHA256"
+          test "$(sha256sum "$stage/Main/darkwolf_ignition_rc_v0_6.pk3" | awk '{print $1}')" = "$BASE_IGNITION_SHA256"
+          test "$(sha256sum "$stage/docs/$BASE_SUN_PATCH_NAME" | awk '{print $1}')" = "$BASE_SUN_PATCH_SHA256"
+
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          (cd dist && zip -q -X -r "$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/$RELEASE_BASENAME.zip" > "dist/$RELEASE_BASENAME.zip.sha256"
+          echo "No-regression candidate packaging PASS"
+
+      - name: Upload clean candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_BASENAME }}
+          path: |
+            dist/${{ env.RELEASE_BASENAME }}.zip
+            dist/${{ env.RELEASE_BASENAME }}.zip.sha2556
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90

@@ -1,0 +1,117 @@
+name: Crypt1 Oct 24 Shadow Root-Cause Controls
+on:
+  push:
+    branches: [rend2-crypt1-shadow-causal-20261024]
+    paths:
+      - 'testlab/scripts/crypt1_shadow_causal_oct24.py'
+      - '.github/workflows/CRYPT1_SHADOW_CAUSAL_OCT24.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  crypt1-grate-ab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate test script and install actual OpenGL+RTCW capture dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/crypt1-grate
+          python3 -m py_compile testlab/scripts/crypt1_shadow_causal_oct24.py testlab/scripts/rc4_requested_views.py
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev \
+            xvfb xauth python3-pil python3-numpy python3-yaml libcurl4-openssl-dev
+          echo CRYPT1_GRATE_TESTLAB_DEPENDENCIES_OK
+      - name: Reconstruct EXACT FourWeek Master plus user-accepted LUT V05 from pinned SHA inputs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash integration/lut-v05/ci_lut_v05_candidate.sh > evidence/crypt1-grate/source-reconstruction-and-win64-build.log 2>&1 || {
+            tail -110 evidence/crypt1-grate/source-reconstruction-and-win64-build.log
+            exit 1
+          }
+          grep -F 'LUT_V05_THREE_FILE_ISOLATION_PASS' evidence/crypt1-grate/source-reconstruction-and-win64-build.log
+          grep -F 'LUT_V05_DIAGNOSTIC_COMPILE_PASS' evidence/crypt1-grate/source-reconstruction-and-win64-build.log
+          strings -a dist/renderer_sp_rend2_x64.dll | grep -F 'DARKWOLF_LUT_V05_PROCEDURAL_ACTIVE'
+          echo V05_PINNED_CANONICAL_SOURCE_READY
+      - name: Isolate game/cgame close-up camera helpers; renderer unchanged
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 testlab/scripts/crypt1_shadow_causal_oct24.py instrument source
+          grep -Fq 'renderer_source_unmodified' evidence/crypt1-source-isolation.json
+          mv evidence/crypt1-source-isolation.json evidence/crypt1-grate/
+      - name: Compile Linux-native SP game with same V05 renderer source for real-map framebuffer captures
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release \
+            VERSION=1.51d-SP-DarkWolf-Crypt1-Grate-TestLab \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            > evidence/crypt1-grate/linux-native-build.log 2>&1 || {
+              tail -100 evidence/crypt1-grate/linux-native-build.log
+              exit 1
+            }
+          find source/SP/build/release-linux-x86_64 -maxdepth 1 -type f -iname '*rend2*.so' -print | tee evidence/crypt1-grate/native-renderer-files.txt
+          test -s evidence/crypt1-grate/native-renderer-files.txt
+          native_exe="$(find source/SP/build/release-linux-x86_64 -maxdepth 1 -type f -iname 'iowolfsp.*' -print -quit)"
+          test -n "$native_exe"
+          test -x "$native_exe"
+          printf '%s\n' "$native_exe" > evidence/crypt1-grate/native-exe-path.txt
+          echo LINUX_V05_CRYPT1_REAL_GAME_BUILD_PASS
+      - name: Retrieve licensed original RTCW assets from existing protected TestLab release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo BLOCKED_MISSING_LICENSED_RETAIL_ASSETS | tee evidence/crypt1-grate/retail-status.txt
+            exit 1
+          fi
+          bash testlab/scripts/fetch_private_release_assets.sh \
+            jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets \
+            > evidence/crypt1-grate/private-asset-location.log
+          tail -1 evidence/crypt1-grate/private-asset-location.log > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+          python3 - <<'PY'
+          import zipfile,pathlib
+          p=pathlib.Path(open('.retail_main').read().strip())
+          found=[]
+          for pk3 in p.glob('*.pk3'):
+              with zipfile.ZipFile(pk3) as z:
+                  if any(n.lower()=='maps/crypt1.bsp' for n in z.namelist()):
+                      found.append(pk3.name)
+          assert found, 'Crypt1 BSP not in protected retail data'
+          print('PRIVATE_RETAIL_CRYPT1_BSP_VERIFIED',found)
+          PY
+      - name: Run causal Crypt1 baseline / no sun / no LUT / no CAS / no dynamic shadows
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/crypt1_shadow_causal_oct24.py \
+            capture source "$(cat .retail_main)" evidence/crypt1-grate \
+            2>&1 | tee evidence/crypt1-grate/driver.log
+          test -s evidence/crypt1-grate/grate_near48_pitch28_A2C_CAS_SHADOW_SSGI_AB.png
+          test -s evidence/crypt1-grate/grate_near48_pitch42_A2C_CAS_SHADOW_SSGI_AB.png
+          test -s evidence/crypt1-grate/grate_near72_pitch28_A2C_CAS_SHADOW_SSGI_AB.png
+          test -s evidence/crypt1-grate/grate_near72_pitch42_A2C_CAS_SHADOW_SSGI_AB.png
+          test -s evidence/crypt1-grate/CRYPT1_GRATE_CLOSEUP_REPORT.json
+          test -s evidence/crypt1-grate/CRYPT1_GRATE_CLOSEUP_PIXEL_DIFF.json
+          echo CRYPT1_SHADOW_CAUSAL_REAL_GAME_AB_COMPLETE
+      - name: Upload isolated Crypt1 causal images and runtime logs (no protected assets)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Crypt1-FourWeek-V05-Shadow-Causal-AB-20261024
+          path: |
+            evidence/crypt1-grate/
+          retention-days: 90
+          if-no-files-found: warn
