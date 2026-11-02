@@ -10,4 +10,10 @@ new=b'ri.Cvar_Get("r_dwFireWorldMaskProbe", "0", CVAR_TEMP);'
 assert source.count(old)==1
 source=source.replace(old,new)
 assert hashlib.sha256(source).hexdigest()=="6ca756dea0b6cf33eebd6b109565a7a5ca0d249527ec67ec10bc90acf9adb4d5"
+# Match the exact V1.2 source reconstructed by the accepted CI pipeline.
+expected_old=b'f85f8574c366c087862ce7731f85cb07266dba09eb4eeedc665f5166ebc22078'
+expected_ci=b'12d6ee6014f89e06e516e75977ba2f3e3e36ea7cd03b44157b1255358dd9c458'
+assert source.count(expected_old)==1
+source=source.replace(expected_old,expected_ci)
+assert hashlib.sha256(source).hexdigest()=="3b65d6a366d3c091885ee2cd0c95cc03b02b23957379dc8daee6b87b0ed01672"
 exec(compile(source.decode("utf-8"),"dw_fire_world_v13.py","exec"))
