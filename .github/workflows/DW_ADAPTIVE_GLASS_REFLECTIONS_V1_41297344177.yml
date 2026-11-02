@@ -1,4 +1,4 @@
-name: DarkWolf Adaptive Glass Static Cubemap Fresnel V1 candidate from 41297344177
+name: DarkWolf Glass V1.1 NVIDIA GLSL150 Startup Fix from 41297344177
 on:
   push:
     branches: [rend2-adaptive-glass-reflections-v1-from-41297344177]
@@ -313,12 +313,44 @@ jobs:
           assert 'r_cubeMapping = ri.Cvar_Get(' in (p/'tr_init.c').read_text()
           print('DW_GLASS_SOURCE_ISOLATION_AND_CVAR_PARITY_PASS')
           PY
-          for mode in vp fp; do
-            if [ "$mode" = vp ]; then stage=vert; else stage=frag; fi
-            { echo '#version 120'; cat "integration/adaptive-glass-reflections-v1/glass_${mode}.glsl"; } > "evidence/DW_GLASS_V1_${mode}.glsl"
-            glslangValidator -S "$stage" "evidence/DW_GLASS_V1_${mode}.glsl" > "evidence/DW_GLASS_V1_${mode}.log" 2>&1 || { cat "evidence/DW_GLASS_V1_${mode}.log"; exit 1; }
+          # Match the actual RTX 3060 Ti GLSL 150 NVIDIA shader wrapper from user's error log.
+          # GLSL 120 and 130 are independently checked for fallback compatibility.
+          python3 - <<'DW_GLASS_NVIDIA_150_REGRESSION'
+          from pathlib import Path
+          p=Path('integration/adaptive-glass-reflections-v1')
+          frag=(p/'glass_fp.glsl').read_text()
+          assert '#if __VERSION__ >= 130' in frag
+          assert '#define DW_GlassCubeSample(cube, direction) texture(cube, direction)' in frag
+          assert frag.count('DW_GlassCubeSample(u_CubeMap,')==4
+          assert not any('textureCube(u_CubeMap,' in x for x in frag.splitlines())
+          for version in (120,130,150):
+              for mode in ('vp','fp'):
+                  stage='vert' if mode=='vp' else 'frag'
+                  header=f'#version {version}\n'
+                  if version>=130:
+                      if mode=='vp':
+                          header+='#define attribute in\n#define varying out\n'
+                      else:
+                          header+=('#define varying in\nout vec4 out_Color;\n'
+                                   '#define gl_FragColor out_Color\n'
+                                   '#define texture2D texture\n'
+                                   '#define textureCubeLod textureLod\n'
+                                   '#define shadow2D texture\n')
+                  dest=Path(f'evidence/DW_GLASS_V1_{version}_{mode}.{stage}')
+                  dest.write_text(header+(p/f'glass_{mode}.glsl').read_text())
+          print('DW_GLASS_NVIDIA_GLSL_150_COMPATIBILITY_SOURCE_PASS')
+          DW_GLASS_NVIDIA_150_REGRESSION
+          for version in 120 130 150; do
+            for mode in vp fp; do
+              if [ "$mode" = vp ]; then stage=vert; else stage=frag; fi
+              input="evidence/DW_GLASS_V1_${version}_${mode}.${stage}"
+              output="evidence/DW_GLASS_V1_${version}_${mode}.log"
+              glslangValidator -S "$stage" "$input" > "$output" 2>&1 || { cat "$output"; exit 1; }
+              if [ "$version" = 120 ]; then cp "$output" "evidence/DW_GLASS_V1_${mode}.log"; fi
+            done
           done
           echo DW_GLASS_GLSL120_BOTH_STAGES_COMPILE_PASS
+          echo DW_GLASS_GLSL120_130_150_NVIDIA_COMPATIBILITY_PASS
       - name: Cross-compile ALL five game and renderer Win64 binaries from September base
         run: |
           set -Eeuo pipefail
@@ -346,7 +378,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: DarkWolf-AdaptiveGlass-Cubemap-Fresnel-V1-from-41297344177
+          name: DarkWolf-AdaptiveGlass-V1_1-NVIDIA-GLSL150-Fixed-Win64
           path: |
             dist/DarkWolf_Adaptive_Glass_Reflections_V1_Clean_Candidate_Win64.zip
             dist/DarkWolf_Adaptive_Glass_Reflections_V1_Clean_Candidate_Win64.zip.sha256
@@ -354,6 +386,9 @@ jobs:
             evidence/DW_GLASS_V1_PACKAGE.txt
             evidence/DW_GLASS_V1_vp.log
             evidence/DW_GLASS_V1_fp.log
+            evidence/DW_GLASS_V1_130_fp.log
+            evidence/DW_GLASS_V1_150_fp.log
+            evidence/DW_GLASS_V1_150_vp.log
             evidence/september-ported-win64-build.log
             integration/adaptive-glass-reflections-v1/apply.py
             integration/adaptive-glass-reflections-v1/package.py

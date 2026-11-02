@@ -9,6 +9,12 @@ uniform vec4 u_SpecularScale;
 varying vec3 v_DWGlassWorldPos;
 varying vec3 v_DWGlassWorldNormal;
 varying vec2 v_DWGlassTex;
+// NVIDIA GLSL 150 core forbids deprecated textureCube; use texture() for 130+.
+#if __VERSION__ >= 130
+#define DW_GlassCubeSample(cube, direction) texture(cube, direction)
+#else
+#define DW_GlassCubeSample(cube, direction) textureCube(cube, direction)
+#endif
 void main() {
     vec3 eye = normalize(u_ViewOrigin - v_DWGlassWorldPos);
     vec3 normal = normalize(v_DWGlassWorldNormal);
@@ -31,11 +37,11 @@ void main() {
     vec3 probeOffset = u_CubeMapInfo.xyz +
                        (u_ViewOrigin - v_DWGlassWorldPos) * u_CubeMapInfo.w;
     vec3 dir = normalize(reflected + 0.20 * probeOffset);
-    vec3 env = textureCube(u_CubeMap, dir).rgb;
+    vec3 env = DW_GlassCubeSample(u_CubeMap, dir).rgb;
     // Compatible GLSL 120 fallback: low-cost, directionally averaged rough glass.
-    vec3 blurred = (textureCube(u_CubeMap, normalize(dir + vec3(0.28, 0.08, -0.16))).rgb +
-                    textureCube(u_CubeMap, normalize(dir + vec3(-0.13, 0.23, 0.12))).rgb +
-                    textureCube(u_CubeMap, normalize(dir + vec3(0.09, -0.18, 0.29))).rgb +
+    vec3 blurred = (DW_GlassCubeSample(u_CubeMap, normalize(dir + vec3(0.28, 0.08, -0.16))).rgb +
+                    DW_GlassCubeSample(u_CubeMap, normalize(dir + vec3(-0.13, 0.23, 0.12))).rgb +
+                    DW_GlassCubeSample(u_CubeMap, normalize(dir + vec3(0.09, -0.18, 0.29))).rgb +
                     env) * 0.25;
     env = mix(env, blurred, roughness * roughness);
     // Renderer uses GL_ONE, GL_ONE: black probe is a strict NO-OP.
