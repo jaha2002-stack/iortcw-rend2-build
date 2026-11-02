@@ -389,12 +389,30 @@ jobs:
           V4_SOURCE_BEFORE
           git -C sept-source apply --check ../evidence/PCPS_V4_FIRE_ON_V3.patch
           git -C sept-source apply ../evidence/PCPS_V4_FIRE_ON_V3.patch
+          # Quake's legacy headers reserve token "near". Rename only the
+          # local FireLinks vector; no branches, guards or shadows change.
+          python3 - <<'V4_MINGW_COMPAT'
+          import hashlib
+          from pathlib import Path
+          p=Path("sept-source/SP/code/rend2/tr_main.c")
+          s=p.read_text()
+          assert hashlib.sha256(s.encode()).hexdigest()=="95bfb8c2ef68769acdbe5414dc1980fa33b370826e37df4ea66f1263d87a7d56"
+          replacements={"    vec3_t near;":"    vec3_t fireLinkedOrigin;",
+            "VectorCopy(dwps4FireOrigin,near);":"VectorCopy(dwps4FireOrigin,fireLinkedOrigin);",
+            "DWPS4_DistSq(l->origin,near)":"DWPS4_DistSq(l->origin,fireLinkedOrigin)"}
+          for a,b in replacements.items():
+            assert s.count(a)==1,a
+            s=s.replace(a,b)
+          assert hashlib.sha256(s.encode()).hexdigest()=="fe45d4079c28610a25efe50988258a1a318b96ef4049ce7d8f5352f2affdbbe9"
+          p.write_text(s)
+          print("PCPS_V4_MINGW_NEAR_MACRO_COMPAT_PASS")
+          V4_MINGW_COMPAT
           git -C sept-source diff --check
           python3 - <<'V4_SOURCE_AFTER'
           import hashlib,json
           from pathlib import Path
           p=Path("sept-source/SP/code/rend2")
-          expect={"tr_main.c":"95bfb8c2ef68769acdbe5414dc1980fa33b370826e37df4ea66f1263d87a7d56","tr_backend.c":"9ebb4236ecd976325ce877d8ed7b7b76036624a7de8505819cf70a68c6712c87"}
+          expect={"tr_main.c":"fe45d4079c28610a25efe50988258a1a318b96ef4049ce7d8f5352f2affdbbe9","tr_backend.c":"9ebb4236ecd976325ce877d8ed7b7b76036624a7de8505819cf70a68c6712c87"}
           for n,sha in expect.items():
             got=hashlib.sha256((p/n).read_bytes()).hexdigest()
             assert got==sha,(n,got,sha)
