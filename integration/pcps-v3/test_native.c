@@ -111,6 +111,7 @@ static void DWPS_CheckWorld(void)
  dwpsNumRules=0;
  DWPS_LoadCurrentMap();
 }
+static qboolean DWPS_SaveCurrentMap(void); /* V2 production forward declaration */
 #include "persistence_v3.inc"
 
 static int faceA=4,faceB=5;
