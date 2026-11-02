@@ -9,4 +9,8 @@ assert hashlib.sha256(source).hexdigest()=="af5bd4746820cabd86e483e74e7544bf4791
 # V1.5 safety: non-persistent test controls; no wolfconfig contamination.
 assert source.count(b'CVAR_ARCHIVE') == 4
 source=source.replace(b'CVAR_ARCHIVE',b'CVAR_TEMP')
+# Gate synthetic volume motion on the same fresh V1.5 OFF-by-default CVar.
+needle=b'if (!fd || !hint || !hint->valid || !hint->dwSyntheticOnly ||'
+assert source.count(needle)==1
+source=source.replace(needle,needle+b'\n        !r_dwFireMotionV15Gate || !r_dwFireMotionV15Gate->integer ||')
 exec(compile(source.decode("utf-8"),"apply_v11_unpacked.py","exec"))
