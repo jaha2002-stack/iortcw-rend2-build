@@ -1,0 +1,59 @@
+name: DW IFLC V1.1 native catalog crash trace
+on:
+  push:
+    branches: [experiment/iflc-v11-shadow-fix-from-41408153237]
+    paths: ['.github/workflows/DW_IFLC_V11_CRASH_DIAG.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  trace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y --no-install-recommends gdb libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth mesa-utils libgl1-mesa-dev python3-pil python3-numpy
+      - name: Prepare isolated native debugger source
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence
+          python3 integration/iflc-v1/prepare.py source evidence
+          python3 integration/iflc-v11/apply.py source evidence
+          python3 integration/iflc-v11/runtime.py instrument source
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('source/SP/code/rend2/tr_iflc.inc');s=p.read_text()
+          s=s.replace('    if (!R_IFLC_EnsureCatalog()) return;\n    R_IssuePendingRenderCommands();','    ri.Printf(PRINT_ALL,"IFLC11_TRACE enter audit\\n");\n    if (!R_IFLC_EnsureCatalog()) return;\n    ri.Printf(PRINT_ALL,"IFLC11_TRACE catalog ready count=%d\\n",s_iflcOwnerCount);\n    R_IssuePendingRenderCommands();')
+          s=s.replace('            R_IFLC_PrepareFixture(i);','            ri.Printf(PRINT_ALL,"IFLC11_TRACE owner=%d kind=%d surfaces=%d\\n",i,s_iflcOwners[i].kind,s_iflcOwners[i].surfaceCount);\n            R_IFLC_PrepareFixture(i);')
+          p.write_text(s)
+          p=Path('integration/iflc-v11/runtime.py');s=p.read_text()
+          old="str(exe),'+safe'";new="'gdb','--batch','-ex','set pagination off','-ex','handle SIGSEGV stop print nopass','-ex','run','-ex','thread apply all bt','-ex','bt full','--args',str(exe),'+safe'"
+          assert s.count(old)==1;s=s.replace(old,new)
+          s=s.replace("(main/'IFLC11_TEST.cfg').write_text('\\n'.join(cmd)+'\\n')", "(main/'IFLC11_TEST.cfg').write_text('set con_notifytime -1\\ngod\\nnotarget\\nwait 18\\ndw_fl_test_audit catalog\\necho IFLC11_CATALOG_COMPLETE\\nquit\\n')")
+          p.write_text(s)
+          PY
+          make -C source/SP -j2 release NO_STRIP=1 OPTIMIZE='-O1 -g -fno-omit-frame-pointer' BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD.log 2>&1 || { tail -80 evidence/BUILD.log; exit 1; }
+      - name: Restore protected retail resources
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail_main"
+          printf '%s\n' "$retail_main" > .retail_main
+      - name: Obtain native stack without producing a release
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v11/runtime.py capture source "$(cat .retail_main)" evidence/runtime crypt2 > evidence/CAPTURE.log 2>&1
+      - name: Upload stack and source diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DW-IFLC-V11-Catalog-Native-Stack
+          path: |
+            evidence/*.log
+            evidence/runtime/*.log
+          retention-days: 30
