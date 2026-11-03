@@ -1,0 +1,63 @@
+name: DW IFLC V1.1 Crypt1 Crypt2 fixture inventory
+on:
+  push:
+    branches: [experiment/iflc-v11-shadow-fix-from-41408153237]
+    paths: ['.github/workflows/DW_IFLC_V11_CRYPT_INVENTORY.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read protected retail maps without exporting game assets
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail_main"
+          printf '%s\n' "$retail_main" > .retail_main
+      - name: Inventory distinct flames lamps and authored emitters on both maps
+        run: |
+          mkdir -p evidence
+          python3 - <<'PY'
+          import json,struct,zipfile,re,hashlib,collections
+          from pathlib import Path
+          maps={}
+          for p in sorted(Path(Path('.retail_main').read_text().strip()).iterdir()):
+              if p.suffix.lower()!='.pk3': continue
+              with zipfile.ZipFile(p) as z:
+                  for n in z.namelist():
+                      if n.lower() in ('maps/crypt1.bsp','maps/crypt2.bsp'): maps[Path(n).stem.lower()]=z.read(n)
+          assert set(maps)=={'crypt1','crypt2'}, 'Both requested retail maps must exist'
+          report={}
+          for name,data in maps.items():
+              def lump(i):
+                  o,n=struct.unpack_from('<ii',data,8+8*i);return data[o:o+n]
+              shaders=[(s.split(b'\0')[0].decode('latin1'),sf,cf) for s,sf,cf in struct.iter_unpack('<64sii',lump(1))]
+              verts=list(struct.iter_unpack('<10f4B',lump(10))); surfaces=list(struct.iter_unpack('<12i12f2i',lump(13)))
+              first,count=struct.unpack_from('<6f4i',lump(7))[6:8]
+              groups=collections.defaultdict(list)
+              for i in range(first,first+count):
+                  s=surfaces[i]; material=shaders[s[0]][0]
+                  if not any(word in material.lower() for word in ('flame','fire','torch','lamp','light','candle')):continue
+                  v=verts[s[3]:s[3]+s[4]]
+                  if not v:continue
+                  groups[material].append({'surface':i,'center':[sum(a[k] for a in v)/len(v) for k in range(3)],'bounds':[[min(a[k] for a in v) for k in range(3)],[max(a[k] for a in v) for k in range(3)]],'surface_type':s[2]})
+              entities=[dict(re.findall(r'"([^"\n]+)"\s*"([^"\n]*)"',x)) for x in re.findall(r'\{([^{}]*)\}',lump(0).decode('latin1'))]
+              emitters=[]
+              for i,e in enumerate(entities):
+                  if e.get('classname') in ('dlight','light','lightJunior','corona') or e.get('classname')=='target_speaker' and 'fire' in e.get('noise','').lower():
+                      emitters.append({'ordinal':i,'fields':{k:e[k] for k in ('classname','origin','target','targetname','light','_color','color','noise','style','spawnflags') if k in e}})
+              report[name]={'bsp_sha256':hashlib.sha256(data).hexdigest(),'world_surfaces':count,'material_groups':dict(groups),'authored_emitters':emitters,'entity_classes':dict(collections.Counter(e.get('classname','') for e in entities))}
+              print(name,'world surfaces',count,'candidate materials',[(k,len(v)) for k,v in groups.items()],'authored emitters',len(emitters))
+          Path('evidence/IFLC_V11_CRYPT_INVENTORY.json').write_text(json.dumps(report,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DW-IFLC-V11-Crypt1-Crypt2-Fixture-Inventory
+          path: evidence/*.json
+          retention-days: 60
