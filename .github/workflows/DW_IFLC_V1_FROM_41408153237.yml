@@ -1,0 +1,102 @@
+name: DW IFLC V1 exact 41408153237 Win64 and Crypt1 TestLab
+on:
+  push:
+    branches: [experiment/iflc-v1-from-41408153237]
+    paths:
+      - '.github/workflows/DW_IFLC_V1_FROM_41408153237.yml'
+      - 'integration/iflc-v1/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-iflc-v1-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build-and-crypt1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install release compilers and native TestLab dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 git unzip zip file ca-certificates libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          mkdir -p evidence dist
+      - name: Reconstruct exact accepted source and verify IFLC-only changes
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v1/prepare.py source evidence
+          python3 -m py_compile integration/iflc-v1/*.py integration/iflc-v1/tests/*.py
+      - name: Execute actual production CPU regression tests
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v1/tests/run_cpu_tests.py source --sanitize --output evidence/IFLC_CPU_TESTS.json | tee evidence/IFLC_CPU_TESTS.log
+          python3 integration/iflc-v1/tests/run_backend_tests.py source --output evidence/iflc-backend | tee evidence/IFLC_BACKEND_TESTS.log
+          python3 integration/iflc-v1/tests/run_shadow_tests.py source --output evidence/iflc-shadow | tee evidence/IFLC_SHADOW_TESTS.log
+      - name: Build Win64 candidate from exact IFLC source
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-IFLC-V1-41408153237 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/IFLC_WIN64_BUILD.log 2>&1 || { tail -100 evidence/IFLC_WIN64_BUILD.log; exit 1; }
+          python3 integration/iflc-v1/package.py source evidence dist
+          tar -czf dist/DW_IFLC_V1_EXACT_SOURCE.tar.gz -C source SP/code
+      - name: Upload compiled test candidate and exact source
+        uses: actions/upload-artifact@v4
+        with:
+          name: DW-IFLC-V1-Win64-TEST-from-41408153237
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          retention-days: 60
+      - name: Upload exact IFLC source audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: DW-IFLC-V1-Exact-Source-Audit
+          path: |
+            dist/DW_IFLC_V1_EXACT_SOURCE.tar.gz
+            evidence/IFLC_SOURCE_PROOF.json
+            evidence/IFLC_SOURCE_SHA256.json
+            evidence/IFLC_BASE_SHA256.json
+          retention-days: 60
+      - name: Prepare isolated camera helpers and build native TestLab
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v1/runtime.py instrument source
+          make -C source/SP -j2 release BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/IFLC_NATIVE_BUILD.log 2>&1 || { tail -100 evidence/IFLC_NATIVE_BUILD.log; exit 1; }
+      - name: Restore protected licensed RTCW game data
+        id: assets
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo 'BLOCKED_MISSING_RETAIL_ASSET_TOKEN' > evidence/IFLC_RUNTIME_STATUS.txt
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail_main"
+          printf '%s\n' "$retail_main" > .iflc_retail_main
+          echo 'available=true' >> "$GITHUB_OUTPUT"
+      - name: Exercise actual IFLC commands in Crypt1 and capture real frames
+        if: steps.assets.outputs.available == 'true'
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v1/runtime.py capture source "$(cat .iflc_retail_main)" evidence/runtime | tee evidence/IFLC_RUNTIME.log
+          echo 'REAL_GAME_CAPTURE_COMPLETE_PENDING_VISUAL_REVIEW' > evidence/IFLC_RUNTIME_STATUS.txt
+      - name: Upload verification evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DW-IFLC-V1-Tests-and-Crypt1-Evidence
+          path: |
+            evidence/IFLC_*.json
+            evidence/IFLC_*.txt
+            evidence/IFLC_*.log
+            evidence/V14_RECONSTRUCTION.json
+            evidence/iflc-backend/**
+            evidence/iflc-shadow/**
+            evidence/runtime/**
+          retention-days: 60

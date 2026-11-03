@@ -1,0 +1,1424 @@
+diff --git a/SP/code/rend2/tr_backend.c b/SP/code/rend2/tr_backend.c
+index fbf7629fc2f5888c974f47b39fb5e328fb1e66d0..6b29c14e4fa4ba7390f068edd73beaf1b301d65c 100644
+--- a/SP/code/rend2/tr_backend.c
++++ b/SP/code/rend2/tr_backend.c
+@@ -4267,16 +4267,36 @@ static void RB_VolumetricSun(FBO_t *srcFbo, ivec4_t srcBox)
+ 	}
+ }
+ 
++// DARKWOLF_IFLC_V1: scene snapshots keep direct-light overrides out of
++// volumetric ownership, fixture comparisons and plume geometry. Never substitute
++// this radius for the real cubemap capture/depth-normalization radius.
++static const float *RB_IFLC_BaseColor(const dlight_t *dl)
++{
++	return dl->iflcActive ? dl->iflcBaseColor : dl->color;
++}
++
++static float RB_IFLC_BaseRadius(const dlight_t *dl)
++{
++	return dl->iflcActive ? dl->iflcBaseRadius : dl->radius;
++}
++
++static float RB_IFLC_FireVolumeGain(const dlight_t *dl)
++{
++	return (dl && dl->iflcActive) ? Com_Clamp(0.0f, 3.0f, dl->iflcVolumeGain) : 1.0f;
++}
++
+ // DARKWOLF_LAMP_VOLUMETRIC_PRODUCTION_CANDIDATE_RELEASE_V1
+ // DARKWOLF_LOCAL_VOLUMETRIC_V0_1
+ static float RB_LocalVolumetricDlightScore(const dlight_t *dl)
+ {
+ 	vec3_t delta;
++	const float *volumeColor = RB_IFLC_BaseColor(dl);
++	float volumeRadius = RB_IFLC_BaseRadius(dl);
+ 	float distanceSquared, radiusSquared, luminance;
+ 	VectorSubtract(dl->origin, backEnd.refdef.vieworg, delta);
+ 	distanceSquared = DotProduct(delta, delta);
+-	radiusSquared = dl->radius * dl->radius;
+-	luminance = 0.2126f * dl->color[0] + 0.7152f * dl->color[1] + 0.0722f * dl->color[2];
++	radiusSquared = volumeRadius * volumeRadius;
++	luminance = 0.2126f * volumeColor[0] + 0.7152f * volumeColor[1] + 0.0722f * volumeColor[2];
+ 	return radiusSquared * (0.25f + luminance) /
+ 		(distanceSquared + radiusSquared * 0.25f + 1.0f);
+ }
+@@ -4390,8 +4410,8 @@ static void RB_LocalVolumetricStoreLampIdentity(localVolumetricLampIdentity_t *i
+     if (!dl)
+         return;
+     VectorCopy(dl->origin, identity->origin);
+-    VectorCopy(dl->color, identity->color);
+-    identity->radius = dl->radius;
++    VectorCopy(RB_IFLC_BaseColor(dl), identity->color);
++    identity->radius = RB_IFLC_BaseRadius(dl);
+     identity->staticPromoteFixtureId = dl->staticPromoteFixtureId; // DARKWOLF_USLRD_V0_1
+     identity->staticPromoteVisibilityTier = dl->staticPromoteVisibilityTier;
+ }
+@@ -4431,10 +4451,10 @@ static int RB_LocalVolumetricFindLampIdentity(const localVolumetricLampIdentity_
+         originDist2 = DotProduct(delta, delta);
+         if (originDist2 > 256.0f) // static physical lamps should normally be exact; allow 16u tolerance.
+             continue;
+-        radiusDelta = dl->radius - identity->radius;
++        radiusDelta = RB_IFLC_BaseRadius(dl) - identity->radius;
+         if (radiusDelta < 0.0f)
+             radiusDelta = -radiusDelta;
+-        VectorSubtract(dl->color, identity->color, colorDelta);
++        VectorSubtract(RB_IFLC_BaseColor(dl), identity->color, colorDelta);
+         colorDist2 = DotProduct(colorDelta, colorDelta);
+         cost = originDist2 + radiusDelta * radiusDelta * 0.0625f + colorDist2 * 64.0f;
+         if (cost < bestCost)
+@@ -4600,12 +4620,12 @@ static qboolean RB_LocalVolumetricUSLRDCompanionEquivalent(const dlight_t *a, co
+     VectorSubtract(a->origin, b->origin, delta);
+     if (DotProduct(delta, delta) > mergeRadius * mergeRadius)
+         return qfalse;
+-    radiusDelta = a->radius - b->radius;
++    radiusDelta = RB_IFLC_BaseRadius(a) - RB_IFLC_BaseRadius(b);
+     if (radiusDelta < 0.0f)
+         radiusDelta = -radiusDelta;
+     if (radiusDelta > 16.0f)
+         return qfalse;
+-    VectorSubtract(a->color, b->color, colorDelta);
++    VectorSubtract(RB_IFLC_BaseColor(a), RB_IFLC_BaseColor(b), colorDelta);
+     colorDist2 = DotProduct(colorDelta, colorDelta);
+     if (colorDist2 > 0.01f)
+         return qfalse;
+@@ -5418,8 +5438,9 @@ static qboolean RB_DWAlarmPromotedRed(const dlight_t *lamp)
+     if (!lamp || !lamp->localVolumetricLamp || lamp->nativeAuthoredDlight ||
+         lamp->transientBlast || lamp->noDlightShadow)
+         return qfalse;
+-    return lamp->color[0] >= 0.04f && lamp->color[1] >= 0.0f && lamp->color[2] >= 0.0f &&
+-        lamp->color[1] <= lamp->color[0] * 0.30f && lamp->color[2] <= lamp->color[0] * 0.30f;
++    return RB_IFLC_BaseColor(lamp)[0] >= 0.04f && RB_IFLC_BaseColor(lamp)[1] >= 0.0f && RB_IFLC_BaseColor(lamp)[2] >= 0.0f &&
++        RB_IFLC_BaseColor(lamp)[1] <= RB_IFLC_BaseColor(lamp)[0] * 0.30f &&
++        RB_IFLC_BaseColor(lamp)[2] <= RB_IFLC_BaseColor(lamp)[0] * 0.30f;
+ }
+ 
+ static int RB_DWAlarmWorldLight(const dlight_t *lamp, int mode)
+@@ -5443,7 +5464,8 @@ static int RB_DWAlarmWorldLight(const dlight_t *lamp, int mode)
+ 
+ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ 	const dlight_t *lamp, int shadowSlot, const localVolumetricSpot_t *spot, float sourceWeight, float fireGeometryRadius,
+-	const vec3_t fireVolumeOrigin, image_t *shadowCubemapOverride) // DARKWOLF_FIREVOL_OCCLUSION_PRODUCTION_V1
++	const vec3_t fireVolumeOrigin, image_t *shadowCubemapOverride,
++	const vec3_t volumeColorOverride, float fireVolumeGain) // DARKWOLF_IFLC_V1
+ {
+ 	vec4_t viewInfo, source, volumeInfo, params, qualityParams, energyParams, dlightInfo, shadowParams;
+ 	image_t *shadowImage = NULL;
+@@ -5474,7 +5496,8 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ 				((mode >= 5 && mode <= 8) && fireGeometryRadius > 0.0f) ? fireGeometryRadius : MAX(lamp->radius, 1.0f));
+ 			VectorSet4(volumeInfo, source[0], source[1], source[2], source[3]);
+ 		}
+-		VectorCopy(lamp->color, lightColor);
++		if (volumeColorOverride) VectorCopy(volumeColorOverride, lightColor);
++		else VectorCopy(lamp->color, lightColor);
+ 		VectorSet4(dlightInfo, 0.0f, 0.0f, 1.0f, -1.0f);
+ 		if (mode == 3 || mode == 6 || mode == 7)
+ 		{
+@@ -5576,6 +5599,11 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ 		Com_Clamp(0.000001f, 0.05f, (mode >= 5 && mode <= 8) ? s_rVolumetricFireDensity->value : r_volumetricLocalDensity->value),
+ 		Com_Clamp(-0.70f, 0.70f, r_volumetricLocalAnisotropy->value),
+ 		Com_Clamp(64.0f, zmax, r_volumetricLocalMaxDistance->value));
++	// IFLC gain is independent of residency/fade. Do not clamp weight * gain:
++	// e.g. weight=.5, gain=3 must yield 1.5 times base strength, not 1.0.
++	// Base strength <=3 and gain <=3 bound the resulting strength to <=9.
++	if (fireVolumeGain != 1.0f)
++		params[0] *= Com_Clamp(0.0f, 3.0f, fireVolumeGain);
+ 	VectorSet4(qualityParams,
+ 		(float)((mode == 4) ? Com_Clamp(8, 48, r_volumetricLocalSpotSamples->integer) :
+ 			((mode >= 5 && mode <= 8) ? Com_Clamp(8, 64, s_rVolumetricFireSamples->integer) : Com_Clamp(4, 32, r_volumetricLocalSamples->integer))), // DARKWOLF_FIRE_VOLUMETRIC_V0_5_VISIBILITY_PROOF
+@@ -5660,7 +5688,13 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ static void RB_LocalVolumetricRender(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ 	const dlight_t *lamp, int shadowSlot, const localVolumetricSpot_t *spot, float sourceWeight, float fireGeometryRadius)
+ {
+-	RB_LocalVolumetricRenderEx(srcFbo, srcBox, mode, lamp, shadowSlot, spot, sourceWeight, fireGeometryRadius, NULL, NULL);
++	// A learned/promoted fire may also have a generic LocalVol companion. Keep
++	// its original tint/energy while changing direct RGB; FireVol's volume gain
++	// belongs only to the separate fire pass. Diagnostic marker colors stay explicit.
++	const float *volumeColor = (lamp && lamp->iflcActive && lamp->localVolumetricLamp && mode >= 1 && mode <= 3) ?
++		lamp->iflcBaseColor : NULL;
++	RB_LocalVolumetricRenderEx(srcFbo, srcBox, mode, lamp, shadowSlot, spot, sourceWeight, fireGeometryRadius,
++		NULL, NULL, volumeColor, 1.0f);
+ }
+ 
+ 
+@@ -5684,10 +5718,10 @@ static qboolean RB_LocalVolumetricUSLRDPhysicalCompanionEquivalent(const dlight_
+     VectorSubtract(a->origin, b->origin, delta);
+     if (DotProduct(delta, delta) > mergeRadius * mergeRadius)
+         return qfalse;
+-    radiusDelta = fabs(a->radius - b->radius);
++    radiusDelta = fabs(RB_IFLC_BaseRadius(a) - RB_IFLC_BaseRadius(b));
+     if (radiusDelta > 16.0f)
+         return qfalse;
+-    VectorSubtract(a->color, b->color, colorDelta);
++    VectorSubtract(RB_IFLC_BaseColor(a), RB_IFLC_BaseColor(b), colorDelta);
+     if (DotProduct(colorDelta, colorDelta) > 0.01f)
+         return qfalse;
+     return qtrue;
+@@ -5769,8 +5803,8 @@ static int RB_LocalVolumetricRenderAllActiveUSLRD(FBO_t *srcFbo, ivec4_t srcBox)
+             if (groupIds[j] != canonical)
+                 continue;
+             VectorAdd(originSum, peer->origin, originSum);
+-            if (peer->radius > maxRadius)
+-                maxRadius = peer->radius;
++            if (RB_IFLC_BaseRadius(peer) > maxRadius)
++                maxRadius = RB_IFLC_BaseRadius(peer);
+             weight = RB_LocalVolumetricLampDistanceWeight(peer);
+             if (weight > bestWeight)
+                 bestWeight = weight;
+@@ -5933,7 +5967,7 @@ static float RB_FireVolumetricGeometryRadius(const dlight_t *dl, int stateSlot,
+ 
+ 	if (!dl)
+ 		return 1.0f;
+-	rawRadius = MAX(dl->radius, 1.0f);
++	rawRadius = MAX(RB_IFLC_BaseRadius(dl), 1.0f);
+ 	if (!s_rVolumetricFireRadiusStabilize || !s_rVolumetricFireRadiusStabilize->integer)
+ 		return rawRadius;
+ 
+@@ -7308,7 +7342,7 @@ static float RB_FireVStableGeometryRadius(const dlight_t *dl,
+ 	vec3_t delta;
+ 	if (!dl)
+ 		return 1.0f;
+-	rawRadius = MAX(dl->radius, 1.0f);
++	rawRadius = MAX(RB_IFLC_BaseRadius(dl), 1.0f);
+ 	if (!pool || !s_rVolumetricFireRadiusStabilize || !s_rVolumetricFireRadiusStabilize->integer)
+ 		return rawRadius;
+ 	minRadius = Com_Clamp(64.0f, 1024.0f, s_rVolumetricFireRadiusMin->value);
+@@ -8503,6 +8537,8 @@ static void RB_VolumetricFireV07(FBO_t *srcFbo, ivec4_t srcBox)
+ 		vec3_t latchDelta;
+ 		float latchedDistance;
+ 		float geometryRadius;
++		float volumeGain;
++		const float *volumeColor;
+ 		int volumeShadowSlot;
+ 		if (!sel->latchValid)
+ 			continue;
+@@ -8517,6 +8553,13 @@ static void RB_VolumetricFireV07(FBO_t *srcFbo, ivec4_t srcBox)
+ 				continue;
+ 			fireDl = &backEnd.refdef.dlights[sel->dlightIndex];
+ 		}
++		// Exact per-frame DLight identity takes precedence; a stable BSP flame
++		// lookup covers synthetic/promoted volumes and missing-native fallbacks.
++		volumeGain = RB_IFLC_FireVolumeGain(fireDl);
++		volumeColor = fireDl->iflcActive ? fireDl->iflcBaseColor : NULL;
++		if (!fireDl->iflcActive)
++			(void)R_IFLC_VolumeOverride(sel->latchedFlameSurface, sel->latchedShader,
++				sel->latchedFlameOrigin, &volumeGain);
+ 		geometryRadius = pool ? RB_FireVStableGeometryRadius(fireDl, pool, nowMs) :
+ 			RB_FireVolumetricGeometryRadius(fireDl, sel->poolSlot, nowMs);
+ 		if (!coreReady)
+@@ -8531,7 +8574,7 @@ static void RB_VolumetricFireV07(FBO_t *srcFbo, ivec4_t srcBox)
+ 			int effectiveRenderMode = (renderMode == 5) ? 6 : renderMode;
+ 			RB_LocalVolumetricRenderEx(srcFbo, srcBox, effectiveRenderMode, fireDl, sel->shadowSlot,
+ 				NULL, sel->sourceWeight, (effectiveRenderMode >= 5 && effectiveRenderMode <= 8) ? geometryRadius : 0.0f,
+-				sel->latchedFlameOrigin, NULL);
++				sel->latchedFlameOrigin, NULL, volumeColor, volumeGain);
+ 		}
+ 		else
+ 		{
+@@ -8540,18 +8583,19 @@ static void RB_VolumetricFireV07(FBO_t *srcFbo, ivec4_t srcBox)
+ 			if (cachedShadow)
+ 			{
+ 				int effectiveRenderMode = (renderMode == 5) ? 6 : renderMode;
+-				VectorCopy(fireDl->color, cachedShadowLight.color);
++				VectorCopy(RB_IFLC_BaseColor(fireDl), cachedShadowLight.color);
+ 				RB_LocalVolumetricRenderEx(srcFbo, srcBox, effectiveRenderMode, &cachedShadowLight, -1,
+ 					NULL, sel->sourceWeight, (effectiveRenderMode >= 5 && effectiveRenderMode <= 8) ? geometryRadius : 0.0f,
+-					sel->latchedFlameOrigin, cachedShadow);
++					sel->latchedFlameOrigin, cachedShadow, volumeColor, volumeGain);
+ 			}
+ 			else
+ 			{
+ 				// Critical behavior lock: cache warm-up/miss NEVER hides a torch. Fall back to exact Run 33864810376 rendering.
+ 				volumeShadowSlot = sel->syntheticVolumeOnly ? -1 :
+ 					((renderMode == 8 || latchedDistance <= 1.0f) ? sel->shadowSlot : -1);
+-				RB_LocalVolumetricRender(srcFbo, srcBox, renderMode, &anchoredDl, volumeShadowSlot,
+-					NULL, sel->sourceWeight, (renderMode >= 5 && renderMode <= 8) ? geometryRadius : 0.0f);
++				RB_LocalVolumetricRenderEx(srcFbo, srcBox, renderMode, &anchoredDl, volumeShadowSlot,
++					NULL, sel->sourceWeight, (renderMode >= 5 && renderMode <= 8) ? geometryRadius : 0.0f,
++					NULL, NULL, volumeColor, volumeGain);
+ 			}
+ 		}
+ 		renderedCount++;
+@@ -8902,8 +8946,9 @@ static void RB_VolumetricFire(FBO_t *srcFbo, ivec4_t srcBox)
+ 				// the DLight cubemap origin. If manually used with physical modes, disable the mismatched
+ 				// cubemap when the volume is moved to the speaker anchor.
+ 				int volumeShadowSlot = (anchorMode == 1 && renderMode != 8) ? -1 : shadowSlot;
+-				RB_LocalVolumetricRender(srcFbo, srcBox, renderMode, volumeDl,
+-					volumeShadowSlot, NULL, 1.0f, (renderMode >= 5 && renderMode <= 8) ? geometryRadius : 0.0f);
++				RB_LocalVolumetricRenderEx(srcFbo, srcBox, renderMode, volumeDl,
++					volumeShadowSlot, NULL, 1.0f, (renderMode >= 5 && renderMode <= 8) ? geometryRadius : 0.0f,
++					NULL, NULL, fireDl->iflcActive ? fireDl->iflcBaseColor : NULL, RB_IFLC_FireVolumeGain(fireDl));
+ 				renderedCount++;
+ 			}
+ 		}
+diff --git a/SP/code/rend2/tr_bsp.c b/SP/code/rend2/tr_bsp.c
+index 79a08aeb40079a531b3da0f01891add26a28545f..165f8effa2c1ffe10a3402be1b0069b4b637b6da 100644
+--- a/SP/code/rend2/tr_bsp.c
++++ b/SP/code/rend2/tr_bsp.c
+@@ -2872,6 +2872,8 @@ void RE_LoadWorldMap( const char *name ) {
+ 	} buffer;
+ 	byte		*startMarker;
+ 
++	// DARKWOLF_IFLC_V1: world storage is reused across map loads.
++	R_IFLC_ResetWorld();
+ 	skyboxportal = 0;
+ 	Com_Memset(tr.dlightWorldCache, 0, sizeof(tr.dlightWorldCache));
+ 	tr.dlightWorldClock = 0;
+diff --git a/SP/code/rend2/tr_iflc.inc b/SP/code/rend2/tr_iflc.inc
+new file mode 100644
+index 0000000000000000000000000000000000000000..465aea366eeb0f89bfb78be4cf1a56c83c42cac0
+--- /dev/null
++++ b/SP/code/rend2/tr_iflc.inc
+@@ -0,0 +1,966 @@
++/*
++ * DarkWolf Individual Fire Light Control V1.
++ * Included by tr_scene.c after StaticPromote has resolved physical ownership.
++ * Only commands and map changes mutate the profile/catalog. They synchronize the
++ * render thread; the backend's surface-volume lookup is strictly read-only.
++ */
++#include <errno.h>
++#include <float.h>
++
++#define IFLC_MAX_OWNERS 1024
++#define IFLC_MAX_SURFACES 2048
++#define IFLC_MAX_PROFILES 256
++#define IFLC_MAX_PICK 32
++#define IFLC_MAX_BRUSHES 128
++#define IFLC_FILE_LIMIT (128 * 1024)
++#define IFLC_NATIVE 1
++#define IFLC_PROMOTED 2
++#define IFLC_SURFACE 3
++
++typedef struct {
++	char key[96];
++	int kind, nativeOrdinal, promotedOrdinal;
++	vec3_t origin;
++	int surfaceCount;
++	qboolean ambiguous;
++	/* Front-end diagnostics only; never used as persistent identity. */
++	int runtimeCount, runtimeIndex, blockedReason;
++	float baseRadius, currentRadius;
++	vec3_t baseColor;
++	int worldContainment, shadowClass, shadowSlot;
++} iflcOwner_t;
++
++typedef struct {
++	int surfaceIndex, owner;
++	char shader[MAX_QPATH];
++	vec3_t origin;
++} iflcSurface_t;
++
++typedef struct {
++	qboolean used;
++	int owner;
++	float direct, radius, volume;
++	int enabled, colorEnabled;
++	vec3_t color;
++} iflcProfile_t;
++
++typedef struct {
++	vec3_t origin, axis[3];
++	int handle;
++} iflcBrush_t;
++
++static iflcOwner_t s_iflcOwners[IFLC_MAX_OWNERS];
++static iflcSurface_t s_iflcSurfaces[IFLC_MAX_SURFACES];
++static iflcProfile_t s_iflcProfiles[IFLC_MAX_PROFILES];
++static int s_iflcOwnerCount, s_iflcSurfaceCount;
++static char s_iflcMap[MAX_QPATH];
++static unsigned int s_iflcFingerprint;
++static int s_iflcGeneration = -1;
++static qboolean s_iflcReady, s_iflcDirty, s_iflcCatalogOverflow;
++static vec3_t s_iflcViewOrigin, s_iflcViewForward;
++static byte s_iflcViewAreaMask[MAX_MAP_AREA_BYTES];
++static qboolean s_iflcViewValid, s_iflcBrushOverflow;
++static iflcBrush_t s_iflcBrushes[IFLC_MAX_BRUSHES];
++static int s_iflcBrushCount;
++static int s_iflcSelected = -1, s_iflcPickCount, s_iflcPickCursor = -1;
++static int s_iflcPicks[IFLC_MAX_PICK];
++static float s_iflcPickScores[IFLC_MAX_PICK];
++
++static qboolean R_IFLC_LoadProfile(qboolean explicitReload);
++
++static float R_IFLC_DistanceSquared(const vec3_t a, const vec3_t b)
++{
++	vec3_t delta;
++	VectorSubtract(a, b, delta);
++	return DotProduct(delta, delta);
++}
++
++static unsigned int R_IFLC_Hash(const void *data, int length)
++{
++	const byte *p = (const byte *)data;
++	unsigned int hash = 2166136261u;
++	int i;
++	for (i = 0; i < length; ++i) { hash ^= p[i]; hash *= 16777619u; }
++	return hash ? hash : 1u;
++}
++
++static qboolean R_IFLC_SafeMapName(const char *name)
++{
++	int i;
++	if (!name || !name[0]) return qfalse;
++	for (i = 0; name[i]; ++i)
++		if (!((name[i] >= 'a' && name[i] <= 'z') || (name[i] >= 'A' && name[i] <= 'Z') ||
++			(name[i] >= '0' && name[i] <= '9') || name[i] == '_' || name[i] == '-')) return qfalse;
++	return i < MAX_QPATH - 1;
++}
++
++static qboolean R_IFLC_FlameShader(const shader_t *shader)
++{
++	const char *name;
++	if (!shader) return qfalse;
++	name = shader->name;
++	/* Exactly the production BSP flame-name evidence, without weapon streams. */
++	if (strstr(name, "flamethrower") || strstr(name, "fthrow_")) return qfalse;
++	return (strstr(name, "xflame") || strstr(name, "torch_ember") ||
++		strstr(name, "flame") || strstr(name, "fire")) ? qtrue : qfalse;
++}
++
++static qboolean R_IFLC_SurfaceCenter(int index, vec3_t out)
++{
++	const msurface_t *surface;
++	const srfBspSurface_t *bsp;
++	int i;
++	if (!tr.world || index < 0 || index >= tr.world->numWorldSurfaces) return qfalse;
++	surface = &tr.world->surfaces[index];
++	if (!surface->data || (*surface->data != SF_FACE && *surface->data != SF_GRID && *surface->data != SF_TRIANGLES)) return qfalse;
++	bsp = (const srfBspSurface_t *)surface->data;
++	if (!bsp->verts || bsp->numVerts <= 0) return qfalse;
++	VectorClear(out);
++	for (i = 0; i < bsp->numVerts; ++i) VectorAdd(out, bsp->verts[i].xyz, out);
++	VectorScale(out, 1.0f / (float)bsp->numVerts, out);
++	return qtrue;
++}
++
++static int R_IFLC_FindOwnerKey(const char *key)
++{
++	int i;
++	for (i = 0; i < s_iflcOwnerCount; ++i) if (!strcmp(key, s_iflcOwners[i].key)) return i;
++	return -1;
++}
++
++static int R_IFLC_AddOwner(int kind, int nativeOrdinal, int promotedOrdinal, const vec3_t origin, const char *key)
++{
++	iflcOwner_t *owner;
++	if (s_iflcOwnerCount >= IFLC_MAX_OWNERS) { s_iflcCatalogOverflow = qtrue; return -1; }
++	owner = &s_iflcOwners[s_iflcOwnerCount];
++	memset(owner, 0, sizeof(*owner));
++	owner->kind = kind;
++	owner->nativeOrdinal = nativeOrdinal;
++	owner->promotedOrdinal = promotedOrdinal;
++	owner->runtimeIndex = -1; owner->shadowSlot = -2;
++	VectorCopy(origin, owner->origin);
++	Q_strncpyz(owner->key, key, sizeof(owner->key));
++	return s_iflcOwnerCount++;
++}
++
++static qboolean R_IFLC_NearFlame(const vec3_t origin, float radius)
++{
++	int i;
++	for (i = 0; i < s_iflcSurfaceCount; ++i)
++		if (R_IFLC_DistanceSquared(origin, s_iflcSurfaces[i].origin) <= radius * radius) return qtrue;
++	return qfalse;
++}
++
++static qboolean R_IFLC_NativeIsFire(const staticPromotePLRMarker_t *marker)
++{
++	int j;
++	if (R_IFLC_NearFlame(marker->origin, 128.0f)) return qtrue;
++	for (j = 0; j < s_staticPromotePLRMarkerCount; ++j) {
++		const staticPromotePLRMarker_t *speaker = &s_staticPromotePLRMarkers[j];
++		if (speaker->kind == PLR_V01_MARKER_SPEAKER && R_StaticPromotePLRNoiseIsFire(speaker->noise) &&
++			R_IFLC_DistanceSquared(marker->origin, speaker->origin) <= PLR_V01_FIRE_PAIR_MAX_DIST * PLR_V01_FIRE_PAIR_MAX_DIST) return qtrue;
++	}
++	return qfalse;
++}
++
++void R_IFLC_ResetWorld(void)
++{
++	R_IssuePendingRenderCommands();
++	if (s_iflcDirty) ri.Printf(PRINT_ALL, "IFLC: discarded unsaved overrides for %s on world change.\n", s_iflcMap);
++	s_iflcReady = s_iflcDirty = s_iflcViewValid = qfalse;
++	s_iflcOwnerCount = s_iflcSurfaceCount = s_iflcBrushCount = 0;
++	s_iflcCatalogOverflow = s_iflcBrushOverflow = qfalse;
++	s_iflcMap[0] = '\0'; s_iflcFingerprint = 0; s_iflcGeneration = -1;
++	s_iflcSelected = s_iflcPickCursor = -1; s_iflcPickCount = 0;
++	memset(s_iflcProfiles, 0, sizeof(s_iflcProfiles));
++}
++
++static qboolean R_IFLC_EnsureCatalog(void)
++{
++	int i, j;
++	void *raw = NULL;
++	long length;
++	char path[MAX_QPATH], key[96];
++	if (!tr.world || !tr.world->entityString || !R_IFLC_SafeMapName(tr.world->baseName)) return qfalse;
++	if (s_iflcReady && !strcmp(s_iflcMap, tr.world->baseName) &&
++		s_iflcGeneration == s_staticPromotePersistentBuildGeneration) return qtrue;
++	R_IssuePendingRenderCommands();
++	if (!R_StaticPromoteBuildPersistentRegistry()) return qfalse;
++	/* Rebuilding after explicit StaticPromote synthetic edits invalidates old selection.
++	 * Saved profiles are keyed and revalidated; unsaved profiles are not silently remapped. */
++	if (s_iflcDirty) ri.Printf(PRINT_WARNING, "IFLC: catalog changed; unsaved overrides discarded.\n");
++	s_iflcReady = qfalse; s_iflcDirty = qfalse;
++	s_iflcOwnerCount = s_iflcSurfaceCount = 0;
++	s_iflcSelected = s_iflcPickCursor = -1; s_iflcPickCount = 0;
++	s_iflcCatalogOverflow = qfalse;
++	memset(s_iflcProfiles, 0, sizeof(s_iflcProfiles));
++	Q_strncpyz(s_iflcMap, tr.world->baseName, sizeof(s_iflcMap));
++	Com_sprintf(path, sizeof(path), "maps/%s.bsp", s_iflcMap);
++	length = ri.FS_ReadFile(path, &raw);
++	if (length <= 0 || length > 0x7fffffffL || !raw) {
++		if (raw) ri.FS_FreeFile(raw);
++		ri.Printf(PRINT_WARNING, "IFLC: cannot fingerprint BSP; editing disabled.\n");
++		return qfalse;
++	}
++	s_iflcFingerprint = R_IFLC_Hash(raw, (int)length);
++	ri.FS_FreeFile(raw);
++	for (i = 0; i < tr.world->numWorldSurfaces; ++i) {
++		iflcSurface_t *surface;
++		vec3_t center;
++		if (!R_IFLC_FlameShader(tr.world->surfaces[i].shader) || !R_IFLC_SurfaceCenter(i, center)) continue;
++		if (s_iflcSurfaceCount >= IFLC_MAX_SURFACES) { s_iflcCatalogOverflow = qtrue; break; }
++		surface = &s_iflcSurfaces[s_iflcSurfaceCount++];
++		surface->surfaceIndex = i; surface->owner = -1;
++		VectorCopy(center, surface->origin);
++		Q_strncpyz(surface->shader, tr.world->surfaces[i].shader->name, sizeof(surface->shader));
++	}
++	for (i = 0; i < s_staticPromotePLRMarkerCount; ++i) {
++		const staticPromotePLRMarker_t *marker = &s_staticPromotePLRMarkers[i];
++		if (marker->kind != PLR_V01_MARKER_DLIGHT || !R_IFLC_NativeIsFire(marker)) continue;
++		Com_sprintf(key, sizeof(key), "native:%d", marker->entityOrdinal);
++		R_IFLC_AddOwner(IFLC_NATIVE, marker->entityOrdinal, -1, marker->origin, key);
++	}
++	for (i = 0; i < s_staticPromotePersistentCount; ++i) {
++		const staticPromotePersistentLight_t *light = &s_staticPromotePersistentLights[i];
++		int alias = -1;
++		qboolean learned = R_StaticPromotePhysicalOverrideState(light) > 0;
++		if (!R_IFLC_NearFlame(light->candidate.origin, 96.0f) && light->physicalFireSpeakerOrdinal < 0) continue;
++		for (j = 0; j < s_iflcOwnerCount; ++j)
++			if (s_iflcOwners[j].kind == IFLC_NATIVE && s_iflcOwners[j].nativeOrdinal == light->physicalNativeDlightOrdinal) { alias = j; break; }
++		if (alias >= 0) {
++			/* A single owner can have a promoted fallback for the same authored lamp. */
++			if (s_iflcOwners[alias].promotedOrdinal >= 0 && s_iflcOwners[alias].promotedOrdinal != light->candidate.entityOrdinal)
++				s_iflcOwners[alias].ambiguous = qtrue;
++			else s_iflcOwners[alias].promotedOrdinal = light->candidate.entityOrdinal;
++			continue;
++		}
++		/* Baked-only entities are not existing Direct owners. Accepted/learned
++		 * fixtures remain owners even when temporarily absent from the scene. */
++		if (!learned && !light->physicalRecognitionAccepted && !light->synthetic &&
++			R_StaticPromoteClassifyFixture(light) != STATIC_PROMOTE_CLASS_ACCEPT) continue;
++		Com_sprintf(key, sizeof(key), "promoted:%d", light->candidate.entityOrdinal);
++		R_IFLC_AddOwner(IFLC_PROMOTED, -1, light->candidate.entityOrdinal, light->candidate.origin, key);
++	}
++	for (i = 0; i < s_iflcSurfaceCount; ++i) {
++		iflcSurface_t *surface = &s_iflcSurfaces[i];
++		int best = -1, competing = -1;
++		float bestDistance = 128.0f * 128.0f + 1.0f, nextDistance = bestDistance;
++		for (j = 0; j < s_iflcOwnerCount; ++j) {
++			float distance;
++			if (s_iflcOwners[j].kind == IFLC_SURFACE) continue;
++			distance = R_IFLC_DistanceSquared(surface->origin, s_iflcOwners[j].origin);
++			if (distance < bestDistance) { nextDistance = bestDistance; competing = best; bestDistance = distance; best = j; }
++			else if (distance < nextDistance) { nextDistance = distance; competing = j; }
++		}
++		if (best >= 0) {
++			if (competing >= 0 && sqrt(nextDistance) - sqrt(bestDistance) < 12.0f) {
++				/* No arbitrary first/nearest winner among indistinguishable emitters. */
++				s_iflcOwners[best].ambiguous = s_iflcOwners[competing].ambiguous = qtrue;
++			}
++			surface->owner = best;
++		} else {
++			/* Same shader + 16-unit anchor is the production FireVol fixture key.
++			 * Match the representative, never chain nearby flames transitively. */
++			for (j = 0; j < i; ++j) {
++				int ownerIndex = s_iflcSurfaces[j].owner;
++				if (ownerIndex >= 0 && s_iflcOwners[ownerIndex].kind == IFLC_SURFACE &&
++					!strcmp(surface->shader, s_iflcSurfaces[j].shader) &&
++					R_IFLC_DistanceSquared(surface->origin, s_iflcOwners[ownerIndex].origin) <= 16.0f * 16.0f) {
++					surface->owner = ownerIndex; break;
++				}
++			}
++			if (surface->owner < 0) {
++				int quantized[3];
++				for (j = 0; j < 3; ++j) quantized[j] = (int)floor(surface->origin[j] * 8.0f + 0.5f);
++				Com_sprintf(key, sizeof(key), "surface:%d:%08x:%08x", surface->surfaceIndex,
++					R_IFLC_Hash(surface->shader, (int)strlen(surface->shader)), R_IFLC_Hash(quantized, sizeof(quantized)));
++				surface->owner = R_IFLC_AddOwner(IFLC_SURFACE, -1, -1, surface->origin, key);
++			}
++		}
++		if (surface->owner >= 0) s_iflcOwners[surface->owner].surfaceCount++;
++	}
++	s_iflcGeneration = s_staticPromotePersistentBuildGeneration;
++	s_iflcReady = qtrue;
++	if (s_iflcCatalogOverflow) ri.Printf(PRINT_WARNING, "IFLC: catalog capacity exceeded; editing and overrides disabled.\n");
++	R_IFLC_LoadProfile(qfalse);
++	return qtrue;
++}
++
++static iflcProfile_t *R_IFLC_ProfileForOwner(int owner, qboolean create)
++{
++	int i, freeSlot = -1;
++	for (i = 0; i < IFLC_MAX_PROFILES; ++i) {
++		if (s_iflcProfiles[i].used && s_iflcProfiles[i].owner == owner) return &s_iflcProfiles[i];
++		if (!s_iflcProfiles[i].used && freeSlot < 0) freeSlot = i;
++	}
++	if (create && freeSlot >= 0) {
++		iflcProfile_t *p = &s_iflcProfiles[freeSlot];
++		memset(p, 0, sizeof(*p)); p->used = qtrue; p->owner = owner;
++		p->direct = p->radius = p->volume = 1.0f;
++		VectorSet(p->color, 1.0f, 1.0f, 1.0f);
++		return p;
++	}
++	return NULL;
++}
++
++/* Strict bounded token stream: no command execution, no implicit atof defaults. */
++static qboolean R_IFLC_Token(const char **cursor, const char *end, char *out, int size)
++{
++	const char *p = *cursor;
++	int used = 0;
++	while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) ++p;
++	if (p >= end) { out[0] = '\0'; *cursor = p; return qfalse; }
++	while (p < end && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') {
++		if ((unsigned char)*p < 33 || (unsigned char)*p > 126 || used >= size - 1) return qfalse;
++		out[used++] = *p++;
++	}
++	out[used] = '\0'; *cursor = p;
++	return used > 0;
++}
++
++static qboolean R_IFLC_Float(const char *text, float minimum, float maximum, float *out)
++{
++	char *end;
++	double value;
++	if (!text || !text[0]) return qfalse;
++	errno = 0; value = strtod(text, &end);
++	if (end == text || *end || errno == ERANGE || value != value || value < minimum || value > maximum) return qfalse;
++	*out = (float)value;
++	return qtrue;
++}
++
++static qboolean R_IFLC_Integer(const char *text, int minimum, int maximum, int *out)
++{
++	char *end;
++	long value;
++	if (!text || !text[0]) return qfalse;
++	errno = 0; value = strtol(text, &end, 10);
++	if (end == text || *end || errno == ERANGE || value < minimum || value > maximum) return qfalse;
++	*out = (int)value; return qtrue;
++}
++
++static qboolean R_IFLC_ParseProfile(const char *text, int length, iflcProfile_t *out, int *count, const char **reason)
++{
++	const char *cursor = text, *end = text + length;
++	char token[128], expected[16];
++	int number, i, j;
++	*count = 0; *reason = "invalid or truncated profile";
++	memset(out, 0, IFLC_MAX_PROFILES * sizeof(*out));
++	if (length <= 0 || length > IFLC_FILE_LIMIT || memchr(text, '\0', length)) return qfalse;
++#define IFLC_READ() R_IFLC_Token(&cursor, end, token, sizeof(token))
++#define IFLC_EXPECT(s) (IFLC_READ() && !strcmp(token, (s)))
++	if (!IFLC_EXPECT("DW_IFLC") || !IFLC_EXPECT("1")) { *reason = "unsupported profile version"; return qfalse; }
++	if (!IFLC_EXPECT("map") || !IFLC_READ() || strcmp(token, s_iflcMap)) { *reason = "map mismatch"; return qfalse; }
++	Com_sprintf(expected, sizeof(expected), "%08x", s_iflcFingerprint);
++	if (!IFLC_EXPECT("bsp") || !IFLC_READ() || strcmp(token, expected)) { *reason = "BSP fingerprint mismatch"; return qfalse; }
++	if (!IFLC_EXPECT("count") || !IFLC_READ() || !R_IFLC_Integer(token, 0, IFLC_MAX_PROFILES, &number)) return qfalse;
++	for (i = 0; i < number; ++i) {
++		iflcProfile_t *p = &out[i];
++		if (!IFLC_EXPECT("fixture") || !IFLC_READ()) return qfalse;
++		p->owner = R_IFLC_FindOwnerKey(token);
++		if (p->owner < 0 || s_iflcOwners[p->owner].ambiguous) { *reason = "unknown or ambiguous fixture"; return qfalse; }
++		for (j = 0; j < i; ++j) if (out[j].owner == p->owner) { *reason = "duplicate fixture"; return qfalse; }
++		if (!IFLC_READ() || !R_IFLC_Float(token, 0.0f, 3.0f, &p->direct) ||
++			!IFLC_READ() || !R_IFLC_Float(token, 0.25f, 2.0f, &p->radius) ||
++			!IFLC_READ() || !R_IFLC_Float(token, 0.0f, 3.0f, &p->volume) ||
++			!IFLC_READ() || !R_IFLC_Integer(token, 0, 1, &p->enabled) ||
++			!IFLC_READ() || !R_IFLC_Integer(token, 0, 1, &p->colorEnabled)) { *reason = "invalid parameter/range"; return qfalse; }
++		for (j = 0; j < 3; ++j) if (!IFLC_READ() || !R_IFLC_Float(token, 0.0f, 1.0f, &p->color[j])) return qfalse;
++		if (p->enabled && s_iflcOwners[p->owner].kind != IFLC_SURFACE) { *reason = "enabled is only valid for volume-only fixtures"; return qfalse; }
++		if (p->colorEnabled && p->color[0] + p->color[1] + p->color[2] <= 0.0f) { *reason = "zero color"; return qfalse; }
++		p->used = qtrue;
++	}
++	if (!IFLC_EXPECT("end")) return qfalse;
++	while (cursor < end && (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n')) ++cursor;
++	if (cursor != end) { *reason = "unexpected trailing data"; return qfalse; }
++	*count = number; *reason = "OK";
++#undef IFLC_EXPECT
++#undef IFLC_READ
++	return qtrue;
++}
++
++static void R_IFLC_ProfilePath(char *path, int size, const char *suffix)
++{
++	Com_sprintf(path, size, "firelights/%s.iflc%s", s_iflcMap, suffix ? suffix : "");
++}
++
++static qboolean R_IFLC_LoadProfile(qboolean explicitReload)
++{
++	iflcProfile_t *staging;
++	void *raw = NULL;
++	long length;
++	const char *reason;
++	char path[MAX_QPATH + 32];
++	int count;
++	qboolean valid;
++	R_IFLC_ProfilePath(path, sizeof(path), "");
++	length = ri.FS_ReadFile(path, NULL);
++	if (length < 0) {
++		if (explicitReload) {
++			memset(s_iflcProfiles, 0, sizeof(s_iflcProfiles)); s_iflcDirty = qfalse;
++			ri.Printf(PRINT_ALL, "IFLC: no saved profile; returned to baseline.\n");
++		}
++		return qtrue;
++	}
++	if (length <= 0 || length > IFLC_FILE_LIMIT) { ri.Printf(PRINT_WARNING, "IFLC: invalid profile size; not applied.\n"); return qfalse; }
++	length = ri.FS_ReadFile(path, &raw);
++	if (!raw || length <= 0 || length > IFLC_FILE_LIMIT) { if (raw) ri.FS_FreeFile(raw); return qfalse; }
++	staging = (iflcProfile_t *)ri.Z_Malloc(sizeof(s_iflcProfiles));
++	valid = R_IFLC_ParseProfile((const char *)raw, (int)length, staging, &count, &reason);
++	if (valid) {
++		memcpy(s_iflcProfiles, staging, sizeof(s_iflcProfiles)); s_iflcDirty = qfalse;
++		if (explicitReload || count) ri.Printf(PRINT_ALL, "IFLC: loaded %d profiles from %s.\n", count, path);
++	} else ri.Printf(PRINT_WARNING, "IFLC: profile rejected (%s); current settings preserved.\n", reason);
++	ri.Free(staging); ri.FS_FreeFile(raw);
++	return valid;
++}
++
++static qboolean R_IFLC_SurfaceBlocks(const msurface_t *surface)
++{
++	const shader_t *shader = surface->shader;
++	if (!shader) return qtrue;
++	if (R_IFLC_FlameShader(shader) || shader->isSky || (shader->contentFlags & CONTENTS_FOG) ||
++		(shader->surfaceFlags & SURF_NODRAW) || shader->sort == SS_FOG || shader->sort == SS_DECAL || shader->sort >= SS_SEE_THROUGH) return qfalse;
++	return qtrue;
++}
++
++static qboolean R_IFLC_RayTriangle(const vec3_t origin, const vec3_t direction,
++	const vec3_t a, const vec3_t b, const vec3_t c, float maximum, float *distance)
++{
++	vec3_t edge1, edge2, p, t, q;
++	float determinant, inverse, u, v, hit;
++	VectorSubtract(b, a, edge1); VectorSubtract(c, a, edge2); CrossProduct(direction, edge2, p);
++	determinant = DotProduct(edge1, p);
++	if (fabs(determinant) < 0.000001f) return qfalse;
++	inverse = 1.0f / determinant; VectorSubtract(origin, a, t);
++	u = DotProduct(t, p) * inverse;
++	if (u < 0.0f || u > 1.0f) return qfalse;
++	CrossProduct(t, edge1, q); v = DotProduct(direction, q) * inverse;
++	if (v < 0.0f || u + v > 1.0f) return qfalse;
++	hit = DotProduct(edge2, q) * inverse;
++	if (hit <= 0.01f || hit >= maximum) return qfalse;
++	*distance = hit; return qtrue;
++}
++
++static qboolean R_IFLC_RaySurface(const msurface_t *surface, const vec3_t origin,
++	const vec3_t direction, float maximum, float *distance)
++{
++	const srfBspSurface_t *bsp;
++	float best = maximum, hit;
++	qboolean found = qfalse;
++	int i;
++	if (!surface || !surface->data || (*surface->data != SF_FACE && *surface->data != SF_GRID && *surface->data != SF_TRIANGLES)) return qfalse;
++	bsp = (const srfBspSurface_t *)surface->data;
++	if (!bsp->verts || !bsp->indexes || bsp->numVerts <= 0) return qfalse;
++	if (surface->cullinfo.type & CULLINFO_BOX) {
++		float nearDistance = 0.0f, farDistance = maximum;
++		int axis;
++		for (axis = 0; axis < 3; ++axis) {
++			float a, b;
++			if (fabs(direction[axis]) < 0.000001f) {
++				if (origin[axis] < surface->cullinfo.bounds[0][axis] || origin[axis] > surface->cullinfo.bounds[1][axis]) return qfalse;
++				continue;
++			}
++			a = (surface->cullinfo.bounds[0][axis] - origin[axis]) / direction[axis];
++			b = (surface->cullinfo.bounds[1][axis] - origin[axis]) / direction[axis];
++			if (a > b) { float swap = a; a = b; b = swap; }
++			nearDistance = MAX(nearDistance, a); farDistance = MIN(farDistance, b);
++			if (nearDistance > farDistance) return qfalse;
++		}
++	}
++	for (i = 0; i + 2 < bsp->numIndexes; i += 3) {
++		unsigned int a = bsp->indexes[i], b = bsp->indexes[i + 1], c = bsp->indexes[i + 2];
++		if (a >= (unsigned int)bsp->numVerts || b >= (unsigned int)bsp->numVerts || c >= (unsigned int)bsp->numVerts) continue;
++		if (R_IFLC_RayTriangle(origin, direction, bsp->verts[a].xyz, bsp->verts[b].xyz, bsp->verts[c].xyz, best, &hit)) { best = hit; found = qtrue; }
++	}
++	if (found) *distance = best;
++	return found;
++}
++
++static qboolean R_IFLC_LineVisible(const vec3_t from, const vec3_t to)
++{
++	vec3_t direction;
++	float length, hit;
++	int i, j, axis;
++	VectorSubtract(to, from, direction); length = VectorNormalize(direction);
++	if (length <= 2.0f) return qtrue;
++	if (s_iflcBrushOverflow) return qfalse;
++	for (i = 0; i < tr.world->numWorldSurfaces; ++i)
++		if (R_IFLC_SurfaceBlocks(&tr.world->surfaces[i]) && R_IFLC_RaySurface(&tr.world->surfaces[i], from, direction, length - 1.0f, &hit)) return qfalse;
++	for (i = 0; i < s_iflcBrushCount; ++i) {
++		const iflcBrush_t *brush = &s_iflcBrushes[i];
++		model_t *model = R_GetModelByHandle(brush->handle);
++		vec3_t delta, localOrigin, localDirection;
++		if (!model || model->type != MOD_BRUSH || !model->bmodel) continue;
++		VectorSubtract(from, brush->origin, delta);
++		for (axis = 0; axis < 3; ++axis) {
++			float scale = DotProduct(brush->axis[axis], brush->axis[axis]);
++			if (scale <= 0.000001f) return qfalse;
++			localOrigin[axis] = DotProduct(delta, brush->axis[axis]) / scale;
++			localDirection[axis] = DotProduct(direction, brush->axis[axis]) / scale;
++		}
++		for (j = 0; j < model->bmodel->numSurfaces; ++j) {
++			int surfaceIndex = model->bmodel->firstSurface + j;
++			if (surfaceIndex < 0 || surfaceIndex >= tr.world->numsurfaces) continue;
++			if (R_IFLC_SurfaceBlocks(&tr.world->surfaces[surfaceIndex]) &&
++				R_IFLC_RaySurface(&tr.world->surfaces[surfaceIndex], localOrigin, localDirection, length - 1.0f, &hit)) return qfalse;
++		}
++	}
++	return qtrue;
++}
++
++static void R_IFLC_SnapshotView(const refdef_t *fd)
++{
++	int i;
++	VectorCopy(fd->vieworg, s_iflcViewOrigin); VectorCopy(fd->viewaxis[0], s_iflcViewForward);
++	s_iflcViewValid = VectorNormalize(s_iflcViewForward) > 0.001f;
++	memcpy(s_iflcViewAreaMask, fd->areamask, sizeof(s_iflcViewAreaMask));
++	s_iflcBrushCount = 0; s_iflcBrushOverflow = qfalse;
++	for (i = r_firstSceneEntity; i < r_numentities; ++i) {
++		const refEntity_t *entity = &backEndData->entities[i].e;
++		model_t *model;
++		iflcBrush_t *brush;
++		if (!entity->hModel) continue;
++		model = R_GetModelByHandle(entity->hModel);
++		if (!model || model->type != MOD_BRUSH || !model->bmodel || !strcmp(model->name, "*0")) continue;
++		if (s_iflcBrushCount >= IFLC_MAX_BRUSHES) { s_iflcBrushOverflow = qtrue; break; }
++		brush = &s_iflcBrushes[s_iflcBrushCount++];
++		brush->handle = entity->hModel; VectorCopy(entity->origin, brush->origin);
++		memcpy(brush->axis, entity->axis, sizeof(brush->axis));
++	}
++}
++
++static qboolean R_IFLC_ReadyForCommand(void)
++{
++	R_IssuePendingRenderCommands();
++	if (!R_IFLC_EnsureCatalog() || s_iflcCatalogOverflow) {
++		ri.Printf(PRINT_ALL, "IFLC: no complete editable BSP catalog; load a map first.\n"); return qfalse;
++	}
++	return qtrue;
++}
++
++static void R_IFLC_InsertPick(int owner, float score)
++{
++	int i, j;
++	for (i = 0; i < s_iflcPickCount; ++i) {
++		if (s_iflcPicks[i] != owner) continue;
++		if (s_iflcPickScores[i] <= score) return;
++		for (j = i + 1; j < s_iflcPickCount; ++j) { s_iflcPicks[j - 1] = s_iflcPicks[j]; s_iflcPickScores[j - 1] = s_iflcPickScores[j]; }
++		--s_iflcPickCount; break;
++	}
++	for (i = 0; i < s_iflcPickCount && s_iflcPickScores[i] <= score; ++i) {}
++	if (i >= IFLC_MAX_PICK) return;
++	if (s_iflcPickCount < IFLC_MAX_PICK) ++s_iflcPickCount;
++	for (j = s_iflcPickCount - 1; j > i; --j) { s_iflcPicks[j] = s_iflcPicks[j - 1]; s_iflcPickScores[j] = s_iflcPickScores[j - 1]; }
++	s_iflcPicks[i] = owner; s_iflcPickScores[i] = score;
++}
++
++static void R_IFLC_ConsiderPick(int owner, const vec3_t anchor, int surfaceIndex)
++{
++	vec3_t delta, rayTarget;
++	float forward, lateralSquared, threshold, hit, score;
++	qboolean exact = qfalse;
++	if (owner < 0 || owner >= s_iflcOwnerCount) return;
++	VectorSubtract(anchor, s_iflcViewOrigin, delta);
++	forward = DotProduct(delta, s_iflcViewForward);
++	if (forward < 1.0f || forward > 512.0f) return;
++	lateralSquared = MAX(0.0f, DotProduct(delta, delta) - forward * forward);
++	threshold = 4.0f + forward * 0.035f;
++	VectorCopy(anchor, rayTarget);
++	if (surfaceIndex >= 0 && R_IFLC_RaySurface(&tr.world->surfaces[surfaceIndex], s_iflcViewOrigin, s_iflcViewForward, 512.0f, &hit)) {
++		exact = qtrue; VectorMA(s_iflcViewOrigin, hit, s_iflcViewForward, rayTarget);
++	}
++	if (!exact && lateralSquared > threshold * threshold) return;
++	if (!R_IFLC_LineVisible(s_iflcViewOrigin, rayTarget)) return;
++	score = exact ? forward * 0.00001f : 1.0f + sqrt(lateralSquared) / forward;
++	R_IFLC_InsertPick(owner, score);
++}
++
++void R_IFLC_Select_f(void)
++{
++	int i;
++	if (!R_IFLC_ReadyForCommand()) return;
++	s_iflcSelected = s_iflcPickCursor = -1; s_iflcPickCount = 0;
++	if (!s_iflcViewValid) { ri.Printf(PRINT_ALL, "IFLC: no primary world view available.\n"); return; }
++	for (i = 0; i < s_iflcSurfaceCount; ++i)
++		R_IFLC_ConsiderPick(s_iflcSurfaces[i].owner, s_iflcSurfaces[i].origin, s_iflcSurfaces[i].surfaceIndex);
++	for (i = 0; i < s_iflcOwnerCount; ++i)
++		if (!s_iflcOwners[i].surfaceCount) R_IFLC_ConsiderPick(i, s_iflcOwners[i].origin, -1);
++	if (s_iflcPickCount == 0) { ri.Printf(PRINT_ALL, "IFLC: no eligible visible flame in crosshair; move closer.\n"); return; }
++	if (s_iflcPickCount > 1) {
++		ri.Printf(PRINT_ALL, "IFLC: ambiguous crosshair (%d candidates); no selection. Use dw_fl_next to choose explicitly.\n", s_iflcPickCount);
++		for (i = 0; i < s_iflcPickCount; ++i) ri.Printf(PRINT_ALL, "  %d: %s\n", i + 1, s_iflcOwners[s_iflcPicks[i]].key);
++		return;
++	}
++	s_iflcSelected = s_iflcPicks[0]; s_iflcPickCursor = 0;
++	R_IFLC_Info_f();
++}
++
++void R_IFLC_Next_f(void)
++{
++	if (!R_IFLC_ReadyForCommand()) return;
++	if (!s_iflcPickCount) { ri.Printf(PRINT_ALL, "IFLC: use dw_fl_select first.\n"); return; }
++	s_iflcPickCursor = (s_iflcPickCursor + 1) % s_iflcPickCount;
++	s_iflcSelected = s_iflcPicks[s_iflcPickCursor];
++	R_IFLC_Info_f();
++}
++
++static const char *R_IFLC_Route(const iflcOwner_t *owner)
++{
++	return owner->kind == IFLC_NATIVE ? "NATIVE_FIRE" : owner->kind == IFLC_PROMOTED ? "PROMOTED_FIRE" : "VOLUME_ONLY";
++}
++
++void R_IFLC_Info_f(void)
++{
++	const iflcOwner_t *owner;
++	const iflcProfile_t *p;
++	if (!R_IFLC_ReadyForCommand()) return;
++	if (s_iflcSelected < 0 || s_iflcSelected >= s_iflcOwnerCount) { ri.Printf(PRINT_ALL, "IFLC: no selection. Use dw_fl_select.\n"); return; }
++	owner = &s_iflcOwners[s_iflcSelected]; p = R_IFLC_ProfileForOwner(s_iflcSelected, qfalse);
++	ri.Printf(PRINT_ALL, "IFLC: map=%s bsp=%08x key=%s route=%s anchor=(%.1f %.1f %.1f) surfaces=%d\n",
++		s_iflcMap, s_iflcFingerprint, owner->key, R_IFLC_Route(owner), owner->origin[0], owner->origin[1], owner->origin[2], owner->surfaceCount);
++	ri.Printf(PRINT_ALL, "IFLC: editable=%s realDlights=%d baseRadius=%.2f currentRadius=%.2f worldContainment=%d shadowClass=%d\n",
++		owner->ambiguous ? "NO_AMBIGUOUS_OWNER" : "YES", owner->runtimeCount, owner->baseRadius, owner->currentRadius, owner->worldContainment, owner->shadowClass);
++	ri.Printf(PRINT_ALL, "IFLC: shadowSlot=%d dynamicShadowBudget=%d (-1=none -2=not-captured)\n", owner->shadowSlot,
++		r_dlightShadowMaxLights ? r_dlightShadowMaxLights->integer : 0);
++	ri.Printf(PRINT_ALL, "IFLC: direct=%.3f radius=%.3f volume=%.3f enabled=%d colorOverride=%d master=%d profile=%s\n",
++		p ? p->direct : 1.0f, p ? p->radius : 1.0f, p ? p->volume : 1.0f, p ? p->enabled : 0, p ? p->colorEnabled : 0,
++		r_dwFireLightControl ? r_dwFireLightControl->integer : 0, s_iflcDirty ? "UNSAVED" : (p ? "SAVED" : "BASELINE"));
++	if (owner->runtimeCount > 1) ri.Printf(PRINT_WARNING, "IFLC: duplicate real owners; direct override blocked until ownership is unique.\n");
++	if (owner->surfaceCount > 1) ri.Printf(PRINT_ALL, "IFLC: these flame surfaces share one physical light; direct controls that owner.\n");
++	if (owner->blockedReason) ri.Printf(PRINT_ALL, "IFLC: direct bridge blocked=%d (1=global-light-off 2=containment-off 3=PVS/area 4=MAX_DLIGHTS 5=nearby-owner 6=solid-anchor 7=new-learned-owner).\n", owner->blockedReason);
++	if (owner->blockedReason == 7) ri.Printf(PRINT_ALL, "IFLC: StaticPromote ownership changed after selection; remove/reset this opt-in profile and reload the map before editing its promoted owner.\n");
++	if (r_dynamiclight->integer == 0 || r_dlightScale->value <= 0.0f) ri.Printf(PRINT_ALL, "IFLC: global direct lighting disabled by r_dynamiclight/r_dlightScale.\n");
++	if (r_dwFireLightControl && !r_dwFireLightControl->integer) ri.Printf(PRINT_ALL, "IFLC: overrides OFF; use r_dwFireLightControl 1 to apply.\n");
++}
++
++static qboolean R_IFLC_SelectedEditable(void)
++{
++	if (!R_IFLC_ReadyForCommand()) return qfalse;
++	if (s_iflcSelected < 0 || s_iflcSelected >= s_iflcOwnerCount) { ri.Printf(PRINT_ALL, "IFLC: no unambiguous selection; use dw_fl_select / dw_fl_next.\n"); return qfalse; }
++	if (s_iflcOwners[s_iflcSelected].ambiguous) { ri.Printf(PRINT_WARNING, "IFLC: physical owner is ambiguous; no settings changed.\n"); return qfalse; }
++	return qtrue;
++}
++
++void R_IFLC_Set_f(void)
++{
++	iflcProfile_t candidate, *p;
++	const char *parameter;
++	int i, argc = ri.Cmd_Argc();
++	if (!R_IFLC_SelectedEditable()) return;
++	if (argc < 3) { ri.Printf(PRINT_ALL, "Usage: dw_fl_set direct|radius|volume <value>; color <r> <g> <b>; enabled 0|1\n"); return; }
++	p = R_IFLC_ProfileForOwner(s_iflcSelected, qfalse);
++	if (p) candidate = *p;
++	else { memset(&candidate, 0, sizeof(candidate)); candidate.used = qtrue; candidate.owner = s_iflcSelected; candidate.direct = candidate.radius = candidate.volume = 1.0f; VectorSet(candidate.color, 1.0f, 1.0f, 1.0f); }
++	parameter = ri.Cmd_Argv(1);
++	if (!strcmp(parameter, "color")) {
++		if (argc != 5) goto invalid;
++		for (i = 0; i < 3; ++i) if (!R_IFLC_Float(ri.Cmd_Argv(i + 2), 0.0f, 1.0f, &candidate.color[i])) goto invalid;
++		if (candidate.color[0] + candidate.color[1] + candidate.color[2] <= 0.0f) goto invalid;
++		candidate.colorEnabled = 1;
++	} else {
++		if (argc != 3) goto invalid;
++		if (!strcmp(parameter, "direct")) { if (!R_IFLC_Float(ri.Cmd_Argv(2), 0.0f, 3.0f, &candidate.direct)) goto invalid; }
++		else if (!strcmp(parameter, "radius")) { if (!R_IFLC_Float(ri.Cmd_Argv(2), 0.25f, 2.0f, &candidate.radius)) goto invalid; }
++		else if (!strcmp(parameter, "volume")) { if (!R_IFLC_Float(ri.Cmd_Argv(2), 0.0f, 3.0f, &candidate.volume)) goto invalid; }
++		else if (!strcmp(parameter, "enabled")) {
++			if (s_iflcOwners[s_iflcSelected].kind != IFLC_SURFACE || !R_IFLC_Integer(ri.Cmd_Argv(2), 0, 1, &candidate.enabled)) goto invalid;
++		} else goto invalid;
++	}
++	p = R_IFLC_ProfileForOwner(s_iflcSelected, qtrue);
++	if (!p) { ri.Printf(PRINT_WARNING, "IFLC: profile limit reached; no changes.\n"); return; }
++	*p = candidate; s_iflcDirty = qtrue;
++	ri.Printf(PRINT_ALL, "IFLC: updated %s (%s); use dw_fl_save to persist.\n", s_iflcOwners[s_iflcSelected].key, parameter);
++	if (!r_dwFireLightControl->integer) ri.Printf(PRINT_ALL, "IFLC: overrides OFF; use r_dwFireLightControl 1.\n");
++	return;
++invalid:
++	ri.Printf(PRINT_WARNING, "IFLC: invalid value; direct/volume 0..3, radius 0.25..2, color 0..1 nonzero, enabled 0|1 for VOLUME_ONLY. No changes.\n");
++}
++
++void R_IFLC_Reset_f(void)
++{
++	iflcProfile_t *p;
++	if (!R_IFLC_SelectedEditable()) return;
++	p = R_IFLC_ProfileForOwner(s_iflcSelected, qfalse);
++	if (p) { memset(p, 0, sizeof(*p)); s_iflcDirty = qtrue; }
++	ri.Printf(PRINT_ALL, "IFLC: %s reset to baseline; save to persist the reset.\n", s_iflcOwners[s_iflcSelected].key);
++}
++
++static qboolean R_IFLC_VerifyFile(const char *path, const void *expected, int length)
++{
++	void *raw = NULL;
++	long got = ri.FS_ReadFile(path, &raw);
++	qboolean equal = raw && got == length && !memcmp(raw, expected, length);
++	if (raw) ri.FS_FreeFile(raw);
++	return equal;
++}
++
++void R_IFLC_Save_f(void)
++{
++	char *buffer, line[512], path[MAX_QPATH + 32], temporary[MAX_QPATH + 32], backup[MAX_QPATH + 32];
++	void *previous = NULL;
++	long previousLength;
++	int i, count = 0, used;
++	if (!R_IFLC_ReadyForCommand()) return;
++	for (i = 0; i < IFLC_MAX_PROFILES; ++i) if (s_iflcProfiles[i].used) ++count;
++	buffer = (char *)ri.Z_Malloc(IFLC_FILE_LIMIT);
++	Com_sprintf(buffer, IFLC_FILE_LIMIT, "DW_IFLC 1\nmap %s\nbsp %08x\ncount %d\n", s_iflcMap, s_iflcFingerprint, count);
++	used = (int)strlen(buffer);
++	for (i = 0; i < IFLC_MAX_PROFILES; ++i) {
++		const iflcProfile_t *p = &s_iflcProfiles[i];
++		int size;
++		if (!p->used) continue;
++		Com_sprintf(line, sizeof(line), "fixture %s %.9g %.9g %.9g %d %d %.9g %.9g %.9g\n",
++			s_iflcOwners[p->owner].key, p->direct, p->radius, p->volume, p->enabled, p->colorEnabled, p->color[0], p->color[1], p->color[2]);
++		size = (int)strlen(line);
++		if (used + size + 5 >= IFLC_FILE_LIMIT) { ri.Printf(PRINT_WARNING, "IFLC: save size overflow; nothing written.\n"); ri.Free(buffer); return; }
++		memcpy(buffer + used, line, size); used += size;
++	}
++	memcpy(buffer + used, "end\n", 4); used += 4;
++	R_IFLC_ProfilePath(path, sizeof(path), ""); R_IFLC_ProfilePath(temporary, sizeof(temporary), ".tmp"); R_IFLC_ProfilePath(backup, sizeof(backup), ".bak");
++	/* Renderer FS has no rename API. Verify staging and preserve a verified backup
++	 * before replacing the destination; report every failed read-back explicitly. */
++	ri.FS_WriteFile(temporary, buffer, used);
++	if (!R_IFLC_VerifyFile(temporary, buffer, used)) { ri.Printf(PRINT_WARNING, "IFLC: temporary write failed; saved profile unchanged.\n"); ri.Free(buffer); return; }
++	previousLength = ri.FS_ReadFile(path, NULL);
++	if (previousLength > IFLC_FILE_LIMIT) { ri.Printf(PRINT_WARNING, "IFLC: existing profile too large to back up; save refused.\n"); ri.Free(buffer); return; }
++	if (previousLength >= 0) {
++		previousLength = ri.FS_ReadFile(path, &previous);
++		if (previousLength < 0 || previousLength > IFLC_FILE_LIMIT || !previous) { ri.Printf(PRINT_WARNING, "IFLC: cannot read bounded existing profile for backup; save refused.\n"); if (previous) ri.FS_FreeFile(previous); ri.Free(buffer); return; }
++		ri.FS_WriteFile(backup, previous, (int)previousLength);
++		if (!R_IFLC_VerifyFile(backup, previous, (int)previousLength)) { ri.Printf(PRINT_WARNING, "IFLC: backup verification failed; save refused.\n"); ri.FS_FreeFile(previous); ri.Free(buffer); return; }
++	}
++	ri.FS_WriteFile(path, buffer, used);
++	if (!R_IFLC_VerifyFile(path, buffer, used)) {
++		if (previous) ri.FS_WriteFile(path, previous, (int)previousLength);
++		ri.Printf(PRINT_WARNING, "IFLC: final write/read-back failed; settings remain UNSAVED. Previous data retained in .bak when available.\n");
++	} else { s_iflcDirty = qfalse; ri.Printf(PRINT_ALL, "IFLC: saved and verified %d profiles in %s.\n", count, path); }
++	if (previous) ri.FS_FreeFile(previous);
++	ri.Free(buffer);
++}
++
++void R_IFLC_Reload_f(void)
++{
++	if (!R_IFLC_ReadyForCommand()) return;
++	R_IFLC_LoadProfile(qtrue);
++}
++
++void R_IFLC_List_f(void)
++{
++	int i, count = 0;
++	if (!R_IFLC_ReadyForCommand()) return;
++	for (i = 0; i < IFLC_MAX_PROFILES; ++i) {
++		const iflcProfile_t *p = &s_iflcProfiles[i];
++		if (!p->used) continue;
++		ri.Printf(PRINT_ALL, "IFLC: %s direct=%.3f radius=%.3f volume=%.3f enabled=%d color=%s\n",
++			s_iflcOwners[p->owner].key, p->direct, p->radius, p->volume, p->enabled, p->colorEnabled ? "custom" : "original"); ++count;
++	}
++	ri.Printf(PRINT_ALL, "IFLC: %d modified fixtures, map=%s, %s.\n", count, s_iflcMap, s_iflcDirty ? "UNSAVED" : "saved/baseline");
++}
++
++static int R_IFLC_DlightOwner(const dlight_t *dl)
++{
++	int i, found = -1;
++	for (i = 0; i < s_iflcOwnerCount; ++i) {
++		const iflcOwner_t *owner = &s_iflcOwners[i];
++		qboolean match = qfalse;
++		if (owner->kind == IFLC_SURFACE) continue;
++		if (dl->nativeAuthoredDlight && owner->nativeOrdinal >= 0) {
++			if (dl->fireVolumetricNativeOrdinal >= 0) match = dl->fireVolumetricNativeOrdinal == owner->nativeOrdinal;
++			else match = R_IFLC_DistanceSquared(dl->origin, owner->origin) <= 16.0f * 16.0f;
++		}
++		if (dl->localVolumetricLamp && owner->promotedOrdinal >= 0) {
++			if (dl->staticPromoteFixtureId >= 0) match = dl->staticPromoteFixtureId == owner->promotedOrdinal;
++			else if (R_IFLC_DistanceSquared(dl->origin, owner->origin) <= 2.0f * 2.0f) match = qtrue;
++		}
++		if (match) { if (found >= 0) return -1; found = i; }
++	}
++	return found;
++}
++
++static void R_IFLC_ApplyProfile(dlight_t *dl, const iflcProfile_t *p, qboolean optIn)
++{
++	vec3_t color;
++	if (!dl || !p || !p->used) return;
++	/* Re-entry is idempotent: every multiplication starts from original per-frame data. */
++	if (!dl->iflcActive) {
++		VectorCopy(dl->color, dl->iflcBaseColor); dl->iflcBaseRadius = dl->radius;
++	}
++	dl->iflcActive = qtrue; dl->iflcOptIn = optIn; dl->iflcVolumeGain = p->volume;
++	VectorCopy(dl->iflcBaseColor, color);
++	if (p->colorEnabled) {
++		float oldLuma = 0.2126f * color[0] + 0.7152f * color[1] + 0.0722f * color[2];
++		float peak = MAX(p->color[0], MAX(p->color[1], p->color[2]));
++		if (peak > 0.0f) {
++			vec3_t normalized;
++			float newLuma;
++			int channel;
++			/* Divide each channel directly: 1/peak could overflow for a valid
++			 * subnormal hue, producing Inf and 0*Inf NaNs. The normalized luma
++			 * is at least 0.0722 and the final gain is therefore well bounded. */
++			for (channel = 0; channel < 3; ++channel) normalized[channel] = p->color[channel] / peak;
++			newLuma = 0.2126f * normalized[0] + 0.7152f * normalized[1] + 0.0722f * normalized[2];
++			VectorScale(normalized, oldLuma / newLuma, color);
++		}
++	}
++	VectorScale(color, p->direct, dl->color);
++	dl->radius = dl->iflcBaseRadius;
++	/* New opt-in lights always obey the budget cap, even when global dlightScale
++	 * is high. An existing lamp with radius=1 remains byte-identical to its base. */
++	if (optIn || p->radius != 1.0f) dl->radius = MIN(512.0f, dl->iflcBaseRadius * p->radius);
++}
++
++static void R_IFLC_RecordRuntime(iflcOwner_t *owner, const dlight_t *dl, int index)
++{
++	owner->runtimeIndex = index;
++	owner->baseRadius = dl->iflcActive ? dl->iflcBaseRadius : dl->radius;
++	owner->currentRadius = dl->radius;
++	VectorCopy(dl->iflcActive ? dl->iflcBaseColor : dl->color, owner->baseColor);
++	owner->worldContainment = dl->worldOcclusion; owner->shadowClass = dl->shadowSourceClass;
++}
++
++static qboolean R_IFLC_SpherePVS(const refdef_t *fd, const vec3_t origin, float radius)
++{
++	mnode_t *viewLeaf = R_StaticPromotePointInLeafSafe(fd->vieworg);
++	mnode_t *sourceLeaf = R_StaticPromotePointInLeafSafe(origin);
++	const byte *vis = NULL;
++	int i, axis;
++	if (!viewLeaf || !sourceLeaf || sourceLeaf->cluster < 0) return qfalse;
++	if (sourceLeaf->area >= 0 && sourceLeaf->area < MAX_MAP_AREA_BYTES * 8 &&
++		(fd->areamask[sourceLeaf->area >> 3] & (1 << (sourceLeaf->area & 7)))) return qfalse;
++	if (tr.world->vis && viewLeaf->cluster >= 0 && viewLeaf->cluster < tr.world->numClusters)
++		vis = tr.world->vis + viewLeaf->cluster * tr.world->clusterBytes;
++	for (i = tr.world->numDecisionNodes; i < tr.world->numnodes; ++i) {
++		const mnode_t *leaf = &tr.world->nodes[i];
++		float distance = 0.0f;
++		if (leaf->cluster < 0 || leaf->cluster >= tr.world->numClusters) continue;
++		if (vis && !(vis[leaf->cluster >> 3] & (1 << (leaf->cluster & 7)))) continue;
++		if (leaf->area >= 0 && leaf->area < MAX_MAP_AREA_BYTES * 8 && (fd->areamask[leaf->area >> 3] & (1 << (leaf->area & 7)))) continue;
++		for (axis = 0; axis < 3; ++axis) {
++			float delta = origin[axis] < leaf->mins[axis] ? leaf->mins[axis] - origin[axis] : origin[axis] > leaf->maxs[axis] ? origin[axis] - leaf->maxs[axis] : 0.0f;
++			distance += delta * delta;
++		}
++		if (distance <= radius * radius) return qtrue;
++	}
++	return qfalse;
++}
++
++static void R_IFLC_AddOptIn(const refdef_t *fd, iflcOwner_t *owner, const iflcProfile_t *p)
++{
++	int i, before;
++	dlight_t *dl;
++	mnode_t *leaf;
++	if (!p->enabled) return;
++	if (!r_dynamiclight->integer || r_dlightScale->value <= 0.0f) { owner->blockedReason = 1; return; }
++	if (r_dlightWorldContainment->integer < 1 || r_dlightMode->integer < 2 || !tr.dlightWorldFbo) { owner->blockedReason = 2; return; }
++	leaf = R_StaticPromotePointInLeafSafe(owner->origin);
++	if (!leaf || leaf->cluster < 0) { owner->blockedReason = 6; return; }
++	/* Learn may change user policy without rebuilding the persistent registry.
++	 * A newly learned physical owner must suppress this bridge even when that
++	 * owner is dormant, outside PVS, or denied the current frame's light budget. */
++	for (i = 0; i < s_staticPromotePersistentCount; ++i) {
++		const staticPromotePersistentLight_t *physical = &s_staticPromotePersistentLights[i];
++		if (R_IFLC_DistanceSquared(physical->candidate.origin, owner->origin) < 96.0f * 96.0f &&
++			(R_StaticPromotePhysicalOverrideState(physical) > 0 || physical->physicalRecognitionAccepted)) {
++			owner->blockedReason = 7; return;
++		}
++	}
++	if (!R_IFLC_SpherePVS(fd, owner->origin, MIN(512.0f, 205.0f * r_dlightScale->value * p->radius))) { owner->blockedReason = 3; return; }
++	/* Learning/promoting a nearby lamp after catalog creation must not produce
++	 * a second direct emitter. This conservative guard never reassigns profiles. */
++	for (i = r_firstSceneDlight; i < r_numdlights; ++i) {
++		const dlight_t *existing = &backEndData->dlights[i];
++		float distanceSquared = R_IFLC_DistanceSquared(existing->origin, owner->origin);
++		if (existing->iflcOptIn) {
++			/* Distinct catalog fixtures may stand close together. Only this exact
++			 * opt-in anchor is a duplicate, not another edited neighbouring fire. */
++			if (distanceSquared < 0.01f) { owner->blockedReason = 5; return; }
++			continue;
++		}
++		if ((existing->nativeAuthoredDlight || existing->localVolumetricLamp) && distanceSquared < 96.0f * 96.0f) { owner->blockedReason = 5; return; }
++	}
++	if (r_numdlights >= MAX_DLIGHTS) { owner->blockedReason = 4; return; }
++	before = r_numdlights;
++	RE_AddLightToScene(owner->origin, 205.0f, 1.0f, 0.52f, 0.16f, REF_FORCE_DLIGHT | DARKWOLF_REF_WORLD_OCCLUSION);
++	if (r_numdlights == before) { owner->blockedReason = 1; return; }
++	dl = &backEndData->dlights[before];
++	/* Independent world-only containment is mandatory. This new source is not
++	 * native authored and never enters the V1.4 strict-native PCF4x4 branch. */
++	dl->worldOcclusion = qtrue; dl->forced = qtrue;
++	dl->shadowSourceClass = DWSHADOW_SOURCE_PERSISTENT_FIRE;
++	R_IFLC_ApplyProfile(dl, p, qtrue);
++	owner->runtimeCount = 1; R_IFLC_RecordRuntime(owner, dl, before - r_firstSceneDlight);
++}
++
++static void R_IFLC_Frame(const refdef_t *fd)
++{
++	int i, ownerIndex, sceneEnd;
++	qboolean enabled = r_dwFireLightControl && r_dwFireLightControl->integer;
++	if (!fd || !tr.world || (fd->rdflags & (RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL))) return;
++	R_IFLC_SnapshotView(fd);
++	if (!enabled && !s_iflcReady) return;
++	if (!R_IFLC_EnsureCatalog() || s_iflcCatalogOverflow) return;
++	for (i = 0; i < s_iflcOwnerCount; ++i) {
++		s_iflcOwners[i].runtimeCount = 0; s_iflcOwners[i].runtimeIndex = -1; s_iflcOwners[i].blockedReason = 0;
++		s_iflcOwners[i].baseRadius = s_iflcOwners[i].currentRadius = 0.0f;
++		s_iflcOwners[i].worldContainment = s_iflcOwners[i].shadowClass = 0; s_iflcOwners[i].shadowSlot = -2;
++	}
++	sceneEnd = r_numdlights;
++	for (i = r_firstSceneDlight; i < sceneEnd; ++i) {
++		ownerIndex = R_IFLC_DlightOwner(&backEndData->dlights[i]);
++		if (ownerIndex >= 0) ++s_iflcOwners[ownerIndex].runtimeCount;
++	}
++	for (i = r_firstSceneDlight; i < sceneEnd; ++i) {
++		dlight_t *dl = &backEndData->dlights[i];
++		iflcOwner_t *owner;
++		const iflcProfile_t *p;
++		ownerIndex = R_IFLC_DlightOwner(dl);
++		if (ownerIndex < 0) continue;
++		owner = &s_iflcOwners[ownerIndex]; p = R_IFLC_ProfileForOwner(ownerIndex, qfalse);
++		if (enabled && p && owner->runtimeCount == 1 && !owner->ambiguous) R_IFLC_ApplyProfile(dl, p, qfalse);
++		R_IFLC_RecordRuntime(owner, dl, i - r_firstSceneDlight);
++	}
++	if (!enabled) return;
++	for (i = 0; i < IFLC_MAX_PROFILES; ++i) {
++		const iflcProfile_t *p = &s_iflcProfiles[i];
++		if (p->used && p->owner >= 0 && p->owner < s_iflcOwnerCount &&
++			s_iflcOwners[p->owner].kind == IFLC_SURFACE && !s_iflcOwners[p->owner].ambiguous)
++			R_IFLC_AddOptIn(fd, &s_iflcOwners[p->owner], p);
++	}
++}
++
++/* Read-only diagnostic snapshot, called after main-scene shadow assignment.
++ * No persistent profile ever contains a transient slot or dlight array index. */
++static void R_IFLC_CaptureShadowSlots(const refdef_t *fd)
++{
++	int i;
++	if (!s_iflcReady || !fd || !tr.world || (fd->rdflags & (RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL))) return;
++	for (i = 0; i < s_iflcOwnerCount; ++i) {
++		iflcOwner_t *owner = &s_iflcOwners[i];
++		int index = owner->runtimeIndex;
++		owner->shadowSlot = -1;
++		if (owner->runtimeCount != 1 || index < 0 || index >= tr.refdef.num_dlights || index >= MAX_DLIGHTS) continue;
++		if ((tr.refdef.dlightShadowMask & (1u << index)) && tr.refdef.dlightShadowSlot[index] >= 0 &&
++			tr.refdef.dlightShadowSlot[index] < MAX_DLIGHT_SHADOWS) owner->shadowSlot = tr.refdef.dlightShadowSlot[index];
++	}
++}
++
++qboolean R_IFLC_VolumeOverride(int surfaceIndex, const char *shaderName, const vec3_t origin, float *gain)
++{
++	int i, j;
++	if (gain) *gain = 1.0f;
++	if (!s_iflcReady || s_iflcCatalogOverflow || !tr.world || !r_dwFireLightControl || !r_dwFireLightControl->integer ||
++		strcmp(s_iflcMap, tr.world->baseName) || !shaderName || !origin) return qfalse;
++	for (i = 0; i < s_iflcSurfaceCount; ++i) {
++		const iflcSurface_t *surface = &s_iflcSurfaces[i];
++		if (surface->surfaceIndex != surfaceIndex || strcmp(surface->shader, shaderName) ||
++			R_IFLC_DistanceSquared(surface->origin, origin) > 16.0f * 16.0f || surface->owner < 0 || s_iflcOwners[surface->owner].ambiguous) continue;
++		for (j = 0; j < IFLC_MAX_PROFILES; ++j)
++			if (s_iflcProfiles[j].used && s_iflcProfiles[j].owner == surface->owner) {
++				if (gain) *gain = s_iflcProfiles[j].volume;
++				return qtrue;
++			}
++		return qfalse;
++	}
++	return qfalse;
++}
+diff --git a/SP/code/rend2/tr_init.c b/SP/code/rend2/tr_init.c
+index 4e4cdaf62d88ddd25ab727ca8eff1d1640173c31..2be423891a25d28a7599908cd3da7795e824c23e 100644
+--- a/SP/code/rend2/tr_init.c
++++ b/SP/code/rend2/tr_init.c
+@@ -283,6 +283,8 @@ cvar_t  *r_mapLightingAutoload; // automatically load maplighting/<map>.maplight
+ cvar_t  *r_mapLightingPresetDynamic; // baked preset only; dynamic lights stay independent
+ cvar_t  *r_mapLightingPresetAtmospheric; // baked preset only
+ cvar_t  *r_dlightMode;
++cvar_t  *r_dwFireLightControl; // DARKWOLF_IFLC_V1, explicit opt-in master.
++
+ cvar_t  *r_dlightWorldContainment; // user-adjustable: 0 off, 1 fire, 2 fire+stationary Tesla
+ cvar_t  *r_dlightFalloff;
+ cvar_t  *r_dlightFallbackMode;
+@@ -1870,6 +1872,8 @@ void R_Register( void ) {
+ 	ri.Cvar_CheckRange( r_indirectLightingMax, 0.0f, 1.0f, qfalse );
+ 	r_indirectLightingDebug = &s_darkwolfProductionDiagOffCvar;
+ 	r_dlightMode = ri.Cvar_Get( "r_dlightMode", "2", CVAR_ARCHIVE | CVAR_LATCH );
++	r_dwFireLightControl = ri.Cvar_Get( "r_dwFireLightControl", "0", CVAR_ARCHIVE );
++	ri.Cvar_CheckRange(r_dwFireLightControl, 0.0f, 1.0f, qtrue);
+ 	// Surgical architectural containment: default on for fire and map Tesla;
+ 	// changing it in the console takes effect at the next scene/frame.
+ 	r_dlightWorldContainment = ri.Cvar_Get( "r_dlightWorldContainment", "2", CVAR_ARCHIVE );
+@@ -2252,6 +2256,15 @@ void R_Register( void ) {
+ 	ri.Cmd_AddCommand( "exportCubemaps", R_ExportCubemaps_f );
+ 	ri.Cmd_AddCommand( "taginfo", R_TagInfo_f );
+ 	// REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V5_V12_0: persistent lamp learning commands.
++	// DARKWOLF_IFLC_V1: individual stationary fire lighting.
++	ri.Cmd_AddCommand( "dw_fl_select", R_IFLC_Select_f );
++	ri.Cmd_AddCommand( "dw_fl_next", R_IFLC_Next_f );
++	ri.Cmd_AddCommand( "dw_fl_info", R_IFLC_Info_f );
++	ri.Cmd_AddCommand( "dw_fl_set", R_IFLC_Set_f );
++	ri.Cmd_AddCommand( "dw_fl_reset", R_IFLC_Reset_f );
++	ri.Cmd_AddCommand( "dw_fl_save", R_IFLC_Save_f );
++	ri.Cmd_AddCommand( "dw_fl_reload", R_IFLC_Reload_f );
++	ri.Cmd_AddCommand( "dw_fl_list", R_IFLC_List_f );
+ 	ri.Cmd_AddCommand( "r_staticPromoteLearn", R_StaticPromoteLearn_f );
+ 	ri.Cmd_AddCommand( "r_staticPromoteBlock", R_StaticPromoteBlock_f );
+ 	ri.Cmd_AddCommand( "r_staticPromoteAuto", R_StaticPromoteAuto_f );
+@@ -2442,6 +2455,15 @@ void RE_Shutdown( qboolean destroyWindow ) {
+ 	ri.Cmd_RemoveCommand( "gfxmeminfo" );
+ 	ri.Cmd_RemoveCommand( "exportCubemaps" );
+ 	ri.Cmd_RemoveCommand( "taginfo" );
++	ri.Cmd_RemoveCommand( "dw_fl_select" );
++	ri.Cmd_RemoveCommand( "dw_fl_next" );
++	ri.Cmd_RemoveCommand( "dw_fl_info" );
++	ri.Cmd_RemoveCommand( "dw_fl_set" );
++	ri.Cmd_RemoveCommand( "dw_fl_reset" );
++	ri.Cmd_RemoveCommand( "dw_fl_save" );
++	ri.Cmd_RemoveCommand( "dw_fl_reload" );
++	ri.Cmd_RemoveCommand( "dw_fl_list" );
++	R_IFLC_ResetWorld();
+ 	ri.Cmd_RemoveCommand( "r_staticPromoteLearn" );
+ 	ri.Cmd_RemoveCommand( "r_staticPromoteBlock" );
+ 	ri.Cmd_RemoveCommand( "r_staticPromoteAuto" );
+diff --git a/SP/code/rend2/tr_local.h b/SP/code/rend2/tr_local.h
+index c43c33a44b1590cbe4a135dc76795d62435b0eb1..efe08072c0b51cdafb838484f9e4f968f3d1349a 100644
+--- a/SP/code/rend2/tr_local.h
++++ b/SP/code/rend2/tr_local.h
+@@ -625,6 +625,13 @@ typedef struct dlight_s {
+ 	int fireVolumetricSpeakerOrdinal;
+ 	vec3_t fireVolumetricSpeakerOrigin;
+ 	float fireVolumetricSpeakerDistance;
++	// DARKWOLF_IFLC_V1: immutable per-scene original light for independent FireVol.
++	// These renderer-private fields do not change the cgame/refimport ABI.
++	qboolean iflcActive;
++	qboolean iflcOptIn;
++	vec3_t iflcBaseColor;
++	float iflcBaseRadius;
++	float iflcVolumeGain;
+ 	//done
+ } dlight_t;
+ 
+@@ -2433,6 +2440,20 @@ extern cvar_t  *r_staticPromoteRootCauseCapture;
+ extern cvar_t  *r_staticPromoteRootCauseFocus;
+ extern cvar_t  *r_staticPromoteRootCauseSampleMs;
+ // REND2_STATIC_LIGHT_PROMOTION_FINAL_PRODUCTION_FIX_V5_V12_0: persistent per-map Lamp Learn commands.
++// DARKWOLF_IFLC_V1: commands and synchronized read-only backend lookup.
++extern cvar_t *r_dwFireLightControl;
++void R_IFLC_ResetWorld(void);
++void R_IFLC_Select_f(void);
++void R_IFLC_Next_f(void);
++void R_IFLC_Info_f(void);
++void R_IFLC_Set_f(void);
++void R_IFLC_Reset_f(void);
++void R_IFLC_Save_f(void);
++void R_IFLC_Reload_f(void);
++void R_IFLC_List_f(void);
++qboolean R_IFLC_VolumeOverride(int surfaceIndex, const char *shaderName,
++	const vec3_t origin, float *gain);
++
+ void R_StaticPromoteLearn_f(void);
+ void R_StaticPromoteBlock_f(void);
+ void R_StaticPromoteAuto_f(void);
+diff --git a/SP/code/rend2/tr_main.c b/SP/code/rend2/tr_main.c
+index 9c4d6b7c8b838ed189365c4128de3c120373458e..5affc3f9b36a084599187054882c0d832c2263ae 100644
+--- a/SP/code/rend2/tr_main.c
++++ b/SP/code/rend2/tr_main.c
+@@ -2621,17 +2621,32 @@ void R_RenderView( viewParms_t *parms ) {
+ }
+ 
+ // REND2_DLIGHT_FINAL_V6
++// DARKWOLF_IFLC_V1: changing an existing torch's direct energy must not
++// reassign its FireVol shadow route. Only selection sees the original light;
++// actual capture extents, depth normalization, PCF and all budgets stay intact.
++static const float *R_IFLC_ShadowSelectionColor(const dlight_t *dl)
++{
++	return (dl->iflcActive && !dl->iflcOptIn) ? dl->iflcBaseColor : dl->color;
++}
++
++static float R_IFLC_ShadowSelectionRadius(const dlight_t *dl)
++{
++	return (dl->iflcActive && !dl->iflcOptIn) ? dl->iflcBaseRadius : dl->radius;
++}
++
+ static float R_DlightShadowSelectionScore(const dlight_t *dl, const refdef_t *fd)
+ {
+ 	vec3_t delta;
++	const float *selectionColor = R_IFLC_ShadowSelectionColor(dl);
++	float selectionRadius = R_IFLC_ShadowSelectionRadius(dl);
+ 	float distanceSquared;
+ 	float radiusSquared;
+ 	float luminance;
+ 
+ 	VectorSubtract(dl->origin, fd->vieworg, delta);
+ 	distanceSquared = DotProduct(delta, delta);
+-	radiusSquared = dl->radius * dl->radius;
+-	luminance = 0.2126f * dl->color[0] + 0.7152f * dl->color[1] + 0.0722f * dl->color[2];
++	radiusSquared = selectionRadius * selectionRadius;
++	luminance = 0.2126f * selectionColor[0] + 0.7152f * selectionColor[1] + 0.0722f * selectionColor[2];
+ 	return radiusSquared * (0.25f + luminance) /
+ 		(distanceSquared + radiusSquared * 0.25f + 1.0f);
+ }
+@@ -3108,10 +3123,10 @@ static qboolean R_DarkWolfStaticPromoteShadowCompanionEquivalent(const dlight_t
+     VectorSubtract(a->origin, b->origin, delta);
+     if (DotProduct(delta, delta) > mergeRadius * mergeRadius)
+         return qfalse;
+-    radiusDelta = fabs(a->radius - b->radius);
++    radiusDelta = fabs(R_IFLC_ShadowSelectionRadius(a) - R_IFLC_ShadowSelectionRadius(b));
+     if (radiusDelta > 16.0f)
+         return qfalse;
+-    VectorSubtract(a->color, b->color, colorDelta);
++    VectorSubtract(R_IFLC_ShadowSelectionColor(a), R_IFLC_ShadowSelectionColor(b), colorDelta);
+     if (DotProduct(colorDelta, colorDelta) > 0.01f)
+         return qfalse;
+     return qtrue;
+diff --git a/SP/code/rend2/tr_scene.c b/SP/code/rend2/tr_scene.c
+index d4a3c824c366bebff6e3a92adac2411a91daf80c..e9956dde690a55975031cc0abb5f56c81475fa36 100644
+--- a/SP/code/rend2/tr_scene.c
++++ b/SP/code/rend2/tr_scene.c
+@@ -458,6 +458,12 @@ void RE_AddLightToScene( const vec3_t org, float intensity, float r, float g, fl
+ 			fireVolumetricSpeakerOrigin, &fireVolumetricSpeakerDistance);
+ 
+ 	dl = &backEndData->dlights[r_numdlights++];
++	// DARKWOLF_IFLC_V1: reset private metadata when a frame reuses a dlight slot.
++	dl->iflcActive = qfalse;
++	dl->iflcOptIn = qfalse;
++	VectorClear(dl->iflcBaseColor);
++	dl->iflcBaseRadius = 0.0f;
++	dl->iflcVolumeGain = 1.0f;
+ 	VectorCopy( org, dl->origin );
+ 
+ 	dl->radius = intensity * r_dlightScale->value;  //----(SA)	modified
+@@ -6181,6 +6187,9 @@ static void R_StaticPromoteFrame(const refdef_t *fd)
+ }
+ 
+ 
++// DARKWOLF_IFLC_V1: shares the immutable physical-light evidence registry.
++#include "tr_iflc.inc"
++
+ /*
+ ==============
+ RE_AddCoronaToScene
+@@ -6643,6 +6652,7 @@ void RE_RenderScene( const refdef_t *fd ) {
+ 	// REND2_STATIC_LIGHT_PROMOTION_POC_V9_0: append at most two selected static BSP lights
+ 	// before RE_BeginScene snapshots the current scene dlight range.
+ 	R_StaticPromoteFrame(fd);
++	R_IFLC_Frame(fd);
+ 
+ 	RE_BeginScene(fd);
+ 	// DARKWOLF_RC4_FORCE_SUN_CSM_REPRIME_V1: source mode exit invalidates reuse.
+@@ -6685,6 +6695,7 @@ void RE_RenderScene( const refdef_t *fd ) {
+ 		R_RenderDlightCubemaps(fd);
+ 	}
+ 	R_RenderDlightWorldOcclusion(fd); // Required solid-world visibility, not the optional 3+2 object-shadow pool.
++	R_IFLC_CaptureShadowSlots(fd); // Read-only command diagnostics after actual allocation.
+ 	// DARKWOLF_FIREVOL_OCCLUSION_PRODUCTION_V1: uses only previous-frame accepted selections and never changes FireVol residency/priority.
+ 	if (!(fd->rdflags & RDF_NOWORLDMODEL) && r_dlightMode->integer >= 2)
+ 		R_RenderFireVolumetricSyntheticShadows(fd);
