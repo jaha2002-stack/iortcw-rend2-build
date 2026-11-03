@@ -1,0 +1,97 @@
+name: DW IFLC V1.1 global self shadow Win64 Crypt1 Crypt2
+on:
+  push:
+    branches: [experiment/iflc-v11-shadow-fix-from-41408153237]
+    paths:
+      - '.github/workflows/DW_IFLC_V11_GLOBAL_SELF_SHADOW.yml'
+      - 'integration/iflc-v11/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-iflc-v11-global-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify-map:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        map: [crypt1, crypt2]
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compilers and native TestLab
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 git unzip zip file ca-certificates libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          mkdir -p evidence dist
+      - name: Reconstruct accepted source and apply geometry-qualified global fix
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v1/prepare.py source evidence
+          python3 integration/iflc-v11/apply.py source evidence
+          python3 -m py_compile integration/iflc-v11/*.py
+          git -C source diff --check
+      - name: Execute real C-code regression and geometry tests
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v11/run_tests.py source evidence | tee evidence/IFLC_V11_TESTS.log
+      - name: Build and package clean Win64 candidate before diagnostic instrumentation
+        if: matrix.map == 'crypt1'
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-IFLC-V11-41408153237 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/IFLC_V11_WIN64_BUILD.log 2>&1 || { tail -100 evidence/IFLC_V11_WIN64_BUILD.log; exit 1; }
+          python3 integration/iflc-v11/package.py source evidence dist
+          tar -czf dist/IFLC_V11_EXACT_SOURCE.tar.gz -C source SP/code SP/Makefile
+      - name: Upload clean test package
+        if: matrix.map == 'crypt1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DW-IFLC-V11-Global-Self-Shadow-Win64-TEST
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          retention-days: 60
+      - name: Upload reproducible uninstrumented source
+        if: matrix.map == 'crypt1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DW-IFLC-V11-Exact-Source
+          path: |
+            dist/IFLC_V11_EXACT_SOURCE.tar.gz
+            evidence/IFLC_V11_SOURCE*.json
+          retention-days: 60
+      - name: Build isolated native comparison harness
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v11/runtime.py instrument source
+          make -C source/SP -j2 release BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/IFLC_V11_NATIVE_BUILD.log 2>&1 || { tail -100 evidence/IFLC_V11_NATIVE_BUILD.log; exit 1; }
+      - name: Restore protected licensed game resources
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail_main"
+          printf '%s\n' "$retail_main" > .iflc11_retail_main
+      - name: Exercise source families and capture actual game frames
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v11/runtime.py capture source "$(cat .iflc11_retail_main)" evidence/runtime ${{ matrix.map }} | tee evidence/IFLC_V11_RUNTIME.log
+      - name: Upload real images and raw evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DW-IFLC-V11-${{ matrix.map }}-Evidence
+          path: |
+            evidence/IFLC_*.json
+            evidence/IFLC_V11*.log
+            evidence/run_backend_tests/**
+            evidence/run_shadow_tests/**
+            evidence/runtime/**
+          retention-days: 60
