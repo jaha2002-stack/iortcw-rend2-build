@@ -28,6 +28,15 @@ from rc4_assault_camera import World
 
 def instrument(source):
     camera.instrument(source)
+    # Extend only the existing camera/cvar logger, never the renderer under test.
+    path = source / "SP/code/cgame/cg_view.c"
+    text = path.read_text()
+    old = '"r_ssgi","r_volumetricSun"'
+    new = ('"r_hdr","r_postProcess","r_volumetricFireMode","r_volumetricFireSourceMode",'
+           '"r_volumetricFireV07Mode","r_volumetricFireMaxActive","r_volumetricFireSamples",'
+           '"r_dlightShadowMaxLights","r_mapLightingLearn","r_ssgi","r_volumetricSun"')
+    assert text.count(old) == 1, "Camera helper cvar list changed"
+    path.write_text(text.replace(old, new))
 
 
 def discover(retail, limit=3):
@@ -124,7 +133,7 @@ def discover(retail, limit=3):
 
 def inspect_command_evidence(text, views, shots):
     """Validate commands and cameras separately from visual acceptance."""
-    records, proof, baked = {}, {}, {}
+    records, proof, baked, cvars = {}, {}, {}, {}
     current = None
     bake = None
     for line in text.splitlines():
@@ -157,6 +166,9 @@ def inspect_command_evidence(text, views, shots):
         if match:
             proof[int(match[1])] = {"time": int(match[2]), "eye": [float(v) for v in match[3].split(",")],
                                     "forward": [float(v) for v in match[4].split(",")]}
+        match = re.search(r"PROOF_CVAR shot=(\d+) name=(\S+) value=(\S+)", line)
+        if match:
+            cvars.setdefault(int(match[1]), {})[match[2]] = match[3]
         match = re.search(r"MAPLIGHT_LEARN status .* cluster=(-?\d+) .*clusterLM=(\d+)", line)
         if match and bake is not None:
             bake.update(actual_cluster=int(match[1]), lightmapped_surfaces_in_cluster=int(match[2]))
@@ -172,6 +184,7 @@ def inspect_command_evidence(text, views, shots):
         "direct_0": (0, 1, 1, 1), "direct_3": (3, 1, 1, 1), "direct_0_repeat": (0, 1, 1, 1),
         "volume_0": (1, 1, 0, 1), "volume_3": (1, 1, 3, 1), "volume_0_repeat": (1, 1, 0, 1),
         "saved": (1.75, 1.25, .8, 1), "mutated": (.5, 1.25, .8, 1), "reload": (1.75, 1.25, .8, 1),
+        "master_off_profile": (1.75, 1.25, .8, 0), "master_on_restore": (1.75, 1.25, .8, 1),
         "reset": (1, 1, 1, 1), "off_restored": (1, 1, 1, 0), "off_restored_repeat": (1, 1, 1, 0),
     }
     faults, cameras = [], []
@@ -187,11 +200,13 @@ def inspect_command_evidence(text, views, shots):
                 faults.append(f"{view['name']}/{variant}: requested parameter state not confirmed")
             if state.get("editable") != "YES":
                 faults.append(f"{view['name']}/{variant}: physical source is not editable")
-            if variant.startswith(("direct_", "volume_")) or variant in ("saved", "mutated", "reload"):
+            if variant.startswith(("direct_", "volume_")) or variant in ("saved", "mutated", "reload", "master_on_restore"):
                 if state.get("real_dlights") != 1 or state.get("bridge_blocked"):
                     faults.append(f"{view['name']}/{variant}: no unique active direct emitter")
-            if variant in ("saved", "reload") and state.get("profile") != "SAVED":
+            if variant in ("saved", "reload", "master_off_profile", "master_on_restore") and state.get("profile") != "SAVED":
                 faults.append(f"{view['name']}/{variant}: persistence result unconfirmed")
+            if variant == "master_off_profile" and state.get("route") == "VOLUME_ONLY" and state.get("real_dlights") != 0:
+                faults.append(f"{view['name']}: master OFF left an opt-in emitter active")
             if variant.startswith(("empty_", "off_restored")) or variant == "reset":
                 if state.get("profile") != "BASELINE":
                     faults.append(f"{view['name']}/{variant}: empty profile not confirmed")
@@ -220,8 +235,20 @@ def inspect_command_evidence(text, views, shots):
     distinct = {state.get("key") for (view, variant), state in records.items() if variant == "direct_0" and state.get("key")}
     if len(distinct) < 2:
         faults.append("Fewer than two independently selected physical sources in direct-test states")
+    required_cvars = {"r_hdr": "1", "r_postProcess": "1", "r_volumetricFire": "1",
+                      "r_volumetricFireV07Mode": "2", "r_volumetricFireSourceMode": "2",
+                      "r_volumetricFireMode": "2", "r_volumetricFireMaxActive": "8",
+                      "r_volumetricFireSamples": "40", "r_dlightShadowMaxLights": "3", "r_mapLightingLearn": "1"}
+    for shot in shots:
+        actual = cvars.get(shot["id"], {})
+        if any(actual.get(name) != value for name, value in required_cvars.items()):
+            faults.append(f"shot {shot['id']}: production FireVol/render settings not confirmed")
+    scans = re.findall(r"FIREVOL07_SCAN map=crypt1 variant=C_RENDERED_MULTI .*?selected=(\d+) rendered=(\d+)", text)
+    if not any(int(selected) > 0 and int(rendered) > 0 for selected, rendered in scans):
+        faults.append("Production FireVol fixture rendering never confirmed")
     return {"faults": faults, "states": list(records.values()), "camera_checks": cameras,
-            "maplighting": list(baked.values()), "independent_source_keys": sorted(distinct)}
+            "maplighting": list(baked.values()), "independent_source_keys": sorted(distinct),
+            "required_render_settings": required_cvars, "firevol_multi_render_scans": len(scans)}
 
 
 def capture(source, retail, out):
@@ -262,7 +289,7 @@ def capture(source, retail, out):
         commands += [f"echo IFLC_TEST_BEGIN {view['name']}", "set dw_proofFreeze 0",
                      "set r_dwFireLightControl 0", "set r_mapLightingLearn 1",
                      "set r_mapLightingLearnShow 0", "set r_mapLightingProfileEnable 0",
-                     "maplight_clear_memory", "maplight_zone_new IFLC_runtime",
+                     "maplight_clear_memory confirm", "maplight_zone_new IFLC_runtime",
                      "proofView " + " ".join(f"{v:.6f}" for v in view["baked_probe"] + view["angles"]),
                      "wait 12", f"echo IFLC_BAKE {view['name']} flame_probe", "maplight_add_cluster", "maplight_status",
                      "proofView " + " ".join(f"{v:.6f}" for v in view["eye"] + view["angles"]),
@@ -294,13 +321,17 @@ def capture(source, retail, out):
         shot(view, "mutated")
         commands += ["dw_fl_reload", "wait 8"]
         shot(view, "reload")
+        commands += ["set r_dwFireLightControl 0", "wait 8"]
+        shot(view, "master_off_profile")
+        commands += ["set r_dwFireLightControl 1", "wait 8"]
+        shot(view, "master_on_restore")
         commands += ["dw_fl_reset", "dw_fl_save", "wait 8"]
         shot(view, "reset")
         commands += ["set r_dwFireLightControl 0", "wait 8"]
         shot(view, "off_restored")
         commands += ["wait 5"]
         shot(view, "off_restored_repeat")
-    commands += ["maplight_clear_memory", "set r_mapLightingLearn 0", "set dw_proofFreeze 0", "echo IFLC_CRYPT1_RUNTIME_COMPLETE", "quit"]
+    commands += ["maplight_clear_memory confirm", "set r_mapLightingLearn 0", "set dw_proofFreeze 0", "echo IFLC_CRYPT1_RUNTIME_COMPLETE", "quit"]
     scenario = "IFLC_CRYPT1_TEST.cfg"
     (main / scenario).write_text("\n".join(commands) + "\n")
     shutil.copy2(main / scenario, out / scenario)
@@ -310,6 +341,11 @@ def capture(source, retail, out):
              "set r_ssgi 1", "set r_forceSun 1", "set r_sunShadows 1", "set r_dlightMode 2",
              "set r_dlightShadowMaxLights 3", "set r_dlightWorldContainment 2",
              "set r_volumetricSun 1", "set r_volumetricLocal 1", "set r_volumetricFire 1",
+             # These four production settings enable the existing stable fixture
+             # path; defaults select legacy v0.6 with no volume-only BSP sources.
+             "set r_volumetricFireV07Mode 2", "set r_volumetricFireSourceMode 2",
+             "set r_volumetricFireMaxActive 8", "set r_volumetricFireMode 2",
+             "set r_volumetricFireDiag 1", "set r_volumetricFireResidencyDiag 1",
              "set r_ext_framebuffer_multisample 4", "set r_cameraExposure 1",
              "set r_autoExposure 0", "set r_forceAutoExposure 0", "set r_dwFireLightControl 0",
              "set s_initsound 0", "set r_swapInterval 0", "set fixedtime 100", "set con_notifytime -1"]
@@ -353,6 +389,7 @@ def capture(source, retail, out):
     effects, parity = [], []
     pairs = [("empty_off", "empty_on"), ("direct_0", "direct_3"), ("volume_0", "volume_3"),
              ("empty_off", "reset"), ("empty_off", "off_restored"), ("saved", "reload"),
+             ("empty_off", "master_off_profile"), ("saved", "master_on_restore"),
              ("empty_off", "empty_off_repeat"), ("direct_0", "direct_0_repeat"),
              ("volume_0", "volume_0_repeat"), ("off_restored", "off_restored_repeat")]
     for view in views:
@@ -389,7 +426,8 @@ def capture(source, retail, out):
             drift = np.maximum(early_drift, late_drift)
             drift_mean = float(drift.mean())
             for a, b in (("empty_off", "empty_on"), ("empty_off", "reset"),
-                         ("empty_off", "off_restored"), ("saved", "reload")):
+                         ("empty_off", "off_restored"), ("saved", "reload"),
+                         ("empty_off", "master_off_profile"), ("saved", "master_on_restore")):
                 d = delta(a, b)
                 if d is None:
                     continue
@@ -423,6 +461,11 @@ def capture(source, retail, out):
     print(json.dumps({k: report[k] for k in ("exit", "ready", "complete", "captured_screenshots", "selected_identities")}, indent=2), flush=True)
     assert rc == 0 and report["ready"] and report["complete"] and len(images) == len(shots), "Incomplete real-game capture"
     assert not command_evidence["faults"], "Unconfirmed runtime behavior: " + "; ".join(command_evidence["faults"])
+    # Measurable response is a prerequisite, never a substitute for image review.
+    responsive = {kind: {item["view"] for item in effects if item["control"] == kind
+                        and item["evidence_flag"] == "CLEAR_DIFFERENCE_ABOVE_REPEAT_DRIFT"}
+                  for kind in ("direct", "volume")}
+    assert len(responsive["direct"] & responsive["volume"]) >= 2, "Direct and FireVol response not measured for two independent sources"
     print("IFLC_REAL_GAME_CAPTURE_COMPLETE_PENDING_VISUAL_REVIEW", flush=True)
 
 
