@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import zipfile
@@ -24,6 +25,8 @@ for file in ("README_RU.md", "DW_IFLC_V1_ENABLE.cfg", "DW_IFLC_V1_DISABLE.cfg"):
     shutil.copy2(kit / file, stage / file)
 shutil.copy2(a.evidence / "IFLC_SOURCE_PROOF.json", stage / "IFLC_SOURCE_PROOF.json")
 status = {"status": "TEST_CANDIDATE", "base_run": 41408153237,
+          "builder_commit": os.environ.get("GITHUB_SHA"),
+          "build_run": os.environ.get("GITHUB_RUN_ID"),
           "renderer_sha256": hashlib.sha256(matches[0].read_bytes()).hexdigest(),
           "visual_status": "See separate runtime evidence; compile success is not visual acceptance"}
 (stage / "BUILD_STATUS.json").write_text(json.dumps(status, indent=2) + "\n")

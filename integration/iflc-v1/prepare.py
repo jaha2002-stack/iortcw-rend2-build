@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import tarfile
 import zipfile
@@ -36,6 +37,53 @@ def hashes(root):
             for p in sorted((root / "SP/code").rglob("*")) if p.is_file()}
 
 
+def restore_shader_build_list(source):
+    """The audit tar contains SP/code only, not the customized SP/Makefile.
+
+    Restore precisely the eleven existing baseline shader objects required by
+    tr_glsl.c. Do not alter compiler flags, shader contents or renderer features.
+    """
+    path = source / "SP/Makefile"
+    before = path.read_text()
+    expected_make = subprocess.check_output(
+        ["git", "-C", str(source), "show", f"{UPSTREAM}:SP/Makefile"], text=True)
+    assert before == expected_make, "Unexpected upstream build configuration"
+    match = re.search(r"(?ms)^Q3R2STRINGOBJ = .*?(?=\n\n)", before)
+    assert match, "Missing renderer shader object list"
+    objects = re.findall(r"\$\(B\)/rend2/glsl/(\w+)\.o", match[0])
+    references = set(re.findall(r"extern const char \*fallbackShader_(\w+)\s*;",
+                               (source / "SP/code/rend2/tr_glsl.c").read_text()))
+    missing = references - set(objects)
+    expected = {"bloom_fp", "bloom_vp", "dwfinal_fp", "dwfinal_vp",
+                "ssgi_fp", "ssgi_vp", "volumetricsun_fp", "volumetricsun_vp",
+                "volumetriclocal_fp", "volumetriclocal_vp", "volumetriclocal_upscale_fp"}
+    assert missing == expected, ("Unexpected missing baseline shader objects", sorted(missing))
+    assert len(objects) == len(set(objects)) and not set(objects) - references
+    for name in references:
+        assert (source / f"SP/code/rend2/glsl/{name}.glsl").is_file(), name
+    # Preserve the historical linker order: cumulative RC0.6 Makefile
+    # 74a126d2 -> 7d452315, Bloom -> d38fb787, CAS -> cdfead4e.
+    additions = {"bokeh_vp": ["bloom_fp", "bloom_vp", "dwfinal_fp", "dwfinal_vp"],
+                 "shadowmask_vp": ["volumetricsun_fp", "volumetricsun_vp", "volumetriclocal_fp",
+                                   "volumetriclocal_upscale_fp", "volumetriclocal_vp"],
+                 "ssao_vp": ["ssgi_fp", "ssgi_vp"]}
+    entries = []
+    for name in objects:
+        entries.extend([name] + additions.get(name, []))
+    replacement = "Q3R2STRINGOBJ = \\\n" + " \\\n".join(
+        f"  $(B)/rend2/glsl/{name}.o" for name in entries)
+    path.write_text(before[:match.start()] + replacement + before[match.end():])
+    assert set(entries) == references and len(entries) == len(references)
+    assert sha(path) == "9cb33a3b0ce2e449edd449fb97c885a1174c868ce5e77c9b84b0645518351740", "Canonical Makefile mismatch"
+    return {"path": "SP/Makefile", "upstream_commit": UPSTREAM,
+            "before_sha256": hashlib.sha256(before.encode()).hexdigest(),
+            "after_sha256": sha(path), "restored_existing_shader_objects": sorted(missing),
+            "all_fallback_shader_references_covered": True,
+            "historical_makefile_hash_verified": True,
+            "compiler_flags_unchanged": True,
+            "note": "Build metadata restored separately; original audit archive contains SP/code only"}
+
+
 def prepare(source, evidence, archive):
     evidence.mkdir(parents=True, exist_ok=True)
     if archive is None:
@@ -66,6 +114,7 @@ def prepare(source, evidence, archive):
     base = hashes(source)
     assert {p for p in base if base[p] != before[p]} == {"SP/code/rend2/tr_main.c"}
     assert base["SP/code/rend2/tr_main.c"] == V14_SHA
+    build_support = restore_shader_build_list(source)
     base_main = (source / "SP/code/rend2/tr_main.c").read_text()
     (evidence / "IFLC_BASE_SHA256.json").write_text(json.dumps(base, indent=2) + "\n")
     run("git", "-C", source, "add", "SP/code")
@@ -117,6 +166,7 @@ def prepare(source, evidence, archive):
         "baseline_verified_files": len(base), "changed_files": sorted(changed),
         "changes": {p: {"before": base.get(p), "after": after.get(p)} for p in sorted(changed)},
         "patch_sha256": sha(patch), "v14_capture_and_pcf_unchanged": True,
+        "build_support": build_support,
         "shadow_selector_changes": sorted(main_changed),
         "all_glsl_unchanged": True, "cgame_abi_unchanged": True,
         "new_cvars": {"r_dwFireLightControl": "0"},
