@@ -1,0 +1,122 @@
+name: DW IFLC V1.1 actual caster geometry probe
+on:
+  push:
+    branches: [experiment/iflc-v11-shadow-fix-from-41408153237]
+    paths: ['.github/workflows/DW_IFLC_V11_GEOMETRY_PROBE.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  geometry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y --no-install-recommends python3-numpy
+      - name: Read protected retail geometry
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail_main"
+          printf '%s\n' "$retail_main" > .retail_main
+      - name: Trace flame-to-wall rays and identify physical caster surfaces
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence
+          python3 - <<'PY'
+          import json, math, struct, zipfile, hashlib, re
+          from pathlib import Path
+          import numpy as np
+          retail=Path('.retail_main').read_text().strip()
+          bsp=None; shader_text={}
+          for pk3 in sorted(Path(retail).glob('*')):
+              if pk3.suffix.lower()!='.pk3': continue
+              with zipfile.ZipFile(pk3) as z:
+                  for n in z.namelist():
+                      if n.lower()=='maps/crypt1.bsp': bsp=z.read(n)
+                      if n.lower().endswith('.shader'):
+                          shader_text[n]=z.read(n).decode('latin1')
+          assert bsp
+          def lump(i):
+              o,n=struct.unpack_from('<ii',bsp,8+8*i); return bsp[o:o+n]
+          verts=np.array([v[:3] for v in struct.iter_unpack('<10f4B',lump(10))])
+          inds=np.array([i[0] for i in struct.iter_unpack('<i',lump(11))])
+          surfs=list(struct.iter_unpack('<12i12f2i',lump(13)))
+          shaders=[(n.split(b'\0')[0].decode('latin1'),sf,cf) for n,sf,cf in struct.iter_unpack('<64sii',lump(1))]
+          model=struct.unpack_from('<6f4i',lump(7)); count=model[7]
+          anchors={i:verts[surfs[i][3]:surfs[i][3]+surfs[i][4]].mean(axis=0) for i in (2992,2968,442,2980)}
+          triangles=[]; ids=[]; details=[]
+          for i,s in enumerate(surfs[:count]):
+              v=verts[s[3]:s[3]+s[4]]; name,sf,cf=shaders[s[0]]
+              if len(v)==0: continue
+              lo=v.min(axis=0); hi=v.max(axis=0); center=v.mean(axis=0)
+              dist={str(a):float(np.linalg.norm(np.maximum(np.maximum(lo-o,o-hi),0))) for a,o in anchors.items()}
+              if min(dist.values())<80:
+                  details.append(dict(surface=i,shader=name,surface_flags=sf,content_flags=cf,bounds=[lo.tolist(),hi.tolist()],center=center.tolist(),vertices=len(v),indexes=s[6],distance_aabb=dist))
+              # Shader/alpha classification here is an offline geometric hypothesis,
+              # not a replacement for the engine's actual shadow eligibility.
+              if sf&128 or any(w in name.lower() for w in ('flame','burnm_','ember','sky','/fog','/sfx/')): continue
+              if s[2] not in (1,3): continue
+              idx=inds[s[5]:s[5]+s[6]]
+              if len(idx)%3 or len(idx)==0: continue
+              t=v[idx.reshape(-1,3)]
+              triangles.extend(t); ids.extend([i]*len(t))
+          t=np.asarray(triangles); ids=np.asarray(ids)
+          a=t[:,0]; e1=t[:,1]-a; e2=t[:,2]-a
+          def hits(o,d,maxdist=2048):
+              o=np.asarray(o); d=np.asarray(d); d=d/np.linalg.norm(d)
+              p=np.cross(d,e2); det=np.einsum('ij,ij->i',e1,p)
+              inv=np.divide(1.,det,out=np.zeros_like(det),where=np.abs(det)>1e-8)
+              tv=o-a; u=np.einsum('ij,ij->i',tv,p)*inv; q=np.cross(tv,e1)
+              v=q@d*inv; dis=np.einsum('ij,ij->i',e2,q)*inv
+              keep=np.where((np.abs(det)>1e-8)&(u>=-1e-6)&(v>=-1e-6)&(u+v<=1.000001)&(dis>.02)&(dis<maxdist))[0]
+              return [(float(dis[k]),int(ids[k]),(o+dis[k]*d).tolist()) for k in keep[np.argsort(dis[keep])]][:12]
+          eye=np.array([-181.63945557510993,1647.9745076412642,488.0])
+          pitch,yaw=np.radians([-29.744881296942214,247.5]); cp,sp,cy,sy=math.cos(pitch),math.sin(pitch),math.cos(yaw),math.sin(yaw)
+          forward=np.array([cp*cy,cp*sy,-sp]); right=np.array([sy,-cy,0]); up=np.array([sp*cy,sp*sy,cp])
+          probes=[]; casters=set()
+          for x,y in ((385,400),(400,500),(450,440),(580,400),(365,470),(530,490),(490,300)):
+              direction=forward+(x+.5-480)/480*right+(270-y-.5)/480*up
+              camera_hits=hits(eye,direction)
+              if not camera_hits: continue
+              receiver=np.array(camera_hits[0][2]); light=anchors[2992]
+              h=hits(light,receiver-light,np.linalg.norm(receiver-light)-.1)
+              casters.update(i for d,i,p in h)
+              shifts=[]
+              for dy,dz in ((0,0),(8,0),(16,0),(24,0),(32,0),(24,8),(0,16),(0,32),(24,-24)):
+                  org=light+np.array([0,dy,dz]); hh=hits(org,receiver-org,np.linalg.norm(receiver-org)-.1)
+                  shifts.append(dict(offset=[0,dy,dz],hits=hh))
+              probes.append(dict(pixel=[x,y],camera_hits=camera_hits,light_hits=h,shifted_origins=shifts))
+          material_names={shaders[surfs[i][0]][0] for i in casters}
+          material_blocks={}
+          for name in material_names:
+              for file,text in shader_text.items():
+                  match=re.search(r'(?m)^\s*'+re.escape(name)+r'\s*\{',text)
+                  if not match: continue
+                  begin=text.index('{',match.start()); depth=1; end=begin+1
+                  while end<len(text) and depth:
+                      if text[end]=='{': depth+=1
+                      elif text[end]=='}': depth-=1
+                      end+=1
+                  material_blocks[name]=dict(file=file,definition=text[match.start():end])
+          local_geometry=[]
+          for i in sorted(casters):
+              s=surfs[i]; v=verts[s[3]:s[3]+s[4]]
+              local_geometry.append(dict(surface=i,shader=shaders[s[0]][0],vertices=v.tolist(),indexes=inds[s[5]:s[5]+s[6]].tolist()))
+          report=dict(bsp_sha256=hashlib.sha256(bsp).hexdigest(),anchors={str(k):v.tolist() for k,v in anchors.items()},camera=dict(eye=eye.tolist(),fov_x=90),probes=probes,nearby_surfaces=details,ray_caster_geometry=local_geometry,material_blocks=material_blocks,limitations='Offline ray intersections identify candidate geometry, not proof of engine caster submission. No map assets exported.')
+          Path('evidence/IFLC_V11_CASTER_GEOMETRY.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('Geometry intersections:',sorted(casters))
+          for row in local_geometry: print(row['surface'],row['shader'],len(row['vertices']))
+          for p in probes: print(p['pixel'],'receiver',p['camera_hits'][0][1], 'casters',[(round(d,2),i) for d,i,pos in p['light_hits']])
+          PY
+          git archive --format=tar.gz -o evidence/IFLC_V11_BUILD_KIT.tar.gz HEAD integration/iflc-v1 integration/iflc-shadow-audit integration/fire-world-pcf4x4-v14 testlab/scripts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DW-IFLC-V11-Caster-Geometry-and-Build-Kit
+          path: evidence/*
+          retention-days: 60
