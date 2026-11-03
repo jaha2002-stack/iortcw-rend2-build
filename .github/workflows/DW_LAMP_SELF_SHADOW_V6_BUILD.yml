@@ -72,6 +72,24 @@ jobs:
       - name: Compile Win64 renderer with unchanged complete feature source
         run: |
           set -Eeuo pipefail
+          # The stock iortcw Makefile predates the accepted DarkWolf renderer GLSL.
+          # Restore build-only shader string object registrations; core code remains SHA-checked.
+          python3 - <<'PY'
+          from pathlib import Path
+          m=Path('source/SP/Makefile')
+          s=m.read_text()
+          anchor='  $(B)/rend2/glsl/tonemap_vp.o'
+          assert s.count(anchor)==1
+          extra=['ssgi_fp','ssgi_vp','volumetriclocal_upscale_fp','volumetriclocal_fp',
+                 'volumetriclocal_vp','volumetricsun_fp','volumetricsun_vp',
+                 'dwfinal_fp','dwfinal_vp','bloom_fp','bloom_vp']
+          for n in extra:
+              assert (Path('source/SP/code/rend2/glsl')/(n+'.glsl')).is_file(),n
+          lines=''.join('  $(B)/rend2/glsl/'+n+'.o \\\n' for n in extra)
+          s=s.replace(anchor,lines+anchor,1)
+          m.write_text(s)
+          print('DARKWOLF_GLSL_STRING_OBJECTS_REGISTERED',len(extra))
+          PY
           make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-SepBase-FourWeek-NoFire PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/V6_WIN64_BUILD.log 2>&1 || { tail -120 evidence/V6_WIN64_BUILD.log; exit 1; }
           find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print > evidence/RENDERER_PATH.txt
           test "$(wc -l < evidence/RENDERER_PATH.txt)" -eq 1
