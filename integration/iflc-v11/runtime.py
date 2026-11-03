@@ -19,7 +19,9 @@ def instrument(src):
     p.write_text(t.replace(s,'"r_iflcFixtureTestBypass","r_dwFireLightControl","r_dlightShadowMaxLights","r_dlightWorldContainment","r_hdr","r_postProcess","r_volumetricFireV07Mode","r_volumetricFireSourceMode","r_ssgi","r_volumetricSun"'))
     p=src/'SP/code/rend2/tr_local.h';t=p.read_text();p.write_text(t+'\nvoid R_IFLC_TestAudit_f(void);\n')
     p=src/'SP/code/rend2/tr_init.c';t=p.read_text();s='ri.Cmd_AddCommand( "dw_fl_select", R_IFLC_Select_f );';assert t.count(s)==1
-    p.write_text(t.replace(s,s+'\n\tri.Cmd_AddCommand("dw_fl_test_audit", R_IFLC_TestAudit_f);'))
+    t=t.replace(s,s+'\n\tri.Cmd_AddCommand("dw_fl_test_audit", R_IFLC_TestAudit_f);')
+    s='ri.Cmd_RemoveCommand( "dw_fl_select" );';assert t.count(s)==1
+    p.write_text(t.replace(s,s+'\n\tri.Cmd_RemoveCommand("dw_fl_test_audit");'))
     p=src/'SP/code/rend2/tr_iflc.inc'
     with p.open('a') as f:f.write(r'''
 /* Native TestLab only. Never compiled into the distributed DLL. */
@@ -171,7 +173,9 @@ def capture(src,retail,out,mapname):
         if m:current=states.setdefault(int(m[1]),{'view':m[2],'variant':m[3],'lines':[],'lights':[]})
         if current is not None and line.startswith(('IFLC:','IFLC11_LIGHT','MAPLIGHT')):current['lines'].append(line)
         m=re.search(r'PROOF_VIEW shot=(\d+) time=(\d+) eye=([\d.,-]+) forward=([\d.,-]+)',line)
-        if m:proof[int(m[1])]={'time':int(m[2]),'eye':list(map(float,m[3].split(','))),'forward':list(map(float,m[4].split(',')))}
+        if m:
+            proof[int(m[1])]={'time':int(m[2]),'eye':list(map(float,m[3].split(','))),'forward':list(map(float,m[4].split(',')))}
+            current=None
         if current is not None and line.startswith('IFLC11_LIGHT '):current['lights'].append(dict(re.findall(r'(\w+)=([^\s]+)',line)))
     comparisons=[];faults=[];review=[]
     for view in views:
@@ -188,7 +192,7 @@ def capture(src,retail,out,mapname):
             d=np.abs(images[an]-images[bn]);metrics={'view':view['name'],'a':aa,'b':bb,'changed_pixels':int(np.any(d>0,axis=2).sum()),'mean_abs_rgb':float(d.mean()),'max_abs_rgb':int(d.max())};comparisons.append(metrics)
             if aa=='v1_shadow' and bb=='v11_shadow' and metrics['changed_pixels']==0:review.append(view['name']+': no correction response; inspect route/classification')
         selected=[s for s in these if s['name'] in images]
-        board=Image.new('RGB',(960,292*math.ceil(len(selected)/2)),(20,20,24));draw=ImageDraw.Draw(board)
+        board=Image.new('RGB',(960,292*max(1,math.ceil(len(selected)/2))),(20,20,24));draw=ImageDraw.Draw(board)
         for i,s in enumerate(selected):
             im=Image.open(out/(s['name']+'.png'));im.thumbnail((480,270));x=i%2*480;y=i//2*292;draw.text((x+8,y+4),s['variant'],fill='white');board.paste(im,(x,y+22))
         board.save(out/(view['name']+'_comparison.png'))
