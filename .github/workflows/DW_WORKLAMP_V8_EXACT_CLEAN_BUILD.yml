@@ -1,0 +1,129 @@
+name: DW Worklamp BSP Self-Shadow V8 exact 41408153237 isolated Win64
+on:
+  push:
+    branches: [fix/worklamp-selfshadow-v8-geometry-verified-from-41408153237]
+    paths:
+      - .github/workflows/DW_WORKLAMP_V8_EXACT_CLEAN_BUILD.yml
+      - integration/worklamp-source-local-v8/apply.py.gz.b64
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  v8-learned-worklamp-win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install source-compatible Windows compiler
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 git unzip file ca-certificates
+      - name: Verify immutable #41408153237 source archive and replay accepted PCF V1.4
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence build-binaries
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/13124382599/zip" > evidence/immutable-41408153237-source.zip
+          unzip -p evidence/immutable-41408153237-source.zip DW_FIRE_MOTION_EXACT_PRODUCTION_SOURCE.tar.gz > evidence/exact-source.tar.gz
+          echo 'bb520b4726232402a4cbd353a14274561d1676b8aa104666786a0213f220cb81  evidence/exact-source.tar.gz' | sha256sum -c -
+          unzip -p evidence/immutable-41408153237-source.zip DW_FIRE_MOTION_BASELINE_SOURCE_SHA256.json > evidence/immutable-source-manifest.json
+          git clone -q https://github.com/iortcw/iortcw.git source
+          git -C source checkout -q --detach 438e7d413b5f7277187c35b032eb0ef9093ae778
+          rm -rf source/SP/code
+          tar -xzf evidence/exact-source.tar.gz -C source
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,hashlib
+          m=json.loads(Path('evidence/immutable-source-manifest.json').read_text())
+          assert len(m['source_sha256'])==1647
+          assert m['base_run']==41297344177
+          for name,old in m['source_sha256'].items():
+              actual=hashlib.sha256((Path('source')/name).read_bytes()).hexdigest()
+              assert actual==old,(name,actual,old)
+          print('EXACT_414_BASELINE_PROVEN_BEFORE_ACCEPTED_V14_REPLAY',len(m['source_sha256']))
+          PY
+          python3 integration/fire-world-pcf4x4-v14/apply.py source --proof evidence/V14_REPLAY_PROOF.json
+          echo '0a17db572b5bf4ee9c5523a47dabf3302a36e23ec2e5fe0d0d3febb300fe7303  source/SP/code/rend2/tr_main.c' | sha256sum -c -
+          echo 'EXACT_41408153237_V14_RECONSTRUCTED'
+      - name: Apply shader-independent local triangle fix, preserve unrelated code SHA
+        run: |
+          set -Eeuo pipefail
+          echo '2f9ab3662d927bb0d64852f070ff7524602dd7f057ad3239494d34eb4d9515c5  integration/worklamp-source-local-v8/apply.py.gz.b64' | sha256sum -c -
+          base64 -d integration/worklamp-source-local-v8/apply.py.gz.b64 | gzip -d > evidence/apply_worklamp_v8.py
+          echo '368d3d5cce452b457b737a7d186aa3bd4f7a55b12f1badc42488313063d8a34b  evidence/apply_worklamp_v8.py' | sha256sum -c -
+          python3 -m py_compile evidence/apply_worklamp_v8.py
+          python3 evidence/apply_worklamp_v8.py source > evidence/WORKLAMP_V8_APPLY.txt
+          cat evidence/WORKLAMP_V8_APPLY.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          r=Path('source');m=json.loads(Path('evidence/immutable-source-manifest.json').read_text())
+          changed={p for p,h in m['source_sha256'].items() if hashlib.sha256((r/p).read_bytes()).hexdigest()!=h}
+          expected={'SP/code/rend2/tr_main.c','SP/code/rend2/tr_backend.c',
+                    'SP/code/rend2/tr_surface.c','SP/code/rend2/tr_local.h'}
+          assert changed==expected,(changed,expected)
+          shas={'tr_main.c':'3b7e0d05f8d119ef4d10d720913498df0aed06ed3c86d34cd5f4dc4312fa1b87',
+                'tr_local.h':'9f0ee9f131bf11b02aef2688fa544763069bb6866d862c3af2220809859c48a2',
+                'tr_backend.c':'e07f4a49cfa5dacfcd2b3e973f32a14b3715bfb48b61482849693534d0906677',
+                'tr_surface.c':'9bacd53505f0ec1c8a667c3d650033298b1d8dda7f3cf0edca3292130bb2963f'}
+          for name,sha in shas.items():
+              got=hashlib.sha256((r/'SP/code/rend2'/name).read_bytes()).hexdigest()
+              assert got==sha,(name,got,sha)
+          code=(r/'SP/code/rend2/tr_backend.c').read_text()
+          assert 'DW_Boss1CleanSkipSourceLocalCaster(drawSurf)' in code
+          assert 'DW_WorklampShouldTrimSourceShadow' in code
+          assert code.count('DW_WorklampRenderDrawSurface(drawSurf);')==2
+          assert 'DW_LampSkipSourceLocalCaster' not in code # no V6/V7 erroneous torch cage classifier
+          assert 'r_dwLampSelfShadowMode' not in code # no diagnostics in clean V8
+          assert 'textures/lights/light_m4' in code
+          assert 'models/mapobjects/light/ametal_m03dm' in code
+          print('EXACT_FOUR_FILES_PROVEN; BOSS1_AND_OTHER_EFFECTS_PRESERVED')
+          PY
+          git -C source diff --check
+          echo 'WORKLAMP_V8_SOURCE_SCOPE_AND_STATIC_GATES_PASS'
+      - name: Build-only registration of accepted extra DarkWolf GLSL strings
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          m=Path('source/SP/Makefile')
+          s=m.read_text()
+          anchor='  $(B)/rend2/glsl/tonemap_vp.o'
+          assert s.count(anchor)==1
+          names=['ssgi_fp','ssgi_vp','volumetriclocal_upscale_fp','volumetriclocal_fp',
+                 'volumetriclocal_vp','volumetricsun_fp','volumetricsun_vp',
+                 'dwfinal_fp','dwfinal_vp','bloom_fp','bloom_vp']
+          for name in names:
+              assert (Path('source/SP/code/rend2/glsl')/(name+'.glsl')).is_file(),name
+          extra=''.join('  $(B)/rend2/glsl/'+name+'.o \\\n' for name in names)
+          m.write_text(s.replace(anchor,extra+anchor,1))
+          print('ALL_ACCEPTED_CUSTOM_GLSL_STRING_OBJECTS_REGISTERED',len(names))
+          PY
+      - name: Compile corrected Windows x64 renderer, assert C code and binary integrity
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-SepBase-FourWeek-NoFire PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/V8_BUILD_WIN64.log 2>&1 || { tail -120 evidence/V8_BUILD_WIN64.log; exit 1; }
+          find source/SP/build -type f -name renderer_sp_rend2_x64.dll > evidence/RENDERER_PATH.txt
+          test "$(wc -l < evidence/RENDERER_PATH.txt)" -eq 1
+          cp "$(cat evidence/RENDERER_PATH.txt)" build-binaries/renderer_sp_rend2_x64.dll
+          file build-binaries/renderer_sp_rend2_x64.dll | grep -F PE32+
+          test "$(stat -c %s build-binaries/renderer_sp_rend2_x64.dll)" -gt 2800000
+          for feature in r_dwTextureFidelity r_dwCas r_dwLut r_staticPromoteGain; do
+            strings build-binaries/renderer_sp_rend2_x64.dll | grep -Fq "$feature"
+          done
+          strings build-binaries/renderer_sp_rend2_x64.dll | grep -Fq 'models/mapobjects/light/ametal_m03dm'
+          sha256sum build-binaries/renderer_sp_rend2_x64.dll > evidence/V8_RENDERER_SHA256.txt
+          echo 'WIN64_V8_COMPILED_GPU_RUNTIME_UNTESTED'
+      - name: Upload V8 internal candidate and inspectable source/binary proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: DW-Worklamp-V8-Internal-Candidate-Win64-GPU-NotVerified
+          path: |
+            build-binaries/renderer_sp_rend2_x64.dll
+            evidence/V14_REPLAY_PROOF.json
+            evidence/WORKLAMP_V8_APPLY.txt
+            evidence/V8_BUILD_WIN64.log
+            evidence/V8_RENDERER_SHA256.txt
+          retention-days: 30
