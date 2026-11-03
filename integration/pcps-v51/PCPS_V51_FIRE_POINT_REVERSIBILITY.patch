@@ -1,0 +1,84 @@
+--- a/SP/code/rend2/tr_main.c
++++ b/SP/code/rend2/tr_main.c
+@@ -3458,6 +3458,13 @@
+     if (r->sourceClass!=l->shadowSourceClass) return qfalse;
+     if(r->fixtureId>=0 && l->staticPromoteFixtureId>=0)
+         return (r->fixtureId==l->staticPromoteFixtureId) ? qtrue : qfalse;
++    /* PCPS V5.1: authored fire point-light radius is animated. A radius
++     * sample is NOT a stable identity. Keep strict origin + fire class and
++     * reject ambiguous live sources in DWPS_ApplyPendingMask as before.
++     * Leave non-fire and StaticPromote fixture matching unchanged. */
++    if(r->sourceClass==DWSHADOW_SOURCE_PERSISTENT_FIRE &&
++       r->fixtureId<0 && l->staticPromoteFixtureId<0)
++        return qtrue;
+     if (fabsf(r->radius-l->radius)>32.0f) return qfalse;
+     return qtrue;
+ }
+@@ -5233,8 +5240,14 @@
+             continue;
+         if(dwps5LinkedFixture>=0 && l->staticPromoteFixtureId!=dwps5LinkedFixture)
+             continue;
+-        if(DWPS4_DistSq(l->origin,dwps5LinkedOrigin)>2.25f ||
+-           fabsf(l->radius-dwps5LinkedRadius)>32.0f)continue;
++        if(DWPS4_DistSq(l->origin,dwps5LinkedOrigin)>2.25f)
++            continue;
++        /* Native persistent fire radius may pulse by >32 units between
++         * confirmation and the inverse command. Never lose this link solely
++         * because its illumination radius changed. */
++        if(l->shadowSourceClass!=DWSHADOW_SOURCE_PERSISTENT_FIRE &&
++           fabsf(l->radius-dwps5LinkedRadius)>32.0f)
++            continue;
+         found=i;matches++;
+     }
+     return matches==1?found:-1;
+@@ -5410,10 +5423,29 @@
+     off=(!Q_stricmp(ri.Cmd_Argv(0),"dw_ps_fire_point_off"))?1:0;
+     i=DWPS5_EnsurePointRule(&tr.refdef.dlights[live]);
+     if(i<0){ri.Printf(PRINT_WARNING,"PCPS V5: point rule unavailable\n");return;}
+-    dwpsRules[i].shadowOff=off?qtrue:qfalse;
+-    DWPS_PersistAfterChange();
+-    ri.Printf(PRINT_ALL,"PCPS V5: linked REAL DLight point-shadow %s; direct light unchanged; point slot eligibility %s\n",
+-      off?"OFF":"ON",off?"removed":"restored if budget allows");
++    /* Old V5 could create multiple saved rules for the SAME native flame
++     * whenever its radius pulsed >32 units. Reconcile all matching source
++     * rules, so an older OFF record cannot silently survive a later ON.
++     * No caster exclusions are removed; no other source is modified. */
++    {
++        const dlight_t *l=&tr.refdef.dlights[live];
++        int j,matched=0;
++        for(j=0;j<dwpsNumRules;j++)
++        {
++            if(!DWPS_SameSource(&dwpsRules[j],l))continue;
++            dwpsRules[j].shadowOff=off?qtrue:qfalse;
++            matched++;
++        }
++        if(matched<=0)
++        {
++            ri.Printf(PRINT_WARNING,"PCPS V5.1: no matching point shadow rule; not saved\n");
++            return;
++        }
++        DWPS_PersistAfterChange();
++        ri.Printf(PRINT_ALL,
++          "PCPS V5.1: linked fire DLight point shadow %s; rules reconciled=%d; current source index=%d; eligible=%s (slot assignment may change)\n",
++          off?"OFF":"ON",matched,live,off?"NO":"YES");
++    }
+ }
+ static void DWPS5_FireWorld_f(void)
+ {
+@@ -5687,6 +5719,17 @@
+            live,l->origin[0],l->origin[1],l->origin[2],l->shadowSourceClass,
+            l->staticPromoteFixtureId,l->radius,tr.refdef.dlightShadowSlot[live],
+            tr.refdef.dlightWorldSlot[live],l->worldOcclusion);
++        {
++          int pointRuleMatches=0,pointOffMatches=0,k;
++          for(k=0;k<dwpsNumRules;k++)
++            if(DWPS_SameSource(&dwpsRules[k],l))
++            {
++                pointRuleMatches++;
++                if(dwpsRules[k].shadowOff)pointOffMatches++;
++            }
++          DWPS5_APPEND("REAL POINT FIRE IDENTITY matchedRules=%d offRules=%d stableOriginClass=1 (animated radius ignored only for native persistent fire)\n",
++            pointRuleMatches,pointOffMatches);
++        }
+         DWPS5_APPEND("REAL RULES pointOff=%d pointCasterCount=%d worldOff=%d worldCasterCount=%d\n",
+           pointRule>=0 && dwpsRules[pointRule].shadowOff,
