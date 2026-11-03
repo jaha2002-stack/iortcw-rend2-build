@@ -1,0 +1,121 @@
+name: DW Lamp Point Shadow V7 corrected fixture body from 41408153237
+on:
+  push:
+    branches: [fix/lamp-housing-v7-source-local-from-41408153237]
+    paths:
+      - .github/workflows/DW_LAMP_SELF_SHADOW_V7_BUILD.yml
+      - integration/lamp-self-shadow-v7/apply.py
+      - integration/lamp-self-shadow-v6/payload.tar.gz.b64
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  win64-renderer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 85
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install exact Win64 compiler
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 git unzip file ca-certificates
+      - name: Verify immutable source from baseline run 41408153237
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence build-binaries
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/13124382599/zip" > evidence/baseline-source-artifact.zip
+          unzip -p evidence/baseline-source-artifact.zip DW_FIRE_MOTION_EXACT_PRODUCTION_SOURCE.tar.gz > evidence/exact-source.tar.gz
+          echo 'bb520b4726232402a4cbd353a14274561d1676b8aa104666786a0213f220cb81  evidence/exact-source.tar.gz' | sha256sum -c -
+          unzip -p evidence/baseline-source-artifact.zip DW_FIRE_MOTION_BASELINE_SOURCE_SHA256.json > evidence/original-source-hashes.json
+          git clone -q https://github.com/iortcw/iortcw.git source
+          git -C source checkout -q --detach 438e7d413b5f7277187c35b032eb0ef9093ae778
+          rm -rf source/SP/code
+          tar -xzf evidence/exact-source.tar.gz -C source
+          python3 - <<'PY'
+          import pathlib,hashlib,json
+          p=pathlib.Path('source')
+          snap=json.load(open('evidence/original-source-hashes.json'))
+          for path,expected in snap['source_sha256'].items():
+              assert hashlib.sha256((p/path).read_bytes()).hexdigest()==expected,path
+          assert snap['base_run']==41297344177
+          assert len(snap['source_sha256'])>=1500
+          print('EXACT_RUN_41408153237_CLEAN_SOURCE_HASHES_PASS',len(snap['source_sha256']))
+          PY
+          python3 integration/fire-world-pcf4x4-v14/apply.py source --proof evidence/V14_FIRE_PCF_REPLAY.json
+          echo '0a17db572b5bf4ee9c5523a47dabf3302a36e23ec2e5fe0d0d3febb300fe7303  source/SP/code/rend2/tr_main.c' | sha256sum -c -
+          echo 'V14_FIRE_WORLD_BASELINE_PRESERVED_PASS'
+      - name: Apply geometry-only universal candidate and prove source boundary
+        run: |
+          set -Eeuo pipefail
+          sha256sum integration/lamp-self-shadow-v6/payload.tar.gz.b64
+          base64 -d integration/lamp-self-shadow-v6/payload.tar.gz.b64 > evidence/v6-payload.tar.gz
+          echo '6d5d41f8428d5f93e349b6fc738d787770e499a74ba3a58939469ebd7ade87a8  evidence/v6-payload.tar.gz' | sha256sum -c -
+          tar -xzf evidence/v6-payload.tar.gz
+          python3 -m py_compile integration/lamp-self-shadow-v6/apply.py integration/lamp-self-shadow-v6/test.py
+          python3 integration/lamp-self-shadow-v6/apply.py source --check-only --proof evidence/V6_PREFLIGHT.json
+          python3 integration/lamp-self-shadow-v6/apply.py source --proof evidence/V6_SOURCE_PROOF.json
+          python3 integration/lamp-self-shadow-v6/test.py source
+          python3 -m py_compile integration/lamp-self-shadow-v7/apply.py
+          python3 integration/lamp-self-shadow-v7/apply.py source --check-only --proof evidence/V7_PREFLIGHT.json
+          python3 integration/lamp-self-shadow-v7/apply.py source --proof evidence/V7_SOURCE_PROOF.json
+          echo 'b69efa0f9305bc5271c95ac777c4efbb03c7a6d1f5f01fc5a8c363e4176e6f4b  source/SP/code/rend2/tr_backend.c' | sha256sum -c -
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('source')
+          snap=json.load(open('evidence/original-source-hashes.json'))['source_sha256']
+          changed={p for p,h in snap.items() if hashlib.sha256((root/p).read_bytes()).hexdigest()!=h}
+          expected={'SP/code/rend2/tr_main.c','SP/code/rend2/tr_backend.c','SP/code/rend2/tr_init.c','SP/code/rend2/tr_local.h'}
+          assert changed==expected,changed
+          print('V14_FIRE_PLUS_V6_SHADOW_EXACT_FOUR_FILE_SCOPE_PASS')
+          PY
+          test "$(grep -l 'DARKWOLF_SOURCE_LOCAL_RADIAL_LAMP_CASTER_V6_20261103' source/SP/code/rend2/tr_backend.c | wc -l)" -eq 1
+          git -C source diff --check
+          echo 'DW_LAMP_V6_STATIC_SOURCE_AND_GEOMETRY_PASS'
+      - name: Compile Win64 renderer with unchanged complete feature source
+        run: |
+          set -Eeuo pipefail
+          # The stock iortcw Makefile predates the accepted DarkWolf renderer GLSL.
+          # Restore build-only shader string object registrations; core code remains SHA-checked.
+          python3 - <<'PY'
+          from pathlib import Path
+          m=Path('source/SP/Makefile')
+          s=m.read_text()
+          anchor='  $(B)/rend2/glsl/tonemap_vp.o'
+          assert s.count(anchor)==1
+          extra=['ssgi_fp','ssgi_vp','volumetriclocal_upscale_fp','volumetriclocal_fp',
+                 'volumetriclocal_vp','volumetricsun_fp','volumetricsun_vp',
+                 'dwfinal_fp','dwfinal_vp','bloom_fp','bloom_vp']
+          for n in extra:
+              assert (Path('source/SP/code/rend2/glsl')/(n+'.glsl')).is_file(),n
+          lines=''.join('  $(B)/rend2/glsl/'+n+'.o \\\n' for n in extra)
+          s=s.replace(anchor,lines+anchor,1)
+          m.write_text(s)
+          print('DARKWOLF_GLSL_STRING_OBJECTS_REGISTERED',len(extra))
+          PY
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-SepBase-FourWeek-NoFire PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/V6_WIN64_BUILD.log 2>&1 || { tail -120 evidence/V6_WIN64_BUILD.log; exit 1; }
+          find source/SP/build -type f -name renderer_sp_rend2_x64.dll -print > evidence/RENDERER_PATH.txt
+          test "$(wc -l < evidence/RENDERER_PATH.txt)" -eq 1
+          cp "$(cat evidence/RENDERER_PATH.txt)" build-binaries/renderer_sp_rend2_x64.dll
+          file build-binaries/renderer_sp_rend2_x64.dll | grep -F PE32+
+          for sym in 'r_dwLampSelfShadowMode' 'r_dwTextureFidelity' 'r_dwLut' 'r_dwCas'; do
+            strings build-binaries/renderer_sp_rend2_x64.dll | grep -Fq "$sym"
+          done
+          sha256sum build-binaries/renderer_sp_rend2_x64.dll > evidence/V6_RENDERER_SHA256.txt
+          echo 'DARKWOLF_V7_SOURCE_LOCAL_HOUSING_WIN64_RENDERER_COMPILE_PASS'
+      - name: Upload V6 experimental Win64 DLL and source/test proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: DW-Lamp-PointShadow-V7-Experimental-Win64
+          path: |
+            build-binaries/renderer_sp_rend2_x64.dll
+            evidence/V6_SOURCE_PROOF.json
+            evidence/V7_SOURCE_PROOF.json
+            evidence/V7_PREFLIGHT.json
+            evidence/V6_RENDERER_SHA256.txt
+            evidence/V6_WIN64_BUILD.log
+            integration/lamp-self-shadow-v6/README_RU.md
+            integration/lamp-self-shadow-v6/DW_LAMP_V6_*.cfg
+          retention-days: 30
