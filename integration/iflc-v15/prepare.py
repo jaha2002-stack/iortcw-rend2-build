@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory() as td:
     with tarfile.open(tar,'r:gz') as t:t.extractall(exact,filter='data')
     if S.exists():shutil.rmtree(S)
     subprocess.run(['git','clone','--filter=blob:none','--no-checkout','https://github.com/iortcw/iortcw',str(S)],check=True,stdout=subprocess.DEVNULL)
-    subprocess.run(['git','-C',str(S),'checkout','438e7d413b5f7277187c35b032eb0ef9093ae778','--','SP'],check=True)
+    subprocess.run(['git','-C',str(S),'checkout','438e7d413b5f7277187c35b032eb0ef9093ae778'],check=True,stdout=subprocess.DEVNULL)
     shutil.rmtree(S/'SP/code')
     shutil.copytree(exact/'SP/code',S/'SP/code')
     shutil.copy2(exact/'SP/Makefile',S/'SP/Makefile')
