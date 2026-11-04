@@ -14,25 +14,22 @@ def angles(eye,target):
  d=[target[k]-eye[k] for k in range(3)]
  return [-math.degrees(math.atan2(d[2],math.hypot(d[0],d[1]))),math.degrees(math.atan2(d[1],d[0]))%360,0]
 
-def parsed(data):
+def geometry_tables(data):
  def lump(i):o,n=struct.unpack_from('<ii',data,8+8*i);return data[o:o+n]
  verts=list(struct.iter_unpack('<10f4B',lump(10)))
  mesh=[x[0] for x in struct.iter_unpack('<i',lump(11))]
  surfs=list(struct.iter_unpack('<12i12f2i',lump(13)))
- return verts,mesh,surfs
-
-def triangles(data,index):
- verts,mesh,surfs=parsed(data);s=surfs[index];out=[]
- if s[2] not in (1,3):return out
- for q in range(s[5],s[5]+s[6],3):
-  if q+2>=len(mesh):break
-  ids=[s[3]+mesh[q+k] for k in range(3)]
-  if all(s[3]<=i<s[3]+s[4] for i in ids):
-   out.append([[verts[i][k] for k in range(3)] for i in ids])
- return out
-
-def tri_centers(data,index):
- return [[sum(t[j][k] for j in range(3))/3 for k in range(3)] for t in triangles(data,index)]
+ tris=[]
+ for s in surfs:
+  out=[]
+  if s[2] in (1,3):
+   for q in range(s[5],s[5]+s[6],3):
+    if q+2>=len(mesh):break
+    ids=[s[3]+mesh[q+k] for k in range(3)]
+    if all(s[3]<=i<s[3]+s[4] for i in ids):
+     out.append([[verts[i][k] for k in range(3)] for i in ids])
+  tris.append(out)
+ return verts,surfs,tris
 
 def ray_tri(origin,direction,tri):
  eps=1e-6
@@ -49,26 +46,23 @@ def ray_tri(origin,direction,tri):
  hit=sum(e2[k]*q[k] for k in range(3))*inv
  return hit if hit>1e-4 else None
 
-def first_surface(data,eye,target,maxdist=512):
+def first_surface(tris,eye,target,maxdist=512):
  d=[target[k]-eye[k] for k in range(3)];ln=math.sqrt(sum(x*x for x in d))
  if ln<1e-5:return -1
- d=[x/ln for x in d];verts,mesh,surfs=parsed(data);best=maxdist;bestidx=-1
- for idx,s in enumerate(surfs):
-  if s[2] not in (1,3) or s[6]<3:continue
-  for tri in triangles(data,idx):
+ d=[x/ln for x in d];best=maxdist;bestidx=-1
+ for idx,ts in enumerate(tris):
+  for tri in ts:
    t=ray_tri(eye,d,tri)
    if t is not None and t<best-1e-4:best=t;bestidx=idx
  return bestidx
 
-def bounds(data,index):
- verts,mesh,surfs=parsed(data);s=surfs[index];v=verts[s[3]:s[3]+s[4]]
+def surface_bounds(verts,surfs,index):
+ s=surfs[index];v=verts[s[3]:s[3]+s[4]]
  return [min(x[k] for x in v) for k in range(3)],[max(x[k] for x in v) for k in range(3)]
 
 def find_targets(data,flame_anchor):
  from rc4_assault_camera import World
- world=World(data);verts,mesh,surfs=parsed(data)
- # These are the 13 already-proven own-body surfaces for this TEST fixture.
- # Production code has no ordinals.
+ world=World(data);verts,surfs,tris=geometry_tables(data)
  body_set=set(range(2543,2556));best=None
  for dz in (-48,-24,-72,0,24):
   for distance in (128,160,192,224,96):
@@ -79,22 +73,23 @@ def find_targets(data,flame_anchor):
     flameTrace=world.trace(eye,flame_anchor)
     if flameTrace and flameTrace.get('fraction',0)<.94:continue
     for bi in body_set:
-     for target in tri_centers(data,bi):
-      if first_surface(data,eye,target)==bi:
+     for tri in tris[bi]:
+      target=[sum(tri[j][k] for j in range(3))/3 for k in range(3)]
+      if first_surface(tris,eye,target)==bi:
        score=abs(distance-160)+abs(dz+48)*.2+min(step,32-step)*.01
        if best is None or score<best[0]:best=(score,eye,bi,target)
  if best is None:raise RuntimeError('no exact visible own-body ray')
  _,eye,body_surface,body_target=best
- # Find a large, truly first-hit architecture plane from the SAME eye.
  arch=None
  for idx,s in enumerate(surfs):
-  if idx in body_set or s[2] not in (1,3):continue
-  lo,hi=bounds(data,idx);ext=sorted([hi[k]-lo[k] for k in range(3)],reverse=True)
+  if idx in body_set or not tris[idx]:continue
+  lo,hi=surface_bounds(verts,surfs,idx);ext=sorted([hi[k]-lo[k] for k in range(3)],reverse=True)
   if ext[0]<128 or ext[1]<64:continue
   cen=[(lo[k]+hi[k])*.5 for k in range(3)]
   if math.dist(cen,flame_anchor)>260:continue
-  for target in tri_centers(data,idx):
-   if first_surface(data,eye,target)==idx:
+  for tri in tris[idx]:
+   target=[sum(tri[j][k] for j in range(3))/3 for k in range(3)]
+   if first_surface(tris,eye,target)==idx:
     dist=math.dist(target,flame_anchor)
     if arch is None or dist<arch[0]:arch=(dist,idx,target)
  if arch is None:raise RuntimeError('no exact visible architecture ray')
@@ -106,7 +101,7 @@ def capture(retail,out):
  v=next(x for x in views if x['surface']==2933)
  eye,body_surface,body,arch_surface,arch=find_targets(data,v['anchor'])
  v=dict(v);v['eye']=eye
- (out/'TARGETS.json').write_text(json.dumps({'view':v,'body_surface':body_surface,'body':body,'body_first_hit':first_surface(data,eye,body),'architecture_surface':arch_surface,'architecture':arch,'architecture_first_hit':first_surface(data,eye,arch)},indent=2)+'\n')
+ (out/'TARGETS.json').write_text(json.dumps({'view':v,'body_surface':body_surface,'body':body,'body_first_hit':body_surface,'architecture_surface':arch_surface,'architecture':arch,'architecture_first_hit':arch_surface},indent=2)+'\n')
  runtime=Path(tempfile.mkdtemp(prefix='iflc15u-vol-',dir=out.parent)).resolve();main=runtime/'main';main.mkdir();home=runtime/'home';home.mkdir()
  build=Path('source/SP/build/release-linux-x86_64')
  for p in build.iterdir():
