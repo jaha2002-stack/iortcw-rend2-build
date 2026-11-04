@@ -1,0 +1,47 @@
+name: DW IFLC V1.2 Castle opening-room shadow geometry proof
+on:
+  push:
+    branches: [fix/iflc-v12-crypt1-torch-castle-from-41758201175]
+    paths: ['.github/workflows/DW_IFLC_V12_CASTLE_OPENING.yml', 'integration/iflc-v12-castle-camera/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  castle-opening:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          mkdir -p evidence
+          python3 integration/iflc-v12/prepare.py
+          python3 integration/iflc-v12/apply.py source evidence
+          python3 integration/iflc-v12/instrument.py source evidence
+          make -C source/SP -j2 release BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/IFLC12_NATIVE_BUILD.log 2>&1 || { tail -100 evidence/IFLC12_NATIVE_BUILD.log; exit 1; }
+      - name: Restore licensed game resources
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail_main"
+          printf '%s\n' "$retail_main" > .retail_main
+      - name: Reproduce opening-room view and identify actual bottom projection
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v12-castle-camera/review.py source "$(cat .retail_main)" evidence/runtime | tee evidence/IFLC12_OPENING_REVIEW.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-IFLC-V12-Castle-Opening-Geometry-Proof
+          path: |
+            evidence/IFLC12*.json
+            evidence/IFLC12*.log
+            evidence/IFLC12*.patch
+            evidence/runtime/**
+          retention-days: 60
