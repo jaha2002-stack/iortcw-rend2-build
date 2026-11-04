@@ -1,0 +1,103 @@
+name: DW IFLC V1.2 reported torch and Castle geometry review
+on:
+  push:
+    branches: [fix/iflc-v12-crypt1-torch-castle-from-41758201175]
+    paths: ['.github/workflows/DW_IFLC_V12_GEOMETRY_REVIEW.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  geometry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Read protected game data
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail_main"
+          printf '%s\n' "$retail_main" > .retail_main
+      - name: Inspect source geometry and authored light identities
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence
+          python3 - <<'PY'
+          import hashlib,json,math,re,struct,zipfile
+          from pathlib import Path
+          maps={};scripts={};names=[]
+          for p in sorted(Path(Path('.retail_main').read_text().strip()).iterdir()):
+              if p.suffix.lower()!='.pk3':continue
+              with zipfile.ZipFile(p) as z:
+                  for n in z.namelist():
+                      if n.lower().endswith('.bsp'):names.append(n)
+                      if n.lower() in ('maps/crypt1.bsp','maps/crypt2.bsp','maps/castle.bsp'):maps[Path(n).stem.lower()]=z.read(n)
+                      if n.lower().endswith('.shader'):scripts[n]=z.read(n).decode('latin1')
+          assert 'castle' in maps, ('Requested Castle map not found',names)
+          report={}
+          for name,data in maps.items():
+              def lump(i):
+                  o,n=struct.unpack_from('<ii',data,8+8*i);return data[o:o+n]
+              shaders=[(s.split(b'\0')[0].decode('latin1'),sf,cf) for s,sf,cf in struct.iter_unpack('<64sii',lump(1))]
+              verts=list(struct.iter_unpack('<10f4B',lump(10)));indices=[a[0] for a in struct.iter_unpack('<i',lump(11))];surfaces=list(struct.iter_unpack('<12i12f2i',lump(13)))
+              first,count=struct.unpack_from('<6f4i',lump(7))[6:8]
+              entities=[dict(re.findall(r'"([^"\n]+)"\s*"([^"\n]*)"',x)) for x in re.findall(r'\{([^{}]*)\}',lump(0).decode('latin1'))]
+              starts=[e for e in entities if e.get('classname')=='info_player_start'];start=list(map(float,starts[0]['origin'].split())) if starts else [0,0,0]
+              def record(i,geometry=False):
+                  s=surfaces[i];v=[list(a[:3]) for a in verts[s[3]:s[3]+s[4]]];sh,sf,cf=shaders[s[0]]
+                  if not v:return None
+                  o={'surface':i,'shader':sh,'surface_flags':sf,'content_flags':cf,'type':s[2],'center':[sum(a[k] for a in v)/len(v) for k in range(3)],'bounds':[[min(a[k] for a in v) for k in range(3)],[max(a[k] for a in v) for k in range(3)]],'numverts':len(v)}
+                  if geometry:o.update(vertices=v,indexes=indices[s[5]:s[5]+s[6]])
+                  return o
+              flames=[];lampfaces=[]
+              for i in range(first,first+count):
+                  shader=shaders[surfaces[i][0]][0].lower()
+                  if any(x in shader for x in ('flame','torch_ember')):
+                      r=record(i)
+                      if r:flames.append(r)
+                  elif any(x in shader for x in ('lamp','lantern','lights/')):
+                      r=record(i)
+                      if r:lampfaces.append(r)
+              targets=[]
+              if name=='crypt1':targets=[record(2933,True),record(2992,True)]
+              if name=='castle':
+                  for f in sorted(flames,key=lambda x:math.dist(start,x['center'])):
+                      if any(math.dist(f['center'],a['center'])<80 for a in targets):continue
+                      targets.append(record(f['surface'],True))
+                      if len(targets)==6:break
+              for target in targets:
+                  nearby=[];o=target['center']
+                  for i in range(first,first+count):
+                      r=record(i)
+                      if not r:continue
+                      lo,hi=r['bounds'];distance=math.sqrt(sum(max(lo[k]-o[k],o[k]-hi[k],0)**2 for k in range(3)))
+                      if distance<=100 and r['numverts']<=128:
+                          g=record(i,True);g['distance_aabb']=distance;nearby.append(g)
+                  target['nearby_geometry']=nearby
+              emitters=[]
+              for i,e in enumerate(entities):
+                  if e.get('classname') in ('dlight','light','lightJunior','corona') or e.get('classname')=='target_speaker' and 'fire' in e.get('noise','').lower():
+                      emitters.append({'ordinal':i,'fields':{k:e[k] for k in ('classname','origin','target','targetname','light','_color','color','noise','style','spawnflags') if k in e}})
+              used={g['shader'] for t in targets for g in t['nearby_geometry']}
+              blocks={}
+              for material in used:
+                  for file,text in scripts.items():
+                      m=re.search(r'(?m)^\s*'+re.escape(material)+r'\s*\{',text)
+                      if not m:continue
+                      begin=text.index('{',m.start());end=begin+1;depth=1
+                      while end<len(text) and depth:
+                          depth+=(text[end]=='{')-(text[end]=='}');end+=1
+                      blocks[material]={'file':file,'definition':text[m.start():end]}
+              report[name]={'bsp_sha256':hashlib.sha256(data).hexdigest(),'world_surfaces':count,'start_entities':starts,'flames':flames,'lampfaces':lampfaces,'authored_emitters':emitters,'targets':targets,'materials':blocks}
+              print(name,'start',start,'flame surfaces',len(flames),'lamp surfaces',len(lampfaces),'targets',[(t['surface'],t['center'],len(t['nearby_geometry'])) for t in targets])
+          Path('evidence/IFLC12_REPORTED_GEOMETRY.json').write_text(json.dumps(report,indent=2)+'\n')
+          PY
+          git archive --format=tar.gz -o evidence/IFLC12_BUILD_KIT.tar.gz HEAD integration/iflc-v1 integration/iflc-v11 integration/iflc-clean-production testlab/scripts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V12-Reported-Geometry-and-Code
+          path: evidence/*
+          retention-days: 60
