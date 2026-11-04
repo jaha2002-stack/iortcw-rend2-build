@@ -1,0 +1,130 @@
+name: DW IFLC V1.5 exact body self-shadow
+on:
+  push:
+    branches: [fix/iflc-v15-exact-body-selfshadow]
+    paths:
+      - '.github/workflows/DW_IFLC_V15_EXACT_BODY.yml'
+      - 'integration/iflc-v15/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-iflc-v15-exact-body-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Restore exact V1.4, apply V1.5 and run inherited checks
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 integration/iflc-v15/prepare.py
+          python3 integration/iflc-v15/apply.py source evidence
+          python3 integration/iflc-v15/run_tests.py source evidence | tee evidence/TESTS.log
+      - name: Build clean Windows V1.5 before any instrumentation
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-IFLC-V15-ExactBody PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/BUILD.log 2>&1 || { tail -120 evidence/BUILD.log; exit 1; }
+          python3 integration/iflc-v15/package.py | tee evidence/PACKAGE.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V15-ExactBody-Win64-TEST
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 60
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V15-Exact-Source
+          path: |
+            dist/*.tar.gz
+            evidence/IFLC15*.json
+            integration/iflc-v15/IFLC15.patch
+          retention-days: 60
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-IFLC-V15-Build-Checks
+          path: evidence/**
+          retention-days: 60
+  native900:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build separately instrumented V1.5 game test
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/iflc-v15/prepare.py
+          python3 integration/iflc-v15/apply.py source evidence
+          python3 integration/iflc-v14/verify.py instrument
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD.log 2>&1 || { tail -120 evidence/BUILD.log; exit 1; }
+      - name: Restore licensed RTCW assets
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"; printf '%s\n' "$retail" > .retail
+      - name: Select native 900, bind exact hanging-body part, reject architecture, save/reload
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v15/runtime.py "$(cat .retail)" evidence/runtime | tee evidence/RUNTIME.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-IFLC-V15-Crypt1-Native900-ExactBody
+          path: |
+            evidence/BUILD.log
+            evidence/RUNTIME.log
+            evidence/runtime/**
+          retention-days: 60
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        map: [crypt1, crypt2, castle]
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build V1.5 with proof camera only
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/iflc-v15/prepare.py
+          python3 integration/iflc-v15/apply.py source evidence
+          python3 integration/iflc-v14/verify.py instrument
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD.log 2>&1 || { tail -120 evidence/BUILD.log; exit 1; }
+      - name: Restore licensed RTCW assets
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"; printf '%s\n' "$retail" > .retail
+      - name: Re-run accepted V1.4 own-shadow roundtrip
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v14/self_runtime.py "$(cat .retail)" evidence/runtime ${{ matrix.map }} | tee evidence/REGRESSION.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-IFLC-V15-${{ matrix.map }}-Regression
+          path: |
+            evidence/BUILD.log
+            evidence/REGRESSION.log
+            evidence/runtime/**
+          retention-days: 60
