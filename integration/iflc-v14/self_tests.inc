@@ -1,9 +1,27 @@
-/* Execute actual self-policy functions in transformed accepted fixture scenes. */
+/* Actual own-policy tests, including T junctions that failed the first game run. */
+static void TestSelfContact(void)
+{
+ srfBspSurface_t a,b;srfVert_t av[4],bv[4];glIndex_t ix[6]={0,1,2,0,2,3};int i;
+ const float roof[4][3]={{0,0,0},{10,0,0},{10,10,0},{0,10,0}};
+ const float bar[4][3]={{4,4,-10},{6,4,-10},{6,4,0},{4,4,0}};
+ const float corner[4][3]={{10,10,0},{12,10,0},{12,10,-2},{10,10,-2}};
+ memset(&a,0,sizeof(a));memset(&b,0,sizeof(b));memset(av,0,sizeof(av));memset(bv,0,sizeof(bv));
+ a.numVerts=b.numVerts=4;a.numIndexes=b.numIndexes=6;a.indexes=b.indexes=ix;a.verts=av;b.verts=bv;
+ for(i=0;i<4;++i){VectorCopy(roof[i],av[i].xyz);VectorCopy(bar[i],bv[i].xyz);}
+ CHECK(!R_IFLC_FixtureAdjacent(&a,&b),"T junction lacks matching edge vertices");
+ CHECK(R_IFLC_SelfContact(&a,&b),"bar terminates inside actual housing roof");
+ CHECK(R_IFLC_SelfContact(&b,&a),"contact is symmetric");
+ for(i=0;i<4;++i)bv[i].xyz[2]+=.3f;
+ CHECK(!R_IFLC_SelfContact(&a,&b),"nearby bounds alone do not join body");
+ for(i=0;i<4;++i)VectorCopy(corner[i],bv[i].xyz);
+ CHECK(!R_IFLC_SelfContact(&a,&b),"single shared corner cannot join unrelated object");
+}
 static void TestSelfRule(const dlight_t *original, msurface_t *s)
 {
     dlight_t dl=*original,other=*original; iflcProfile_t *p;int f,i,count;const char *why;
     iflcProfile_t parsed[IFLC_MAX_PROFILES];char text[512],path[128];testFile_t *file;
     int oldSort=s[0].shader->sort;s[0].shader->sort=SS_BLEND0;
+    TestSelfContact();
     Q_strncpyz(s_iflcMap,testWorld.baseName,sizeof(s_iflcMap));
     Com_sprintf(path,sizeof(path),"firelights/%s.iflc",s_iflcMap);
     memset(s_iflcProfiles,0,sizeof(s_iflcProfiles));R_IFLC_ResetSelfFixtures();
