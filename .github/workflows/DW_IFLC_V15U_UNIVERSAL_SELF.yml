@@ -1,0 +1,177 @@
+name: DW IFLC V1.5 Universal manual self-shadow
+on:
+  push:
+    branches: [fix/iflc-v15-universal-manual-selfshadow]
+    paths:
+      - '.github/workflows/DW_IFLC_V15U_UNIVERSAL_SELF.yml'
+      - 'integration/iflc-v15u/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-iflc-v15u-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Restore exact successful V1.5 and apply Universal manual mode
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 integration/iflc-v15/prepare.py
+          python3 integration/iflc-v15/apply.py source evidence
+          python3 integration/iflc-v15u/apply.py source evidence
+          python3 integration/iflc-v15u/run_tests.py source evidence | tee evidence/TESTS.log
+      - name: Build clean Windows DLL before any test instrumentation
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-IFLC-V15U PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/BUILD.log 2>&1 || { tail -160 evidence/BUILD.log; exit 1; }
+          python3 integration/iflc-v15u/package.py | tee evidence/PACKAGE.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V15U-Universal-Win64-TEST
+          path: |
+            dist/DarkWolf_IFLC_V1.5_Universal_ManualSelfShadow_Win64_TEST.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 60
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V15U-Exact-Source
+          path: |
+            dist/IFLC_V15U_EXACT_SOURCE.tar.gz
+            evidence/IFLC15U_SOURCE_PROOF.json
+            evidence/IFLC15U_SOURCE_SHA256.json
+            evidence/IFLC15U_STATIC_SAFETY.json
+          retention-days: 60
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-IFLC-V15U-Build-Checks
+          path: evidence/**
+          retention-days: 60
+
+  no-flame-bounds-native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build instrumented Universal with flame-bounds deliberately unavailable
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/iflc-v15/prepare.py
+          python3 integration/iflc-v15/apply.py source evidence
+          python3 integration/iflc-v15u/apply.py source evidence
+          python3 integration/iflc-v15u/instrument_no_flame_bounds.py source
+          python3 integration/iflc-v14/verify.py instrument
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD.log 2>&1 || { tail -160 evidence/BUILD.log; exit 1; }
+      - name: Restore licensed RTCW assets
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"; printf '%s\n' "$retail" > .retail
+      - name: Prove native owner manual body selection without any usable flame bounds
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v15/runtime.py "$(cat .retail)" evidence/runtime | tee evidence/RUNTIME.log
+          grep -q 'IFLC V1.5 Universal: bound exact body surface' evidence/runtime/console-0.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-IFLC-V15U-Native-NoFlameBounds-Proof
+          path: evidence/**
+          retention-days: 60
+
+  volume-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build Universal VOLUME_ONLY runtime
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/iflc-v15/prepare.py
+          python3 integration/iflc-v15/apply.py source evidence
+          python3 integration/iflc-v15u/apply.py source evidence
+          python3 integration/iflc-v14/verify.py instrument
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD.log 2>&1 || { tail -160 evidence/BUILD.log; exit 1; }
+          cp integration/iflc-v15/runtime.py evidence/runtime_surface.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('evidence/runtime_surface.py');s=p.read_text()
+          s=s.replace('OWNER=[-928.0,-64.0,256.0]','OWNER=[273.0,1312.5,122.0]')
+          s=s.replace("'key=native:900 '","'route=VOLUME_ONLY '")
+          p.write_text(s)
+          PY
+      - name: Restore licensed RTCW assets
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"; printf '%s\n' "$retail" > .retail
+      - name: Exercise same manual workflow on a VOLUME_ONLY fire owner
+        run: |
+          set -Eeuo pipefail
+          python3 evidence/runtime_surface.py "$(cat .retail)" evidence/runtime | tee evidence/RUNTIME.log
+          grep -q 'route=VOLUME_ONLY' evidence/runtime/console-0.log
+          grep -q 'IFLC V1.5 Universal: bound exact body surface' evidence/runtime/console-0.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-IFLC-V15U-VolumeOnly-Proof
+          path: evidence/**
+          retention-days: 60
+
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        map: [crypt1, crypt2, castle]
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build Universal plus proof camera
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/iflc-v15/prepare.py
+          python3 integration/iflc-v15/apply.py source evidence
+          python3 integration/iflc-v15u/apply.py source evidence
+          python3 integration/iflc-v14/verify.py instrument
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD.log 2>&1 || { tail -160 evidence/BUILD.log; exit 1; }
+      - name: Restore licensed RTCW assets
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"; printf '%s\n' "$retail" > .retail
+      - name: Re-run accepted V1.4 self-shadow state roundtrip
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v14/self_runtime.py "$(cat .retail)" evidence/runtime ${{ matrix.map }} | tee evidence/REGRESSION.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-IFLC-V15U-${{ matrix.map }}-Regression
+          path: evidence/**
+          retention-days: 60
