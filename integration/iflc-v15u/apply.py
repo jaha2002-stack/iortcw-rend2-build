@@ -24,13 +24,6 @@ new='''    vec3_t anchor,seedLo,seedHi,groupLo,groupHi;int vertices=0;
 '''
 assert s.count(old)==1,'manual builder anchor block changed unexpectedly'
 s=s.replace(old,new)
-old='''    if(!R_IFLC_FixtureOpaque(s) || s->shader->numDeforms || s->shader->polygonOffset || R_IFLC_SelfIsFlameSurface(ownerIndex,index))return qfalse;
-'''
-new='''    if(!R_IFLC_FixtureOpaque(s) || s->shader->numDeforms || s->shader->polygonOffset ||
-       R_IFLC_SelfIsFlameSurface(ownerIndex,index) || R_IFLC_FlameShader(s->shader))return qfalse;
-'''
-assert s.count(old)==1,'manual surface flame guard changed unexpectedly'
-s=s.replace(old,new)
 p.write_text(s)
 
 p=src/'SP/code/rend2/tr_iflc.inc'
@@ -73,7 +66,8 @@ proof={
  'auto_requires_flame_bounds':True,
  'supported_owner_kinds':['NATIVE_FIRE','PROMOTED_FIRE','VOLUME_ONLY'],
  'architecture_guards_preserved':True,
- 'global_flame_shader_guard_added':True,
+ 'owner_mapped_flame_surfaces_protected':True,
+ 'opaque_emissive_body_materials_allowed':True,
  'glsl_unchanged':True,
  'electric_fixture_unchanged':True,
 }
