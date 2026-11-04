@@ -1,0 +1,124 @@
+name: DW IFLC V1.3 Win64 candidate and final IFLC regressions
+on:
+  push:
+    branches: [test/iflc-v13-win64-review-from-41772470237]
+    paths:
+      - '.github/workflows/DW_IFLC_V13_WIN64_TEST.yml'
+      - 'integration/iflc-v13-release/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-iflc13-win64-review-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install Windows toolchain
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          mkdir -p evidence dist
+      - name: Restore exact V1.2 and apply visually exercised scoped fixes
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v13/refine_causal.py
+          python3 integration/iflc-v13/prepare.py
+          python3 integration/iflc-v13/apply_electric.py source evidence
+          python3 integration/iflc-v13-release/apply.py source evidence
+          python3 -m py_compile integration/iflc-v13-release/*.py
+          git -C source diff --check
+      - name: Execute inherited IFLC and new actual C guard tests
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v13-release/run_tests.py source evidence | tee evidence/IFLC13_RELEASE_TESTS.log
+      - name: Build and verify clean Windows candidate without diagnostic hooks
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-IFLC-V13-41772470237 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/IFLC13_WIN64_BUILD.log 2>&1 || { tail -100 evidence/IFLC13_WIN64_BUILD.log; exit 1; }
+          python3 integration/iflc-v13-release/package.py | tee evidence/IFLC13_PACKAGE.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V13-Full-Win64-TEST-from-41772470237
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 60
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V13-Exact-Source
+          path: |
+            dist/*.tar.gz
+            evidence/IFLC13*PROOF.json
+            evidence/IFLC13*SHA256.json
+            evidence/IFLC13*.patch
+          if-no-files-found: error
+          retention-days: 60
+      - name: Upload complete build and verification logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V13-Win64-Checks
+          path: |
+            evidence/IFLC13*.json
+            evidence/IFLC13*.log
+            evidence/IFLC12_CPU_TESTS.json
+            evidence/guard_tests/**
+            evidence/run_backend_tests/**
+            evidence/run_shadow_tests/**
+          retention-days: 60
+  regressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        map: [crypt1, crypt2, castle]
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install native TestLab
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          mkdir -p evidence
+      - name: Prepare exact final candidate before isolated regression hooks
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v13/refine_causal.py
+          python3 integration/iflc-v13/prepare.py
+          python3 integration/iflc-v13/apply_electric.py source evidence
+          python3 integration/iflc-v13-release/apply.py source evidence
+          python3 integration/iflc-v12/instrument.py source evidence
+          make -C source/SP -j2 release BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/IFLC13_NATIVE_BUILD.log 2>&1 || { tail -100 evidence/IFLC13_NATIVE_BUILD.log; exit 1; }
+      - name: Restore protected licensed resources
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"
+          printf '%s\n' "$retail" > .retail
+      - name: Verify IFLC fixtures reset reload and Castle native light on final code
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v12/runtime.py source "$(cat .retail)" evidence/runtime ${{ matrix.map }} | tee evidence/IFLC13_REGRESSION.log
+      - name: Upload runtime evidence without retail data or test executables
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V13-Final-${{ matrix.map }}-Regression
+          path: |
+            evidence/IFLC13*.log
+            evidence/IFLC13*.json
+            evidence/IFLC12_NATIVE_HOOKS.*
+            evidence/runtime/**
+          retention-days: 60
