@@ -1,0 +1,99 @@
+name: DW IFLC V1.2 Crypt1 shaft fix and Castle lantern assessment
+on:
+  push:
+    branches: [fix/iflc-v12-crypt1-torch-castle-from-41758201175]
+    paths:
+      - '.github/workflows/DW_IFLC_V12_BUILD_VERIFY.yml'
+      - 'integration/iflc-v12/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-iflc12-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        map: [crypt1, crypt2, castle]
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install release and native verification toolchains
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          mkdir -p evidence dist
+      - name: Restore exact source from production 41758201175 and apply scoped fix
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile integration/iflc-v12/*.py
+          python3 integration/iflc-v12/prepare.py
+          python3 integration/iflc-v12/apply.py source evidence
+          git -C source diff --check
+      - name: Execute real production C-code regression tests
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v12/run_tests.py source evidence | tee evidence/IFLC12_CPU.log
+      - name: Build clean Windows DLL and full candidate before any test instrumentation
+        if: matrix.map == 'crypt1'
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-IFLC-V12-41758201175 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/IFLC12_WIN64_BUILD.log 2>&1 || { tail -100 evidence/IFLC12_WIN64_BUILD.log; exit 1; }
+          python3 integration/iflc-v12/package.py
+      - name: Upload complete Windows test candidate
+        if: matrix.map == 'crypt1'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V12-Full-Win64-TEST-from-41758201175
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 60
+      - name: Upload exact production source and code proofs
+        if: matrix.map == 'crypt1'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V12-Exact-Source
+          path: |
+            dist/*.tar.gz
+            evidence/IFLC12_SOURCE*.json
+            evidence/IFLC12_BASE_SHA256.json
+            evidence/IFLC12.patch
+          retention-days: 60
+      - name: Build disposable native comparison and Castle causal harness
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v12/instrument.py source evidence
+          make -C source/SP -j2 release BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/IFLC12_NATIVE_BUILD.log 2>&1 || { tail -100 evidence/IFLC12_NATIVE_BUILD.log; exit 1; }
+      - name: Restore protected licensed game resources
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail_main"
+          printf '%s\n' "$retail_main" > .iflc12_retail
+      - name: Reproduce actual scenes and verify the commanded state
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v12/runtime.py source "$(cat .iflc12_retail)" evidence/runtime ${{ matrix.map }} | tee evidence/IFLC12_RUNTIME.log
+      - name: Upload evidence even if a test fails
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V12-${{ matrix.map }}-Evidence
+          path: |
+            evidence/IFLC12*.json
+            evidence/IFLC12*.log
+            evidence/IFLC12*.patch
+            evidence/runtime/**
+            evidence/run_backend_tests/**
+            evidence/run_shadow_tests/**
+          retention-days: 60
