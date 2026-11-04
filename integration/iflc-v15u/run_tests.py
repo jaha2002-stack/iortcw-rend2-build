@@ -13,7 +13,7 @@ checks={
  'manual_no_owner_kind_gate':all(x not in manual for x in ('IFLC_NATIVE','IFLC_PROMOTED','IFLC_SURFACE')),
  'selfpick_no_flame_bounds':'R_IFLC_SelfBounds' not in selfpick,
  'auto_still_flame_bounds':'if(!R_IFLC_SelfBounds(ownerIndex,flameLo,flameHi,anchor)) return qfalse;' in selfsrc,
- 'mapped_flame_surfaces_protected':'R_IFLC_SelfIsFlameSurface(ownerIndex,index)' in selfsrc,
+ 'manual_solid_hit_not_catalog':'R_IFLC_SelfIsFlameSurface' not in selfsrc,
  'opaque_emissive_names_not_blanket_rejected':'R_IFLC_FlameShader(s->shader)' not in selfsrc[selfsrc.index('static qboolean R_IFLC_ManualSurfaceBasic'):selfsrc.index('static qboolean R_IFLC_ManualSeedSafe')],
  'architecture_guard':'R_IFLC_SelfSamePlaneAsLargeArchitecture' in selfsrc,
  'contact_flood':'R_IFLC_SelfContact(a,b)' in manual,
