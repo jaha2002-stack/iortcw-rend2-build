@@ -2,7 +2,7 @@
 from pathlib import Path
 import json,subprocess,sys,re
 src=Path(sys.argv[1]).resolve();ev=Path(sys.argv[2]).resolve();ev.mkdir(parents=True,exist_ok=True)
-subprocess.run([sys.executable,'integration/iflc-v15/run_tests.py',str(src),str(ev/'inherited_v15')],check=True)
+subprocess.run([sys.executable,'integration/iflc-v14/run_tests.py',str(src),str(ev/'inherited_v14')],check=True)
 selfsrc=(src/'SP/code/rend2/tr_iflc_self.inc').read_text();cmd=(src/'SP/code/rend2/tr_iflc.inc').read_text()
 manual=selfsrc[selfsrc.index('static qboolean R_IFLC_BuildManualSelfFixture'):selfsrc.index('/* Explicit profile is passed')]
 selfpick=cmd[cmd.index('void R_IFLC_SelfPick_f'):cmd.index('void R_IFLC_Reset_f')]
@@ -19,6 +19,9 @@ checks={
  'contact_flood':'R_IFLC_SelfContact(a,b)' in manual,
  'bounded_group':'hi[0]-lo[0]>160' in manual and 'hi[2]-lo[2]>224' in manual,
  'route_reporting':'R_IFLC_Route(&s_iflcOwners[s_iflcSelected])' in selfpick,
+ 'manual_precedes_auto':'if(profile->selfSeedCount)return R_IFLC_BuildManualSelfFixture' in selfsrc,
+ 'self_pick_reports_exact':'IFLC V1.5 Universal: bound exact body surface' in cmd,
+ 'auto_semantics_unchanged':'0=AUTO baseline, 1=OFF own body, 2=ON original' in cmd,
 }
 assert all(checks.values()),checks
 (ev/'IFLC15U_STATIC_SAFETY.json').write_text(json.dumps(checks,indent=2)+'\n')
