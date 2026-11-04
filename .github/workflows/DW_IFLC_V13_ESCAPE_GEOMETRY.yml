@@ -1,0 +1,61 @@
+name: DW IFLC V1.3 Escape1 ceiling lamp geometry
+on:
+  push:
+    branches: [fix/iflc-v13-electric-fire-containment-from-41772470237]
+    paths: ['.github/workflows/DW_IFLC_V13_ESCAPE_GEOMETRY.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  geometry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Read protected geometry
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          printf '%s\n' "$retail" > .retail
+      - name: Inspect compact lamps and associated entities
+        run: |
+          mkdir -p evidence
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,struct,json,re,math,sys
+          sys.path.insert(0,'testlab/scripts')
+          from rc4_assault_camera import World
+          data=None
+          for p in sorted(Path(Path('.retail').read_text().strip()).iterdir()):
+           if p.suffix.lower()!='.pk3':continue
+           with zipfile.ZipFile(p) as z:
+            for n in z.namelist():
+             if n.lower()=='maps/escape1.bsp':data=z.read(n)
+          assert data
+          w=World(data)
+          def lump(i):o,n=struct.unpack_from('<ii',data,8+i*8);return data[o:o+n]
+          vv=list(struct.iter_unpack('<10f4B',lump(10)));ss=list(struct.iter_unpack('<12i12f2i',lump(13)));ii=[x[0] for x in struct.iter_unpack('<i',lump(11))];first,count=struct.unpack_from('<6f4i',lump(7))[6:8]
+          rows=[];meta=[]
+          for index in range(first,first+count):
+           s=ss[index];v=vv[s[3]:s[3]+s[4]];name=w.shaders[s[0]][0].split(b'\0')[0].decode('latin1')
+           if not v:continue
+           lo=[min(p[k] for p in v) for k in range(3)];hi=[max(p[k] for p in v) for k in range(3)]
+           row={'id':index,'shader':name,'verts':len(v),'indexes':s[6],'lo':lo,'hi':hi,'center':[(lo[k]+hi[k])/2 for k in range(3)]};meta.append(row)
+           if any(x in name.lower() for x in ('light','lamp','shade')) and 'sky' not in name.lower():
+            if len(v)<600 and s[6]<2000:row={**row,'xyz':[list(p[:3]) for p in v],'triangles':ii[s[5]:s[5]+s[6]]}
+            rows.append(row)
+          entities=[{'ordinal':i,**e} for i,e in enumerate(w.entities) if any(x in str(e).lower() for x in ('light','lamp')) or e.get('classname')=='info_player_start']
+          report={'surfaces':rows,'entities':entities,'nearby_architecture':[]}
+          for r in meta:
+           if not any(x in r['shader'].lower() for x in ('light','lamp','shade')) and r['verts']<40 and r['indexes']<200:
+            if any(math.dist(r['center'],l['center'])<128 for l in rows):report['nearby_architecture'].append(r)
+          Path('evidence/ESCAPE1_LAMP_GEOMETRY.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('Lamp materials:',sorted({r['shader'] for r in rows}));print('Relevant entities',len(entities))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V13-Escape1-Lamp-Geometry
+          path: evidence/*
+          retention-days: 30
