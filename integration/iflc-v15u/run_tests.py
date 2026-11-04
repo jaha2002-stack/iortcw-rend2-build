@@ -7,7 +7,7 @@ selfsrc=(src/'SP/code/rend2/tr_iflc_self.inc').read_text();cmd=(src/'SP/code/ren
 manual=selfsrc[selfsrc.index('static qboolean R_IFLC_BuildManualSelfFixture'):selfsrc.index('/* Explicit profile is passed')]
 selfpick=cmd[cmd.index('void R_IFLC_SelfPick_f'):cmd.index('void R_IFLC_Reset_f')]
 checks={
- 'manual_no_flame_bounds':'R_IFLC_SelfBounds' not in manual,
+ 'manual_no_flame_bounds':'if(!profile || profile->selfSeedCount<=0 || !R_IFLC_SelfBounds' not in manual and 'VectorCopy(s_iflcOwners[ownerIndex].origin,anchor)' in manual,
  'manual_owner_origin':'VectorCopy(s_iflcOwners[ownerIndex].origin,anchor)' in manual,
  'manual_rejects_ambiguous':'s_iflcOwners[ownerIndex].ambiguous' in manual,
  'manual_no_owner_kind_gate':all(x not in manual for x in ('IFLC_NATIVE','IFLC_PROMOTED','IFLC_SURFACE')),
