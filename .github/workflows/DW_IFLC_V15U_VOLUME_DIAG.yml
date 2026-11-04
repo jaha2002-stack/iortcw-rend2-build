@@ -1,0 +1,54 @@
+name: DW IFLC V1.5U volume manual diagnostic
+on:
+  push:
+    branches: [fix/iflc-v15-universal-manual-selfshadow]
+    paths: ['.github/workflows/DW_IFLC_V15U_VOLUME_DIAG.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  volume-diag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build exact current V1.5 Universal
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/iflc-v15/prepare.py
+          python3 integration/iflc-v15/apply.py source evidence
+          python3 integration/iflc-v15u/apply.py source evidence
+          python3 integration/iflc-v14/verify.py instrument
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD.log 2>&1
+      - name: Restore licensed RTCW assets
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"; printf '%s\n' "$retail" > .retail
+      - name: Run VOLUME_ONLY and print exact manual binding state
+        run: |
+          set +e
+          python3 integration/iflc-v15u/runtime_volume.py "$(cat .retail)" evidence/runtime > evidence/RUNTIME_STDOUT.log 2>&1
+          rc=$?
+          echo "=== RUNTIME REPORT ==="
+          cat evidence/runtime/REPORT.json || true
+          echo "=== IFLC MANUAL DIAGNOSTICS ==="
+          grep -h -E 'IFLC(:| V1\.5 Universal:)|dw_fl_self_pick|IFLC15U_VOL_(STATE|ARCH|DONE)' evidence/runtime/console-*.log 2>/dev/null | tail -240 || true
+          echo "RUNTIME_RC=$rc"
+          exit 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-IFLC-V15U-Volume-Diagnostic
+          path: |
+            evidence/runtime/REPORT.json
+            evidence/runtime/TARGETS.json
+            evidence/runtime/console-*.log
+            evidence/RUNTIME_STDOUT.log
+          retention-days: 30
