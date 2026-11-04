@@ -1,0 +1,100 @@
+name: DW IFLC V1.3 electric fixtures and fire enclosure geometry
+on:
+  push:
+    branches: [fix/iflc-v13-electric-fire-containment-from-41772470237]
+    paths: ['.github/workflows/DW_IFLC_V13_GEOMETRY_INVENTORY.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Restore protected assets for private geometry inspection
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"
+          printf '%s\n' "$retail" > .retail
+      - name: Extract limited derived fixture geometry and enclosure probes
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence
+          python3 - <<'PY'
+          import sys, struct, json, zipfile, math, hashlib, re
+          from pathlib import Path
+          sys.path.insert(0,'testlab/scripts')
+          from rc4_assault_camera import World
+          maps={};scripts={}
+          for p in sorted(Path(Path('.retail').read_text().strip()).iterdir()):
+            if p.suffix.lower()!='.pk3':continue
+            with zipfile.ZipFile(p) as z:
+              for n in z.namelist():
+                if n.lower() in ['maps/'+m+'.bsp' for m in ('crypt1','escape1','boss1','crypt2','castle')]:maps[Path(n).stem.lower()]=z.read(n)
+                if n.lower().endswith('.shader'):scripts[n]=z.read(n).decode('latin1')
+          result={};needed=set()
+          for name,data in maps.items():
+            w=World(data)
+            def lump(i):
+              o,s=struct.unpack_from('<ii',data,8+8*i);return data[o:o+s]
+            vs=list(struct.iter_unpack('<10f4B',lump(10)));inds=[x[0] for x in struct.iter_unpack('<i',lump(11))];ss=list(struct.iter_unpack('<12i12f2i',lump(13)))
+            shaders=[(n.split(b'\0')[0].decode('latin1'),sf,cf) for n,sf,cf in struct.iter_unpack('<64sii',lump(1))]
+            first,count=struct.unpack_from('<6f4i',lump(7))[6:8]
+            meta=[]
+            for i in range(first,first+count):
+              s=ss[i];v=vs[s[3]:s[3]+s[4]]
+              if not v:continue
+              lo=[min(p[k] for p in v) for k in range(3)];hi=[max(p[k] for p in v) for k in range(3)]
+              material,sf,cf=shaders[s[0]]
+              meta.append({'id':i,'shader':material,'type':s[2],'verts':len(v),'indexes':s[6],'lo':lo,'hi':hi,'center':[(a+b)/2 for a,b in zip(lo,hi)],'sf':sf,'cf':cf})
+            lamps=[s for s in meta if s['shader'].startswith('textures/lights/') or 'worklamp' in s['shader'].lower()]
+            flames=[s for s in meta if any(t in s['shader'].lower() for t in ('xflame','torch_ember'))]
+            def boxdist(p,s):return math.sqrt(sum(max(s['lo'][k]-p[k],p[k]-s['hi'][k],0)**2 for k in range(3)))
+            fixtures=[]
+            for lamp in lamps:
+              if any(math.dist(lamp['center'],f['lamp']['center'])<12 and lamp['shader']==f['lamp']['shader'] for f in fixtures):continue
+              nearby=[]
+              for s in meta:
+                if boxdist(lamp['center'],s)>84 or max(s['hi'][k]-s['lo'][k] for k in range(3))>160 or s['verts']>350:continue
+                row=dict(s);surf=ss[s['id']];v=vs[surf[3]:surf[3]+surf[4]]
+                row['xyz']=[list(p[:3]) for p in v];row['triangles']=inds[surf[5]:surf[5]+surf[6]]
+                nearby.append(row);needed.add(s['shader'])
+              fixtures.append({'lamp':lamp,'nearby':nearby})
+            fire_probes=[]
+            for s in flames:
+              if 'ember' in s['shader'].lower():continue
+              if any(math.dist(s['center'],p['source']['center'])<16 for p in fire_probes):continue
+              o=s['center'];probes=[]
+              for axis,d in [('up',(0,0,1)),('down',(0,0,-1)),('x',(1,0,0)),('-x',(-1,0,0)),('y',(0,1,0)),('-y',(0,-1,0))]:
+                end=[o[k]+d[k]*256 for k in range(3)];h=w.trace(o,end)
+                probes.append({'direction':axis,'hit':h})
+              floors=[x for x in meta if x['type']==1 and abs(x['hi'][2]-x['lo'][2])<.01 and x['lo'][0]-64<o[0]<x['hi'][0]+64 and x['lo'][1]-64<o[1]<x['hi'][1]+64 and abs(x['center'][2]-o[2])<256]
+              fire_probes.append({'source':s,'solid':w.solid(o),'rays':probes,'horizontal_surfaces':floors})
+            ents=[]
+            for i,e in enumerate(w.entities):
+              if e.get('classname') in ('dlight','light','lightJunior','info_player_start') or 'fire' in e.get('noise','').lower():ents.append({'ordinal':i,**{k:e[k] for k in ('classname','origin','target','targetname','light','_color','color','noise','style') if k in e}})
+            result[name]={'sha256':hashlib.sha256(data).hexdigest(),'world_surfaces':count,'lamps':lamps,'fixtures':fixtures,'fire_probes':fire_probes,'entities':ents}
+            print(name,'lamp surfaces',len(lamps),'fixtures',len(fixtures),'fire fixtures',len(fire_probes))
+          definitions={}
+          for mat in needed:
+            for f,t in scripts.items():
+              m=re.search(r'(?m)^\s*'+re.escape(mat)+r'\s*\{',t)
+              if not m:continue
+              start=t.index('{',m.start());end=start+1;depth=1
+              while depth and end<len(t):
+                if t[end]=='{':depth+=1
+                elif t[end]=='}':depth-=1
+                end+=1
+              definitions[mat]={'file':f,'text':t[m.start():end]};break
+          Path('evidence/IFLC13_GEOMETRY.json').write_text(json.dumps({'base_run':41772470237,'maps':result,'materials':definitions,'scope':'Limited derived fixture meshes and enclosure metadata, no retail assets; offline geometry is not proof of rendered causality.'},indent=2)+'\n')
+          PY
+          git archive --format=tar.gz -o evidence/IFLC13_BASE_TEST_KIT.tar.gz HEAD integration/iflc-v12 integration/iflc-v11 integration/iflc-v1 testlab/scripts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V13-Fixture-Geometry-and-Baseline-Tests
+          path: evidence/*
+          retention-days: 30
