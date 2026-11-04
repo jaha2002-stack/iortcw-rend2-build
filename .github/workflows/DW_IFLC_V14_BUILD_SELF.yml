@@ -1,0 +1,99 @@
+name: DW IFLC V1.4 Win64 and persistent own-shadow checks
+on:
+  push:
+    branches: [fix/iflc-v14-native-containment-selfshadow-from-v13]
+    paths: ['.github/workflows/DW_IFLC_V14_BUILD_SELF.yml','integration/iflc-v14/self_runtime.py','integration/iflc-v14/run_tests.py','integration/iflc-v14/self_tests.inc','integration/iflc-v14/package.py','integration/iflc-v14/changes.patch.zlib']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-iflc14-build-self-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Restore and check candidate production source
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 integration/iflc-v14/probe.py prepare
+          python3 integration/iflc-v14/apply.py source evidence
+          python3 integration/iflc-v14/run_tests.py source evidence | tee evidence/TESTS.log
+      - name: Compile and package clean Windows binary before any instrumentation
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-IFLC-V14-NativeSelf PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/BUILD.log 2>&1 || { tail -100 evidence/BUILD.log; exit 1; }
+          python3 integration/iflc-v14/package.py | tee evidence/PACKAGE.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V14-Win64-TEST
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 60
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-IFLC-V14-Exact-Source
+          path: |
+            dist/*.tar.gz
+            evidence/IFLC14*.json
+            evidence/IFLC14.patch
+          if-no-files-found: error
+          retention-days: 60
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-IFLC-V14-Build-Checks
+          path: |
+            evidence/*.log
+            evidence/IFLC14*.json
+            evidence/backend/**
+            evidence/shadow/**
+          retention-days: 60
+  own-shadow:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        map: [crypt1, crypt2, castle]
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build instrumented separate native candidate
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/iflc-v14/probe.py prepare
+          python3 integration/iflc-v14/apply.py source evidence
+          python3 integration/iflc-v14/verify.py instrument
+          make -C source/SP -j2 release BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD.log 2>&1 || { tail -100 evidence/BUILD.log; exit 1; }
+      - name: Restore licensed assets
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"
+          printf '%s\n' "$retail" > .retail
+      - name: Use actual IFLC commands and verify own-body roundtrip
+        run: |
+          set -Eeuo pipefail
+          python3 integration/iflc-v14/self_runtime.py "$(cat .retail)" evidence/runtime ${{ matrix.map }} | tee evidence/SELF.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-IFLC-V14-${{ matrix.map }}-Own-Shadow
+          path: |
+            evidence/BUILD.log
+            evidence/SELF.log
+            evidence/runtime/**
+          retention-days: 60
