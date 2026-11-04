@@ -8,6 +8,24 @@ before={p.relative_to(src).as_posix():p.read_bytes() for p in (src/'SP/code').rg
 
 p=src/'SP/code/rend2/tr_iflc_self.inc'
 s=p.read_text()
+old_flame_fn='''static qboolean R_IFLC_SelfIsFlameSurface(int ownerIndex,int surfaceIndex)
+{
+    int i;for(i=0;i<s_iflcSurfaceCount;++i)if(s_iflcSurfaces[i].owner==ownerIndex && s_iflcSurfaces[i].surfaceIndex==surfaceIndex)return qtrue;
+    return qfalse;
+}
+'''
+assert s.count(old_flame_fn)==1
+s=s.replace(old_flame_fn,'')
+old_body='''    if(!R_IFLC_FixtureOpaque(s) || s->shader->numDeforms || s->shader->polygonOffset || R_IFLC_SelfIsFlameSurface(ownerIndex,index))return qfalse;
+'''
+new_body='''    /* MANUAL classifies the exact hit by render solidity, not by the broad
+     * flame-name catalog. Some real opaque bowl/ember/cage parts use names
+     * such as torch_ember and are catalogued as flame surfaces. Architecture
+     * is still rejected below; translucent/deformed flame geometry fails here. */
+    if(!R_IFLC_FixtureOpaque(s) || s->shader->numDeforms || s->shader->polygonOffset)return qfalse;
+'''
+assert s.count(old_body)==1
+s=s.replace(old_body,new_body)
 old='''    vec3_t flameLo,flameHi,anchor,seedLo,seedHi,groupLo,groupHi;int vertices=0;
     vec3_t planes[64];float planeD[64];int planesN=0;
     if(!profile || profile->selfSeedCount<=0 || !R_IFLC_SelfBounds(ownerIndex,flameLo,flameHi,anchor))return qfalse;
@@ -66,7 +84,7 @@ proof={
  'auto_requires_flame_bounds':True,
  'supported_owner_kinds':['NATIVE_FIRE','PROMOTED_FIRE','VOLUME_ONLY'],
  'architecture_guards_preserved':True,
- 'owner_mapped_flame_surfaces_protected':True,
+ 'manual_uses_solid_hit_not_name_catalog':True,
  'opaque_emissive_body_materials_allowed':True,
  'glsl_unchanged':True,
  'electric_fixture_unchanged':True,
