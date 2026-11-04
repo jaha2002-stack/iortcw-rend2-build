@@ -90,7 +90,7 @@ def capture(retail,out):
  cmds+=['dw_fl_save','wait 12'];shot('saved')
  cmds+=['dw_fl_set selfshadow 1','wait 16','dw_fl_reload','wait 32'];shot('reloaded')
  cmds+=['dw_fl_set selfshadow auto','wait 24'];shot('auto')
- cmds+=['dw_fl_reset','wait 8',pv(view['flame_anchor']),'wait 12','dw_fl_select',pv(view['architecture_target']),'wait 12','dw_fl_self_pick','dw_fl_info','echo IFLC15_ARCH_CONTROL_DONE','set dw_proofFreeze 0','echo IFLC15_DONE','quit']
+ cmds+=[pv(view['architecture_target']),'wait 12','dw_fl_self_pick','dw_fl_info','echo IFLC15_ARCH_CONTROL_DONE','dw_fl_reset','set dw_proofFreeze 0','echo IFLC15_DONE','quit']
  (main/'TEST.cfg').write_text('\n'.join(cmds)+'\n')
  exe=next(p for p in runtime.iterdir() if p.name.startswith('iowolfsp') and p.is_file());exe.chmod(0o755)
  args=['xvfb-run','-a','-s','-screen 0 1280x720x24',str(exe),'+safe','+set','fs_basepath',str(runtime),'+set','fs_homepath',str(home),'+set','com_introplayed','1','+set','com_recommendedSet','1','+set','logfile','2','+set','dw_proofAutomation','1','+set','r_renderer','rend2','+set','cl_renderer','rend2','+exec','SETUP.cfg','+vid_restart','+set','dw_proofScenario','TEST.cfg','+spdevmap','crypt1']
