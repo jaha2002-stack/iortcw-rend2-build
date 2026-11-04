@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""VOLUME_ONLY manual self-pick proof on Crypt1 surface:2933.
-Production code contains no map/surface ordinals; these are deterministic TEST targets.
+"""VOLUME_ONLY universal MANUAL self-pick proof on Crypt1 surface:2933.
+The test deliberately disables usable flame bounds before build. Production code
+contains no map/surface ordinals; ids below are deterministic test targets only.
 """
 from pathlib import Path
 import sys,math,struct,json,tempfile,shutil,subprocess,os,signal,re,zipfile
@@ -24,11 +25,10 @@ def capture(retail,out):
  out.mkdir(parents=True,exist_ok=True)
  data=r12.geometry(retail,'crypt1');views=r12.discover(data,'crypt1')
  v=next(x for x in views if x['surface']==2933)
- # From the accepted test camera this direction was observed to first hit
- # own-body surface 2555. 2555 belongs to the accepted 2543..2555 fixture group.
- # The 8139 ordinal is only an aiming reference for this test, not a production rule.
- aim=center(data,8139);expected_body_surface=2555
- (out/'TARGETS.json').write_text(json.dumps({'view':v,'aim_reference_surface':8139,'aim':aim,'expected_first_body_surface':expected_body_surface},indent=2)+'\n')
+ # Two deterministic aim references from the earlier diagnostic:
+ # first ray lands on protected flame geometry, second lands on own-body 2555.
+ protected_aim=center(data,2548);body_aim=center(data,8139);expected_body_surface=2555
+ (out/'TARGETS.json').write_text(json.dumps({'view':v,'protected_aim_ref':2548,'protected_aim':protected_aim,'body_aim_ref':8139,'body_aim':body_aim,'expected_body_surface':expected_body_surface},indent=2)+'\n')
  runtime=Path(tempfile.mkdtemp(prefix='iflc15u-vol-',dir=out.parent)).resolve();main=runtime/'main';main.mkdir();home=runtime/'home';home.mkdir()
  build=Path('source/SP/build/release-linux-x86_64')
  for p in build.iterdir():
@@ -42,7 +42,8 @@ def capture(retail,out):
  scene=[v['anchor'][0],v['anchor'][1],v['anchor'][2]-42]
  cmds=['set cg_draw2D 0','set cg_drawGun 0','set cg_bobup 0','set cg_bobpitch 0','set cg_bobroll 0','set r_forceSunPause 1','god','notarget','wait 16',
        pv(v['anchor']),'wait 20','dw_fl_select','dw_fl_next','dw_fl_info',
-       pv(aim),'wait 12','dw_fl_self_pick','dw_fl_info',
+       pv(protected_aim),'wait 12','dw_fl_self_pick','dw_fl_info',
+       pv(body_aim),'wait 12','dw_fl_self_pick','dw_fl_info',
        'dw_fl_set enabled 1','dw_fl_set direct 1.8','dw_fl_set radius 1.3',
        pv(scene),'wait 20','set dw_proofFreeze 1','wait 12']
  shots=[]
@@ -70,6 +71,9 @@ def capture(retail,out):
   m=re.search(r'IFLC15U_VOL_STATE (\d+) (\S+)',line)
   if m:cur=states.setdefault(int(m[1]),[])
   if cur is not None and line.startswith('IFLC:'):cur.append(line)
+ bind=f'IFLC V1.5 Universal: bound exact body surface {expected_body_surface};'
+ if bind not in text:faults.append('manual body surface 2555 did not bind')
+ if not re.search(r'selected surface \d+ is protected architecture, flame geometry, too large, or too far',text):faults.append('protected flame/architecture rejection not observed')
  for n,label,name in shots:
   found=list(home.rglob(name+'.tga'))
   if len(found)==1:
@@ -78,8 +82,6 @@ def capture(retail,out):
   if 'route=VOLUME_ONLY' not in lines:faults.append(label+': VOLUME_ONLY owner not selected')
   if label in ('off','saved','reloaded') and (not re.search(r'selfshadow=OFF\b',lines) or not re.search(r'ownBodySurfaces=[1-9]\d*',lines) or not re.search(r'manualSeeds=[1-8]',lines)):
    faults.append(label+': manual OFF not active')
- bind=f'IFLC V1.5 Universal: bound exact body surface {expected_body_surface};'
- if bind not in text:faults.append('deterministic own-body surface did not bind manually')
  if 'IFLC15U_VOL_DONE' not in text:faults.append('scenario incomplete')
  comps=[]
  for a,b in [('on','off'),('off','saved'),('saved','reloaded')]:
