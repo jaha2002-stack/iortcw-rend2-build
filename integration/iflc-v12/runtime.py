@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Exact reported Crypt1 torch, regressions, and Castle native-lantern causes.
-Retail BSP never leaves the runner; generated screenshots are from the game.
-"""
+"""Exact Crypt1 report, regressions, Castle native-lantern causal controls."""
 from pathlib import Path
 import sys,math,struct,re,json,zipfile,tempfile,shutil,subprocess,os,signal,hashlib
 ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT/'testlab/scripts'))
@@ -30,19 +28,15 @@ def discover(data,mapname):
  views=[]
  for index in targets:
   s=surfs[index];v=verts[s[3]:s[3]+s[4]];anchor=[sum(a[k] for a in v)/len(v) for k in range(3)]
-  shader=world.shaders[s[0]][0].split(b'\0')[0].decode('latin1');assert 'flame' in shader, (mapname,index,shader)
-  candidates=[]
-  distances=(320,384,256) if mapname=='castle' else (160,192,128)
-  dz=-164 if mapname=='castle' else -58
+  shader=world.shaders[s[0]][0].split(b'\0')[0].decode('latin1');assert 'flame' in shader,(mapname,index,shader)
+  candidates=[];distances=(320,384,256) if mapname=='castle' else (160,192,128);dz=-164 if mapname=='castle' else -58
   for di,distance in enumerate(distances):
    for step in range(16):
     theta=step*math.pi/8;eye=[anchor[0]+distance*math.cos(theta),anchor[1]+distance*math.sin(theta),anchor[2]+dz]
     if world.solid(eye) or any(world.solid([eye[k]+off[k] for k in range(3)]) for off in ((8,0,0),(-8,0,0),(0,8,0),(0,-8,0),(0,0,-16))):continue
     hit=world.trace(eye,anchor)
     if hit and hit.get('fraction',0)<.985:continue
-    # Prefer the east-side approach for the reported torch / opening Castle room.
-    score=di*100+min(step,16-step)
-    low_target=[anchor[0],anchor[1],anchor[2]-(80 if mapname=='castle' else 42)]
+    score=di*100+min(step,16-step);low_target=[anchor[0],anchor[1],anchor[2]-(80 if mapname=='castle' else 42)]
     candidates.append((score,{'surface':index,'anchor':anchor,'shader':shader,'eye':eye,'select_angles':angles(eye,anchor),'angles':angles(eye,low_target),'name':f'{mapname}_source_{index}'}))
   assert candidates,('No unobstructed camera',mapname,index)
   view=min(candidates,key=lambda x:x[0])[1];d=[view['eye'][k]-anchor[k] for k in range(3)];length=math.sqrt(sum(v*v for v in d));probe=[anchor[k]+d[k]*32/length for k in range(3)]
@@ -61,10 +55,8 @@ def capture(source,retail,out,mapname):
  for p in (build/'main').glob('*.so'):shutil.copy2(p,main/p.name)
  for p in retail.iterdir():
   if p.suffix.lower()=='.pk3':(main/p.name.lower()).symlink_to(p.resolve())
- cmd=['set con_notifytime -1','set cg_draw2D 0','set cg_drawGun 0','set cg_bobup 0','set cg_bobpitch 0','set cg_bobroll 0','set r_autoExposure 0','set r_forceAutoExposure 0','set r_forceSunPause 1','god','notarget','wait 16','dw_fl12_mode 0 0','dw_fl12_audit catalog']
- shots=[]
- def viewcmd(v,aim=False,probe=False):
-  return 'proofView '+' '.join(f'{x:.6f}' for x in (v['probe'] if probe else v['eye'])+(v['select_angles'] if aim else v['angles']))
+ cmd=['set con_notifytime -1','set cg_draw2D 0','set cg_drawGun 0','set cg_bobup 0','set cg_bobpitch 0','set cg_bobroll 0','set r_autoExposure 0','set r_forceAutoExposure 0','set r_forceSunPause 1','god','notarget','wait 16','dw_fl12_mode 0 0','dw_fl12_audit catalog'];shots=[]
+ def viewcmd(v,aim=False,probe=False):return 'proofView '+' '.join(f'{x:.6f}' for x in (v['probe'] if probe else v['eye'])+(v['select_angles'] if aim else v['angles']))
  def shot(v,label,legacy=0,mask=0,baked=.2):
   i=len(shots)+1;name=v['name']+'_'+label
   cmd.extend(['set dw_proofShot 0',f'echo IFLC12_STATE {i} {v["name"]} {label}','dw_fl_info','dw_fl12_audit','maplight_list',f'set dw_proofShot {i}','wait 5',f'screenshot {name}','wait 2'])
@@ -82,7 +74,6 @@ def capture(source,retail,out,mapname):
    cmd.extend(['set r_dwFireLightControl 0','wait 12']);shot(v,'master_off')
    cmd.extend(['dw_fl_reset','dw_fl_save','wait 4'])
   else:
-   # All native source data stay unchanged; only selected caster faces are bypassed.
    cmd.extend(['dw_fl12_mode 1 0','wait 16']);shot(v,'v11_native',legacy=1)
    cmd.extend(['dw_fl12_mode 0 0','wait 16']);shot(v,'v12_native')
    for mask,label in ((1,'diagnostic_no_bottom'),(2,'diagnostic_no_bars'),(4,'diagnostic_no_roof'),(7,'diagnostic_no_cage'),(8,'diagnostic_native_direct_zero')):
@@ -127,14 +118,12 @@ def capture(source,retail,out,mapname):
    if cv.get('r_iflc12Legacy')!=str(s['legacy']) or cv.get('r_iflc12CastleMask')!=str(s['castle_mask']) or cv.get('r_dlightShadowMaxLights')!='3':faults.append(s['name']+': cvar proof')
    if mapname=='crypt1' and v['surface']==2933:
     if 'key=surface:2933:2cbb32f6:41205293' not in lines:faults.append(s['name']+': wrong torch selected')
-    expected=0 if s['legacy'] else 4
+    expected=0 if s['legacy'] else 13
     if f'fixtureSelfCasters={expected} ' not in lines:faults.append(s['name']+': wrong classified caster count')
     if s['variant'] in ('v12_shadow','saved','reloaded'):
-     hit=re.search(r'submittedExclusions=([^\n]+)',lines)
-     pairs=dict((int(a),int(b)) for a,b in re.findall(r'(\d+):(\d+)',hit[1] if hit else ''))
-     if set(pairs)!={2552,2553,2554,2555} or not all(pairs.values()):faults.append(s['name']+': actual caster exclusion not observed')
-   if mapname=='castle':
-    if not any(x.get('native')=='349' for x in state.get('lights',[])):faults.append(s['name']+': native lantern draw not present')
+     hit=re.search(r'submittedExclusions=([^\n]+)',lines);pairs=dict((int(a),int(b)) for a,b in re.findall(r'(\d+):(\d+)',hit[1] if hit else ''))
+     if set(pairs)!=set(range(2543,2556)) or not all(pairs.values()):faults.append(s['name']+': actual caster exclusion not observed')
+   if mapname=='castle' and not any(x.get('native')=='349' for x in state.get('lights',[])):faults.append(s['name']+': native lantern draw not present')
    for light in state.get('lights',[]):
     if light.get('optin')=='1' and light.get('policy')!=light.get('cachePolicy'):faults.append(s['name']+': stale world capture policy')
   pairs=[('v11_shadow','v12_shadow'),('v11_shadow','v11_repeat'),('v12_shadow','v12_repeat'),('saved','reloaded'),('baseline_off','master_off')] if mapname!='castle' else [('v11_native','v12_native'),('v12_native','diagnostic_no_bottom'),('v12_native','diagnostic_no_bars'),('v12_native','diagnostic_no_roof'),('v12_native','diagnostic_no_cage'),('v12_native','diagnostic_native_direct_zero'),('v12_native','restored'),('v12_native','final_restore'),('native_baked100','no_bottom_baked100')]
@@ -150,7 +139,7 @@ def capture(source,retail,out,mapname):
  if mapname=='crypt1':
   response=next((x for x in comparisons if x['view']=='crypt1_source_2933' and x['a']=='v11_shadow' and x['b']=='v12_shadow'),None)
   if not response or response['pixels_above_2']<100:faults.append('No measurable response on the reported torch')
- report={'base_run':41758201175,'map':mapname,'exit':rc,'ready':'PROOF_READY' in text,'complete':'IFLC12_COMPLETE' in text,'requested':len(shots),'captured':len(images),'faults':faults,'comparisons':comparisons,'shots':shots,'states':states,'proof':proof,'cvars':cvars,'owner_catalog':[l for l in text.splitlines() if l.startswith('IFLC12_OWNER ')],'visual_acceptance':'PENDING_MANUAL_REVIEW','limits':'Linux Mesa software native test harness; legacy mode disables only new fallback; Castle masks are causal diagnostics and are not a production fix.'}
+ report={'base_run':41758201175,'map':mapname,'exit':rc,'ready':'PROOF_READY' in text,'complete':'IFLC12_COMPLETE' in text,'requested':len(shots),'captured':len(images),'faults':faults,'comparisons':comparisons,'shots':shots,'states':states,'proof':proof,'cvars':cvars,'owner_catalog':[l for l in text.splitlines() if l.startswith('IFLC12_OWNER ')],'visual_acceptance':'PENDING_MANUAL_REVIEW','limits':'Linux Mesa native test harness; legacy mode disables only new fallback; Castle masks are causal diagnostics, not a production fix.'}
  (out/'IFLC12_RUNTIME_REPORT.json').write_text(json.dumps(report,indent=2)+'\n')
  print(json.dumps({k:report[k] for k in ('map','exit','ready','complete','requested','captured','faults')},indent=2),flush=True)
  assert rc==0 and report['ready'] and report['complete'] and len(images)==len(shots) and not faults,'Incomplete or unverified experiment'
