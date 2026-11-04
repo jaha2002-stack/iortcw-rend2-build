@@ -1,0 +1,85 @@
+name: DW IFLC V1.1 FINAL Clean Production full Win64
+on:
+  push:
+    branches: [release/iflc-v11-clean-production-20261104]
+    paths:
+      - '.github/workflows/DW_IFLC_V11_CLEAN_PRODUCTION.yml'
+      - 'integration/iflc-clean-production/**'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: dw-iflc-v11-clean-production-release
+  cancel-in-progress: false
+jobs:
+  assemble-verify-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Assemble accepted binaries and verify complete distribution
+        run: |
+          set -Eeuo pipefail
+          command -v objdump
+          python3 -m py_compile integration/iflc-clean-production/package.py
+          python3 integration/iflc-clean-production/package.py --fetch | tee CLEAN_PRODUCTION_VERIFICATION.log
+      - name: Upload complete Windows production package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-IFLC-V1.1-Clean-Production-Win64
+          path: |
+            dist/DarkWolf_IFLC_V1.1_Clean_Production_Win64.zip
+            dist/RELEASE_MANIFEST.json
+            dist/RELEASE_NOTES_RU.md
+            dist/SHA256SUMS.txt
+            CLEAN_PRODUCTION_VERIFICATION.log
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload exact corresponding source
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-IFLC-V1.1-Clean-Production-Exact-Source
+          path: dist/DarkWolf_IFLC_V1.1_Exact_Source.zip
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish release with direct ZIP links, without replacing another release
+        run: |
+          set -Eeuo pipefail
+          tag='darkwolf-iflc-v1.1-clean-production-20261104'
+          gh release create "$tag" \
+            dist/DarkWolf_IFLC_V1.1_Clean_Production_Win64.zip \
+            dist/DarkWolf_IFLC_V1.1_Exact_Source.zip \
+            dist/SHA256SUMS.txt \
+            dist/RELEASE_MANIFEST.json \
+            dist/RELEASE_NOTES_RU.md \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title 'DarkWolf IFLC V1.1 - FINAL Clean Production Win64' \
+            --notes-file dist/RELEASE_NOTES_RU.md --draft
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url,tagName,isDraft,assets > RELEASE_PUBLISHED.json
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          r=json.loads(Path('RELEASE_PUBLISHED.json').read_text())
+          assert not r['isDraft']
+          expected={p.name:p.stat().st_size for p in Path('dist').iterdir() if p.is_file()}
+          actual={a['name']:a['size'] for a in r['assets']}
+          assert actual == expected, (actual, expected)
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write('## IFLC V1.1 Clean Production\n\n'+r['url']+'\n\n')
+              f.write('Accepted renderer unchanged. Complete Win64 runtime, five unchanged profiles, SHA256 and exact source verified.\n')
+          print(r['url'])
+          print('IFLC_V11_CLEAN_PRODUCTION_PUBLISHED_AND_ASSET_SIZES_VERIFIED')
+          PY
+      - name: Upload publication verification
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-IFLC-V1.1-Clean-Production-Verification
+          path: |
+            CLEAN_PRODUCTION_VERIFICATION.log
+            RELEASE_PUBLISHED.json
+          retention-days: 90
