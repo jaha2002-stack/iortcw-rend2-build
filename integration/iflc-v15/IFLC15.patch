@@ -1,0 +1,163 @@
+--- a/SP/code/rend2/tr_iflc_self.inc
++++ b/SP/code/rend2/tr_iflc_self.inc
+@@ -96,6 +96,128 @@
+     if(!out->key)out->key=1;
+ }
+ 
+ 
++/* V1.5 manual body binding deliberately differs from AUTO classification.
++ * The user-selected surface is the authority, but only inside a conservative
++ * local envelope around the already selected physical fire owner.  Flooding
++ * may cross real mesh contacts inside that envelope; it stops before large
++ * architecture and never uses mere AABB overlap as connectivity. */
++static qboolean R_IFLC_SelfSurfaceBoundsAny(int index,vec3_t lo,vec3_t hi)
++{
++    const srfBspSurface_t *b=R_IFLC_FixtureMesh(index);
++    const msurface_t *s;
++    if(!tr.world || index<0 || index>=tr.world->numWorldSurfaces)return qfalse;
++    if(b){R_IFLC_FixtureBounds(b,lo,hi);return qtrue;}
++    s=&tr.world->surfaces[index];
++    if(s->cullinfo.type&CULLINFO_BOX){VectorCopy(s->cullinfo.bounds[0],lo);VectorCopy(s->cullinfo.bounds[1],hi);return qtrue;}
++    return qfalse;
++}
++static float R_IFLC_SelfBoundsDistanceSquared(const vec3_t point,const vec3_t lo,const vec3_t hi)
++{
++    float d=0;int k;for(k=0;k<3;++k){float a=point[k]<lo[k]?lo[k]-point[k]:point[k]>hi[k]?point[k]-hi[k]:0;d+=a*a;}return d;
++}
++static qboolean R_IFLC_SelfIsFlameSurface(int ownerIndex,int surfaceIndex)
++{
++    int i;for(i=0;i<s_iflcSurfaceCount;++i)if(s_iflcSurfaces[i].owner==ownerIndex && s_iflcSurfaces[i].surfaceIndex==surfaceIndex)return qtrue;
++    return qfalse;
++}
++static qboolean R_IFLC_SelfSamePlaneAsLargeArchitecture(int index)
++{
++    const srfBspSurface_t *b=R_IFLC_FixtureMesh(index);vec3_t n,lo,hi;float d;int i,k;
++    if(!b || !R_IFLC_FixturePlane(b,n,&d))return qfalse;
++    R_IFLC_FixtureBounds(b,lo,hi);
++    for(i=0;i<tr.world->numWorldSurfaces;++i)if(i!=index) {
++        const srfBspSurface_t *o=R_IFLC_FixtureMesh(i);vec3_t on,olo,ohi;float od,extent[3],largest=0,second=0;
++        if(!o || !R_IFLC_SurfaceBlocks(&tr.world->surfaces[i]) || !R_IFLC_FixturePlane(o,on,&od))continue;
++        if(fabsf(fabsf(DotProduct(n,on))-1.0f)>.001f)continue;
++        if(DotProduct(n,on)<0)od=-od;
++        if(fabsf(d-od)>.25f)continue;
++        R_IFLC_FixtureBounds(o,olo,ohi);
++        for(k=0;k<3;++k)extent[k]=ohi[k]-olo[k];
++        for(k=0;k<3;++k){float e=extent[k];if(e>largest){second=largest;largest=e;}else if(e>second)second=e;}
++        if(largest<96 || second<48)continue;
++        /* A coplanar structural surface protects its small BSP fragments. */
++        if(!(ohi[0]<lo[0]-1 || olo[0]>hi[0]+1 || ohi[1]<lo[1]-1 || olo[1]>hi[1]+1 || ohi[2]<lo[2]-1 || olo[2]>hi[2]+1))return qtrue;
++    }
++    return qfalse;
++}
++static qboolean R_IFLC_ManualSurfaceBasic(int ownerIndex,int index)
++{
++    const msurface_t *s;vec3_t lo,hi;float e[3],largest=0,second=0;int k;
++    if(!tr.world || ownerIndex<0 || ownerIndex>=s_iflcOwnerCount || index<0 || index>=tr.world->numWorldSurfaces)return qfalse;
++    s=&tr.world->surfaces[index];
++    if(!R_IFLC_FixtureOpaque(s) || s->shader->numDeforms || s->shader->polygonOffset || R_IFLC_SelfIsFlameSurface(ownerIndex,index))return qfalse;
++    if(!R_IFLC_SelfSurfaceBoundsAny(index,lo,hi))return qfalse;
++    for(k=0;k<3;++k)e[k]=hi[k]-lo[k];
++    for(k=0;k<3;++k){float x=e[k];if(x>largest){second=largest;largest=x;}else if(x>second)second=x;}
++    if(largest>224 || second>128)return qfalse;
++    if(R_IFLC_SelfBoundsDistanceSquared(s_iflcOwners[ownerIndex].origin,lo,hi)>176.0f*176.0f)return qfalse;
++    /* Broad planes are never manual fixture parts. Long narrow suspension bars remain eligible. */
++    if(largest>128 && second>64)return qfalse;
++    return qtrue;
++}
++static qboolean R_IFLC_ManualSeedSafe(int ownerIndex,int index)
++{
++    return R_IFLC_ManualSurfaceBasic(ownerIndex,index) && !R_IFLC_SelfSamePlaneAsLargeArchitecture(index);
++}
++static qboolean R_IFLC_BuildManualSelfFixture(int ownerIndex,const iflcProfile_t *profile,iflcSelfFixture_t *out)
++{
++    int candidates[IFLC_SELF_CANDIDATES],n=0,i,j,k; qboolean included[IFLC_SELF_CANDIDATES],changed;
++    vec3_t flameLo,flameHi,anchor,seedLo,seedHi,groupLo,groupHi;int vertices=0;
++    vec3_t planes[64];float planeD[64];int planesN=0;
++    if(!profile || profile->selfSeedCount<=0 || !R_IFLC_SelfBounds(ownerIndex,flameLo,flameHi,anchor))return qfalse;
++    ClearBounds(seedLo,seedHi);
++    for(i=0;i<profile->selfSeedCount;++i) {
++        vec3_t lo,hi;if(!R_IFLC_ManualSeedSafe(ownerIndex,profile->selfSeeds[i]) || !R_IFLC_SelfSurfaceBoundsAny(profile->selfSeeds[i],lo,hi))return qfalse;
++        AddPointToBounds(lo,seedLo);AddPointToBounds(hi,seedHi);
++    }
++    /* Build a small set of nearby structural planes once. This protects BSP
++     * wall/floor fragments without an O(worldSurfaces^2) manual command. */
++    for(i=0;i<tr.world->numWorldSurfaces && planesN<64;++i) {
++        const srfBspSurface_t *b=R_IFLC_FixtureMesh(i);vec3_t lo,hi,norm;float d,e[3],largest=0,second=0;
++        if(!b || !R_IFLC_SurfaceBlocks(&tr.world->surfaces[i]) || !R_IFLC_FixturePlane(b,norm,&d))continue;
++        R_IFLC_FixtureBounds(b,lo,hi);if(R_IFLC_SelfBoundsDistanceSquared(anchor,lo,hi)>192.0f*192.0f)continue;
++        for(k=0;k<3;++k)e[k]=hi[k]-lo[k];for(k=0;k<3;++k){float x=e[k];if(x>largest){second=largest;largest=x;}else if(x>second)second=x;}
++        if(largest<96 || second<48)continue;VectorCopy(norm,planes[planesN]);planeD[planesN++]=d;
++    }
++    /* Manual selection is allowed to reach a hanging support, but not to walk
++     * indefinitely through touching map geometry. */
++    for(i=0;i<tr.world->numWorldSurfaces;++i) {
++        const srfBspSurface_t *mesh;vec3_t lo,hi,center;float d=0;qboolean protected=qfalse;
++        if(!R_IFLC_ManualSurfaceBasic(ownerIndex,i) || !R_IFLC_SelfSurfaceBoundsAny(i,lo,hi))continue;
++        for(k=0;k<3;++k){center[k]=(lo[k]+hi[k])*.5f;float a=center[k]<seedLo[k]?seedLo[k]-center[k]:center[k]>seedHi[k]?center[k]-seedHi[k]:0;d+=a*a;}
++        if(d>160.0f*160.0f)continue;mesh=R_IFLC_FixtureMesh(i);
++        if(mesh)for(j=0;j<planesN && !protected;++j){qboolean all=qtrue;float pd=planeD[j];
++            for(k=0;k<mesh->numVerts;++k)if(fabsf(DotProduct(planes[j],mesh->verts[k].xyz)-pd)>.25f){all=qfalse;break;}if(all)protected=qtrue;}
++        if(protected && !R_IFLC_ManualSeedSafe(ownerIndex,i))continue;
++        if(n>=IFLC_SELF_CANDIDATES)return qfalse;candidates[n++]=i;
++    }
++    if(!n)return qfalse;memset(included,0,sizeof(included));
++    for(i=0;i<profile->selfSeedCount;++i){for(j=0;j<n && candidates[j]!=profile->selfSeeds[i];++j){}if(j==n)return qfalse;included[j]=qtrue;}
++    do {changed=qfalse;
++        for(i=0;i<n;++i)if(!included[i])for(j=0;j<n;++j)if(included[j]) {
++            const srfBspSurface_t *a=R_IFLC_FixtureMesh(candidates[i]),*b=R_IFLC_FixtureMesh(candidates[j]);
++            vec3_t lo,hi;int q;
++            if(!a || !b || !R_IFLC_SelfContact(a,b))continue;
++            ClearBounds(lo,hi);
++            for(q=0;q<n;++q)if(included[q] || q==i){vec3_t qlo,qhi;if(!R_IFLC_SelfSurfaceBoundsAny(candidates[q],qlo,qhi))continue;AddPointToBounds(qlo,lo);AddPointToBounds(qhi,hi);}
++            if(hi[0]-lo[0]>160 || hi[1]-lo[1]>160 || hi[2]-lo[2]>224)continue;
++            included[i]=qtrue;changed=qtrue;break;
++        }
++    }while(changed);
++    ClearBounds(groupLo,groupHi);
++    for(i=0;i<n;++i)if(included[i]) {
++        const srfBspSurface_t *b=R_IFLC_FixtureMesh(candidates[i]);vec3_t lo,hi;
++        if(out->count>=IFLC_SELF_CAP){out->count=0;return qfalse;}
++        out->surfaces[out->count++]=candidates[i];
++        if(R_IFLC_SelfSurfaceBoundsAny(candidates[i],lo,hi)){AddPointToBounds(lo,groupLo);AddPointToBounds(hi,groupHi);}
++        vertices+=b?b->numVerts:4;
++    }
++    if(!out->count || vertices<3){out->count=0;return qfalse;}
++    if(groupHi[0]-groupLo[0]>160 || groupHi[1]-groupLo[1]>160 || groupHi[2]-groupLo[2]>224){out->count=0;return qfalse;}
++    R_IFLC_SelfPolicyKey(ownerIndex,out);return qtrue;
++}
++
+ /* Explicit profile is passed so validation never partially changes live state. */
+ static qboolean R_IFLC_BuildSelfFixture(int ownerIndex, const iflcProfile_t *profile,
+                                        iflcSelfFixture_t *out)
+@@ -106,7 +228,9 @@
+     float best=1e30f,height,span;
+     vec3_t planes[32]; float planeD[32]; int planesN=0;
+     memset(out,0,sizeof(*out)); out->built=qtrue;
+-    if(!tr.world || !profile || !R_IFLC_SelfBounds(ownerIndex,flameLo,flameHi,anchor)) return qfalse;
++    if(!tr.world || !profile)return qfalse;
++    if(profile->selfSeedCount)return R_IFLC_BuildManualSelfFixture(ownerIndex,profile,out);
++    if(!R_IFLC_SelfBounds(ownerIndex,flameLo,flameHi,anchor)) return qfalse;
+     /* Accepted V1.2 groups already proved the support wall, shaft and body.
+      * Do not reject those groups merely because unrelated architecture creates
+      * more than 32 nearby planes in the broader generic housing search.
+--- a/SP/code/rend2/tr_iflc.inc
++++ b/SP/code/rend2/tr_iflc.inc
+@@ -744,13 +744,16 @@
+         ri.Printf(PRINT_ALL, "IFLC: this body part is already bound.\n"); return;
+     }
+     if(candidate.selfSeedCount>=8) { ri.Printf(PRINT_WARNING,"IFLC: own-body binding limit reached.\n"); return; }
++    if(!R_IFLC_ManualSeedSafe(s_iflcSelected,selected)) {
++        ri.Printf(PRINT_WARNING,"IFLC: selected surface %d is protected architecture, flame geometry, too large, or too far from this fire. No change.\n",selected);return;
++    }
+     candidate.selfSeeds[candidate.selfSeedCount++]=selected;
+     if (!R_IFLC_BuildSelfFixture(s_iflcSelected,&candidate,&test)) {
+-        ri.Printf(PRINT_WARNING,"IFLC: not a safe small connected fixture; wall/floor/ambiguous geometry protected. No change.\n"); return;
++        ri.Printf(PRINT_WARNING,"IFLC: selected body part is safe, but its bounded connected group could not be formed. No change.\n"); return;
+     }
+     p=R_IFLC_ProfileForOwner(s_iflcSelected,qtrue);if(!p)return;
+     *p=candidate;s_iflcDirty=qtrue;R_IFLC_ResetSelfFixtures();
+-    ri.Printf(PRINT_ALL,"IFLC: bound body surface %d (%d connected surfaces). Use dw_fl_set selfshadow 0 and dw_fl_save.\n",selected,test.count);
++    ri.Printf(PRINT_ALL,"IFLC: bound exact body surface %d; safe local group=%d surfaces, manualSeeds=%d. Use dw_fl_set selfshadow 0 and dw_fl_save.\n",selected,test.count,candidate.selfSeedCount);
+ }
+ 
+ void R_IFLC_Reset_f(void)
