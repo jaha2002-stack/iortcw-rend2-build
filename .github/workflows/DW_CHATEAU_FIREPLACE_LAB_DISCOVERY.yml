@@ -84,10 +84,78 @@ jobs:
           Path("evidence/CHATEAU_FIREPLACE_SCRIPT_SNIPPET.json").write_text(json.dumps(out,indent=2)+"\n")
           print("CHATEAU_FIREPLACE_SCRIPT_METADATA_PASS",len(out))
           PY
+      - name: Extract sanitized fire surface clusters
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,struct,zipfile,math
+          retail=Path(Path(".retail_main").read_text().strip())
+          bsp=None
+          for p in sorted(retail.glob("*.pk3")):
+              with zipfile.ZipFile(p) as z:
+                  for n in z.namelist():
+                      if n.lower()=="maps/chateau.bsp":
+                          bsp=z.read(n); break
+              if bsp: break
+          if not bsp: raise SystemExit("maps/chateau.bsp not found")
+          def lump(i):
+              off,n=struct.unpack_from("<ii",bsp,8+i*8); return bsp[off:off+n]
+          shaders=[]
+          for name,flags,contents in struct.iter_unpack("<64sii",lump(1)):
+              shaders.append(name.split(b"\\0",1)[0].decode("latin1"))
+          verts=[v for v in struct.iter_unpack("<3f2f2f3f4B",lump(10))]
+          surf_blob=lump(13)
+          rows=[]
+          for off in range(0,len(surf_blob),104):
+              if off+104>len(surf_blob): break
+              vals=struct.unpack_from("<12i12f2i",surf_blob,off)
+              shader,stype,firstv,numv=vals[0],vals[2],vals[3],vals[4]
+              if shader<0 or shader>=len(shaders) or numv<=0: continue
+              name=shaders[shader]
+              low=name.lower()
+              if not any(k in low for k in ("fire","flame","torch","ember","coal","woodburn","fireplace")): continue
+              pts=[verts[i][:3] for i in range(firstv,min(firstv+numv,len(verts)))]
+              if not pts: continue
+              mins=[min(p[k] for p in pts) for k in range(3)]
+              maxs=[max(p[k] for p in pts) for k in range(3)]
+              ctr=[sum(p[k] for p in pts)/len(pts) for k in range(3)]
+              rows.append({"shader":name,"surface_index":off//104,"surface_type":stype,"num_verts":len(pts),
+                           "center":[round(x,2) for x in ctr],
+                           "mins":[round(x,2) for x in mins],"maxs":[round(x,2) for x in maxs]})
+          # spatial clusters within 160 units
+          clusters=[]
+          for r in rows:
+              c=r["center"]; hit=None
+              for g in clusters:
+                  gc=g["center"]
+                  if sum((c[k]-gc[k])**2 for k in range(3)) <= 160*160:
+                      hit=g; break
+              if hit is None:
+                  hit={"center":c[:],"surfaces":[]}; clusters.append(hit)
+              hit["surfaces"].append(r)
+              n=len(hit["surfaces"])
+              hit["center"]=[round(sum(x["center"][k] for x in hit["surfaces"])/n,2) for k in range(3)]
+          out=[]
+          for i,g in enumerate(clusters):
+              mins=[min(x["mins"][k] for x in g["surfaces"]) for k in range(3)]
+              maxs=[max(x["maxs"][k] for x in g["surfaces"]) for k in range(3)]
+              out.append({"cluster":i,"center":g["center"],"mins":mins,"maxs":maxs,
+                          "surface_count":len(g["surfaces"]),
+                          "shaders":sorted(set(x["shader"] for x in g["surfaces"])),
+                          "surfaces":g["surfaces"]})
+          out.sort(key=lambda x:(-x["surface_count"],x["center"][1],x["center"][0]))
+          Path("evidence/CHATEAU_FIRE_SURFACE_CLUSTERS.json").write_text(json.dumps(out,indent=2)+"\\n")
+          print("CHATEAU_FIRE_SURFACE_CLUSTERS_PASS",len(rows),len(out))
+          for g in out[:30]:
+              print("FIRE_CLUSTER",g["cluster"],g["center"],g["surface_count"],";".join(g["shaders"]))
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: DW-Chateau-Fireplace-Lab-Discovery
           path: |
             evidence/CHATEAU_ENTITY_AUDIT.json
             evidence/CHATEAU_FIREPLACE_SCRIPT_SNIPPET.json
+            evidence/CHATEAU_FIRE_SURFACE_CLUSTERS.json
           retention-days: 7
