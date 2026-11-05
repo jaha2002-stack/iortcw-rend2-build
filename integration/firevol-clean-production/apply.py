@@ -10,12 +10,33 @@ old="""#define FIREVOL_V6_BMODEL_PLUME_Z_OFFSET 12.0f
 """
 new="""#define FIREVOL_V6_BMODEL_PLUME_Z_OFFSET 12.0f
 // CLEAN PRODUCTION: fireplace-specific visual alignment.
-// Keep Crypt1/world-torch offset unchanged; only the two Chateau fireplace classes differ.
+// Keep Crypt1/world-torch offset unchanged; only Chateau fireplaces get production alignment/gain.
 #define FIREVOL_PROD_STATIC_FIREPLACE_PLUME_Z_OFFSET 10.0f
-#define FIREVOL_PROD_BMODEL_PLUME_Z_OFFSET 2.0f
+#define FIREVOL_PROD_BMODEL_PLUME_Z_OFFSET 72.0f
+#define FIREVOL_PROD_CHATEAU_FIREPLACE_GAIN 1.35f
 """
 if old not in s:
     raise SystemExit("production constants anchor not found")
+s=s.replace(old,new,1)
+
+old="""\t\tif (!fireDl->iflcActive)
+\t\t\t(void)R_IFLC_VolumeOverride(sel->latchedFlameSurface, sel->latchedShader,
+\t\t\t\tsel->latchedFlameOrigin, &volumeGain);
+\t\tgeometryRadius = pool ? RB_FireVStableGeometryRadius(fireDl, pool, nowMs) :
+"""
+new="""\t\tif (!fireDl->iflcActive)
+\t\t\t(void)R_IFLC_VolumeOverride(sel->latchedFlameSurface, sel->latchedShader,
+\t\t\t\tsel->latchedFlameOrigin, &volumeGain);
+\t\tif (tr.world && !Q_stricmp(tr.world->baseName, "chateau") && pool &&
+\t\t\t(pool->fireV6StaticFireplaceStable ||
+\t\t\t (pool->latchedPrimitive==FIREVOL_PRIM_BMODEL &&
+\t\t\t  (pool->latchedEntityNum==5 || pool->latchedEntityNum==6)))) {
+\t\t\tvolumeGain *= FIREVOL_PROD_CHATEAU_FIREPLACE_GAIN;
+\t\t}
+\t\tgeometryRadius = pool ? RB_FireVStableGeometryRadius(fireDl, pool, nowMs) :
+"""
+if old not in s:
+    raise SystemExit("production fireplace gain anchor not found")
 s=s.replace(old,new,1)
 
 old="""\t\tVectorCopy(sel->latchedFlameOrigin,renderVolumeOrigin);
@@ -46,9 +67,9 @@ new='''\t\tri.Printf(PRINT_ALL,"FIREVOL_CONTINUITY_V6 map=%s staticFireplaceSupp
 \t\t\ttr.world?tr.world->baseName:"<none>",continuityV6StaticFireplaceDroppedFrame,s_fireV6StaticFireplaceSuppressedTotal,
 \t\t\tFIREVOL_V6_STATIC_FIREPLACE_RAW_RADIUS_MIN,FIREVOL_V6_STATIC_FIREPLACE_COMPANION_RADIUS,
 \t\t\tFIREVOL_PROD_BMODEL_PLUME_Z_OFFSET,selectedCount,renderedCount);
-\t\tri.Printf(PRINT_ALL,"FIREVOL_CLEAN_PRODUCTION map=%s staticFireplaceZ=-%.0f movingBmodelZ=-%.0f worldTorchZ=-%.0f selected=%d rendered=%d\\n",
+\t\tri.Printf(PRINT_ALL,"FIREVOL_CLEAN_PRODUCTION map=%s staticFireplaceZ=-%.0f movingBmodelZ=-%.0f fireplaceGain=%.2f worldTorchZ=-%.0f selected=%d rendered=%d\\n",
 \t\t\ttr.world?tr.world->baseName:"<none>",FIREVOL_PROD_STATIC_FIREPLACE_PLUME_Z_OFFSET,
-\t\t\tFIREVOL_PROD_BMODEL_PLUME_Z_OFFSET,FIREVOL_V5_WORLD_PLUME_Z_OFFSET,selectedCount,renderedCount);
+\t\t\tFIREVOL_PROD_BMODEL_PLUME_Z_OFFSET,FIREVOL_PROD_CHATEAU_FIREPLACE_GAIN,FIREVOL_V5_WORLD_PLUME_Z_OFFSET,selectedCount,renderedCount);
 '''
 if old not in s:
     raise SystemExit("production diagnostic anchor not found")
