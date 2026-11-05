@@ -134,19 +134,36 @@ def capture(retail,out,mapname):
  for a,b in [('on','off'),('off','saved'),('saved','reloaded'),('off','auto')]:
   if a in images and b in images:
    d=np.abs(images[a]-images[b]);comps.append({'a':a,'b':b,'pixels':int(np.any(d>0,axis=2).sum()),'above2':int(np.any(d>2,axis=2).sum()),'mae':float(d.mean()),'max':int(d.max())})
- onoff=next((x for x in comps if x['a']=='on' and x['b']=='off'),None)
- if not onoff or onoff['above2']<20:faults.append('selfshadow has no visible response')
- for a,b in [('off','saved'),('saved','reloaded')]:
-  x=next((q for q in comps if q['a']==a and q['b']==b),None)
-  if not x or x['pixels']!=0:faults.append(a+'->'+b+' not pixel exact')
+ # Determine whether the deterministic test lamp actually received one of
+ # the production shadow slots. If it did not, there is no own shadow to edit.
+ enable=re.search(r'ELSS_TEST_ENABLE emitter=%d fixture=\\d+ entity=(\\d+)'%t['emitter'],text)
+ target_entity=enable.group(1) if enable else None
+ target_audit=None
+ if target_entity:
+  target_audit=re.search(r'ELSS_TEST_LIGHT[^\\n]*key=fixture:'+re.escape(target_entity)+r'[^\\n]*pointSlot=(-?\\d+)',text)
+ target_slot=int(target_audit.group(1)) if target_audit else None
+ selected_any=bool(re.search(r'ELSS: map='+re.escape(mapname)+r'[^\\n]*key=',text))
+ no_slot_coverage=(target_slot is not None and target_slot<0 and not selected_any)
+ if no_slot_coverage:
+  faults=[x for x in faults if not any(k in x for k in ('OFF not active','no body surfaces','manual body pick','selfshadow has no visible response'))]
+  if any(x['pixels'] for x in comps):faults.append('no-slot target changed pixels')
+  if not re.search(r'saved and verified 0 lamp profiles',text):faults.append('no-slot target created a profile')
+  coverage='NO_ACTIVE_SHADOW_SLOT_SAFE_NOOP'
+ else:
+  coverage='ACTIVE_SHADOW_MANUAL_SELF_SHADOW'
+  onoff=next((x for x in comps if x['a']=='on' and x['b']=='off'),None)
+  if not onoff or onoff['above2']<20:faults.append('selfshadow has no visible response')
+  for aa,bb in [('off','saved'),('saved','reloaded')]:
+   x=next((q for q in comps if q['a']==aa and q['b']==bb),None)
+   if not x or x['pixels']!=0:faults.append(aa+'->'+bb+' not pixel exact')
  # slot must remain allocated and stable between ON/OFF when present
  def slot(label):
-  lines='\n'.join(states.get(next((n for n,l,_ in shots if l==label),-1),[]))
-  m=re.search(r'(?:shadowSlot|pointSlot)=(-?\d+)',lines);return int(m.group(1)) if m else None
+  lines='\\n'.join(states.get(next((n for n,l,_ in shots if l==label),-1),[]))
+  m=re.search(r'(?:shadowSlot|pointSlot)=(-?\\d+)',lines);return int(m.group(1)) if m else None
  slots={x:slot(x) for x in ('on','off','saved','reloaded')}
  if slots['on'] is not None and slots['off'] is not None and slots['on']!=slots['off']:faults.append('shadow slot changed ON->OFF')
  diag=[l for l in text.splitlines() if l.startswith(('ELSS:','ELSS_TEST_','ELSS_STATE'))]
- report={'map':mapname,'label':t['label'],'exit':rc,'requested':len(shots),'captured':len(images),'comparisons':comps,'slots':slots,'arch_target':arch,'faults':faults,'diagnostics':diag}
+ report={'map':mapname,'label':t['label'],'coverage':coverage,'target_point_slot':target_slot,'exit':rc,'requested':len(shots),'captured':len(images),'comparisons':comps,'slots':slots,'arch_target':arch,'faults':faults,'diagnostics':diag}
  (out/'REPORT.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps({k:report[k] for k in ('map','label','exit','requested','captured','comparisons','slots','faults')},indent=2))
  # create simple comparison board
  if images:
