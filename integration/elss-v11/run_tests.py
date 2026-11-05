@@ -17,7 +17,7 @@ checks={
  'exact_uses_only_explicit_seeds':'out->surfaces[out->count++]=p->seeds[i]' in manual,
  'exact_reuses_architecture_safety':'R_ELSS_ManualSurfaceSafe(o,p->seeds[i])' in manual,
  'exact_group_bounded':'groupHi[0]-groupLo[0]>192' in manual and 'groupHi[2]-groupLo[2]>256' in manual,
- 'protected_hit_never_bound_directly':'protected architecture/too large' in pick and 'R_ELSS_FindHousingNearCrosshair' in pick,
+ 'protected_hit_never_bound_directly':all(x in pick for x in ('firstSurface=surface','!R_ELSS_ManualSurfaceSafe(o,surface)','R_ELSS_FindHousingNearCrosshair(o,&surface)')),
  'fallback_owner_local':'owner2>112.0f*112.0f' in s,
  'fallback_requires_owner_visibility':'R_IFLC_LineVisible(s_iflcViewOrigin,o->origin)' in s,
  'fallback_ambiguous_refused':'secondScore-bestScore<.08f' in s,
