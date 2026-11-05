@@ -161,14 +161,13 @@ static qboolean RB_FireVFixtureV3KeyForPool(const fireVolumetricV07PoolSlot_t *p
     return qfalse;
 }
 
-static qboolean RB_FireVFixtureV3KeyForCatalog(const fireVolumetricFinalCatalogEntry_t *e,
+static qboolean RB_FireVFixtureV3KeyForCatalogSurface(int surfaceIndex,
     fireVolumetricFixtureKeyV3_t *out)
 {
     int token;
     if (!out) return qfalse;
     memset(out,0,sizeof(*out));
-    if (!e) return qfalse;
-    token=R_IFLC_FireOwnerForWorldSurface(e->surfaceIndex);
+    token=R_IFLC_FireOwnerForWorldSurface(surfaceIndex);
     if (token<=0) return qfalse;
     out->kind=FIREVOL_FIXKEY_WORLD_IFLC; out->a=token; return qtrue;
 }
@@ -227,10 +226,10 @@ static int RB_FireVFixtureV3FindPoolForAnchor(const fireVolumetricV07Anchor_t *a
     return -1;
 }
 
-static int RB_FireVFixtureV3FindPoolForCatalog(const fireVolumetricFinalCatalogEntry_t *e)
+static int RB_FireVFixtureV3FindPoolForCatalogSurface(int surfaceIndex)
 {
     int slot; fireVolumetricFixtureKeyV3_t ek;
-    if(!r_dwFireVolFixtureV3||!r_dwFireVolFixtureV3->integer||!RB_FireVFixtureV3KeyForCatalog(e,&ek)) return -1;
+    if(!r_dwFireVolFixtureV3||!r_dwFireVolFixtureV3->integer||!RB_FireVFixtureV3KeyForCatalogSurface(surfaceIndex,&ek)) return -1;
     for(slot=0;slot<FIREVOL07_MAX_POOL;++slot){fireVolumetricFixtureKeyV3_t pk;
         if(RB_FireVFixtureV3KeyForPool(&s_fireV07Pool[slot],&pk)&&RB_FireVFixtureV3KeyEqual(&ek,&pk))return slot;}
     return -1;
@@ -309,7 +308,7 @@ a='''\t\t\t\tif (RB_FireVFinalPoolForCatalog(entry) >= 0)
 '''
 b='''\t\t\t\tif (RB_FireVFinalPoolForCatalog(entry) >= 0)
 \t\t\t\t\tcontinue;
-\t\t\t\tif (RB_FireVFixtureV3FindPoolForCatalog(entry) >= 0)
+\t\t\t\tif (RB_FireVFixtureV3FindPoolForCatalogSurface(entry->surfaceIndex) >= 0)
 \t\t\t\t\tcontinue;
 \t\t\t\tif (RB_FireVStableDistanceWeight(entry->origin) <= 0.001f)
 '''
