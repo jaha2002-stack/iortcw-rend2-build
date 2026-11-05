@@ -35,11 +35,25 @@ assert "renderVolumeOrigin[2]-=FIREVOL_PROD_BMODEL_PLUME_Z_OFFSET" in b
 assert "fireV5BmodelLocalOrigin" in b
 assert "FIREVOL_V5_BMODEL_HOLD_MS 5000" in b
 
-# Production diagnostics must remain opt-in (default zero).
-for name in ("r_dwFireVolContinuityDiag","r_dwFireVolFixtureDiag"):
-    pos=init.find(name)
-    assert pos>=0, name
-    window=init[pos:pos+500]
-    assert '"0"' in window, f"{name} default not zero"
+def cvar_default(name):
+    m=re.search(r'ri\\.Cvar_Get\\(\\s*"' + re.escape(name) + r'"\\s*,\\s*"([^"]+)"',init)
+    assert m, "missing cvar registration: "+name
+    return m.group(1)
+
+# Production diagnostics are opt-in only.
+assert cvar_default("r_dwFireVolContinuityDiag")=="0"
+assert cvar_default("r_dwFireVolFixtureDiag")=="0"
+
+# Accepted FireVol fixes must be active without any /exec test pack.
+expected_on={
+    "r_dwFireVolFlashFix":"1",
+    "r_dwFireVolWarmupGuard":"1",
+    "r_dwFireVolEnergyGuard":"1",
+    "r_dwFireVolFLCFade":"1",
+    "r_dwFireVolFixtureV3":"1",
+    "r_dwFireVolContinuityV4":"1",
+}
+for name,val in expected_on.items():
+    assert cvar_default(name)==val, f"{name} default={cvar_default(name)} expected={val}"
 
 print("PASS Clean Production regression gates")
