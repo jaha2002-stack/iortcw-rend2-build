@@ -1,0 +1,91 @@
+name: DW FireVol Chateau Follow V5 FINAL
+on:
+  push:
+    branches: [fix/firevol-chateau-v5-final]
+    paths:
+      - '.github/workflows/DW_FIREVOL_CHATEAU_V5_FINAL.yml'
+      - 'integration/firevol-chateau-v5/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-firevol-chateau-v5-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Restore exact accepted lineage through V4
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+
+      - name: Apply Chateau Follow V5
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2 | tee evidence/FIREVOL_CHATEAU_V5_APPLY.log
+
+      - name: Architecture tests
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-chateau-v5/run_tests.py source/SP/code/rend2 | tee evidence/FIREVOL_CHATEAU_V5_TESTS.log
+
+      - name: Build Win64
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-FireVol-Chateau-Follow-V5 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/BUILD.log 2>&1 || { tail -300 evidence/BUILD.log; exit 1; }
+
+      - name: Package inherited V4 then V5
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-continuity-v4/package.py source evidence dist | tee evidence/PACKAGE_V4.log
+          python3 integration/firevol-chateau-v5/package.py dist | tee evidence/PACKAGE_V5.log
+
+      - name: Verify V5 artifact
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee evidence/FIREVOL_CHATEAU_V5_ARTIFACT_VERIFY.log
+          from pathlib import Path
+          import zipfile
+          p=Path("dist/DarkWolf_FireVol_Chateau_Follow_V5_FINAL_From_41982135692_Win64_TEST.zip")
+          assert p.exists() and p.stat().st_size > 1000000
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist()
+              dll=[n for n in names if n.endswith("/renderer_sp_rend2_x64.dll")]
+              assert len(dll)==1
+              data=z.read(dll[0])
+              assert b"FIREVOL_CONTINUITY_V5" in data
+              assert any(n.endswith("/Main/DW_FIREVOL_CHATEAU_V5_FINAL.cfg") for n in names)
+              assert any(n.endswith("/README_FIREVOL_CHATEAU_V5_RU.txt") for n in names)
+          print("PASS V5 archive and DLL marker")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-FireVol-Chateau-Follow-V5-FINAL-Win64-TEST
+          path: |
+            dist/DarkWolf_FireVol_Chateau_Follow_V5_FINAL_From_41982135692_Win64_TEST.zip
+            dist/SHA256SUMS_V5.txt
+          if-no-files-found: error
+          retention-days: 60
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-FireVol-Chateau-Follow-V5-Build-Proof
+          path: evidence/**
+          retention-days: 60
