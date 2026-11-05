@@ -7,8 +7,8 @@ b=(root/"tr_backend.c").read_text()
 init=(root/"tr_init.c").read_text()
 
 required=[
-    "FIREVOL_PROD_STATIC_FIREPLACE_PLUME_Z_OFFSET 4.0f",
-    "FIREVOL_PROD_BMODEL_PLUME_Z_OFFSET 6.0f",
+    "FIREVOL_PROD_STATIC_FIREPLACE_PLUME_Z_OFFSET 10.0f",
+    "FIREVOL_PROD_BMODEL_PLUME_Z_OFFSET 2.0f",
     "FIREVOL_CLEAN_PRODUCTION map=%s",
     "pool->fireV6StaticFireplaceStable",
     "RB_FireV5BmodelHoldActive(pool,nowMs)",
