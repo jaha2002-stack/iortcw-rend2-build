@@ -55,4 +55,25 @@ if old not in s:
 s=s.replace(old,new,1)
 
 p.write_text(s)
+
+# Clean Production must never enable diagnostic overlays by default.
+import re
+pinit=root/"tr_init.c"
+si=pinit.read_text()
+for name in ("r_dwFireVolContinuityDiag","r_dwFireVolFixtureDiag"):
+    pat=re.compile(r'(ri\\.Cvar_Get\\(\\s*"' + re.escape(name) + r'"\\s*,\\s*)"[^"]+"')
+    si,n=pat.subn(r'\\1"0"',si,count=1)
+    if n!=1:
+        raise SystemExit("production diagnostic default anchor not found: "+name)
+pinit.write_text(si)
+
+# Emit the relevant defaults into build proof.
+for line in si.splitlines():
+    if any(k in line for k in (
+        "r_dwFireVolFlashFix","r_dwFireVolWarmupGuard","r_dwFireVolEnergyGuard",
+        "r_dwFireVolFLCFade","r_dwFireVolFixtureV3","r_dwFireVolFixtureDiag",
+        "r_dwFireVolContinuityV4","r_dwFireVolContinuityDiag",
+        "r_dwFireVolWorldGeometryScale","r_dwFireVolIFLCPriority")):
+        print("PROD_DEFAULT:",line.strip())
+
 print("PASS Clean Production fireplace alignment patch")
