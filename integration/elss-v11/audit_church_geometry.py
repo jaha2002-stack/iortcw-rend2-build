@@ -49,7 +49,19 @@ def main(retail,out):
         d2=sum((lo[k]-ANCHOR[k])**2 if ANCHOR[k]<lo[k] else (ANCHOR[k]-hi[k])**2 if ANCHOR[k]>hi[k] else 0 for k in range(3))
         center=[(lo[k]+hi[k])*.5 for k in range(3)]
         comps.append({'start_tri':start,'triangles':len(c),'lo':lo,'hi':hi,'extents':ext,'sorted_extents':sorted(ext,reverse=True),'distance_to_owner':math.sqrt(d2),'center':center})
-    result={'bsp_sha256':hashlib.sha256(data).hexdigest(),'surface':SURFACE,'numVerts':nv,'numIndexes':ni,'triangles':ni//3,'components':sorted(comps,key=lambda x:(x['distance_to_owner'],x['triangles']))}
+    nearby=[]
+    for si,ss in enumerate(surfs):
+        v=verts[ss[3]:ss[3]+ss[4]]
+        if not v:continue
+        lo=[min(float(x[k]) for x in v) for k in range(3)];hi=[max(float(x[k]) for x in v) for k in range(3)]
+        ext=[hi[k]-lo[k] for k in range(3)]
+        d2=sum((lo[k]-ANCHOR[k])**2 if ANCHOR[k]<lo[k] else (ANCHOR[k]-hi[k])**2 if ANCHOR[k]>hi[k] else 0 for k in range(3))
+        if d2>224**2:continue
+        if max(ext)>320:continue
+        nearby.append({'surface':si,'numVerts':ss[4],'numIndexes':ss[6],'triangles':ss[6]//3,'lo':lo,'hi':hi,'extents':ext,'distance_to_owner':math.sqrt(d2)})
+    result={'bsp_sha256':hashlib.sha256(data).hexdigest(),'surface':SURFACE,'numVerts':nv,'numIndexes':ni,'triangles':ni//3,
+            'components':sorted(comps,key=lambda x:(x['distance_to_owner'],x['triangles'])),
+            'nearby_compact_surfaces':sorted(nearby,key=lambda x:(x['distance_to_owner'],max(x['extents']),x['surface']))}
     out.mkdir(parents=True,exist_ok=True);(out/'CHURCH_10810_COMPONENTS.json').write_text(json.dumps(result,indent=2)+'\n')
     print(json.dumps(result,indent=2))
 if __name__=='__main__':
