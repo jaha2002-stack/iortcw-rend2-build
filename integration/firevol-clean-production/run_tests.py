@@ -57,3 +57,5 @@ for name,val in expected_on.items():
     assert cvar_default(name)==val, f"{name} default={cvar_default(name)} expected={val}"
 
 print("PASS Clean Production regression gates")
+
+# clean-production-final-trigger
