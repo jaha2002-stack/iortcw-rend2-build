@@ -63,12 +63,13 @@ def prepare(build,retail):
 def capture(source,retail,out):
     from PIL import Image
     out.mkdir(parents=True,exist_ok=True)
-    world=World(map_data(retail))
-    static_eye,sfrac,shit=choose_eye(world,STATIC_TARGET,"minus_x")
-    moving_eye,mfrac,mhit=choose_eye(world,MOVING_TARGET,"plus_x")
+    # Discovery run #42085819342 proved both fireplace targets.
+    # Use fixed head-on noclip cameras to keep capture deterministic and avoid expensive BSP search.
+    static_eye=[1320.0,2447.0,105.0]
+    moving_eye=[-760.0,2630.0,475.0]
     views=[
-        {"name":"chateau_static_fireplace","eye":static_eye,"target":STATIC_TARGET,"angles":aim(static_eye,STATIC_TARGET),"trace_fraction":sfrac},
-        {"name":"chateau_moving_fireplace","eye":moving_eye,"target":MOVING_TARGET,"angles":aim(moving_eye,MOVING_TARGET),"trace_fraction":mfrac},
+        {"name":"chateau_static_fireplace","eye":static_eye,"target":STATIC_TARGET,"angles":aim(static_eye,STATIC_TARGET),"provenance":"WORLD fire cluster + nearest dlight"},
+        {"name":"chateau_moving_fireplace","eye":moving_eye,"target":MOVING_TARGET,"angles":aim(moving_eye,MOVING_TARGET),"provenance":"fireplace1 origin + local flame cluster"},
     ]
     build=source/"SP/build/release-linux-x86_64"
     runtime,main=prepare(build,retail)
@@ -106,7 +107,7 @@ def capture(source,retail,out):
     env.update(LIBGL_ALWAYS_SOFTWARE="1",LP_NUM_THREADS="2",SDL_AUDIODRIVER="dummy")
     with (out/"stdout.log").open("w") as log:
         p=subprocess.Popen(cmd,stdout=log,stderr=subprocess.STDOUT,env=env,start_new_session=True)
-        try: rc=p.wait(timeout=720)
+        try: rc=p.wait(timeout=240)
         except subprocess.TimeoutExpired:
             os.killpg(p.pid,signal.SIGKILL); p.wait(); rc=124
     logs=[]
