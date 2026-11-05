@@ -1,0 +1,89 @@
+name: DW Chateau Fireplace Two Frame Proof
+on:
+  push:
+    branches: [release/firevol-chateau-clean-production]
+    paths:
+      - '.github/workflows/DW_CHATEAU_FIREPLACE_TWO_FRAME_PROOF.yml'
+      - 'testlab/scripts/chateau_fireplace_production_proof.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native TestLab dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends             build-essential ca-certificates git gh python3 python3-pil unzip zip             xvfb xauth libgl1-mesa-dev libegl1 libgl1-mesa-dri             libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          mkdir -p evidence
+      - name: Restore exact accepted lineage and final Clean Production renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          sha256sum source/SP/code/rend2/tr_backend.c source/SP/code/rend2/tr_init.c > evidence/FINAL_RENDERER_SOURCE.sha256
+      - name: Add camera automation only - renderer bytes must remain unchanged
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sha256sum source/SP/code/rend2/* > evidence/RENDERER_BEFORE.sha256
+          python3 testlab/scripts/chateau_fireplace_production_proof.py instrument source
+          sha256sum source/SP/code/rend2/* > evidence/RENDERER_AFTER.sha256
+          diff -u evidence/RENDERER_BEFORE.sha256 evidence/RENDERER_AFTER.sha256
+      - name: Build native Linux Clean Production TestLab
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release             VERSION=1.51d-SP_DarkWolf-Clean-Production-FireVol-Proof             BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0             BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1             > evidence/NATIVE_BUILD.log 2>&1 || { tail -200 evidence/NATIVE_BUILD.log; exit 1; }
+          test -x "$(find source/SP/build/release-linux-x86_64 -maxdepth 1 -type f -iname 'iowolfsp.*' -print -quit)"
+          find source/SP/build/release-linux-x86_64 -maxdepth 1 -type f -iname '*rend2*.so' -print > evidence/NATIVE_RENDERER.txt
+          test -s evidence/NATIVE_RENDERER.txt
+      - name: Fetch protected RTCW retail Chateau assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}"
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          echo "$retail" > .retail_main
+          test -s "$retail/pak0.pk3"
+      - name: Capture exactly two Clean Production Chateau frames
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/chateau_fireplace_production_proof.py capture             source "$(cat .retail_main)" evidence             2>&1 | tee evidence/CHATEAU_TWO_FRAME_CAPTURE.log
+          test -s evidence/chateau_static_fireplace.png
+          test -s evidence/chateau_moving_fireplace.png
+          test -s evidence/CHATEAU_FIREPLACE_PROOF_REPORT.json
+          grep -Fq CHATEAU_FIREPLACE_TWO_FRAME_PROOF_PASS evidence/CHATEAU_TWO_FRAME_CAPTURE.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DW-Chateau-Fireplace-Two-Frame-Proof
+          path: |
+            evidence/chateau_static_fireplace.png
+            evidence/chateau_moving_fireplace.png
+            evidence/CHATEAU_FIREPLACE_PROOF_REPORT.json
+            evidence/CHATEAU_TWO_FRAME_CAPTURE.log
+            evidence/FINAL_RENDERER_SOURCE.sha256
+            evidence/NATIVE_RENDERER.txt
+          if-no-files-found: warn
+          retention-days: 30
