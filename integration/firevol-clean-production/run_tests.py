@@ -8,7 +8,7 @@ init=(root/"tr_init.c").read_text()
 
 required=[
     "FIREVOL_PROD_STATIC_FIREPLACE_PLUME_Z_OFFSET 10.0f",
-    "FIREVOL_PROD_BMODEL_PLUME_Z_OFFSET 2.0f",
+    "FIREVOL_PROD_BMODEL_PLUME_Z_OFFSET 72.0f",\n    "FIREVOL_PROD_CHATEAU_FIREPLACE_GAIN 1.35f",
     "FIREVOL_CLEAN_PRODUCTION map=%s",
     "pool->fireV6StaticFireplaceStable",
     "RB_FireV5BmodelHoldActive(pool,nowMs)",
@@ -31,7 +31,7 @@ assert "renderVolumeOrigin[2]-=FIREVOL_PROD_STATIC_FIREPLACE_PLUME_Z_OFFSET" in 
 assert "renderVolumeOrigin[2]-=FIREVOL_V5_WORLD_PLUME_Z_OFFSET" in b
 
 # The moving BMODEL keeps V5 ownership/follow logic, only the final visual offset changes.
-assert "renderVolumeOrigin[2]-=FIREVOL_PROD_BMODEL_PLUME_Z_OFFSET" in b
+assert "renderVolumeOrigin[2]-=FIREVOL_PROD_BMODEL_PLUME_Z_OFFSET" in b\nassert "volumeGain *= FIREVOL_PROD_CHATEAU_FIREPLACE_GAIN" in b
 assert "fireV5BmodelLocalOrigin" in b
 assert "FIREVOL_V5_BMODEL_HOLD_MS 5000" in b
 
