@@ -51,3 +51,5 @@ assert d > 1000.0
 print("PASS FireVol Chateau Final V6 architecture checks")
 
 # verifier-trigger-v2
+
+# verifier-trigger-v3
