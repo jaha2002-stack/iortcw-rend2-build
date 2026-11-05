@@ -136,12 +136,15 @@ def capture(retail,out,mapname):
    d=np.abs(images[a]-images[b]);comps.append({'a':a,'b':b,'pixels':int(np.any(d>0,axis=2).sum()),'above2':int(np.any(d>2,axis=2).sum()),'mae':float(d.mean()),'max':int(d.max())})
  # Determine whether the deterministic test lamp actually received one of
  # the production shadow slots. If it did not, there is no own shadow to edit.
- enable=re.search(r'ELSS_TEST_ENABLE emitter=%d fixture=\\d+ entity=(\\d+)'%t['emitter'],text)
+ enable=re.search(r'ELSS_TEST_ENABLE emitter='+str(t['emitter'])+r'[^\\n]*entity=(\\d+)',text)
  target_entity=enable.group(1) if enable else None
- target_audit=None
+ target_slot=None
  if target_entity:
-  target_audit=re.search(r'ELSS_TEST_LIGHT[^\\n]*key=fixture:'+re.escape(target_entity)+r'[^\\n]*pointSlot=(-?\\d+)',text)
- target_slot=int(target_audit.group(1)) if target_audit else None
+  for audit_line in text.splitlines():
+   if audit_line.startswith('ELSS_TEST_LIGHT ') and ('key=fixture:'+target_entity+' ') in audit_line:
+    mm=re.search(r'pointSlot=(-?\\d+)',audit_line)
+    if mm:
+     target_slot=int(mm.group(1));break
  selected_any=bool(re.search(r'ELSS: map='+re.escape(mapname)+r'[^\\n]*key=',text))
  no_slot_coverage=(target_slot is not None and target_slot<0 and not selected_any)
  if no_slot_coverage:
