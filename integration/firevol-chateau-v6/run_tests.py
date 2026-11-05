@@ -49,3 +49,5 @@ d=math.sqrt(sum((a-b)**2 for a,b in zip(real,moving)))
 assert d > 1000.0
 
 print("PASS FireVol Chateau Final V6 architecture checks")
+
+# verifier-trigger-v2
