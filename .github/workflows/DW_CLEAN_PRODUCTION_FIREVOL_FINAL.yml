@@ -1,0 +1,110 @@
+name: DW Clean Production FireVol Final
+on:
+  push:
+    branches: [release/firevol-chateau-clean-production]
+    paths:
+      - '.github/workflows/DW_CLEAN_PRODUCTION_FIREVOL_FINAL.yml'
+      - 'integration/firevol-clean-production/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-clean-production-firevol-final-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Restore exact accepted lineage through V6
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+
+      - name: Record protected-module hashes before production patch
+        run: |
+          set -Eeuo pipefail
+          sha256sum             source/SP/code/rend2/tr_iflc.inc             source/SP/code/rend2/tr_init.c             source/SP/code/rend2/tr_local.h             source/SP/code/rend2/tr_main.c             > evidence/PROTECTED_BEFORE.sha256
+
+      - name: Apply final clean production alignment
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2 | tee evidence/CLEAN_PRODUCTION_APPLY.log
+
+      - name: Production regression gates
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2 | tee evidence/CLEAN_PRODUCTION_TESTS.log
+          sha256sum             source/SP/code/rend2/tr_iflc.inc             source/SP/code/rend2/tr_init.c             source/SP/code/rend2/tr_local.h             source/SP/code/rend2/tr_main.c             > evidence/PROTECTED_AFTER.sha256
+          diff -u evidence/PROTECTED_BEFORE.sha256 evidence/PROTECTED_AFTER.sha256 | tee evidence/PROTECTED_DIFF.txt
+
+      - name: Build Win64 Clean Production
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-Clean-Production-FireVol-Final PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/BUILD.log 2>&1 || { tail -320 evidence/BUILD.log; exit 1; }
+
+      - name: Package accepted lineage and strip test packs
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-continuity-v4/package.py source evidence dist | tee evidence/PACKAGE_V4.log
+          python3 integration/firevol-chateau-v5/package.py dist | tee evidence/PACKAGE_V5.log
+          python3 integration/firevol-chateau-v6/package.py dist | tee evidence/PACKAGE_V6.log
+          python3 integration/firevol-clean-production/package.py dist | tee evidence/PACKAGE_CLEAN_PRODUCTION.log
+
+      - name: Verify Clean Production archive
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee evidence/CLEAN_PRODUCTION_ARTIFACT_VERIFY.log
+          from pathlib import Path
+          import json, zipfile
+          p=Path("dist/DarkWolf_Clean_Production_FireVol_Final_From_41982135692_Win64.zip")
+          assert p.exists() and p.stat().st_size > 1000000
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist()
+              dll=[n for n in names if n.endswith("/renderer_sp_rend2_x64.dll")]
+              assert len(dll)==1
+              data=z.read(dll[0])
+              assert b"FIREVOL_CLEAN_PRODUCTION" in data
+              assert b"FIREVOL_CONTINUITY_V6" in data
+              assert not any("/Main/DW_FIREVOL_" in n and n.endswith(".cfg") for n in names)
+              assert not any("/README_FIREVOL_" in n for n in names)
+              manifests=[n for n in names if n.endswith("/CLEAN_PRODUCTION_MANIFEST.json")]
+              assert len(manifests)==1
+              m=json.loads(z.read(manifests[0]))
+              assert m["status"]=="CLEAN_PRODUCTION"
+              assert m["crypt1_status"]=="USER_ACCEPTED_PASS_PRESERVED"
+              assert m["static_fireplace_plume_z_offset"]==-4
+              assert m["moving_bmodel_fireplace_plume_z_offset"]==-6
+          print("PASS Clean Production archive")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Clean-Production-FireVol-Final-Win64
+          path: |
+            dist/DarkWolf_Clean_Production_FireVol_Final_From_41982135692_Win64.zip
+            dist/SHA256SUMS_CLEAN_PRODUCTION.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Clean-Production-FireVol-Final-Build-Proof
+          path: evidence/**
+          retention-days: 90
