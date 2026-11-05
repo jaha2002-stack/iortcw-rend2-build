@@ -1,0 +1,313 @@
+name: DW FireVol Physical Owner Dedup V2
+on:
+  push:
+    branches: [fix/firevol-physical-owner-dedup-v2]
+    paths:
+      - '.github/workflows/DW_FIREVOL_PHYSICAL_OWNER_V2.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-firevol-physical-owner-v2-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Restore exact Run 41982135692 lineage and FireVol Flash Fix V1
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+
+      - name: Apply FireVol Physical Owner Dedup V2
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          root=Path('source/SP/code/rend2'); ev=Path('evidence'); ev.mkdir(exist_ok=True)
+          H=lambda p:hashlib.sha256((root/p).read_bytes()).hexdigest()
+          expected={
+            'tr_backend.c':'c205f59d4993695e06afb43692f8386e2153fe598f04a4cfbc7538124fbce749',
+            'tr_iflc.inc':'318c2eba928b70badb238bc567a3e9a025d95d99c57498d6af68508d7bc64b5c',
+            'tr_init.c':'312f2cc7cb1e295c05790df01826925fad5b415ba5d74e023a05d8a8a096ccb3',
+            'tr_local.h':'6bb152e1b7635fc154186ea484593f524d358d6a8b89a4172bc2e6efdfcf3e6c'}
+          for p,h in expected.items(): assert H(p)==h,(p,H(p),h)
+          def rep(s,a,b,label):
+            assert s.count(a)==1,(label,s.count(a)); return s.replace(a,b,1)
+
+          # IFLC physical-owner read API. Build catalog even when interactive FLC is OFF.
+          p=root/'tr_iflc.inc'; s=p.read_text()
+          s=rep(s,'\tif (!enabled && !s_iflcReady) return;\n\tif (!R_IFLC_EnsureCatalog() || s_iflcCatalogOverflow) return;',
+            '\t/* FireVol V2 needs the immutable owner catalog even when FLC editing is off. */\n\tif (!R_IFLC_EnsureCatalog() || s_iflcCatalogOverflow) return;','iflc catalog')
+          marker='qboolean R_IFLC_VolumeOverride(int surfaceIndex, const char *shaderName, const vec3_t origin, float *gain)\n'
+          api=r'''/* DARKWOLF_FIREVOL_PHYSICAL_OWNER_DEDUP_V2: backend read-only owner API. */
+          int R_IFLC_FirePhysicalOwnerForSurface(int surfaceIndex)
+          {
+              int i,o;
+              if(!s_iflcReady||s_iflcCatalogOverflow||!tr.world||strcmp(s_iflcMap,tr.world->baseName))return 0;
+              for(i=0;i<s_iflcSurfaceCount;++i)if(s_iflcSurfaces[i].surfaceIndex==surfaceIndex){
+                  o=s_iflcSurfaces[i].owner;
+                  if(o<0||o>=s_iflcOwnerCount||s_iflcOwners[o].ambiguous)return 0;
+                  return o+1;
+              }
+              return 0;
+          }
+          qboolean R_IFLC_FirePhysicalOwnerOrigin(int token, vec3_t out)
+          {
+              int o=token-1;
+              if(!out||!s_iflcReady||s_iflcCatalogOverflow||o<0||o>=s_iflcOwnerCount||s_iflcOwners[o].ambiguous)return qfalse;
+              VectorCopy(s_iflcOwners[o].origin,out);return qtrue;
+          }
+
+          '''
+          assert s.count(marker)==1; s=s.replace(marker,api+marker,1); p.write_text(s)
+
+          # Public symbols/cvars.
+          p=root/'tr_local.h'; s=p.read_text()
+          s=rep(s,'extern cvar_t *r_dwFireLightControl;\n',
+            'extern cvar_t *r_dwFireLightControl;\nextern cvar_t *r_dwFireVolPhysicalOwnerDedup;\nextern cvar_t *r_dwFireVolPhysicalOwnerDiag;\n','extern cvars')
+          s=rep(s,'int R_IFLC_SurfaceSelfFixture(int surfaceIndex);\n',
+            'int R_IFLC_SurfaceSelfFixture(int surfaceIndex);\nint R_IFLC_FirePhysicalOwnerForSurface(int surfaceIndex);\nqboolean R_IFLC_FirePhysicalOwnerOrigin(int ownerToken, vec3_t out);\n','owner prototypes')
+          p.write_text(s)
+
+          p=root/'tr_init.c'; s=p.read_text()
+          s=rep(s,'cvar_t  *r_dwFireLightControl; // DARKWOLF_IFLC_V1, explicit opt-in master.\n',
+            'cvar_t  *r_dwFireLightControl; // DARKWOLF_IFLC_V1, explicit opt-in master.\ncvar_t  *r_dwFireVolPhysicalOwnerDedup; // DARKWOLF_FIREVOL_PHYSICAL_OWNER_DEDUP_V2\ncvar_t  *r_dwFireVolPhysicalOwnerDiag;\n','cvar declarations')
+          a='\tr_dwFireLightControl = ri.Cvar_Get( "r_dwFireLightControl", "0", CVAR_ARCHIVE );\n\tri.Cvar_CheckRange(r_dwFireLightControl, 0.0f, 1.0f, qtrue);\n'
+          b=a+'\tr_dwFireVolPhysicalOwnerDedup = ri.Cvar_Get( "r_dwFireVolPhysicalOwnerDedup", "1", CVAR_ARCHIVE );\n\tri.Cvar_CheckRange(r_dwFireVolPhysicalOwnerDedup, 0.0f, 1.0f, qtrue);\n\tr_dwFireVolPhysicalOwnerDiag = ri.Cvar_Get( "r_dwFireVolPhysicalOwnerDiag", "0", 0 );\n\tri.Cvar_CheckRange(r_dwFireVolPhysicalOwnerDiag, 0.0f, 1.0f, qtrue);\n'
+          s=rep(s,a,b,'cvar registration'); p.write_text(s)
+
+          # Backend helper include.
+          inc=root/'tr_firevol_physical_owner_v2.inc'
+          inc.write_text(r'''// DARKWOLF_FIREVOL_PHYSICAL_OWNER_DEDUP_V2
+          static int s_fireVPhysicalOwnerSuppressedTotal=0;
+          static char s_fireVPhysicalOwnerMap[MAX_QPATH]="";
+          static void RB_FireVPhysicalOwnerResetMap(void){
+              const char *m=tr.world?tr.world->baseName:"<none>";
+              if(Q_stricmp(s_fireVPhysicalOwnerMap,m)){Q_strncpyz(s_fireVPhysicalOwnerMap,m,sizeof(s_fireVPhysicalOwnerMap));s_fireVPhysicalOwnerSuppressedTotal=0;}
+          }
+          static int RB_FireVPhysicalOwnerToken(const fireVolumetricV07PoolSlot_t *p){
+              return (!p||!p->valid||!p->latchValid)?0:R_IFLC_FirePhysicalOwnerForSurface(p->latchedFlameSurface);
+          }
+          static int RB_FireVPhysicalOwnerExistingPool(int token){
+              int s;if(token<=0)return -1;
+              for(s=0;s<FIREVOL07_MAX_POOL;++s)if(s_fireV07Pool[s].valid&&s_fireV07Pool[s].latchValid&&RB_FireVPhysicalOwnerToken(&s_fireV07Pool[s])==token)return s;
+              return -1;
+          }
+          static int RB_FireVPhysicalOwnerRank(const fireVolumetricV07PoolSlot_t *p,int real,qboolean synth){
+              if(!p||!p->valid)return -1;
+              if(real>=0)return 400+(p->nativeOrdinal>=0?20:0)+(p->sourceClass==FIREVOL082_SOURCE_STRICT?10:0);
+              if(synth)return 300;
+              return p->sourceClass==FIREVOL082_SOURCE_SYNTHETIC?100:200;
+          }
+          static void RB_FireVPhysicalOwnerDrop(int slot,int *li,int *ls,qboolean *syn,qboolean *chosen){
+              int r;if(slot<0||slot>=FIREVOL07_MAX_POOL)return;
+              r=RB_FireVStableResidentIndexForPool(slot);if(r>=0)RB_FireVStableClearResident(r);
+              memset(&s_fireV07Pool[slot],0,sizeof(s_fireV07Pool[slot]));li[slot]=-1;ls[slot]=-1;syn[slot]=qfalse;chosen[slot]=qfalse;s_fireV07PoolChangeCount++;
+          }
+          static void RB_FireVPhysicalOwnerDedup(int *li,int *ls,qboolean *syn,qboolean *chosen,qboolean apply,
+              int *physical,int *realOwners,int *synthOwners,int *suppressed){
+              int tok[FIREVOL07_MAX_POOL],win[FIREVOL07_MAX_POOL],groups=0,s,g,drop=0;
+              RB_FireVPhysicalOwnerResetMap();
+              for(g=0;g<FIREVOL07_MAX_POOL;++g){tok[g]=0;win[g]=-1;}
+              for(s=0;s<FIREVOL07_MAX_POOL;++s){
+                  fireVolumetricV07PoolSlot_t *p=&s_fireV07Pool[s];int t,rank,wr;float d=0,wd=0;vec3_t o,x; qboolean ho;
+                  if(!p->valid||!p->latchValid||(t=RB_FireVPhysicalOwnerToken(p))<=0)continue;
+                  for(g=0;g<groups&&tok[g]!=t;++g){}
+                  if(g==groups){tok[groups]=t;win[groups++]=s;continue;}
+                  rank=RB_FireVPhysicalOwnerRank(p,li[s],syn[s]);wr=RB_FireVPhysicalOwnerRank(&s_fireV07Pool[win[g]],li[win[g]],syn[win[g]]);
+                  ho=R_IFLC_FirePhysicalOwnerOrigin(t,o);
+                  if(ho){VectorSubtract(p->latchedFlameOrigin,o,x);d=DotProduct(x,x);VectorSubtract(s_fireV07Pool[win[g]].latchedFlameOrigin,o,x);wd=DotProduct(x,x);}
+                  if(rank>wr||(rank==wr&&ho&&d<wd))win[g]=s;
+              }
+              if(apply)for(s=0;s<FIREVOL07_MAX_POOL;++s){
+                  fireVolumetricV07PoolSlot_t *p=&s_fireV07Pool[s];int t;
+                  if(!p->valid||!p->latchValid||(t=RB_FireVPhysicalOwnerToken(p))<=0)continue;
+                  for(g=0;g<groups&&tok[g]!=t;++g){}
+                  if(g<groups&&win[g]!=s){RB_FireVPhysicalOwnerDrop(s,li,ls,syn,chosen);drop++;}
+              }
+              s_fireVPhysicalOwnerSuppressedTotal+=drop;
+              {int lt[FIREVOL07_MAX_POOL],lc=0,rc=0,sc=0; qboolean lr[FIREVOL07_MAX_POOL],ly[FIREVOL07_MAX_POOL];
+               for(g=0;g<FIREVOL07_MAX_POOL;++g){lt[g]=0;lr[g]=ly[g]=qfalse;}
+               for(s=0;s<FIREVOL07_MAX_POOL;++s){fireVolumetricV07PoolSlot_t *p=&s_fireV07Pool[s];int t;
+                 if(!p->valid||!p->latchValid||(li[s]<0&&!syn[s])||(t=RB_FireVPhysicalOwnerToken(p))<=0)continue;
+                 for(g=0;g<lc&&lt[g]!=t;++g){} if(g==lc)lt[lc++]=t;
+                 if(li[s]>=0)lr[g]=qtrue;else if(syn[s])ly[g]=qtrue;
+               }
+               for(g=0;g<lc;++g){if(lr[g])rc++;else if(ly[g])sc++;}
+               if(physical)*physical=lc;if(realOwners)*realOwners=rc;if(synthOwners)*synthOwners=sc;
+              }
+              if(suppressed)*suppressed=drop;
+          }
+          ''')
+
+          p=root/'tr_backend.c'; s=p.read_text()
+
+          # Owner-aware catalog coverage: known different torches never collapse by 32 units.
+          s=rep(s,'\tint slot;\n\tconst char *catalogShader;\n\tif (!entry || !tr.world',
+            '\tint slot;\n\tint entryOwner;\n\tconst char *catalogShader;\n\tif (!entry || !tr.world','catalog owner declaration')
+          s=rep(s,'\tcatalogShader = tr.world->surfaces[entry->surfaceIndex].shader ?\n\t\ttr.world->surfaces[entry->surfaceIndex].shader->name : "";\n\tfor (slot = 0;',
+            '\tcatalogShader = tr.world->surfaces[entry->surfaceIndex].shader ?\n\t\ttr.world->surfaces[entry->surfaceIndex].shader->name : "";\n\tentryOwner = R_IFLC_FirePhysicalOwnerForSurface(entry->surfaceIndex);\n\tfor (slot = 0;','catalog owner value')
+          s=rep(s,'\t\tfireVolumetricV07PoolSlot_t *pool = &s_fireV07Pool[slot];\n\t\tvec3_t delta;\n\t\tif (!pool->valid || !pool->latchValid)\n\t\t\tcontinue;\n\t\tif (RB_FireV082FixtureKeyMatches(pool->latchedFlameSurface, pool->latchedShader,',
+            '\t\tfireVolumetricV07PoolSlot_t *pool = &s_fireV07Pool[slot];\n\t\tint poolOwner;\n\t\tvec3_t delta;\n\t\tif (!pool->valid || !pool->latchValid)\n\t\t\tcontinue;\n\t\tpoolOwner = R_IFLC_FirePhysicalOwnerForSurface(pool->latchedFlameSurface);\n\t\tif (entryOwner > 0 && poolOwner > 0) { if (entryOwner == poolOwner) return slot; else continue; }\n\t\tif (RB_FireV082FixtureKeyMatches(pool->latchedFlameSurface, pool->latchedShader,','catalog distinct owners')
+
+          # Anchor coverage: physical owner beats proximity.
+          s=rep(s,'static qboolean RB_FireV082AnchorSpatiallyCovered(const fireVolumetricV07Anchor_t *anchor, float tolerance)\n{\n\tint slot;\n\tfloat toleranceSq = tolerance * tolerance;',
+            'static qboolean RB_FireV082AnchorSpatiallyCovered(const fireVolumetricV07Anchor_t *anchor, float tolerance)\n{\n\tint slot;\n\tint anchorOwner = anchor ? R_IFLC_FirePhysicalOwnerForSurface(anchor->surfaceIndex) : 0;\n\tfloat toleranceSq = tolerance * tolerance;','anchor owner declaration')
+          needle='\t\tif (!pool->valid || !pool->latchValid)\n\t\t\tcontinue;\n\t\tif (RB_FireV082PoolMatchesAnchor(pool, anchor))'
+          repl='\t\tif (!pool->valid || !pool->latchValid)\n\t\t\tcontinue;\n\t\t{ int poolOwner=R_IFLC_FirePhysicalOwnerForSurface(pool->latchedFlameSurface); if(anchorOwner>0&&poolOwner>0){if(anchorOwner==poolOwner)return qtrue;else continue;} }\n\t\tif (RB_FireV082PoolMatchesAnchor(pool, anchor))'
+          # only the occurrence inside AnchorSpatiallyCovered should be changed: use split around function.
+          pos=s.index('static qboolean RB_FireV082AnchorSpatiallyCovered')
+          pre=s[:pos]; tail=s[pos:]; assert tail.count(needle)>=1; tail=tail.replace(needle,repl,1); s=pre+tail
+
+          # Synthetic pool must not block a returning real/fallback DLight of same owner.
+          old='\t\t// nativeOrdinal==-1 is NEVER an identity. The immutable fixture key is authoritative.\n\t\tif (anchor && RB_FireV082PoolMatchesAnchor(pool, anchor))\n\t\t\treturn qtrue;\n'
+          new='\t\t// nativeOrdinal==-1: physical owner is authoritative when known.\n\t\tif (anchor) { int ao=R_IFLC_FirePhysicalOwnerForSurface(anchor->surfaceIndex); int po=pool->latchValid?R_IFLC_FirePhysicalOwnerForSurface(pool->latchedFlameSurface):0; if(ao>0&&po>0&&ao==po){if(pool->sourceClass==FIREVOL082_SOURCE_SYNTHETIC)continue;return qtrue;} if(RB_FireV082PoolMatchesAnchor(pool,anchor))return qtrue; }\n'
+          s=rep(s,old,new,'real reclaim')
+
+          # Include V2 helpers after resident clear helper and before candidate priority.
+          marker='static float RB_FireVStableCandidatePriority(FBO_t *srcFbo, int poolSlot,\n'
+          assert s.count(marker)==1; s=s.replace(marker,'#include "tr_firevol_physical_owner_v2.inc"\n\n'+marker,1)
+
+          # Function diagnostics locals.
+          s=rep(s,'\tstatic int lastResidencyDiagMs = 0;\n','\tstatic int lastResidencyDiagMs = 0;\n\tstatic int lastPhysicalOwnerDiagMs = 0;\n','diag clock')
+          s=rep(s,'\tint v084VisibleFixtureHolds = 0;\n',
+            '\tint v084VisibleFixtureHolds = 0;\n\tint physicalFires=0, physicalRealOwners=0, physicalSyntheticOwners=0, physicalDuplicatesSuppressed=0;\n','stats locals')
+
+          # Pass2b/2c prevent duplicate synthetic admission.
+          old='\t\t\tif (!RB_FireV082SyntheticAnchorEligible(anchor))\n\t\t\t\tcontinue;\n\t\t\tif (RB_FireV082AnchorSpatiallyCovered(anchor, 32.0f))'
+          new='\t\t\tif (!RB_FireV082SyntheticAnchorEligible(anchor))\n\t\t\t\tcontinue;\n\t\t\t{int ot=R_IFLC_FirePhysicalOwnerForSurface(anchor->surfaceIndex);if(ot>0&&RB_FireVPhysicalOwnerExistingPool(ot)>=0)continue;}\n\t\t\tif (RB_FireV082AnchorSpatiallyCovered(anchor, 32.0f))'
+          s=rep(s,old,new,'pass2b guard')
+          old='\t\t\t\tif (RB_FireVFinalPoolForCatalog(entry) >= 0)\n\t\t\t\t\tcontinue;\n\t\t\t\tif (RB_FireVStableDistanceWeight(entry->origin) <= 0.001f)'
+          new='\t\t\t\tif (RB_FireVFinalPoolForCatalog(entry) >= 0)\n\t\t\t\t\tcontinue;\n\t\t\t\t{int ot=R_IFLC_FirePhysicalOwnerForSurface(entry->surfaceIndex);if(ot>0&&RB_FireVPhysicalOwnerExistingPool(ot)>=0)continue;}\n\t\t\t\tif (RB_FireVStableDistanceWeight(entry->origin) <= 0.001f)'
+          s=rep(s,old,new,'pass2c guard')
+
+          # Architectural boundary: hard de-dup BEFORE residency/shadow-cache.
+          marker='\t\t// Production v1 Pass 3: persistent eight-slot active residency. Existing owners are retained;\n'
+          insert='\t\t/* Physical Owner V2: prune registry duplicates before residency and synthetic shadow-cache. */\n\t\tRB_FireVPhysicalOwnerDedup(liveIndex,liveShadowSlot,liveSynthetic,renderChosen,(!r_dwFireVolPhysicalOwnerDedup||r_dwFireVolPhysicalOwnerDedup->integer)?qtrue:qfalse,&physicalFires,&physicalRealOwners,&physicalSyntheticOwners,&physicalDuplicatesSuppressed);\n\n'
+          assert s.count(marker)==1; s=s.replace(marker,insert+marker,1)
+
+          # Runtime proof after actual renderedCount is known.
+          marker='\tif (s_rVolumetricFireDiag && s_rVolumetricFireDiag->integer &&\n'
+          diag='\tif(r_dwFireVolPhysicalOwnerDiag&&r_dwFireVolPhysicalOwnerDiag->integer&&(lastPhysicalOwnerDiagMs==0||nowMs-lastPhysicalOwnerDiagMs>=1000)){ri.Printf(PRINT_ALL,"FIREVOL_PHYSICAL_OWNER_V2 map=%s physicalFires=%d realOwners=%d syntheticOwners=%d duplicatesSuppressed=%d duplicatesSuppressedTotal=%d selected=%d rendered=%d\\n",tr.world?tr.world->baseName:"<none>",physicalFires,physicalRealOwners,physicalSyntheticOwners,physicalDuplicatesSuppressed,s_fireVPhysicalOwnerSuppressedTotal,selectedCount,renderedCount);lastPhysicalOwnerDiagMs=nowMs;}\n\n'
+          assert s.count(marker)==1; s=s.replace(marker,diag+marker,1)
+          p.write_text(s)
+
+          proof={'version':'FireVol Physical Owner Dedup V2','base_run':42011094909,'requested_base':41982135692,
+            'policy':'one known physical owner -> one registry owner before residency/shadow-cache',
+            'real_precedence':'live real > live synthetic fallback > stale real > stale synthetic',
+            'distinct_owner_safety':'different IFLC owner tokens bypass old proximity collapse',
+            'flash_fix_v1_preserved':True,
+            'changed':['tr_backend.c','tr_firevol_physical_owner_v2.inc','tr_iflc.inc','tr_init.c','tr_local.h']}
+          proof['sha256']={x:hashlib.sha256((root/x).read_bytes()).hexdigest() for x in proof['changed']}
+          (ev/'FIREVOL_PHYSICAL_OWNER_V2_SOURCE_PROOF.json').write_text(json.dumps(proof,indent=2)+'\n')
+          print('FIREVOL_PHYSICAL_OWNER_V2_APPLIED',json.dumps(proof,sort_keys=True))
+          PY
+
+      - name: Static architecture tests
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee evidence/FIREVOL_PHYSICAL_OWNER_V2_TESTS.log
+          from pathlib import Path
+          import json
+          r=Path('source/SP/code/rend2'); b=(r/'tr_backend.c').read_text(); i=(r/'tr_iflc.inc').read_text(); init=(r/'tr_init.c').read_text()
+          checks={
+            'owner_api':'R_IFLC_FirePhysicalOwnerForSurface' in i,
+            'catalog_independent_of_flc':'if (!enabled && !s_iflcReady) return;' not in i,
+            'dedup_default_on':'r_dwFireVolPhysicalOwnerDedup' in init and '"1", CVAR_ARCHIVE' in init,
+            'pre_residency_boundary':'RB_FireVPhysicalOwnerDedup(liveIndex,liveShadowSlot,liveSynthetic,renderChosen' in b,
+            'pass2b_guard':'R_IFLC_FirePhysicalOwnerForSurface(anchor->surfaceIndex)' in b,
+            'pass2c_guard':'R_IFLC_FirePhysicalOwnerForSurface(entry->surfaceIndex)' in b,
+            'real_reclaim':'pool->sourceClass==FIREVOL082_SOURCE_SYNTHETIC)continue' in b,
+            'diag':'FIREVOL_PHYSICAL_OWNER_V2 map=%s physicalFires=%d realOwners=%d syntheticOwners=%d' in b,
+            'render_cap_8':'#define FIREVOL081_RENDER_CAP 8' in b,
+            'flashfix_v1_preserved':'FIREVOL_FLASHFIX_V1' in b or 'r_dwFireVolFlashFix' in b}
+          assert all(checks.values()),{k:v for k,v in checks.items() if not v}
+          # Policy model: Chateau = one real + seven synthetic -> seven suppressed.
+          ranks=[430]+[300]*7; assert max(range(8),key=lambda x:ranks[x])==0 and len(ranks)-1==7
+          # Eight distinct owner tokens remain eight groups.
+          assert len(set(range(1,9)))==8
+          model={'chateau_expected':{'physicalFires':1,'realOwners':1,'syntheticOwners':0,'duplicatesSuppressed':7,'selected':1},
+                 'crypt1_distinct_expected':{'physicalFires':8,'duplicatesSuppressed':0,'selected_allowed':8}}
+          (Path('evidence')/'FIREVOL_PHYSICAL_OWNER_V2_TESTS.json').write_text(json.dumps({'checks':checks,'model':model},indent=2)+'\n')
+          print('FIREVOL_PHYSICAL_OWNER_V2_TESTS_PASS',json.dumps(model,sort_keys=True))
+          PY
+
+      - name: Build Win64 test candidate
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-FireVol-PhysicalOwner-V2 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/BUILD.log 2>&1 || { tail -260 evidence/BUILD.log; exit 1; }
+          python3 - <<'PY' | tee evidence/PACKAGE.log
+          from pathlib import Path
+          import hashlib,io,json,os,subprocess,zipfile
+          ev=Path('evidence');out=Path('dist');out.mkdir(exist_ok=True);H=lambda b:hashlib.sha256(b).hexdigest()
+          a=ev/'v1.zip'
+          with a.open('wb') as f:subprocess.run(['gh','api','repos/jaha2002-stack/iortcw-rend2-build/actions/artifacts/13406852042/zip'],stdout=f,check=True)
+          with zipfile.ZipFile(a) as z:
+            inner=[n for n in z.namelist() if n.endswith('_Win64_TEST.zip')];assert len(inner)==1;raw=z.read(inner[0])
+          with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            assert z.testzip() is None; files=[n for n in z.namelist() if n and not n.endswith('/')]; prefix=files[0].split('/',1)[0]+'/'; entries={n[len(prefix):]:z.read(n) for n in files if n.startswith(prefix)}
+          dlls=list(Path('source/SP/build').rglob('renderer_sp_rend2_x64.dll'));assert len(dlls)==1;dll=dlls[0].read_bytes()
+          for m in (b'r_dwFireVolPhysicalOwnerDedup',b'r_dwFireVolPhysicalOwnerDiag',b'FIREVOL_PHYSICAL_OWNER_V2'):assert m in dll,m
+          entries['renderer_sp_rend2_x64.dll']=dll
+          entries['Main/DW_FIREVOL_PHYSICAL_OWNER_V2_DIAG.cfg']=b'seta r_dwFireVolFlashFix "1"\r\nseta r_dwFireVolWarmupGuard "1"\r\nseta r_dwFireVolEnergyGuard "1"\r\nseta r_dwFireVolFLCFade "1"\r\nseta r_dwFireVolPhysicalOwnerDedup "1"\r\nseta r_dwFireVolPhysicalOwnerDiag "1"\r\n'
+          entries['Main/DW_FIREVOL_PHYSICAL_OWNER_V2_AB_OFF.cfg']=b'seta r_dwFireVolPhysicalOwnerDedup "0"\r\nseta r_dwFireVolPhysicalOwnerDiag "1"\r\n'
+          entries['Main/DW_FIREVOL_PHYSICAL_OWNER_V2_AB_ON.cfg']=b'seta r_dwFireVolPhysicalOwnerDedup "1"\r\nseta r_dwFireVolPhysicalOwnerDiag "1"\r\n'
+          readme='''DarkWolf FireVol Physical Owner Dedup V2 - Win64 TEST
+Base lineage: Run #41982135692 -> FireVol Flash Fix V1 Run #42011094909.
+
+Rule: one physical fire owner -> one live FireVol before residency and shadow-cache.
+A live real DLight wins. If it disappears, one synthetic fallback may remain. When
+the real DLight returns, synthetic cannot block it. Known different owners are not
+merged merely because they are close.
+
+Test:
+/exec DW_FIREVOL_PHYSICAL_OWNER_V2_DIAG.cfg
+Reproduce Chateau secret-room transition and Crypt1 torch scenes.
+/condump firevol_physical_owner_v2.txt
+
+Expected Chateau fireplace:
+physicalFires=1 realOwners=1 syntheticOwners=0 selected=1 rendered=1
+duplicatesSuppressedTotal should rise when old duplicate registry entries are purged.
+
+Eight genuinely separate Crypt1 torches are allowed to remain eight owners.
+'''
+          entries['README_FIREVOL_PHYSICAL_OWNER_V2.txt']=readme.replace('\n','\r\n').encode('utf-8-sig')
+          entries['FIREVOL_PHYSICAL_OWNER_V2_BUILD_STATUS.json']=(json.dumps({'status':'TEST_CANDIDATE','version':'FIREVOL_PHYSICAL_OWNER_DEDUP_V2','requested_base_run':41982135692,'parent_flashfix_run':42011094909,'build_run':os.environ.get('GITHUB_RUN_ID'),'commit':os.environ.get('GITHUB_SHA'),'renderer_sha256':H(dll),'render_cap':8,'flash_fix_v1_preserved':True},indent=2)+'\n').encode()
+          entries.pop('SHA256SUMS.txt',None);entries['SHA256SUMS.txt']=''.join(H(b)+'  '+n+'\n' for n,b in sorted(entries.items())).encode()
+          name='DarkWolf_FireVol_PhysicalOwner_Dedup_V2_From_41982135692_Win64_TEST';target=out/(name+'.zip')
+          with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED) as z:
+            for n,b in sorted(entries.items()):z.writestr(name+'/'+n,b)
+          with zipfile.ZipFile(target) as z:assert z.testzip() is None
+          (out/'SHA256SUMS.txt').write_text(H(target.read_bytes())+'  '+target.name+'\n'+H(dll)+'  renderer_sp_rend2_x64.dll\n')
+          print(json.dumps({'package':str(target),'sha256':H(target.read_bytes()),'renderer_sha256':H(dll),'files':len(entries)},indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-FireVol-PhysicalOwner-Dedup-V2-Win64-TEST
+          path: |
+            dist/DarkWolf_FireVol_PhysicalOwner_Dedup_V2_From_41982135692_Win64_TEST.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 60
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-FireVol-PhysicalOwner-Dedup-V2-Build-Proof
+          path: evidence/**
+          retention-days: 60
