@@ -55,7 +55,7 @@ void R_ELSS_Test_f(void)
     ri.Printf(PRINT_ALL,"ELSS_TEST_AUDIT map=%s selected=%d lights=%d master=%d\n",
       tr.world?tr.world->baseName:"",s_elssSelected,tr.refdef.num_dlights,r_dwElectricLightControl?r_dwElectricLightControl->integer:0);
     for(i=0;i<tr.refdef.num_dlights&&i<MAX_DLIGHTS;++i){
-        const dlight_t *d=&tr.refdef.dlights[i];char key[ELSS_KEY_MAX];int fixture=R_ElectricFixtureForLight(d);
+        const dlight_t *d=&tr.refdef.dlights[i];char key[128];int fixture=R_ElectricFixtureForLight(d);
         if(!R_ELSS_KeyForLight(d,key,sizeof(key)))continue;
         ri.Printf(PRINT_ALL,"ELSS_TEST_LIGHT i=%d key=%s origin=%.3f,%.3f,%.3f radius=%.3f pointSlot=%d worldSlot=%d fixture=%d policyKey=%u native=%d promoted=%d localVol=%d\n",
           i,key,d->origin[0],d->origin[1],d->origin[2],d->radius,
