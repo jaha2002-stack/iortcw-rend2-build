@@ -111,17 +111,31 @@ def main(retail,out):
     profile=list(home.rglob('electricshadows/church.elss'));assert len(profile)==1,profile;shutil.copy2(profile[0],out/'church_saved.elss')
     img_on=grab(runtime,out,'elss11_church_on');img_off=grab(runtime,out,'elss11_church_off');img_saved=grab(runtime,out,'elss11_church_saved')
 
-    # Fresh process: preserve V1.0.1 persistence behavior and do not use reload/select/set.
+    # Fresh process: preserve V1.0.1 persistence behavior. Cross-process
+    # pixels are diagnostic only; the causal proof is OFF->ON->OFF inside this
+    # restarted process, while the manual policy key and shadow slot must match.
     for p in home.rglob('*console*.log'):p.unlink()
     cmds2=['set cg_draw2D 0','set cg_drawGun 0','set cg_bobup 0','set cg_bobpitch 0','set cg_bobroll 0','set r_forceSunPause 1','god','notarget',
            'wait 70',f'dw_el_v11_test_fixture {FIXTURE} 1','wait 48',pv(scene),'wait 20','set dw_proofFreeze 1','wait 12',
-           'echo ELSS11_STATE RESTART','dw_el_v11_test_audit 107','set dw_proofShot 4','wait 4','screenshot elss11_church_restart','set dw_proofShot 0','wait 2',
+           'echo ELSS11_STATE RESTART_OFF','dw_el_v11_test_audit 107','set dw_proofShot 4','wait 4','screenshot elss11_church_restart_off','set dw_proofShot 0','wait 2',
+           'set dw_proofFreeze 0',pv(body),'wait 16','dw_el_select','dw_el_info',pv(scene),'wait 16','set dw_proofFreeze 1','wait 8',
+           'dw_el_set selfshadow 1','wait 28','echo ELSS11_STATE RESTART_ON','dw_el_info','dw_el_v11_test_audit 107','set dw_proofShot 5','wait 4','screenshot elss11_church_restart_on','set dw_proofShot 0','wait 2',
+           'dw_el_set selfshadow 0','wait 32','echo ELSS11_STATE RESTART_OFF2','dw_el_info','dw_el_v11_test_audit 107','set dw_proofShot 6','wait 4','screenshot elss11_church_restart_off2','set dw_proofShot 0','wait 2',
            'set dw_proofFreeze 0','echo ELSS11_SESSION2_DONE','quit']
-    rc2,t2=run_process(runtime,mainp,home,cmds2,'session2',out);img_restart=grab(runtime,out,'elss11_church_restart')
+    rc2,t2=run_process(runtime,mainp,home,cmds2,'session2',out)
+    img_restart_off=grab(runtime,out,'elss11_church_restart_off')
+    img_restart_on=grab(runtime,out,'elss11_church_restart_on')
+    img_restart_off2=grab(runtime,out,'elss11_church_restart_off2')
 
     def comp(a,b):
         d=np.abs(a-b);return {'pixels':int(np.any(d>0,axis=2).sum()),'above2':int(np.any(d>2,axis=2).sum()),'mae':float(d.mean()),'max':int(d.max())}
-    comps={'on_off':comp(img_on,img_off),'off_saved':comp(img_off,img_saved),'off_restart':comp(img_off,img_restart)}
+    comps={
+        'on_off':comp(img_on,img_off),
+        'off_saved':comp(img_off,img_saved),
+        'saved_off_vs_restart_off_diagnostic':comp(img_off,img_restart_off),
+        'restart_off_on':comp(img_restart_off,img_restart_on),
+        'restart_off_off2':comp(img_restart_off,img_restart_off2)
+    }
     faults=[]
     if rc1!=0:faults.append('session1 exit '+str(rc1))
     if rc2!=0:faults.append('session2 exit '+str(rc2))
@@ -133,12 +147,21 @@ def main(retail,out):
     if 'selfshadow=OFF' not in t1:faults.append('OFF not active')
     if comps['on_off']['above2']<20:faults.append('no visible selfshadow response')
     if comps['off_saved']['pixels']!=0:faults.append('OFF->saved differs')
-    if comps['off_restart']['pixels']!=0:faults.append('OFF->restart differs')
     if 'ELSS: loaded 1 lamp profiles' not in t2:faults.append('profile not loaded on restart')
+    if comps['restart_off_on']['above2']<20:faults.append('persisted OFF has no causal response when restored ON after restart')
+    if comps['restart_off_off2']['pixels']!=0:faults.append('restart OFF->ON->OFF did not return pixel-exactly')
+
+    first_off_lines=[l for l in t1.splitlines() if l.startswith('ELSS11_TEST_LIGHT ') and 'key=fixture:107 ' in l and 'policyFixture=-' in l]
     lightlines=[l for l in t2.splitlines() if l.startswith('ELSS11_TEST_LIGHT ') and 'key=fixture:107 ' in l]
     if not lightlines:faults.append('fixture107 not audited after restart')
     elif not any(re.search(r'policyFixture=-\d+',l) for l in lightlines):faults.append('restart did not restore manual OFF policy')
-    # The slot must still exist; ELSS removes only own-body casters.
+    def pkey(lines):
+        for line in lines:
+            m=re.search(r'policyFixture=-\d+ policyKey=(\d+)',line)
+            if m:return int(m.group(1))
+        return None
+    key1=pkey(first_off_lines);key2=pkey(lightlines)
+    if key1 is None or key2 is None or key1!=key2:faults.append('manual policy key changed across restart')
     if lightlines and not any(re.search(r'pointSlot=[0-2]\b',l) for l in lightlines):faults.append('shadow slot not preserved after restart')
     report={'session1_exit':rc1,'session2_exit':rc2,'comparisons':comps,'faults':faults,
             'profile':(out/'church_saved.elss').read_text(errors='replace'),
