@@ -11,8 +11,8 @@ old="""#define FIREVOL_V6_BMODEL_PLUME_Z_OFFSET 12.0f
 new="""#define FIREVOL_V6_BMODEL_PLUME_Z_OFFSET 12.0f
 // CLEAN PRODUCTION: fireplace-specific visual alignment.
 // Keep Crypt1/world-torch offset unchanged; only the two Chateau fireplace classes differ.
-#define FIREVOL_PROD_STATIC_FIREPLACE_PLUME_Z_OFFSET 4.0f
-#define FIREVOL_PROD_BMODEL_PLUME_Z_OFFSET 6.0f
+#define FIREVOL_PROD_STATIC_FIREPLACE_PLUME_Z_OFFSET 10.0f
+#define FIREVOL_PROD_BMODEL_PLUME_Z_OFFSET 2.0f
 """
 if old not in s:
     raise SystemExit("production constants anchor not found")
