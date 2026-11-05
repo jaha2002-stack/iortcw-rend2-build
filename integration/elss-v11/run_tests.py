@@ -8,7 +8,8 @@ s=(src/'SP/code/rend2/tr_elss.inc').read_text()
 frame=s[s.index('void R_ELSS_Frame'):s.index('void R_ELSS_CaptureShadowSlots')]
 prep=s[s.index('static void R_ELSS_PrepareProfileFixture'):s.index('void R_ELSS_Frame')]
 manual=s[s.index('static qboolean R_ELSS_BuildExact'):s.index('static void R_ELSS_PrepareProfileFixture')]
-pick=s[s.index('void R_ELSS_SelfPick_f'):s.index('void R_ELSS_Set_f')]
+pick_start=s.index('void R_ELSS_SelfPick_f(void)\n{')
+pick=s[pick_start:s.index('void R_ELSS_Set_f(void)\n{',pick_start)]
 checks={
  'v101_owner_order_preserved':frame.index('R_ELSS_UpsertOwner') < frame.index('R_ELSS_PrepareProfileFixture'),
  'v101_retry_preserved':prep.index('if(oi<0||s_elssOwners[oi].ambiguous)return;') < prep.index('s_elssFixtures[slot].built=qtrue;', prep.index('if(oi<0')),
