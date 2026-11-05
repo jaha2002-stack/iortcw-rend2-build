@@ -2,7 +2,11 @@
 """Disposable Church fixture audit for ELSS V1.1 design."""
 from pathlib import Path
 import sys
+ROOT=Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(ROOT/'testlab/scripts'))
+import rc4_requested_views as camera
 src=Path(sys.argv[1]).resolve(); root=src/'SP/code/rend2'
+camera.instrument(src)
 
 p=root/'tr_local.h';s=p.read_text()
 anchor='unsigned int R_ElectricFixtureKey(int fixture);\n'
