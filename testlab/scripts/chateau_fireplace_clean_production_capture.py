@@ -143,7 +143,7 @@ def capture(root,retail,out):
       "set con_notifytime -1","set cg_draw2D 0","set cg_drawGun 0",
       "set cg_bobup 0","set cg_bobpitch 0","set cg_bobroll 0",
       "set r_volumetricFireStrength 1","set r_volumetricFire 1",
-      "set r_dwFireVolContinuityDiag 0","set r_dwFireVolFixtureDiag 0",
+      "set r_dwFireVolContinuityDiag 1","set r_dwFireVolFixtureDiag 0",
       "god","notarget","wait 20"
     ]
     shots=[]; idx=0
@@ -158,7 +158,7 @@ def capture(root,retail,out):
     for v in static_views:
         add_pair(v,"static")
     cmds.extend(["set dw_proofFreeze 0","proofScriptOrigin fireplace1","proofTriggerScript fireplace1 rotate1",
-                 "wait 130","proofScriptOrigin fireplace1","wait 8"])
+                 "wait 70","proofScriptOrigin fireplace1","wait 8"])
     for v in moving_views:
         add_pair(v,"moving_post_move")
     cmds.extend(["set r_volumetricFire 1","set dw_proofFreeze 0","echo CHATEAU_FIREPLACE_PROOF_COMPLETE","quit"])
