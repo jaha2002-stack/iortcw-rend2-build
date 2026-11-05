@@ -7,6 +7,9 @@ s=p.read_text()
 sha=lambda b:hashlib.sha256(b).hexdigest()
 assert sha(s.encode())=='fb680b71233ca6346507819e46c4ae9e06cd3b3d7fb91b6d235c5394e6df7130',sha(s.encode())
 before=s
+state_anchor='''static qboolean s_elssReady, s_elssDirty, s_elssOverflow;\n'''
+assert s.count(state_anchor)==1
+s=s.replace(state_anchor,state_anchor+'static qboolean s_elssLastBuildExact;\\n')
 
 marker='''static unsigned int R_ELSS_PolicyKey(const elssProfile_t *p,const int *surfaces,int count)
 {
@@ -93,7 +96,9 @@ s=s.replace(tail,'''    if(!out->count||vertices<3){out->count=0;return qfalse;}
 }
 static qboolean R_ELSS_BuildManual(const elssProfile_t *p,const elssOwner_t *o,elssFixture_t *out)
 {
+    s_elssLastBuildExact=qfalse;
     if(R_ELSS_BuildFlood(p,o,out))return qtrue;
+    s_elssLastBuildExact=qtrue;
     return R_ELSS_BuildExact(p,o,out);
 }
 
@@ -137,6 +142,7 @@ proof={
  "profile_format":"DW_ELSS 1 unchanged",
  "persistence_fix_preserved":True,
  "component_policy":"V1 connected flood first, exact picked compact surfaces fallback",
+ "user_visible_mode":"dw_el_self_pick reports FLOOD or EXACT",
  "protected_hit_policy":"never suppress protected first hit; optional unique compact owner-local crosshair fallback",
  "shadow_slot_preserved":True,
  "direct_preserved":True,
