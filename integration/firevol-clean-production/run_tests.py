@@ -36,9 +36,12 @@ assert "fireV5BmodelLocalOrigin" in b
 assert "FIREVOL_V5_BMODEL_HOLD_MS 5000" in b
 
 def cvar_default(name):
-    m=re.search(r'ri\\.Cvar_Get\\(\\s*"' + re.escape(name) + r'"\\s*,\\s*"([^"]+)"',init)
-    assert m, "missing cvar registration: "+name
-    return m.group(1)
+    for line in init.splitlines():
+        if "ri.Cvar_Get" in line and ('"' + name + '"') in line:
+            parts=line.split('"')
+            assert len(parts) >= 4, line
+            return parts[3]
+    raise AssertionError("missing cvar registration: "+name)
 
 # Production diagnostics are opt-in only.
 assert cvar_default("r_dwFireVolContinuityDiag")=="0"
