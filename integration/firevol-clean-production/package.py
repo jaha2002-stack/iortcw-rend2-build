@@ -48,7 +48,7 @@ Production locks:
 - First Chateau fireplace keeps V6 one-owner consolidation and stable radius.
 - First Chateau fireplace restores the accepted V6/world -10 unit plume alignment.
 - Moving/secret Chateau fireplace keeps V5/V6 BMODEL follow, hold and anti-flash logic.
-- Moving/secret fireplace uses a minimal -2 unit plume alignment.
+- Moving/secret fireplace uses a -72 unit plume alignment to place the FireVol base at the visible fire instead of the decorative ram panel.
 - Normal WORLD torches retain the accepted -10 unit alignment.
 - Diagnostic overlays are OFF by default and no diagnostic exec cfg is required.
 - Existing accepted ELSS/IFLC and other inherited renderer tools are preserved.
@@ -64,7 +64,7 @@ manifest={
     "render_cap":8,
     "world_torch_plume_z_offset":-10,
     "static_fireplace_plume_z_offset":-10,
-    "moving_bmodel_fireplace_plume_z_offset":-2,
+    "moving_bmodel_fireplace_plume_z_offset":-72,\n    "chateau_fireplace_gain":1.35,
     "crypt1_status":"USER_ACCEPTED_PASS_PRESERVED",
     "chateau_static_fireplace":"V6_STABLE_OWNER_PRESERVED",
     "chateau_moving_fireplace":"V5_V6_FOLLOW_AND_ANTI_FLASH_PRESERVED",
