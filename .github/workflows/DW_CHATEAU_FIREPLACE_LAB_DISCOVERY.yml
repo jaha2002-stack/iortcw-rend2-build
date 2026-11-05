@@ -1,0 +1,67 @@
+name: DW Chateau Fireplace Lab Discovery
+on:
+  push:
+    branches: [release/firevol-chateau-clean-production]
+    paths: ['.github/workflows/DW_CHATEAU_FIREPLACE_LAB_DISCOVERY.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch protected retail assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}"
+          mkdir -p evidence
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          echo "$retail" > .retail_main
+          test -s "$retail/pak0.pk3"
+      - name: Sanitize Chateau BSP entity metadata
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re,struct,zipfile,sys
+          sys.path.insert(0,str(Path("testlab/scripts").resolve()))
+          from rc4_assault_camera import World
+          retail=Path(Path(".retail_main").read_text().strip())
+          bsp=None
+          for p in sorted(retail.glob("*.pk3")):
+              with zipfile.ZipFile(p) as z:
+                  for n in z.namelist():
+                      if n.lower()=="maps/chateau.bsp":
+                          bsp=z.read(n); break
+              if bsp: break
+          if not bsp: raise SystemExit("maps/chateau.bsp not found")
+          w=World(bsp)
+          keys=("classname","origin","angle","angles","model","model2","target","targetname","scriptName","scriptname","spawnflags","message")
+          rows=[]
+          hot=[]
+          for i,e in enumerate(w.entities):
+              r={"entity_index":i}
+              for k in keys:
+                  if k in e:r[k]=e[k]
+              rows.append(r)
+              hay=" ".join(str(v) for v in e.values()).lower()
+              cls=e.get("classname","").lower()
+              if any(t in hay for t in ("fire","flame","hearth","secret","torch","chimney")) or cls.startswith(("func_door","func_train","func_static","func_rotating","trigger_")):
+                  hot.append(r)
+          starts=[r for r in rows if r.get("classname","").startswith("info_player")]
+          out={"map":"chateau","entity_count":len(rows),"world_bounds":list(w.bounds),"player_starts":starts,"hot_entities":hot,"all_entities":rows}
+          Path("evidence/CHATEAU_ENTITY_AUDIT.json").write_text(json.dumps(out,indent=2)+"\n")
+          print("CHATEAU_ENTITY_AUDIT_PASS",len(rows),len(hot))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DW-Chateau-Fireplace-Lab-Discovery
+          path: evidence/CHATEAU_ENTITY_AUDIT.json
+          retention-days: 7
