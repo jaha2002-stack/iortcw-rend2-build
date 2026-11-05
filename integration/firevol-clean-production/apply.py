@@ -61,8 +61,8 @@ import re
 pinit=root/"tr_init.c"
 si=pinit.read_text()
 for name in ("r_dwFireVolContinuityDiag","r_dwFireVolFixtureDiag"):
-    pat=re.compile(r'(ri\\.Cvar_Get\\(\\s*"' + re.escape(name) + r'"\\s*,\\s*)"[^"]+"')
-    si,n=pat.subn(r'\\1"0"',si,count=1)
+    pat=re.compile(r'(ri\.Cvar_Get\(\s*"' + re.escape(name) + r'"\s*,\s*)"[^"]+"')
+    si,n=pat.subn(r'\1"0"',si,count=1)
     if n!=1:
         raise SystemExit("production diagnostic default anchor not found: "+name)
 pinit.write_text(si)
