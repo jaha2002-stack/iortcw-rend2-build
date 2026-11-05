@@ -1,0 +1,96 @@
+name: DW Chateau Fireplace Clean Production Visual Proof
+on:
+  push:
+    branches: [release/firevol-chateau-clean-production]
+    paths:
+      - '.github/workflows/DW_CHATEAU_FIREPLACE_CLEAN_PRODUCTION_VISUAL_PROOF.yml'
+      - 'testlab/scripts/chateau_fireplace_clean_production_capture.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-chateau-fireplace-clean-production-visual-proof
+  cancel-in-progress: true
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install TestLab dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ca-certificates gh git python3 python3-pil python3-numpy unzip zip \
+            xvfb xauth mesa-utils libgl1-mesa-dev libgl1-mesa-dri libegl1 libegl1-mesa-dev \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          mkdir -p evidence
+          python3 -m py_compile testlab/scripts/chateau_fireplace_clean_production_capture.py
+      - name: Restore exact accepted Clean Production lineage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2 | tee evidence/CLEAN_PRODUCTION_APPLY.log
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2 | tee evidence/CLEAN_PRODUCTION_TESTS.log
+          sha256sum source/SP/code/rend2/tr_backend.c source/SP/code/rend2/tr_init.c source/SP/code/rend2/tr_iflc.inc > evidence/PRODUCTION_RENDERER_SOURCE_SHA256.txt
+      - name: Apply camera and script-trigger TestLab helpers only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 testlab/scripts/chateau_fireplace_clean_production_capture.py instrument source
+      - name: Build native Linux Clean Production proof runtime
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release \
+            VERSION=1.51d-SP_DarkWolf-Clean-Production-FireVol-Chateau-Proof \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            > evidence/NATIVE_BUILD.log 2>&1 || { tail -240 evidence/NATIVE_BUILD.log; exit 1; }
+          test -x "$(find source/SP/build/release-linux-x86_64 -maxdepth 1 -type f -iname 'iowolfsp.*' -print -quit)"
+          find source/SP/build/release-linux-x86_64 -maxdepth 2 -type f -print | sort > evidence/NATIVE_BUILD_FILES.txt
+      - name: Fetch protected retail Chateau assets
+        shell: bash
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}" || { echo MISSING_LICENSED_RETAIL_ASSET_TOKEN; exit 1; }
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          echo "$retail" > .retail_main
+          test -s "$retail/pak0.pk3"
+      - name: Capture static and moved fireplace proof frames
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/chateau_fireplace_clean_production_capture.py \
+            capture source "$(cat .retail_main)" evidence/chateau \
+            2>&1 | tee evidence/CHATEAU_CAPTURE_DRIVER.log
+          test -s evidence/chateau/BEST_STATIC_FIREPLACE.png
+          test -s evidence/chateau/BEST_MOVING_FIREPLACE_POST_MOVE.png
+          test -s evidence/chateau/CHATEAU_FIREPLACE_VISUAL_PROOF_REPORT.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DW-Chateau-Clean-Production-Fireplace-Visual-Proof
+          path: |
+            evidence/chateau/**
+            evidence/CHATEAU_CAPTURE_DRIVER.log
+            evidence/CHATEAU_PROOF_SOURCE_ISOLATION.json
+            evidence/PRODUCTION_RENDERER_SOURCE_SHA256.txt
+            evidence/CLEAN_PRODUCTION_TESTS.log
+          if-no-files-found: warn
+          retention-days: 30
