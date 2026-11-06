@@ -75,6 +75,62 @@ if old not in s:
     raise SystemExit("production diagnostic anchor not found")
 s=s.replace(old,new,1)
 
+# CLEAN PRODUCTION: user-validated Crypt1 Slot6 reanchor correction from test Run #42192556922.
+# Burn/scorch decals are evidence of past impact/heat, not a physical flame fixture.
+old='''static qboolean RB_FireV07NameLooksFire(const char *name)
+{
+	static const char *tokens[] = {
+		"fire", "flame", "torch", "blaze", "burn", "ember", "flamethrower", NULL
+	};
+	int i;
+	if (!name || !name[0])
+		return qfalse;
+	if (RB_FireV085NameLooksWeaponStream(name))
+		return qfalse;
+	for (i = 0; tokens[i]; ++i)
+		if (RB_FireV07ContainsToken(name, tokens[i]))
+			return qtrue;
+	return qfalse;
+}
+'''
+new='''// DARKWOLF_FIREVOL_CRYPT1_SLOT6_REANCHOR_PRODUCTION
+// User visual PASS: GitHub Run #42192556922, promoted into Clean Production.
+// decals/burn* and decals/scorch* must never become physical FireVol flame anchors.
+static qboolean RB_FireV07NameLooksBurnScorchDecal(const char *name)
+{
+	qboolean decalFamily;
+	if (!name || !name[0])
+		return qfalse;
+	decalFamily = RB_FireV07ContainsToken(name, "/decals/") ||
+		RB_FireV07ContainsToken(name, "decals/");
+	if (!decalFamily)
+		return qfalse;
+	return (RB_FireV07ContainsToken(name, "burn") ||
+		RB_FireV07ContainsToken(name, "scorch")) ? qtrue : qfalse;
+}
+
+static qboolean RB_FireV07NameLooksFire(const char *name)
+{
+	static const char *tokens[] = {
+		"fire", "flame", "torch", "blaze", "burn", "ember", "flamethrower", NULL
+	};
+	int i;
+	if (!name || !name[0])
+		return qfalse;
+	if (RB_FireV085NameLooksWeaponStream(name))
+		return qfalse;
+	if (RB_FireV07NameLooksBurnScorchDecal(name))
+		return qfalse;
+	for (i = 0; tokens[i]; ++i)
+		if (RB_FireV07ContainsToken(name, tokens[i]))
+			return qtrue;
+	return qfalse;
+}
+'''
+if old not in s:
+    raise SystemExit("production Crypt1 reanchor anchor not found")
+s=s.replace(old,new,1)
+
 p.write_text(s)
 
 # Clean Production must never enable diagnostic overlays by default.
@@ -97,4 +153,4 @@ for line in si.splitlines():
         "r_dwFireVolWorldGeometryScale","r_dwFireVolIFLCPriority")):
         print("PROD_DEFAULT:",line.strip())
 
-print("PASS Clean Production fireplace alignment patch")
+print("PASS Clean Production fireplace alignment + Crypt1 reanchor patch")
