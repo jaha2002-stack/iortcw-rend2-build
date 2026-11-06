@@ -77,11 +77,15 @@ Direct lighting is intentionally NOT deduplicated in this version.
 What V1 changes
 ---------------
 - Adds explicit map-local physicalElectricOwnerId metadata.
-- Real promoted electric lights obtain an owner only through the existing
-  unambiguous Electric Fixture geometry matcher.
-- A synthetic may inherit that owner only from a delivered real promoted light,
+- Every delivered real StaticPromote light keeps its existing stable
+  staticPromoteFixtureId as PhysicalElectricOwnerId; no two real lights are
+  merged by this new rule.
+- A synthetic may inherit the nearest real promoted owner's stable id only
   within 48 units, with compatible base radius/color, and only when no competing
   owner is close enough to make the association ambiguous.
+- Existing Electric Fixture geometry is an additional conflict guard when both
+  the synthetic and candidate resolve it; unresolved geometry does not invent
+  or block an otherwise unambiguous StaticPromote owner.
 - Point-shadow grouping uses equal physicalElectricOwnerId before falling back
   to the existing production 16-unit proximity grouping.
 - Local Volumetric grouping uses the same owner rule and the same fallback.
@@ -129,8 +133,10 @@ status={
  'iflc_profile_mutated':False,
  'elss_profile_mutated':False,
  'legacy_grouping_fallback_preserved':True,
+ 'physical_owner_identity':'stable real staticPromoteFixtureId',
  'synthetic_inherit_max_distance':48.0,
  'ambiguity_margin':16.0,
+ 'electric_fixture_role':'conflict guard + ELSS capture consensus, not owner identity',
  'windows_gpu_fps':'USER_TEST_REQUIRED'
 }
 entries['ELECTRIC_PHYSICAL_OWNER_V1_TEST_STATUS.json']=(json.dumps(status,indent=2)+'\n').encode()
