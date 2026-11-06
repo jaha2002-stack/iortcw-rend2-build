@@ -84,22 +84,24 @@ old='''static int R_ElectricFixtureForCapture(int index)
 '''
 new='''static int R_ElectricFixtureForCapture(int index)
 {
-    int i, fixture, group;
+    int i, fixture = 0, group;
     if (index < 0 || index >= tr.refdef.num_dlights || index >= MAX_DLIGHTS) return 0;
-    fixture = tr.refdef.dlights[index].physicalElectricOwnerId > 0 ?
-        tr.refdef.dlights[index].physicalElectricOwnerId :
-        R_ElectricFixtureForLight(&tr.refdef.dlights[index]);
-    if (!fixture || !R_DarkWolfStaticPromoteShadowGroupEligible(&tr.refdef.dlights[index])) return fixture;
+    if (!R_DarkWolfStaticPromoteShadowGroupEligible(&tr.refdef.dlights[index]))
+        return R_ElectricFixtureForLight(&tr.refdef.dlights[index]);
     group = R_DarkWolfStaticPromoteShadowGroupCanonicalId(index);
     if (group < 0) return 0;
+    // DARKWOLF_ELECTRIC_PHYSICAL_OWNER_V1: PhysicalElectricOwnerId is a
+    // StaticPromote identity, not an ELSS electric-fixture id. For a shared
+    // shadow capture, retain ELSS only when all positively resolved members
+    // agree on one Electric Fixture. Unresolved synthetic children are neutral.
     for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i)
         if (R_DarkWolfStaticPromoteShadowGroupEligible(&tr.refdef.dlights[i]) &&
             R_DarkWolfStaticPromoteShadowGroupCanonicalId(i) == group)
         {
-            int peerFixture = tr.refdef.dlights[i].physicalElectricOwnerId > 0 ?
-                tr.refdef.dlights[i].physicalElectricOwnerId :
-                R_ElectricFixtureForLight(&tr.refdef.dlights[i]);
-            if (peerFixture != fixture) return 0;
+            int peerFixture = R_ElectricFixtureForLight(&tr.refdef.dlights[i]);
+            if (peerFixture <= 0) continue;
+            if (!fixture) fixture = peerFixture;
+            else if (peerFixture != fixture) return 0;
         }
     return fixture;
 }
