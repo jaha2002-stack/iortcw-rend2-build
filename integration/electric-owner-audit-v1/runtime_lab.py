@@ -192,15 +192,26 @@ def parse(lines,mapname,variant,target,eyes,data):
       'summary_samples':len(summaries),'group_samples':len(groups),'member_samples':len(members),
       'unique_near_pairs':list(unique.values()),'suspicious_near_pairs':suspicious,
       'registry_sample':regs[:200],
+      'delivered_members':list({int(m.get('fixture')):m for m in members if isinstance(m.get('fixture'),int)}.values()),
     }
 
 def choose_physical(native,mapname,target):
+    registry={int(r.get('fixture')):r for r in native.get('registry_sample',[]) if isinstance(r.get('fixture'),int)}
     candidates=[]
-    for r in native.get('registry_sample',[]):
+    for m in native.get('delivered_members',[]):
         try:
+            fixture=int(m.get('fixture'))
+            if fixture>=1000000: continue
+            o=[float(x) for x in str(m['origin']).split(',')]
+            r=registry.get(fixture)
+            if not r: continue
             if int(r.get('synthetic',0))!=0: continue
-            o=[float(x) for x in str(r['origin']).split(',')]
-            candidates.append((math.dist(o,target),r,o))
+            combined=dict(r)
+            combined['deliveredDlight']=m.get('dlight')
+            combined['deliveredOrigin']=m.get('origin')
+            combined['deliveredRadius']=m.get('directRadius')
+            combined['deliveredColor']=m.get('directColor')
+            candidates.append((math.dist(o,target),combined,o))
         except Exception:
             continue
     if not candidates: return None
