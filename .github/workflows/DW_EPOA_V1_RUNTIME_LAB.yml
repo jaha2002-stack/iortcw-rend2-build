@@ -1,0 +1,115 @@
+name: DW EPOA V1 Autonomous Runtime Lab
+
+on:
+  push:
+    branches: [diag/electric-physical-owner-audit-v1-from-42217883095]
+    paths:
+      - '.github/workflows/DW_EPOA_V1_RUNTIME_LAB.yml'
+      - 'integration/electric-owner-audit-v1/runtime_lab.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dw-epoa-v1-runtime-lab-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  runtime-lab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Restore exact Run 42217883095 renderer lineage and EPOA
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/electric-owner-audit-v1/apply.py source evidence
+          python3 integration/electric-owner-audit-v1/run_tests.py source evidence
+          python3 testlab/scripts/rc4_requested_views.py instrument source
+
+      - name: Build Linux x64 TestLab renderer
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD_RUNTIME_LAB.log 2>&1 || { tail -300 evidence/BUILD_RUNTIME_LAB.log; exit 1; }
+
+      - name: Restore licensed RTCW retail assets
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"
+          printf '%s\n' "$retail" > .retail
+
+      - name: Run native plus controlled synthetic laboratory on five maps
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/runtime-lab
+          for map in escape1 boss1 crypt1 church factory; do
+            echo "===== EPOA LAB $map ====="
+            python3 integration/electric-owner-audit-v1/runtime_lab.py "$(cat .retail)" "evidence/runtime-lab/$map" "$map" | tee "evidence/runtime-lab/$map.stdout.txt"
+          done
+
+      - name: Aggregate EPOA findings
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          root=Path('evidence/runtime-lab')
+          rows=[]
+          for p in sorted(root.glob('*/REPORT.json')):
+              d=json.loads(p.read_text())
+              n=d['native']['summary_max']
+              c=d['controlled']['summary_max'] if d.get('controlled') else {}
+              rows.append({
+                'map':d['map'],
+                'selected_fixture':(d.get('selected_fixture') or {}).get('fixture'),
+                'native_promotedDirect':n.get('promotedDirect'),
+                'native_syntheticDirect':n.get('syntheticDirect'),
+                'native_shadowGroups':n.get('shadowGroups'),
+                'native_shadowSlotsUsed':n.get('shadowSlotsUsed'),
+                'native_localVolGroups':n.get('localVolGroups'),
+                'native_localVolActiveGroups':n.get('localVolActiveGroups'),
+                'controlled_promotedDirect':c.get('promotedDirect'),
+                'controlled_syntheticDirect':c.get('syntheticDirect'),
+                'controlled_shadowGroups':c.get('shadowGroups'),
+                'controlled_shadowSlotsUsed':c.get('shadowSlotsUsed'),
+                'controlled_localVolGroups':c.get('localVolGroups'),
+                'controlled_localVolActiveGroups':c.get('localVolActiveGroups'),
+                'delta':d.get('delta'),
+                'controlled_suspicious_pairs':len(d['controlled']['suspicious_near_pairs']) if d.get('controlled') else None,
+              })
+          out={'base_run':42217883095,'audit_run':'EPOA_V1','runtime':'Linux Mesa software; counts/ownership valid, GPU FPS not representative','maps':rows}
+          Path('evidence/EPOA_RUNTIME_LAB_SUMMARY.json').write_text(json.dumps(out,indent=2)+'\n')
+          print(json.dumps(out,indent=2))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-EPOA-V1-Autonomous-Runtime-Lab
+          path: |
+            evidence/runtime-lab/**
+            evidence/EPOA_RUNTIME_LAB_SUMMARY.json
+            evidence/BUILD_RUNTIME_LAB.log
+            evidence/EPOA_V1_STATIC_SAFETY.json
+          retention-days: 60
