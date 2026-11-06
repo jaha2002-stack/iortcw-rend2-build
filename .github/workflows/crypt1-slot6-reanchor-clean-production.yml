@@ -1,0 +1,139 @@
+name: Crypt1 Slot6 Reanchor Clean Production
+
+on:
+  push:
+    branches:
+      - release/crypt1-slot6-reanchor-clean-production
+  workflow_dispatch:
+
+jobs:
+  win64:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Run actions/checkout@v4
+        uses: actions/checkout@v4
+
+      - name: Install Win64 build dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix \
+            binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          mkdir -p evidence dist
+
+      - name: Restore exact confirmed Clean Production 42060324463 lineage
+        run: |
+          set -Eeuo pipefail
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2 | tee evidence/CLEAN_BASE_TESTS.log
+
+      - name: Protect accepted modules before targeted production fix
+        run: |
+          set -Eeuo pipefail
+          find source/SP/code/rend2 -type f ! -name tr_backend.c -print0 | sort -z | xargs -0 sha256sum > evidence/PROTECTED_BEFORE.sha256
+          sha256sum source/SP/code/rend2/tr_iflc.inc > evidence/IFLC_BEFORE.sha256
+
+      - name: Apply accepted Crypt1 Slot6 reanchor fix only
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-crypt1-slot6-reanchor-v1/apply.py source/SP/code/rend2 | tee evidence/REANCHOR_APPLY.log
+          python3 integration/firevol-crypt1-slot6-reanchor-v1/run_tests.py source/SP/code/rend2 | tee evidence/REANCHOR_TESTS.log
+
+      - name: Re-run Clean Production regression gates
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2 | tee evidence/CLEAN_PRODUCTION_RETEST.log
+
+      - name: Verify protected renderer modules unchanged
+        run: |
+          set -Eeuo pipefail
+          find source/SP/code/rend2 -type f ! -name tr_backend.c -print0 | sort -z | xargs -0 sha256sum > evidence/PROTECTED_AFTER.sha256
+          sha256sum source/SP/code/rend2/tr_iflc.inc > evidence/IFLC_AFTER.sha256
+          diff -u evidence/PROTECTED_BEFORE.sha256 evidence/PROTECTED_AFTER.sha256 | tee evidence/PROTECTED_DIFF.txt
+          diff -u evidence/IFLC_BEFORE.sha256 evidence/IFLC_AFTER.sha256 | tee evidence/IFLC_DIFF.txt
+
+      - name: Verify diagnostic Slot Isolation is absent from source
+        run: |
+          set -Eeuo pipefail
+          ! grep -R "DARKWOLF_FIREVOL_SLOT_ISOLATION_V1" source/SP/code/rend2
+          ! grep -R "dw_fv_solo" source/SP/code/rend2
+          grep -n -B 8 -A 36 "DARKWOLF_FIREVOL_CRYPT1_SLOT6_REANCHOR_V1" source/SP/code/rend2/tr_backend.c > evidence/REANCHOR_SOURCE_PROOF.txt
+
+      - name: Build Win64 Clean Production
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release \
+            VERSION=1.51d-SP_DarkWolf-Clean-Production-Crypt1-Reanchor \
+            PLATFORM=mingw32 ARCH=x86_64 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 \
+            BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-gcc-posix \
+            CXX=x86_64-w64-mingw32-g++-posix \
+            WINDRES=x86_64-w64-mingw32-windres \
+            > evidence/BUILD.log 2>&1 || { tail -360 evidence/BUILD.log; exit 1; }
+
+      - name: Package accepted lineage
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-continuity-v4/package.py source evidence dist | tee evidence/PACKAGE_V4.log
+          python3 integration/firevol-chateau-v5/package.py dist | tee evidence/PACKAGE_V5.log
+          python3 integration/firevol-chateau-v6/package.py dist | tee evidence/PACKAGE_V6.log
+          python3 integration/firevol-clean-production/package.py dist | tee evidence/PACKAGE_CLEAN_BASE.log
+          python3 integration/firevol-crypt1-slot6-clean-production/package.py dist | tee evidence/PACKAGE_FINAL.log
+
+      - name: Verify final Clean Production archive
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee evidence/ARTIFACT_VERIFY.log
+          from pathlib import Path
+          import json, zipfile
+          p=Path("dist/DarkWolf_Clean_Production_FireVol_Crypt1_Reanchor_From_42060324463_Win64.zip")
+          assert p.exists() and p.stat().st_size > 1000000
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist()
+              dll=[n for n in names if n.endswith("/renderer_sp_rend2_x64.dll")]
+              assert len(dll)==1
+              data=z.read(dll[0])
+              assert b"/decals/" in data
+              assert b"scorch" in data
+              assert b"dw_fv_solo" not in data
+              assert b"FIREVOL_SLOT_ISOLATION" not in data
+              assert not any("SLOT6_REANCHOR_TEST" in n.upper() for n in names)
+              mf=[n for n in names if n.endswith("/CLEAN_PRODUCTION_MANIFEST.json")]
+              assert len(mf)==1
+              m=json.loads(z.read(mf[0]))
+              assert m["base_clean_production_run"]==42060324463
+              assert m["visual_pass_test_run"]==42192556922
+              assert m["slot_isolation_diagnostic_included"] is False
+              assert m["status"]=="CLEAN_PRODUCTION"
+          print("PASS Crypt1 Reanchor Clean Production archive")
+          PY
+          sha256sum dist/DarkWolf_Clean_Production_FireVol_Crypt1_Reanchor_From_42060324463_Win64.zip | tee evidence/FINAL_ARCHIVE_SHA256.txt
+          unzip -p dist/DarkWolf_Clean_Production_FireVol_Crypt1_Reanchor_From_42060324463_Win64.zip '*/renderer_sp_rend2_x64.dll' | sha256sum | tee evidence/FINAL_DLL_SHA256.txt
+
+      - name: Upload Clean Production Win64
+        uses: actions/upload-artifact@v4
+        with:
+          name: DW-Clean-Production-Crypt1-Reanchor-Win64
+          path: |
+            dist/DarkWolf_Clean_Production_FireVol_Crypt1_Reanchor_From_42060324463_Win64.zip
+            dist/SHA256SUMS_CRYPT1_REANCHOR_CLEAN_PRODUCTION.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: DW-Clean-Production-Crypt1-Reanchor-Proof
+          path: evidence/**
+          if-no-files-found: warn
+          retention-days: 30
