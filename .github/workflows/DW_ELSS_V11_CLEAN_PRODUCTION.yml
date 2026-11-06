@@ -1,0 +1,69 @@
+name: DW Clean Production ELSS V1.1 REFINED from 42198541106
+on:
+  push:
+    branches: [release/elss-v11-clean-production-from-42198541106]
+    paths:
+      - '.github/workflows/DW_ELSS_V11_CLEAN_PRODUCTION.yml'
+      - 'integration/elss-v11cp/package_clean_from_tested.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-elss-v11-clean-production-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  production:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify accepted V1.1 source lineage
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          sha256sum source/SP/code/rend2/tr_backend.c source/SP/code/rend2/tr_init.c source/SP/code/rend2/tr_iflc.inc source/SP/code/rend2/tr_main.c > evidence/PROTECTED_BEFORE.sha256
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence | tee evidence/V11_STATIC.log
+          sha256sum source/SP/code/rend2/tr_backend.c source/SP/code/rend2/tr_init.c source/SP/code/rend2/tr_iflc.inc source/SP/code/rend2/tr_main.c > evidence/PROTECTED_AFTER.sha256
+          diff -u evidence/PROTECTED_BEFORE.sha256 evidence/PROTECTED_AFTER.sha256 | tee evidence/PROTECTED_DIFF.txt
+      - name: Package exact user-accepted renderer as Clean Production
+        run: |
+          set -Eeuo pipefail
+          python3 integration/elss-v11cp/package_clean_from_tested.py | tee evidence/PACKAGE_CLEAN.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Clean-Production-ELSS-V11-REFINED-From-42198541106-Win64
+          path: |
+            dist/DarkWolf_Clean_Production_ELSS_V1.1_ComponentPick_REFINED_From_42198541106_Win64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Clean-Production-ELSS-V11-REFINED-Proof
+          path: |
+            evidence/CLEAN_PRODUCTION_PROOF.json
+            evidence/PACKAGE_CLEAN.log
+            evidence/V11_STATIC.log
+            evidence/PROTECTED_BEFORE.sha256
+            evidence/PROTECTED_AFTER.sha256
+            evidence/PROTECTED_DIFF.txt
+          if-no-files-found: warn
+          retention-days: 90
