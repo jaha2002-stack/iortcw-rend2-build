@@ -145,3 +145,5 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
     f"{hashlib.sha256(out.read_bytes()).hexdigest()}  {out.name}\n"
 )
 print(out)
+
+# ci-trigger-after-base-workflow
