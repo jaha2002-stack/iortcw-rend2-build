@@ -1,0 +1,214 @@
+name: DW ELSS V1.1 Component Pick from Clean 42198541106
+on:
+  push:
+    branches: [fix/elss-v11cp-from-42198541106]
+    paths:
+      - '.github/workflows/DW_ELSS_V11_FROM_421985.yml'
+      - 'integration/elss-v11cp/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-elss-v11-421985-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Restore exact Clean Production lineage from Run 42198541106
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+      - name: Record protected base hashes
+        run: |
+          set -Eeuo pipefail
+          sha256sum source/SP/code/rend2/tr_backend.c source/SP/code/rend2/tr_init.c source/SP/code/rend2/tr_iflc.inc source/SP/code/rend2/tr_main.c > evidence/V11_PROTECTED_BEFORE.sha256
+      - name: Apply ELSS V1.1 Component Pick
+        run: |
+          set -Eeuo pipefail
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/run_tests.py source evidence | tee evidence/V11_TESTS.log
+          sha256sum source/SP/code/rend2/tr_backend.c source/SP/code/rend2/tr_init.c source/SP/code/rend2/tr_iflc.inc source/SP/code/rend2/tr_main.c > evidence/V11_PROTECTED_AFTER.sha256
+          diff -u evidence/V11_PROTECTED_BEFORE.sha256 evidence/V11_PROTECTED_AFTER.sha256 | tee evidence/V11_PROTECTED_DIFF.txt
+      - name: Build clean Win64 test candidate
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-ELSS-V11-421985 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/BUILD.log 2>&1 || { tail -260 evidence/BUILD.log; exit 1; }
+          python3 integration/elss-v11cp/package.py | tee evidence/PACKAGE.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-ELSS-V11-ComponentPick-From-42198541106-Win64-TEST
+          path: |
+            dist/DarkWolf_ELSS_V1.1_ComponentPick_From_42198541106_Win64_TEST.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 60
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-ELSS-V11-ComponentPick-Build-Proof
+          path: evidence/**
+          retention-days: 60
+
+  church-component:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build instrumented Church proof renderer
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/instrument_church.py source evidence
+          python3 integration/iflc-v14/verify.py instrument
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD_CHURCH.log 2>&1 || { tail -260 evidence/BUILD_CHURCH.log; exit 1; }
+      - name: Restore protected RTCW assets
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"
+          printf '%s\n' "$retail" > .retail
+      - name: Reproduce Church fixture 107 surface 10810 and exercise Component Pick
+        run: |
+          set -Eeuo pipefail
+          python3 integration/elss-v11cp/runtime_church.py "$(cat .retail)" evidence/church | tee evidence/CHURCH.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-ELSS-V11-Church-Component-Proof
+          path: |
+            evidence/church/**
+            evidence/CHURCH.log
+            evidence/BUILD_CHURCH.log
+          retention-days: 60
+
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        map: [boss1, escape1]
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build regression proof renderer
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v1/instrument.py source evidence
+          python3 integration/iflc-v14/verify.py instrument
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD_REGRESSION.log 2>&1 || { tail -260 evidence/BUILD_REGRESSION.log; exit 1; }
+      - name: Restore protected RTCW assets
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"
+          printf '%s\n' "$retail" > .retail
+      - name: Re-run accepted ELSS V1 scenarios
+        run: |
+          set -Eeuo pipefail
+          python3 integration/elss-v1/runtime.py "$(cat .retail)" evidence/runtime ${{ matrix.map }} | tee evidence/REGRESSION.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-ELSS-V11-${{ matrix.map }}-Regression
+          path: |
+            evidence/runtime/**
+            evidence/REGRESSION.log
+            evidence/BUILD_REGRESSION.log
+          retention-days: 60
+
+  restart-v2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build V1.1 restart proof renderer
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v1/instrument.py source evidence
+          python3 integration/iflc-v14/verify.py instrument
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD_RESTART.log 2>&1 || { tail -260 evidence/BUILD_RESTART.log; exit 1; }
+      - name: Restore protected RTCW assets
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"
+          printf '%s\n' "$retail" > .retail
+      - name: Prove DW_ELSS 2 survives full game restart
+        run: |
+          set -Eeuo pipefail
+          python3 integration/elss-v101/runtime_restart.py "$(cat .retail)" evidence/restart | tee evidence/RESTART.log
+          grep -q '^DW_ELSS 2$' evidence/restart/boss1_saved.elss
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-ELSS-V11-DWELSS2-Restart-Proof
+          path: |
+            evidence/restart/**
+            evidence/RESTART.log
+            evidence/BUILD_RESTART.log
+          retention-days: 60
