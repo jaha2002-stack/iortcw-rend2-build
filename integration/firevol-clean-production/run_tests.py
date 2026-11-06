@@ -16,9 +16,21 @@ required=[
     "RB_FireV6StaticFireplaceDedup",
     "RB_FireV5BmodelClusterDedup",
     "RB_FireV4WorldClusterDedup",
+    "DARKWOLF_FIREVOL_CRYPT1_SLOT6_REANCHOR_PRODUCTION",
+    "RB_FireV07NameLooksBurnScorchDecal",
+    'RB_FireV07ContainsToken(name, "/decals/")',
+    'RB_FireV07ContainsToken(name, "scorch")',
 ]
 for x in required:
     assert x in b, x
+
+
+# User-validated Crypt1 Slot6 reanchor must be part of production source.
+assert "if (RB_FireV07NameLooksBurnScorchDecal(name))" in b
+assert '"fire", "flame", "torch", "blaze", "burn", "ember", "flamethrower", NULL' in b
+assert "RB_FireV085NameLooksWeaponStream(name)" in b
+assert "Never synthesize from generic scorch/burn decals" in b
+assert "burn/scorch decals can no longer create DLight-backed entries" in b
 
 # Accepted budgets and Crypt1 behavior are preserved.
 assert "#define FIREVOL081_RENDER_CAP 8" in b
@@ -61,10 +73,12 @@ expected_on={
 for name,val in expected_on.items():
     assert cvar_default(name)==val, f"{name} default={cvar_default(name)} expected={val}"
 
-print("PASS Clean Production regression gates")
+print("PASS Clean Production regression gates incl. Crypt1 Slot6 reanchor")
 
 # clean-production-final-trigger
 
 # final-production-trigger-2
 
 # clean-production-release-trigger-final
+
+# crypt1-reanchor-clean-production-trigger
