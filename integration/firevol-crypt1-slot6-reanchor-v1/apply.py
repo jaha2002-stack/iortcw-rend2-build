@@ -35,7 +35,6 @@ static qboolean RB_FireV07NameLooksBurnScorchDecal(const char *name)
 	if (!name || !name[0])
 		return qfalse;
 	decalFamily = RB_FireV07ContainsToken(name, "/decals/") ||
-		RB_FireV07ContainsToken(name, "\\decals\\") ||
 		RB_FireV07ContainsToken(name, "decals/");
 	if (!decalFamily)
 		return qfalse;
