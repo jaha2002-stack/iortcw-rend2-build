@@ -41,9 +41,11 @@ GitHub Run #41982135692
 + Chateau Follow V5
 + Chateau V6 stable static-fireplace consolidation
 + final fireplace visual alignment.
++ Crypt1 Slot6 FireVol reanchor fix validated in GitHub Run #42192556922.
 
 Production locks:
 - Crypt1 FireVol/IFLC behavior is preserved from the user-approved V5/V6 result.
+- Burn/scorch decals are excluded from FireVol flame-anchor evidence; the previously reported glow near the Crypt1 passage was confirmed gone in #42192556922.
 - FireVol renderCap remains 8.
 - First Chateau fireplace keeps V6 one-owner consolidation and stable radius.
 - First Chateau fireplace restores the accepted V6/world -10 unit plume alignment.
@@ -67,6 +69,12 @@ manifest={
     "moving_bmodel_fireplace_plume_z_offset":-72,
     "chateau_fireplace_gain":1.35,
     "crypt1_status":"USER_ACCEPTED_PASS_PRESERVED",
+    "base_clean_production_run":42060324463,
+    "crypt1_reanchor_visual_pass_run":42192556922,
+    "crypt1_slot6_reanchor":"USER_VISUAL_PASS_PROMOTED_TO_PRODUCTION",
+    "crypt1_slot6_surface":9035,
+    "crypt1_slot6_pool":52,
+    "slot_isolation_diagnostic_included":False,
     "chateau_static_fireplace":"V6_STABLE_OWNER_PRESERVED",
     "chateau_moving_fireplace":"V5_V6_FOLLOW_AND_ANTI_FLASH_PRESERVED",
     "diagnostic_exec_required":False,
