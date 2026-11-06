@@ -82,7 +82,8 @@ manifest={
  'shadow_slot_preserved':True,
  'direct_preserved':True,
  'local_volumetric_preserved':True,
- 'other_casters_preserved':True,\n 'exact_housing_refinement':True,
+ 'other_casters_preserved':True,
+ 'exact_housing_refinement':True,
  'windows_gpu_fps':'NOT_TESTED'
 }
 entries['ELSS_V11_BUILD_STATUS.json']=(json.dumps(manifest,indent=2)+'\n').encode()
