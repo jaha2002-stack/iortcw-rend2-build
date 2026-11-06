@@ -1,0 +1,120 @@
+name: DW Crypt1 Slot6 Target Investigate
+on:
+  push:
+    branches: [release/firevol-chateau-clean-production]
+    paths: ['.github/workflows/DW_CRYPT1_SLOT6_TARGET_INVESTIGATE.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact Clean Production source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+      - name: Inspect geometry-radius calculation and world-source path
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            echo '===== RB_FireVStableGeometryRadius ====='
+            grep -n -B 30 -A 90 'RB_FireVStableGeometryRadius' source/SP/code/rend2/tr_backend.c
+            echo '===== world geometry scale / min ====='
+            grep -n -B 18 -A 45 -E 'geometryScale|worldGeometryScale|geometryMin|FIREVOL_V4_WORLD|FIREVOL.*GEOMETRY' source/SP/code/rend2/tr_backend.c
+            echo '===== radiusState update ====='
+            grep -n -B 30 -A 80 -E 'radiusStateValue|radiusStateValid|geometryRadius' source/SP/code/rend2/tr_backend.c
+            echo '===== surface/origin latch path ====='
+            grep -n -B 25 -A 70 -E 'latchedFlameSurface|latchedFlameOrigin|sourceClass' source/SP/code/rend2/tr_backend.c
+          } > evidence/RENDERER_RADIUS_AUDIT.txt
+      - name: Fetch protected Crypt1 retail BSP
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}"
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          echo "$retail" > .retail_main
+          test -s "$retail/pak0.pk3"
+      - name: Extract Crypt1 drawsurface 9035 and nearby fire geometry
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,struct,zipfile,math
+          retail=Path(Path(".retail_main").read_text().strip())
+          bsp=None
+          src=None
+          for p in sorted(retail.glob("*.pk3")):
+              with zipfile.ZipFile(p) as z:
+                  for n in z.namelist():
+                      if n.lower()=="maps/crypt1.bsp":
+                          bsp=z.read(n); src=f"{p.name}:{n}"; break
+              if bsp: break
+          if not bsp: raise SystemExit("maps/crypt1.bsp not found")
+          def lump(i):
+              off,n=struct.unpack_from("<ii",bsp,8+i*8); return bsp[off:off+n]
+          shaders=[]
+          for name,flags,contents in struct.iter_unpack("<64sii",lump(1)):
+              shaders.append({"name":name.split(b"\0",1)[0].decode("latin1"),"flags":flags,"contents":contents})
+          verts=[v for v in struct.iter_unpack("<3f2f2f3f4B",lump(10))]
+          surf_blob=lump(13)
+          rows=[]
+          for off in range(0,len(surf_blob),104):
+              if off+104>len(surf_blob): break
+              vals=struct.unpack_from("<12i12f2i",surf_blob,off)
+              shader,stype,firstv,numv=vals[0],vals[2],vals[3],vals[4]
+              if shader<0 or shader>=len(shaders) or numv<=0: continue
+              pts=[verts[i][:3] for i in range(firstv,min(firstv+numv,len(verts)))]
+              if not pts: continue
+              mins=[min(p[k] for p in pts) for k in range(3)]
+              maxs=[max(p[k] for p in pts) for k in range(3)]
+              ctr=[sum(p[k] for p in pts)/len(pts) for k in range(3)]
+              ext=[maxs[k]-mins[k] for k in range(3)]
+              diag=math.sqrt(sum(e*e for e in ext))
+              rows.append({"surface_index":off//104,"shader_index":shader,"shader":shaders[shader]["name"],
+                           "surface_type":stype,"first_vertex":firstv,"num_vertices":len(pts),
+                           "center":[round(x,3) for x in ctr],"mins":[round(x,3) for x in mins],
+                           "maxs":[round(x,3) for x in maxs],"extents":[round(x,3) for x in ext],
+                           "bbox_diag":round(diag,3)})
+          target=next((r for r in rows if r["surface_index"]==9035),None)
+          # Nearby surfaces around the runtime owner origin and around target center if available.
+          runtime=[-1376.0,640.0,-384.0]
+          def dist(a,b): return math.sqrt(sum((a[k]-b[k])**2 for k in range(3)))
+          nearby=[]
+          for r in rows:
+              d=dist(r["center"],runtime)
+              low=r["shader"].lower()
+              if d<=320 or any(x in low for x in ("fire","flame","torch","ember","coal")) and d<=700:
+                  rr=dict(r); rr["distance_to_runtime_origin"]=round(d,3); nearby.append(rr)
+          nearby.sort(key=lambda r:r["distance_to_runtime_origin"])
+          out={"source":src,"surface_count":len(rows),"runtime_owner":{"surface":9035,"origin":runtime},
+               "bsp_surface_9035":target,"nearby_surfaces":nearby[:120]}
+          Path("evidence/CRYPT1_SLOT6_BSP_AUDIT.json").write_text(json.dumps(out,indent=2)+"\n")
+          print("TARGET",json.dumps(target,sort_keys=True))
+          for r in nearby[:60]:
+              print("NEAR",r["surface_index"],r["shader"],r["center"],r["extents"],r["distance_to_runtime_origin"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DW-Crypt1-Slot6-Target-Investigation
+          path: evidence/**
+          retention-days: 14
