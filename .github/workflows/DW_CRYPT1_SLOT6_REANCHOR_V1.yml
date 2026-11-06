@@ -1,0 +1,153 @@
+name: DW Crypt1 Slot6 Reanchor V1
+on:
+  push:
+    branches: [release/firevol-chateau-clean-production]
+    paths:
+      - '.github/workflows/DW_CRYPT1_SLOT6_REANCHOR_V1.yml'
+      - 'integration/firevol-crypt1-slot6-reanchor-v1/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-crypt1-slot6-reanchor-v1-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore exact confirmed Clean Production 42060324463 lineage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends             gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix             binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          mkdir -p evidence dist
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2             | tee evidence/CLEAN_BASE_TESTS.log
+
+      - name: Protect accepted modules before targeted fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          find source/SP/code/rend2 -type f ! -name tr_backend.c ! -name tr_init.c -print0             | sort -z | xargs -0 sha256sum > evidence/PROTECTED_BEFORE.sha256
+          sha256sum source/SP/code/rend2/tr_iflc.inc > evidence/IFLC_BEFORE.sha256
+          sha256sum source/SP/code/rend2/tr_local.h source/SP/code/rend2/tr_main.c > evidence/CORE_BEFORE.sha256
+
+      - name: Apply targeted Crypt1 Slot6 reanchor fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-crypt1-slot6-reanchor-v1/apply.py source/SP/code/rend2             | tee evidence/REANCHOR_APPLY.log
+          python3 integration/firevol-crypt1-slot6-reanchor-v1/run_tests.py source/SP/code/rend2             | tee evidence/REANCHOR_TESTS.log
+
+      - name: Add render-only slot isolation diagnostic
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-slot-isolation-v1/apply.py source/SP/code/rend2             | tee evidence/SLOT_ISOLATION_APPLY.log
+          python3 integration/firevol-slot-isolation-v1/run_tests.py source/SP/code/rend2             | tee evidence/SLOT_ISOLATION_TESTS.log
+
+      - name: Re-run Clean Production regression gates
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2             | tee evidence/CLEAN_PRODUCTION_RETEST.log
+
+      - name: Verify protected renderer modules unchanged
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          find source/SP/code/rend2 -type f ! -name tr_backend.c ! -name tr_init.c -print0             | sort -z | xargs -0 sha256sum > evidence/PROTECTED_AFTER.sha256
+          sha256sum source/SP/code/rend2/tr_iflc.inc > evidence/IFLC_AFTER.sha256
+          sha256sum source/SP/code/rend2/tr_local.h source/SP/code/rend2/tr_main.c > evidence/CORE_AFTER.sha256
+          diff -u evidence/PROTECTED_BEFORE.sha256 evidence/PROTECTED_AFTER.sha256             | tee evidence/PROTECTED_DIFF.txt
+          diff -u evidence/IFLC_BEFORE.sha256 evidence/IFLC_AFTER.sha256             | tee evidence/IFLC_DIFF.txt
+          diff -u evidence/CORE_BEFORE.sha256 evidence/CORE_AFTER.sha256             | tee evidence/CORE_DIFF.txt
+
+      - name: Source proof for exact classification delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            grep -n -B 8 -A 36 'DARKWOLF_FIREVOL_CRYPT1_SLOT6_REANCHOR_V1' source/SP/code/rend2/tr_backend.c
+            grep -n -B 4 -A 12 'burn/scorch decals can no longer create DLight-backed entries' source/SP/code/rend2/tr_backend.c
+            grep -n -B 4 -A 12 'Never synthesize from generic scorch/burn decals' source/SP/code/rend2/tr_backend.c
+          } > evidence/REANCHOR_SOURCE_PROOF.txt
+
+      - name: Build Win64 test release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release             VERSION=1.51d-SP_DarkWolf-Crypt1-Slot6-Reanchor-V1             PLATFORM=mingw32 ARCH=x86_64             BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0             BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1             CC=x86_64-w64-mingw32-gcc-posix             CXX=x86_64-w64-mingw32-g++-posix             WINDRES=x86_64-w64-mingw32-windres             > evidence/BUILD.log 2>&1 || { tail -360 evidence/BUILD.log; exit 1; }
+
+      - name: Package exact lineage with targeted test wrapper
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 integration/firevol-continuity-v4/package.py source evidence dist             | tee evidence/PACKAGE_V4.log
+          python3 integration/firevol-chateau-v5/package.py dist             | tee evidence/PACKAGE_V5.log
+          python3 integration/firevol-chateau-v6/package.py dist             | tee evidence/PACKAGE_V6.log
+          python3 integration/firevol-clean-production/package.py dist             | tee evidence/PACKAGE_CLEAN.log
+          python3 integration/firevol-crypt1-slot6-reanchor-v1/package.py dist             | tee evidence/PACKAGE_REANCHOR.log
+
+      - name: Verify final archive
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee evidence/ARTIFACT_VERIFY.log
+          from pathlib import Path
+          import json,zipfile
+          p=Path("dist/DarkWolf_Crypt1_FireVol_Slot6_Reanchor_V1_From_42060324463_Win64.zip")
+          assert p.exists() and p.stat().st_size > 1000000
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist()
+              dll=[n for n in names if n.endswith("/renderer_sp_rend2_x64.dll")]
+              assert len(dll)==1
+              data=z.read(dll[0])
+              assert b"DARKWOLF_FIREVOL_CRYPT1_SLOT6_REANCHOR_V1" in data
+              assert b"dw_fv_solo" in data
+              assert b"FIREVOL_SLOT_ISOLATION" in data
+              mf=[n for n in names if n.endswith("/CRYPT1_SLOT6_REANCHOR_V1_MANIFEST.json")]
+              assert len(mf)==1
+              m=json.loads(z.read(mf[0]))
+              assert m["base_clean_production_run"]==42060324463
+              assert m["target"]["surface"]==9035
+              assert m["geometry_radius_changed"] is False
+              assert m["iflc_changed"] is False
+              assert m["elss_changed"] is False
+              assert m["production_candidate"] is False
+          print("PASS Crypt1 Slot6 Reanchor V1 archive")
+          PY
+          sha256sum dist/DarkWolf_Crypt1_FireVol_Slot6_Reanchor_V1_From_42060324463_Win64.zip             | tee evidence/FINAL_ARCHIVE_SHA256.txt
+          unzip -p dist/DarkWolf_Crypt1_FireVol_Slot6_Reanchor_V1_From_42060324463_Win64.zip             '*/renderer_sp_rend2_x64.dll' | sha256sum | tee evidence/FINAL_DLL_SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DW-Crypt1-FireVol-Slot6-Reanchor-V1-Win64
+          path: |
+            dist/DarkWolf_Crypt1_FireVol_Slot6_Reanchor_V1_From_42060324463_Win64.zip
+            dist/SHA256SUMS_CRYPT1_SLOT6_REANCHOR_V1.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DW-Crypt1-FireVol-Slot6-Reanchor-V1-Proof
+          path: evidence/**
+          retention-days: 30
