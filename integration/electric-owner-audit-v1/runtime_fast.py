@@ -19,3 +19,5 @@ if __name__=='__main__':
         'selected_fixture':report.get('selected_fixture'),
         'suspicious':len(report['controlled']['suspicious_near_pairs']) if report.get('controlled') else None
     },sort_keys=True))
+
+# rerun with delivered-owner selection
