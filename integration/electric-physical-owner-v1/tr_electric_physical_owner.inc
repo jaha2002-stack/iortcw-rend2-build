@@ -68,24 +68,24 @@ static void R_DarkWolfAssignPhysicalElectricOwnerIds(void)
     if (!s_rDwElectricPhysicalOwner || !s_rDwElectricPhysicalOwner->integer)
         return;
 
-    // Pass 1: real/native-routed promoted lights get an exact geometry owner only
-    // when the existing Electric Fixture matcher itself is unambiguous.
+    // Pass 1: every delivered REAL StaticPromote light is already a stable physical
+    // identity. Reuse that persistent fixture id as PhysicalElectricOwnerId.
+    // Crucially, this never merges two real promoted lights; only synthetic children
+    // may inherit a real owner's id in pass 2.
     for (i = 0; i < n; ++i)
     {
         dlight_t *dl = &tr.refdef.dlights[i];
-        int fixture;
         if (!R_DarkWolfElectricOwnerIsPromoted(dl) || R_DarkWolfElectricOwnerIsSynthetic(dl))
             continue;
-        fixture = R_ElectricFixtureForLight(dl);
-        if (fixture <= 0)
-            continue;
-        dl->physicalElectricOwnerId = fixture;
+        dl->physicalElectricOwnerId = dl->staticPromoteFixtureId;
         physicalResolved++;
     }
 
-    // Pass 2: a synthetic may inherit ONLY from a delivered real promoted light
-    // that already has an exact geometry owner. The inheritance path is bounded,
-    // radius/color compatible, and rejected when a competing owner is too close.
+    // Pass 2: a synthetic may inherit ONLY from a delivered real promoted light.
+    // The inheritance path is bounded, radius/color compatible, and rejected when
+    // a competing real owner is too close. Existing Electric Fixture geometry is
+    // supplementary evidence: if BOTH sides resolve and disagree, the candidate
+    // is rejected; an unresolved geometry id never blocks a stable StaticPromote owner.
     for (i = 0; i < n; ++i)
     {
         dlight_t *syn = &tr.refdef.dlights[i];
@@ -100,14 +100,15 @@ static void R_DarkWolfAssignPhysicalElectricOwnerIds(void)
             dlight_t *real = &tr.refdef.dlights[j];
             vec3_t delta;
             float dist2;
-            int owner;
+            int owner, realFixture;
             if (i == j || !R_DarkWolfElectricOwnerIsPromoted(real) ||
                 R_DarkWolfElectricOwnerIsSynthetic(real))
                 continue;
             owner = real->physicalElectricOwnerId;
             if (owner <= 0)
                 continue;
-            if (selfFixture > 0 && owner != selfFixture)
+            realFixture = R_ElectricFixtureForLight(real);
+            if (selfFixture > 0 && realFixture > 0 && selfFixture != realFixture)
                 continue;
             if (!R_DarkWolfElectricOwnerCompatible(syn, real))
                 continue;
@@ -138,8 +139,6 @@ static void R_DarkWolfAssignPhysicalElectricOwnerIds(void)
         if (bestOwner > 0)
         {
             qboolean accept = qtrue;
-            if (selfFixture > 0 && selfFixture != bestOwner)
-                accept = qfalse;
             if (secondOwner > 0)
             {
                 float bestDist = sqrtf(best2);
@@ -194,9 +193,10 @@ static void R_DarkWolfAssignPhysicalElectricOwnerIds(void)
             if (!R_DarkWolfElectricOwnerIsPromoted(dl))
                 continue;
             ri.Printf(PRINT_ALL,
-                "EPO_V1_MEMBER dlight=%d fixture=%d synthetic=%d owner=%d origin=%.2f,%.2f,%.2f radius=%.2f color=%.4f,%.4f,%.4f iflc=%d localVol=%d\n",
+                "EPO_V1_MEMBER dlight=%d fixture=%d synthetic=%d owner=%d electricFixture=%d origin=%.2f,%.2f,%.2f radius=%.2f color=%.4f,%.4f,%.4f iflc=%d localVol=%d\n",
                 i, dl->staticPromoteFixtureId, R_DarkWolfElectricOwnerIsSynthetic(dl) ? 1 : 0,
-                dl->physicalElectricOwnerId, dl->origin[0], dl->origin[1], dl->origin[2],
+                dl->physicalElectricOwnerId, R_ElectricFixtureForLight(dl),
+                dl->origin[0], dl->origin[1], dl->origin[2],
                 dl->radius, dl->color[0], dl->color[1], dl->color[2],
                 dl->iflcActive ? 1 : 0, dl->localVolumetricLamp ? 1 : 0);
         }
