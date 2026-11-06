@@ -22,13 +22,14 @@ checks['inherit_distance_48']='#define DW_EPO_V1_INHERIT_MAX_DIST 48.0f' in inc
 checks['ambiguity_margin_16']='#define DW_EPO_V1_AMBIGUITY_MARGIN 16.0f' in inc
 checks['radius_guard_16']='#define DW_EPO_V1_RADIUS_DELTA 16.0f' in inc
 checks['color_guard']='DW_EPO_V1_COLOR_DELTA_SQ 0.01f' in inc
-checks['real_owner_uses_electric_fixture']='fixture = R_ElectricFixtureForLight(dl);' in inc
+checks['real_owner_uses_stable_promote_fixture']='dl->physicalElectricOwnerId = dl->staticPromoteFixtureId;' in inc
+checks['electric_geometry_is_conflict_guard']='selfFixture > 0 && realFixture > 0 && selfFixture != realFixture' in inc
 checks['synthetic_only_inherits']='R_DarkWolfElectricOwnerIsSynthetic(syn)' in inc
 checks['shadow_owner_equivalence']='a->physicalElectricOwnerId == b->physicalElectricOwnerId' in main
 checks['localvol_owner_equivalence']='a->physicalElectricOwnerId == b->physicalElectricOwnerId' in backend
 checks['legacy_shadow_fallback']='s_rStaticPromotePhysicalGroupMergeRadius->value' in main
 checks['legacy_localvol_fallback']='s_rStaticPromotePhysicalGroupMergeRadius' in backend
-checks['elss_capture_uses_owner']='fixture = tr.refdef.dlights[index].physicalElectricOwnerId > 0' in main
+checks['elss_capture_positive_fixture_consensus']='if (peerFixture <= 0) continue;' in main and 'else if (peerFixture != fixture) return 0;' in main
 checks['iflc_source_untouched']='tr_iflc.inc' in json.loads((ev/'EPO_V1_APPLY_PROOF.json').read_text())['protected_unchanged']
 checks['elss_source_untouched']='tr_elss.inc' in json.loads((ev/'EPO_V1_APPLY_PROOF.json').read_text())['protected_unchanged']
 checks['direct_mutation_absent']=all(x not in inc for x in (
@@ -52,7 +53,8 @@ def inherit(syn,reals,self_fixture=0):
     for real in reals:
         owner=real['owner']
         if owner<=0: continue
-        if self_fixture>0 and owner!=self_fixture: continue
+        real_fixture=real.get('electric_fixture',0)
+        if self_fixture>0 and real_fixture>0 and self_fixture!=real_fixture: continue
         if not compatible(syn,real): continue
         d2=sum((syn['origin'][k]-real['origin'][k])**2 for k in range(3))
         if d2>48**2: continue
@@ -64,11 +66,10 @@ def inherit(syn,reals,self_fixture=0):
         elif owner!=best_owner and d2<second2:
             second2,second_owner=d2,owner
     if best_owner<=0:return -1
-    if self_fixture>0 and self_fixture!=best_owner:return -1
     if second_owner>0 and math.sqrt(second2)<math.sqrt(best2)+16:return -1
     return best_owner
 
-base={'origin':(0,0,0),'radius':192,'color':(1.0,.8,.6),'owner':7}
+base={'origin':(0,0,0),'radius':192,'color':(1.0,.8,.6),'owner':7,'electric_fixture':0}
 checks['lab_plus8_inherits']=inherit({'origin':(8,0,0),'radius':192,'color':(1.0,.8,.6)},[base])==7
 checks['lab_plus32_inherits']=inherit({'origin':(32,0,0),'radius':192,'color':(1.0,.8,.6)},[base])==7
 checks['lab_plus49_rejected']=inherit({'origin':(49,0,0),'radius':192,'color':(1.0,.8,.6)},[base])==-1
@@ -79,7 +80,12 @@ checks['lab_ambiguous_two_owners_rejected']=inherit(
     [base,{'origin':(30,0,0),'radius':192,'color':(1.0,.8,.6),'owner':8}])==-1
 checks['lab_clear_nearest_owner_accepted']=inherit(
     {'origin':(8,0,0),'radius':192,'color':(1.0,.8,.6)},
-    [base,{'origin':(44,0,0),'radius':192,'color':(1.0,.8,.6),'owner':8}])==7
+    [base,{'origin':(44,0,0),'radius':192,'color':(1.0,.8,.6),'owner':8,'electric_fixture':0}])==7
+checks['lab_unresolved_geometry_does_not_block']=inherit(
+    {'origin':(8,0,0),'radius':192,'color':(1.0,.8,.6)},[base],self_fixture=107)==7
+checks['lab_conflicting_resolved_geometry_rejected']=inherit(
+    {'origin':(8,0,0),'radius':192,'color':(1.0,.8,.6)},
+    [{**base,'electric_fixture':108}],self_fixture=107)==-1
 
 bad={k:v for k,v in checks.items() if not v}
 assert not bad,bad
