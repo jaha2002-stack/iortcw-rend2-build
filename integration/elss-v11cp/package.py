@@ -19,7 +19,7 @@ with zipfile.ZipFile(io.BytesIO(raw)) as z:
 
 dlls=list(Path('source/SP/build').rglob('renderer_sp_rend2_x64.dll'));assert len(dlls)==1,dlls
 dll=dlls[0].read_bytes()
-for m in (b'dw_el_select',b'dw_el_self_pick',b'r_dwElectricLightControl',b'ELSS V1.1:',b'ownBodyTriangles=',b'FIREVOL_CLEAN_PRODUCTION'):
+for m in (b'dw_el_select',b'dw_el_self_pick',b'r_dwElectricLightControl',b'ELSS V1.1:',b'ownBodyTriangles=',b'bound exact compact body surface',b'protected surface',b'FIREVOL_CLEAN_PRODUCTION'):
     assert m in dll,m
 for m in (b'ELSS11_TEST_',b'dw_el_v11_test_'):
     assert m not in dll,m
@@ -67,7 +67,7 @@ and ELSS V1.0.1 restart persistence are preserved.
 entries['README_ELSS_V11_COMPONENT_PICK.txt']=readme.replace('\n','\r\n').encode('utf-8-sig')
 manifest={
  'status':'TEST_CANDIDATE',
- 'version':'ELSS_V1.1_COMPONENT_PICK',
+ 'version':'ELSS_V1.1_COMPONENT_PICK_REFINED',
  'base_run':42198541106,
  'base_commit':'5ba3e923803674c9acee71600412720a0eeaf81e',
  'build_run':os.environ.get('GITHUB_RUN_ID'),
@@ -82,7 +82,7 @@ manifest={
  'shadow_slot_preserved':True,
  'direct_preserved':True,
  'local_volumetric_preserved':True,
- 'other_casters_preserved':True,
+ 'other_casters_preserved':True,\n 'exact_housing_refinement':True,
  'windows_gpu_fps':'NOT_TESTED'
 }
 entries['ELSS_V11_BUILD_STATUS.json']=(json.dumps(manifest,indent=2)+'\n').encode()
