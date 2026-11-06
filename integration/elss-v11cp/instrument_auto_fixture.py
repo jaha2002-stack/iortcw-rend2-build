@@ -2,39 +2,46 @@
 from pathlib import Path
 import sys
 src=Path(sys.argv[1]).resolve();root=src/'SP/code/rend2'
+
 p=root/'tr_local.h';s=p.read_text()
 anchor='unsigned int R_ElectricFixtureKey(int fixture);\n'
 assert s.count(anchor)==1
-s=s.replace(anchor,anchor+'void R_ELSS_V11_AutoFixtureAudit_f(void);\n');p.write_text(s)
+s=s.replace(anchor,anchor+'void R_ELSS_V11_AutoEnable_f(void);\nvoid R_ELSS_V11_AutoAudit_f(void);\n');p.write_text(s)
 
 p=root/'tr_init.c';s=p.read_text()
 a='\tri.Cmd_AddCommand( "dw_el_list", R_ELSS_List_f );\n';assert s.count(a)==1
-s=s.replace(a,a+'\tri.Cmd_AddCommand( "dw_el_v11_auto_enable", R_ELSS_V11_AutoFixtureAudit_f );\n\tri.Cmd_AddCommand( "dw_el_v11_auto_audit", R_ELSS_V11_AutoFixtureAudit_f );\n')
+s=s.replace(a,a+'\tri.Cmd_AddCommand( "dw_el_v11_auto_enable", R_ELSS_V11_AutoEnable_f );\n\tri.Cmd_AddCommand( "dw_el_v11_auto_audit", R_ELSS_V11_AutoAudit_f );\n')
 a='\tri.Cmd_RemoveCommand( "dw_el_list" );\n';assert s.count(a)==1
 s=s.replace(a,a+'\tri.Cmd_RemoveCommand( "dw_el_v11_auto_enable" );\n\tri.Cmd_RemoveCommand( "dw_el_v11_auto_audit" );\n');p.write_text(s)
 
+# StaticPromote internals live in the tr_scene translation unit with tr_elss.inc.
+p=root/'tr_elss.inc';s=p.read_text()
+s+=r'''
+/* TEST ONLY: activate one promoted fixture so backend AUTO geometry can be audited. */
+void R_ELSS_V11_AutoEnable_f(void)
+{
+    int requested=atoi(ri.Cmd_Argv(1)),state=ri.Cmd_Argc()>2?atoi(ri.Cmd_Argv(2)):1,i,found=0;
+    R_IssuePendingRenderCommands();
+    if(!tr.world||!R_StaticPromoteBuildPersistentRegistry())return;
+    for(i=0;i<s_staticPromotePersistentCount;++i) {
+        staticPromotePersistentLight_t *l=&s_staticPromotePersistentLights[i];
+        if(l->candidate.entityOrdinal!=requested)continue;
+        ++found;
+        ri.Printf(PRINT_ALL,"ELSS11_AUTO_ENABLE fixture=%d idx=%d origin=%.3f,%.3f,%.3f state=%d ok=%d\n",
+            requested,i,l->candidate.origin[0],l->candidate.origin[1],l->candidate.origin[2],state,R_StaticPromotePhysicalOverrideSet(l,state));
+    }
+    if(!found)ri.Printf(PRINT_WARNING,"ELSS11_AUTO_ENABLE_MISSING fixture=%d\n",requested);
+}
+'''
+p.write_text(s)
+
 p=root/'tr_electric_fixture.inc';s=p.read_text()
 s+=r'''
-/* TEST ONLY: audit selected promoted lamp against the existing AUTO classifier. */
-void R_ELSS_V11_AutoFixtureAudit_f(void)
+/* TEST ONLY: report existing V1.3 AUTO geometry after the lamp is active. */
+void R_ELSS_V11_AutoAudit_f(void)
 {
-    const char *cmd=ri.Cmd_Argv(0);int requested=atoi(ri.Cmd_Argv(1)),i,j,found=0;
-    R_IssuePendingRenderCommands();
-    if(!tr.world)return;
-    if(!strcmp(cmd,"dw_el_v11_auto_enable")) {
-        int state=ri.Cmd_Argc()>2?atoi(ri.Cmd_Argv(2)):1;
-        if(!R_StaticPromoteBuildPersistentRegistry())return;
-        for(i=0;i<s_staticPromotePersistentCount;++i) {
-            staticPromotePersistentLight_t *l=&s_staticPromotePersistentLights[i];
-            if(l->candidate.entityOrdinal!=requested)continue;
-            ++found;
-            ri.Printf(PRINT_ALL,"ELSS11_AUTO_ENABLE fixture=%d idx=%d origin=%.3f,%.3f,%.3f state=%d ok=%d\n",
-                requested,i,l->candidate.origin[0],l->candidate.origin[1],l->candidate.origin[2],state,R_StaticPromotePhysicalOverrideSet(l,state));
-        }
-        if(!found)ri.Printf(PRINT_WARNING,"ELSS11_AUTO_ENABLE_MISSING fixture=%d\n",requested);
-        return;
-    }
-    EF_Build();
+    int requested=atoi(ri.Cmd_Argv(1)),i,j,found=0;
+    R_IssuePendingRenderCommands();if(!tr.world)return;EF_Build();
     for(i=0;i<tr.refdef.num_dlights;++i) {
         const dlight_t *d=&tr.refdef.dlights[i];int af;
         if(d->staticPromoteFixtureId!=requested)continue;
