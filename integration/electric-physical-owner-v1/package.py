@@ -33,7 +33,6 @@ for marker in (
     b'r_dwElectricPhysicalOwner',
     b'r_dwElectricPhysicalOwnerDiag',
     b'EPO_V1_SUMMARY',
-    b'physicalElectricOwnerId',
     b'EPOA_SUMMARY',
     b'dw_el_self_pick',
     b'FIREVOL_CLEAN_PRODUCTION',
