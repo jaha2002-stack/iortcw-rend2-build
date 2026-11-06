@@ -1,0 +1,151 @@
+name: DW Electric Physical Owner Audit V1 from 42217883095
+
+on:
+  push:
+    branches: [diag/electric-physical-owner-audit-v1-from-42217883095]
+    paths:
+      - '.github/workflows/DW_ELECTRIC_PHYSICAL_OWNER_AUDIT_V1.yml'
+      - 'integration/electric-owner-audit-v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dw-electric-owner-audit-v1-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  win64-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Restore exact Clean Production Run 42217883095 source lineage
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence | tee evidence/ELSS_BASE_TESTS.log
+
+      - name: Prove isolated read-only delta and run grouping laboratory
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          root=Path('source/SP/code/rend2')
+          d={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in root.iterdir() if p.is_file()}
+          Path('evidence/EPOA_PRE_MANIFEST.json').write_text(json.dumps(d,indent=2)+'\n')
+          PY
+          python3 integration/electric-owner-audit-v1/apply.py source evidence
+          python3 integration/electric-owner-audit-v1/run_tests.py source evidence | tee evidence/EPOA_STATIC_TESTS.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          root=Path('source/SP/code/rend2')
+          before=json.loads(Path('evidence/EPOA_PRE_MANIFEST.json').read_text())
+          after={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in root.iterdir() if p.is_file()}
+          changed=sorted(k for k in set(before)|set(after) if before.get(k)!=after.get(k))
+          assert changed==['tr_electric_owner_audit.inc','tr_scene.c'],changed
+          protected=['tr_backend.c','tr_main.c','tr_init.c','tr_local.h','tr_iflc.inc','tr_elss.inc']
+          assert all(before[k]==after[k] for k in protected),protected
+          proof={'changed':changed,'protected_unchanged':protected,'audit_default_off':True,'read_only_hook':True}
+          Path('evidence/EPOA_DELTA_PROOF.json').write_text(json.dumps(proof,indent=2)+'\n')
+          print('EPOA_DELTA_PROOF_PASS',proof)
+          PY
+
+      - name: Build Win64 diagnostic renderer
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-EPOA-V1-42217883095 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/BUILD_WIN64.log 2>&1 || { tail -300 evidence/BUILD_WIN64.log; exit 1; }
+          python3 integration/electric-owner-audit-v1/package.py | tee evidence/PACKAGE.log
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Electric-Physical-Owner-Audit-V1-From-42217883095-Win64-DIAGNOSTIC
+          path: |
+            dist/DarkWolf_Electric_Physical_Owner_Audit_V1_From_42217883095_Win64_DIAGNOSTIC.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 60
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Electric-Physical-Owner-Audit-V1-Proof
+          path: evidence/**
+          retention-days: 60
+
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        map: [boss1, escape1]
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Build exact production plus audit default-OFF instrumentation
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/electric-owner-audit-v1/apply.py source evidence
+          python3 integration/electric-owner-audit-v1/run_tests.py source evidence
+          python3 integration/elss-v1/instrument.py source evidence
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD_REGRESSION.log 2>&1 || { tail -300 evidence/BUILD_REGRESSION.log; exit 1; }
+
+      - name: Restore protected RTCW assets
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"
+          printf '%s\n' "$retail" > .retail
+
+      - name: Re-run accepted visual/slot regression with audit OFF
+        run: |
+          set -Eeuo pipefail
+          python3 integration/elss-v1/runtime.py "$(cat .retail)" "evidence/runtime-${{ matrix.map }}" "${{ matrix.map }}" | tee "evidence/REGRESSION_${{ matrix.map }}.log"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Electric-Owner-Audit-V1-${{ matrix.map }}-Regression
+          path: |
+            evidence/runtime-${{ matrix.map }}/**
+            evidence/REGRESSION_${{ matrix.map }}.log
+            evidence/BUILD_REGRESSION.log
+          retention-days: 60
