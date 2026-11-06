@@ -124,8 +124,10 @@ new='''    if (!a || !b || a->staticPromoteFixtureId < 0 || b->staticPromoteFixt
         return qtrue;
     RB_LocalVolumetricEnsureLampMultiSourceCvars();
 '''
-assert s.count(old)==1,s.count(old)
-s=s.replace(old,new,1)
+assert s.count(old)==2,s.count(old)
+# Apply the explicit owner to both LocalVol grouping paths: the legacy four-slot
+# companion path and the production all-active physical-group path.
+s=s.replace(old,new,2)
 backend.write_text(s)
 
 # If the read-only EPOA diagnostic is present in this test build, teach it the
