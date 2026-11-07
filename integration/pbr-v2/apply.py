@@ -418,7 +418,9 @@ if stage >= 2:
         raise SystemExit(f"shader image load anchors expected at least 2, found {len(hits)}")
     def add_pbrdata_guard(m):
         indent=m.group(1)
-        return indent+'if (stage->type == ST_SPECULARMAP && stage->specularScale[2] < 0.0f)\\n'+indent+'\\tflags |= IMGFLAG_NOLIGHTSCALE | IMGFLAG_PBRDATA;\\n'+m.group(0)
+        nl=chr(10)
+        tab=chr(9)
+        return indent+'if (stage->type == ST_SPECULARMAP && stage->specularScale[2] < 0.0f)'+nl+indent+tab+'flags |= IMGFLAG_NOLIGHTSCALE | IMGFLAG_PBRDATA;'+nl+m.group(0)
     s,n=re.subn(load_pat,add_pbrdata_guard,s,count=2)
     if n!=2:
         raise SystemExit(f"shader PBRDATA guard insertion expected 2, found {n}")
