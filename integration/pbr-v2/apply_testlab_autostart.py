@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import argparse
+
+ap=argparse.ArgumentParser()
+ap.add_argument("source")
+args=ap.parse_args()
+p=Path(args.source)/"SP/code/cgame/cg_servercmds.c"
+s=p.read_text()
+old='''	if ( !strcmp( cmd, "rockandroll" ) ) {   // map loaded, game is ready to begin.
+		CG_Fade( 0, 0, 0, 255, cg.time, 0 );      // go black
+		trap_UI_Popup( "pregame" );                // start pregame menu
+		trap_Cvar_Set( "cg_norender", "1" );    // don't render the world until the player clicks in and the 'playerstart' func has been called (g_main in G_UpdateCvars() ~ilne 949)
+
+		trap_S_FadeAllSound( 1.0f, 1000 );    // fade sound up
+
+		return;
+	}
+'''
+new='''	if ( !strcmp( cmd, "rockandroll" ) ) {   // map loaded, game is ready to begin.
+		// DarkWolf TestLab only: emulate the retail pregame "Continue" action.
+		// This patch is never packaged into production or the Win64 PBR candidate.
+		CG_Fade( 0, 0, 0, 0, cg.time, 0 );
+		trap_Cvar_Set( "cl_paused", "0" );
+		trap_Cvar_Set( "cg_norender", "0" );
+		trap_Cvar_Set( "g_playerstart", "1" );
+		trap_S_FadeAllSound( 1.0f, 1000 );
+		CG_Printf( "DW_PBR_TESTLAB_AUTOSTART playerstart=1 render=1\\n" );
+		return;
+	}
+'''
+if s.count(old)!=1:
+    raise SystemExit(f"rockandroll block anchor count={s.count(old)}")
+p.write_text(s.replace(old,new,1))
+print("DW_PBR_TESTLAB_AUTOSTART_APPLIED")
