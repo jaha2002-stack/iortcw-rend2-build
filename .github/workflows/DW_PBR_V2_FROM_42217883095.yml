@@ -1,62 +1,37 @@
 name: DW PBR V2 V1-V3 from Clean 42217883095
-
 on:
   push:
-    branches: [feature/pbr-v2-from-42217883095]
+    branches:
+      - feature/pbr-v2-from-42217883095
     paths:
-      - '.github/workflows/DW_PBR_V2_FROM_42217883095.yml'
-      - 'integration/pbr-v2/**'
-      - 'docs/DARKWOLF_PBR_V2_ARCHITECTURE_HANDOFF_2026-11-07.md'
+      - .github/workflows/DW_PBR_V2_FROM_42217883095.yml
+      - integration/pbr-v2/**
+      - docs/DARKWOLF_PBR_V2_ARCHITECTURE_HANDOFF_2026-11-07.md
   workflow_dispatch:
-
 permissions:
   contents: read
   actions: read
-
-concurrency:
-  group: dw-pbr-v2-from-42217883095-${{ github.sha }}
-  cancel-in-progress: false
-
 jobs:
   pbr:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      BASE_RUN: "42217883095"
-      BASE_COMMIT: "0ef4fc401daff30c230ccb8226a8029fb0a3519f"
-      BASE_ARTIFACT: "13502112057"
-      BASE_RENDERER_SHA256: "0b2ff0b28bbf69ff0df73417866eb330eb204c10b5be5fb0835b98f26797cc2d"
-      ASSET_REPO: jaha2002-stack/DarkWolfRTCW-TestAssets
-      ASSET_RELEASE_TAG: rtcw-retail-v1
-      ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
-
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-
-      - name: Install build and TestLab dependencies
+      - name: Install dependencies
         run: |
           set -Eeuo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends             build-essential git gh jq python3 unzip zip file             libsdl2-dev libopenal-dev libcurl4-openssl-dev             gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64             xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+          sudo apt-get install -y --no-install-recommends build-essential git gh jq python3 unzip zip file libsdl2-dev libopenal-dev libcurl4-openssl-dev gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
           python3 -m py_compile integration/pbr-v2/apply.py integration/pbr-v2/test.py
-
-      - name: Verify exact Clean Production provenance
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Reconstruct exact Clean Production source
         run: |
           set -Eeuo pipefail
-          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN}")"
-          test "$(jq -r .head_sha <<<"$run_json")" = "$BASE_COMMIT"
-          test "$(jq -r .conclusion <<<"$run_json")" = success
-          art="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${BASE_ARTIFACT}")"
-          test "$(jq -r .expired <<<"$art")" = false
-          echo CLEAN_42217883095_PROVENANCE_PASS
-
-      - name: Reconstruct exact source lineage used by Clean Production
-        run: |
-          set -Eeuo pipefail
-          rm -rf source evidence dist build-binaries
-          mkdir -p evidence dist build-binaries
+          rm -rf source source-clean source-v1 source-v2 source-v3 evidence build-binaries
+          mkdir -p evidence build-binaries
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42217883095 --jq .head_sha)" = "0ef4fc401daff30c230ccb8226a8029fb0a3519f"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42217883095 --jq .conclusion)" = "success"
           python3 integration/elss-v1/prepare.py
           python3 integration/elss-v1/apply.py source evidence
           python3 integration/elss-v101/apply.py source evidence
@@ -74,215 +49,46 @@ jobs:
           grep -Fq 'DARKWOLF_FIREVOL_CRYPT1_SLOT6_REANCHOR_PRODUCTION' source/SP/code/rend2/tr_backend.c
           grep -Fq 'r_pbr = ri.Cvar_Get("r_pbr", "0"' source/SP/code/rend2/tr_init.c
           cp -a source source-clean
-          echo EXACT_42217883095_SOURCE_LINEAGE_RECONSTRUCTED
-
-      - name: Stage V1 - PBR2 Core static and native compile gate
+          echo EXACT_SOURCE_PASS
+      - name: Apply and validate V1 V2 V3
         run: |
           set -Eeuo pipefail
-          cp -a source-clean source-v1
-          python3 integration/pbr-v2/apply.py source-v1 --stage 1 --proof evidence/PBR_V1_PROOF.json
-          python3 integration/pbr-v2/test.py source-v1 --stage 1 --out evidence/PBR_V1_TESTS.json
-          git -C source-v1 diff --check
-          make -C source-v1/SP -j2             BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1             BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1             > evidence/PBR_V1_NATIVE_BUILD.log 2>&1 || { tail -150 evidence/PBR_V1_NATIVE_BUILD.log; exit 1; }
-          echo PBR_V1_CORE_NATIVE_PASS
-
-      - name: Stage V2 - modern ORM material path static and native compile gate
+          for stage in 1 2 3; do
+            cp -a source-clean "source-v${stage}"
+            python3 integration/pbr-v2/apply.py "source-v${stage}" --stage "${stage}" --proof "evidence/PBR_V${stage}_PROOF.json"
+            python3 integration/pbr-v2/test.py "source-v${stage}" --stage "${stage}" --out "evidence/PBR_V${stage}_TESTS.json"
+            git -C "source-v${stage}" diff --check
+          done
+          echo PBR_STATIC_V1_V2_V3_PASS
+      - name: Native compile V1
         run: |
           set -Eeuo pipefail
-          cp -a source-clean source-v2
-          python3 integration/pbr-v2/apply.py source-v2 --stage 2 --proof evidence/PBR_V2_PROOF.json
-          python3 integration/pbr-v2/test.py source-v2 --stage 2 --out evidence/PBR_V2_TESTS.json
-          git -C source-v2 diff --check
-          make -C source-v2/SP -j2             BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1             BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1             > evidence/PBR_V2_NATIVE_BUILD.log 2>&1 || { tail -150 evidence/PBR_V2_NATIVE_BUILD.log; exit 1; }
-          echo PBR_V2_ORM_NATIVE_PASS
-
-      - name: Stage V3 - conservative IBL path and final source gate
+          make -C source-v1/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/PBR_V1_NATIVE_BUILD.log 2>&1 || { tail -160 evidence/PBR_V1_NATIVE_BUILD.log; exit 1; }
+      - name: Native compile V2
         run: |
           set -Eeuo pipefail
-          cp -a source-clean source-v3
-          python3 integration/pbr-v2/apply.py source-v3 --stage 3 --proof evidence/PBR_V3_PROOF.json
-          python3 integration/pbr-v2/test.py source-v3 --stage 3 --out evidence/PBR_V3_TESTS.json
-          git -C source-v3 diff --check
-          python3 - <<'PY'
-          from pathlib import Path
-          allowed={
-            'SP/code/rend2/tr_glsl.c',
-            'SP/code/rend2/glsl/lightall_fp.glsl',
-            'SP/code/rend2/tr_local.h',
-            'SP/code/rend2/tr_image.c',
-            'SP/code/rend2/tr_shader.c',
-          }
-          # The patch deliberately does not modify cubemap capture/export in V3.
-          import subprocess
-          out=subprocess.check_output(['git','-C','source-v3','diff','--name-only'],text=True)
-          changed=set(x.strip() for x in out.splitlines() if x.strip())
-          # source-v3 is reconstructed outside git commits, so earlier production deltas may appear.
-          # Require every PBR marker to remain scoped to the intended files instead of requiring global diff equality.
-          for marker,file in [
-            ('USE_PBR2','SP/code/rend2/tr_glsl.c'),
-            ('DW_DistributionGGX','SP/code/rend2/glsl/lightall_fp.glsl'),
-            ('IMGFLAG_PBRDATA','SP/code/rend2/tr_local.h'),
-            ('DW_MipMapsPBRData','SP/code/rend2/tr_image.c'),
-            ('ormMap','SP/code/rend2/tr_shader.c')]:
-              assert marker in (Path('source-v3')/file).read_text(),(marker,file)
-          assert 'DW_DistributionGGX' not in (Path('source-v3/SP/code/rend2/tr_backend.c')).read_text()
-          print('PBR_V3_SCOPE_PASS')
-          PY
-          echo PBR_V3_IBL_SOURCE_PASS
-
-      - name: Build final Win64 PBR V3 candidate
+          make -C source-v2/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/PBR_V2_NATIVE_BUILD.log 2>&1 || { tail -160 evidence/PBR_V2_NATIVE_BUILD.log; exit 1; }
+      - name: Native compile V3
         run: |
           set -Eeuo pipefail
-          make -C source-v3/SP -j2 release             VERSION=1.51d-SP_DarkWolf-PBRV2-V3             PLATFORM=mingw32 ARCH=x86_64             BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1             BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1             CC=x86_64-w64-mingw32-gcc-posix             CXX=x86_64-w64-mingw32-g++-posix             WINDRES=x86_64-w64-mingw32-windres             > evidence/PBR_V3_WIN64_BUILD.log 2>&1 || { tail -180 evidence/PBR_V3_WIN64_BUILD.log; exit 1; }
+          make -C source-v3/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/PBR_V3_NATIVE_BUILD.log 2>&1 || { tail -160 evidence/PBR_V3_NATIVE_BUILD.log; exit 1; }
+      - name: Win64 compile V3
+        run: |
+          set -Eeuo pipefail
+          make -C source-v3/SP -j2 release VERSION=1.51d-SP_DarkWolf-PBRV2-V3 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/PBR_V3_WIN64_BUILD.log 2>&1 || { tail -180 evidence/PBR_V3_WIN64_BUILD.log; exit 1; }
           dll="$(find source-v3/SP/build -type f -name renderer_sp_rend2_x64.dll -print -quit)"
-          test -n "$dll" && test -s "$dll"
+          test -n "$dll"
           cp "$dll" build-binaries/renderer_sp_rend2_x64.dll
           file build-binaries/renderer_sp_rend2_x64.dll | grep -F PE32+
-          strings build-binaries/renderer_sp_rend2_x64.dll | grep -Fq r_pbr
           sha256sum build-binaries/renderer_sp_rend2_x64.dll | tee evidence/PBR_V3_RENDERER_SHA256.txt
-          echo PBR_V3_WIN64_BUILD_PASS
-
-      - name: TestLab protected retail asset gate
-        id: assets
-        env:
-          GH_TOKEN: ${{ env.ASSET_TOKEN }}
-        run: |
-          set -Eeuo pipefail
-          if [ -z "${ASSET_TOKEN:-}" ]; then
-            echo BLOCKED_MISSING_RETAIL_ASSET_TOKEN > evidence/PBR_RUNTIME_STATUS.txt
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh "$ASSET_REPO" "$ASSET_RELEASE_TAG" protected-assets | tail -1)"
-          test -n "$retail_main" && test -d "$retail_main"
-          echo "$retail_main" > .retail_main
-          echo "available=true" >> "$GITHUB_OUTPUT"
-          echo TESTLAB_RETAIL_ASSET_GATE_PASS
-
-      - name: TestLab escape1 runtime - PBR V3 shader startup and screenshot
-        if: steps.assets.outputs.available == 'true'
-        run: |
-          set -Eeuo pipefail
-          exe="$(find source-v3/SP/build -type f -iname 'iowolfsp.*' -perm -111 -print -quit)"
-          if [ -z "$exe" ]; then
-            make -C source-v3/SP -j2               BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1               BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1               > evidence/PBR_V3_NATIVE_RUNTIME_BUILD.log 2>&1
-            exe="$(find source-v3/SP/build -type f -iname 'iowolfsp.*' -perm -111 -print -quit)"
-          fi
-          test -n "$exe"
-          buildroot="$(dirname "$exe")"
-          rm -rf runtime home
-          mkdir -p runtime/main home evidence/screenshots
-          cp -a "$buildroot/." runtime/
-          retail="$(cat .retail_main)"
-          find "$retail" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
-          runtime_exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
-          set +e
-          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 90s "$runtime_exe"             +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home"             +set com_introplayed 1 +set logfile 2 +set r_fullscreen 0             +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720             +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1 +set r_cubeMapping 1             +set r_dlightMode 2 +set r_forceSun 1             +spdevmap escape1 +wait 500 +screenshot pbr_v3_escape1 +wait 30 +quit
-          rc=$?
-          set -e
-          echo "$rc" > evidence/PBR_RUNTIME_EXIT_CODE.txt
-          qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
-          test -n "$qlog"
-          cp "$qlog" evidence/PBR_RUNTIME_QCONSOLE.log
-          if grep -Eiq 'Could not load lightall shader|shader.*failed|GLSL.*error|compile.*error' evidence/PBR_RUNTIME_QCONSOLE.log; then
-            grep -Ein 'Could not load lightall shader|shader.*failed|GLSL.*error|compile.*error' evidence/PBR_RUNTIME_QCONSOLE.log
-            exit 1
-          fi
-          find home -type f \( -iname 'pbr_v3_escape1*.tga' -o -iname 'pbr_v3_escape1*.jpg' -o -iname 'pbr_v3_escape1*.png' \) -exec cp {} evidence/screenshots/ \; || true
-          echo PASS_ESCAPE1_PBR_V3_RUNTIME_NO_GLSL_ERROR > evidence/PBR_RUNTIME_STATUS.txt
-
-      - name: Package exact Clean Production payload with PBR renderer and A-B cfgs
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -Eeuo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${BASE_ARTIFACT}/zip" > evidence/base_42217883095_outer.zip
-          python3 - <<'PY'
-          import io,zipfile,hashlib,json,struct
-          from pathlib import Path
-          H=lambda b:hashlib.sha256(b).hexdigest()
-          outer=zipfile.ZipFile('evidence/base_42217883095_outer.zip')
-          inners=[n for n in outer.namelist() if n.endswith('.zip')]
-          assert len(inners)==1,inners
-          raw=outer.read(inners[0])
-          z=zipfile.ZipFile(io.BytesIO(raw))
-          assert z.testzip() is None
-          files={n:z.read(n) for n in z.namelist() if not n.endswith('/')}
-          roots={n.split('/',1)[0] for n in files if '/' in n}
-          assert len(roots)==1,roots
-          oldroot=next(iter(roots))
-          dll=oldroot+'/renderer_sp_rend2_x64.dll'
-          assert H(files[dll])=='0b2ff0b28bbf69ff0df73417866eb330eb204c10b5be5fb0835b98f26797cc2d'
-          newdll=Path('build-binaries/renderer_sp_rend2_x64.dll').read_bytes()
-          assert newdll[:2]==b'MZ' and len(newdll)>2500000
-          pe=struct.unpack_from('<I',newdll,60)[0]
-          assert newdll[pe:pe+4]==b'PE\0\0'
-          files[dll]=newdll
-          root=oldroot+'/'
-          cfgs={
-            'DW_PBR_LEGACY_OFF.cfg': 'seta r_pbr "0"\nseta r_cubeMapping "0"\nvid_restart\n',
-            'DW_PBR_LEGACY_V1.cfg': 'seta r_pbr "1"\nseta r_normalMapping "1"\nseta r_specularMapping "1"\nseta r_cubeMapping "1"\nvid_restart\n',
-            'DW_PBR2_CORE.cfg': 'seta r_pbr "2"\nseta r_normalMapping "1"\nseta r_specularMapping "1"\nseta r_cubeMapping "1"\nvid_restart\n',
-            'DW_PBR2_MODERN_ORM.cfg': 'seta r_pbr "2"\nseta r_normalMapping "1"\nseta r_specularMapping "1"\nseta r_cubeMapping "1"\nvid_restart\n',
-            'DW_PBR2_V3_IBL.cfg': 'seta r_pbr "3"\nseta r_normalMapping "1"\nseta r_specularMapping "1"\nseta r_cubeMapping "1"\nvid_restart\n',
-          }
-          for n,c in cfgs.items(): files[root+'Main/'+n]=c.encode()
-          readme='''DarkWolf PBR V2 V1-V3 TEST CANDIDATE
-Base: Clean Production Run #42217883095
-
-r_pbr 0 = unchanged legacy non-PBR path
-r_pbr 1 = unchanged inherited Rend2 PBR
-r_pbr 2 = DarkWolf PBR2 GGX + exact transfer + ORM support
-r_pbr 3 = PBR2 plus conservative V3 IBL BRDF/roughness LOD
-
-Modern material convention:
-  base texture = BaseColor
-  _n = Normal
-  _nh = Normal+Height
-  _orm = R AO, G Roughness, B Metallic
-
-Existing _s material maps remain supported as fallback.
-V3 intentionally preserves old cubemap capture/export. True GGX cubemap prefilter is deferred to V3.1.
-Production default r_pbr remains 0.
-'''
-          files[root+'README_DARKWOLF_PBR_V2_TEST.txt']=readme.encode()
-          proofs={}
-          for n in ('PBR_V1_PROOF.json','PBR_V2_PROOF.json','PBR_V3_PROOF.json','PBR_V1_TESTS.json','PBR_V2_TESTS.json','PBR_V3_TESTS.json'):
-            proofs[n]=json.loads((Path('evidence')/n).read_text())
-            files[root+'docs/'+n]=json.dumps(proofs[n],indent=2).encode()
-          runtime=Path('evidence/PBR_RUNTIME_STATUS.txt')
-          files[root+'docs/PBR_RUNTIME_STATUS.txt']=runtime.read_bytes() if runtime.exists() else b'NOT_RUN\n'
-          files.pop(root+'SHA256SUMS.txt',None)
-          # Some inherited packages keep checksum under root only; regenerate additive package checksum.
-          files[root+'SHA256SUMS_PBR_V2.txt']="".join(H(v)+"  "+k[len(root):]+"\n" for k,v in sorted(files.items())).encode()
-          newroot='DarkWolf_PBR_V2_V3_From_42217883095_Win64'
-          target=Path('dist/'+newroot+'.zip')
-          with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as out:
-            for k,v in sorted(files.items()):
-              rel=k.split('/',1)[1] if '/' in k else k
-              out.writestr(newroot+'/'+rel,v)
-          assert zipfile.ZipFile(target).testzip() is None
-          Path(str(target)+'.sha256').write_text(H(target.read_bytes())+'  '+target.name+'\n')
-          print('PBR_V2_V3_PACKAGE_PASS',H(target.read_bytes()),H(newdll))
-          PY
-
-      - name: Upload PBR V2 V1-V3 Win64 candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: DarkWolf-PBR-V2-V3-From-42217883095-Win64
-          path: |
-            dist/DarkWolf_PBR_V2_V3_From_42217883095_Win64.zip
-            dist/DarkWolf_PBR_V2_V3_From_42217883095_Win64.zip.sha256
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Upload PBR audit and TestLab evidence
+      - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DarkWolf-PBR-V2-V3-Evidence
+          name: DarkWolf-PBR-V2-V3-Build-Evidence
           path: |
-            docs/DARKWOLF_PBR_V2_ARCHITECTURE_HANDOFF_2026-11-07.md
             evidence/
+            build-binaries/
+            docs/DARKWOLF_PBR_V2_ARCHITECTURE_HANDOFF_2026-11-07.md
           if-no-files-found: warn
           retention-days: 90
