@@ -46,6 +46,28 @@ replacement='''	{ "camera", CG_Camera_f },   // duffy
 '''
 if cs.count(anchor)!=1:
     raise SystemExit(f"console camera anchor count={cs.count(anchor)}")
-cp.write_text(cs.replace(anchor,replacement,1))
+cs=cs.replace(anchor,replacement,1)
 
-print("DW_PBR_TESTLAB_AUTOSTART_APPLIED stopcamera_command=1")
+start=cs.find("void CG_StartCamera( const char *name, qboolean startBlack ) {")
+stop_marker="/*\n==============\nCG_StopCamera"
+stop=cs.find(stop_marker,start)
+if start < 0 or stop < 0:
+    raise SystemExit(f"CG_StartCamera function anchors missing start={start} stop={stop}")
+test_start='''void CG_StartCamera( const char *name, qboolean startBlack ) {
+	// DarkWolf TestLab only: suppress map intro/cutscene cameras so scripted
+	// material captures use the real player refdef after setviewpos.
+	(void)name;
+	(void)startBlack;
+	cg.cameraMode = qfalse;
+	trap_SendClientCommand( "stopCamera" );
+	trap_stopCamera( CAM_PRIMARY );
+	trap_Cvar_Set( "cg_letterbox", "0" );
+	CG_Fade( 0, 0, 0, 0, cg.time, 0 );
+	CG_Printf( "DW_PBR_TESTLAB_CAMERA_SUPPRESSED\\n" );
+}
+
+'''
+cs=cs[:start]+test_start+cs[stop:]
+cp.write_text(cs)
+
+print("DW_PBR_TESTLAB_AUTOSTART_APPLIED stopcamera_command=1 suppress_startcamera=1")
