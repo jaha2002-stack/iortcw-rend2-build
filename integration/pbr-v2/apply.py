@@ -302,17 +302,17 @@ new='''  #if defined(USE_PBR2)
 '''
 s=replace_once(s,old,new,"primary GGX")
 
-old='''  #if defined(USE_PBR)
-	gl_FragColor.rgb = sqrt(gl_FragColor.rgb);
-  #endif
-'''
-new='''  #if defined(USE_PBR2)
+pattern=r'(?m)^[ \\t]*#if defined\\(USE_PBR\\)[ \\t]*\\n[ \\t]*gl_FragColor\\.rgb[ \\t]*=[ \\t]*sqrt\\(gl_FragColor\\.rgb\\);[ \\t]*\\n[ \\t]*#endif'
+replacement='''  #if defined(USE_PBR2)
 	gl_FragColor.rgb = DW_LinearToSRGB(gl_FragColor.rgb);
   #elif defined(USE_PBR)
 	gl_FragColor.rgb = sqrt(gl_FragColor.rgb);
-  #endif
-'''
-s=replace_once(s,old,new,"output transfer")
+  #endif'''
+s,n=re.subn(pattern,replacement,s,count=1)
+if n!=1:
+    pos=s.find("sqrt(gl_FragColor.rgb)")
+    context=s[max(0,pos-240):pos+320] if pos>=0 else "<sqrt marker absent>"
+    raise SystemExit("output transfer regex failed; context="+repr(context))
 p.write_text(s); changed.append("SP/code/rend2/glsl/lightall_fp.glsl")
 
 if stage >= 2:
