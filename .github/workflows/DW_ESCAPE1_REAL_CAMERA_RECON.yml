@@ -1,0 +1,111 @@
+name: DW Escape1 Real Camera Recon
+on:
+  push:
+    branches:
+      - feature/pbr-v2-from-42217883095
+    paths:
+      - .github/workflows/DW_ESCAPE1_REAL_CAMERA_RECON.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  recon:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential git gh python3 libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+      - name: Reconstruct production and PBR V3
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence protected-assets runtime home
+          mkdir -p evidence
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+          python3 integration/pbr-v2/apply.py source --stage 3 --proof evidence/PBR_V3_RECON_PROOF.json
+          python3 integration/pbr-v2/test.py source --stage 3 --out evidence/PBR_V3_RECON_STATIC.json
+      - name: Build native TestLab client
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/RECON_BUILD.log 2>&1 || { tail -180 evidence/RECON_BUILD.log; exit 1; }
+      - name: Fetch retail assets and derive camera candidates
+        run: |
+          set -Eeuo pipefail
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          test -d "$retail_main"
+          echo "$retail_main" > evidence/retail_main_path.txt
+          python3 integration/pbr-v2/discover_escape1.py "$retail_main" --out evidence/escape1_recon.json --shots evidence/escape1_shots.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          shots=json.loads(Path('evidence/escape1_shots.json').read_text())
+          selected=[]
+          counts={}
+          limits={'torch':12,'light_cluster':24,'spawn':8,'high_z':16}
+          for s in shots:
+              cat=s['category']
+              if counts.get(cat,0) >= limits.get(cat,0):
+                  continue
+              selected.append(s)
+              counts[cat]=counts.get(cat,0)+1
+          lines=['set g_cheats 1','set cg_draw2D 0','set cg_drawGun 0']
+          for s in selected:
+              x,y,z=s['camera']; yaw=s['yaw']
+              lines += [f'setviewpos {x} {y} {z} {yaw}', 'wait 35', f'screenshot {s["name"]}', 'wait 12']
+          lines += ['quit']
+          Path('evidence/recon.cfg').write_text('\n'.join(lines)+'\n')
+          Path('evidence/recon_selected.json').write_text(json.dumps(selected,indent=2)+'\n')
+          print('selected',len(selected),counts)
+          PY
+      - name: Run real Escape1 recon screenshots
+        run: |
+          set -Eeuo pipefail
+          exe="$(find source/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe"
+          buildroot="$(dirname "$exe")"
+          mkdir -p runtime/main home/main evidence/screenshots
+          cp -a "$buildroot/." runtime/
+          retail_main="$(cat evidence/retail_main_path.txt)"
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+          cp evidence/recon.cfg home/main/recon.cfg
+          runtime_exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 180s "$runtime_exe"             +set fs_basepath "$PWD/runtime"             +set fs_homepath "$PWD/home"             +set com_introplayed 1             +set s_initsound 0             +set logfile 2             +set r_fullscreen 0             +set r_renderer rend2             +set r_mode -1             +set r_customwidth 1280             +set r_customheight 720             +set r_pbr 3             +set r_normalMapping 1             +set r_specularMapping 1             +set r_cubeMapping 1             +set r_dlightMode 2             +set r_forceSun 1             +devmap escape1             +wait 220             +exec recon.cfg
+          rc=$?
+          set -e
+          echo "$rc" > evidence/recon_exit.txt
+          find home -type f \( -iname '*.tga' -o -iname '*.jpg' -o -iname '*.png' \) -exec cp {} evidence/screenshots/ \; || true
+          qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+          test -n "$qlog" && cp "$qlog" evidence/recon_qconsole.log
+          count="$(find evidence/screenshots -type f | wc -l)"
+          echo "REAL_RECON_SCREENSHOT_COUNT=$count" | tee evidence/RECON_STATUS.txt
+          test "$count" -ge 12
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DarkWolf-Escape1-Real-Camera-Recon
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
