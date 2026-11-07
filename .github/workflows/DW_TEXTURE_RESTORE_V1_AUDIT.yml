@@ -1,0 +1,50 @@
+name: DW Texture Restoration V1 Source Audit
+on:
+  push:
+    branches: [test/texture-restoration-v1-from-42198541106]
+    paths:
+      - '.github/workflows/DW_TEXTURE_RESTORE_V1_AUDIT.yml'
+      - 'integration/texture-restoration-v1/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Restore exact Clean Production source
+        run: |
+          set -Eeuo pipefail
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+      - name: Print renderer anchors needed by texture restoration
+        run: |
+          set -Eeuo pipefail
+          echo '===== tr_image functions ====='
+          grep -n -E 'R_FindImageFile|R_CreateImage|R_LoadImage|RawImage|Upload|Bind|image_t \*|DeleteTextures|R_InitImages|R_ShutdownImages' source/SP/code/rend2/tr_image.c | head -220 || true
+          echo '===== tr_image image_t / globals context ====='
+          grep -n -E 'typedef struct image_s|struct image_s|image_t' source/SP/code/rend2/tr_local.h | head -120 || true
+          echo '===== renderer import filesystem / cmd API ====='
+          grep -n -E 'FS_|Cmd_|Cvar_|Printf|Milliseconds|Hunk_' source/SP/code/rend2/tr_public.h source/SP/code/rend2/tr_local.h | head -260 || true
+          echo '===== init command anchors ====='
+          grep -n -E 'Cmd_AddCommand|Cmd_RemoveCommand|R_Init|R_Shutdown' source/SP/code/rend2/tr_init.c | tail -220 || true
+          echo '===== scene/view state anchors ====='
+          grep -n -E 'vieworg|viewaxis|refdef|worldEntity|numWorldSurfaces|surfaces' source/SP/code/rend2/tr_scene.c source/SP/code/rend2/tr_world.c source/SP/code/rend2/tr_local.h | head -260 || true
+          echo '===== filesystem APIs in renderer ====='
+          grep -R -n -E 'FS_(FOpenFile|Write|Read|FCloseFile|FileExists|Home|Base)|ri\.FS_' source/SP/code/rend2 | head -260 || true
+          echo '===== texture hot reload precedents ====='
+          grep -R -n -E 'reload|Reload|imageHashTable|glBindTexture|qglTexImage2D|R_FindImageFile' source/SP/code/rend2 | head -260 || true
+          echo '===== END AUDIT ====='
