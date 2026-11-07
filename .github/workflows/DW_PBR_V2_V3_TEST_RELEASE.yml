@@ -1,8 +1,11 @@
 name: DW PBR V2 V3 Win64 Test Release
 on:
   push:
-    branches: [feature/pbr-v2-from-42217883095]
-    paths: ['.github/workflows/DW_PBR_V2_V3_TEST_RELEASE.yml']
+    branches:
+      - feature/pbr-v2-from-42217883095
+    paths:
+      - .github/workflows/DW_PBR_V2_V3_TEST_RELEASE.yml
+      - integration/pbr-v2/package_test_release.py
   workflow_dispatch:
 permissions:
   contents: read
@@ -17,99 +20,20 @@ jobs:
       BASE_ARTIFACT_ID: "13502112057"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Download build and production base
+      - name: Download validated build and exact production base
         run: |
           set -Eeuo pipefail
           rm -rf incoming dist
-          mkdir -p incoming/build incoming/base dist
+          mkdir -p incoming/build dist
           gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/$BUILD_ARTIFACT_ID/zip > incoming/pbr_build.zip
           gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/$BASE_ARTIFACT_ID/zip > incoming/base_prod.zip
           unzip -q incoming/pbr_build.zip -d incoming/build
           test -s incoming/build/build-binaries/renderer_sp_rend2_x64.dll
           file incoming/build/build-binaries/renderer_sp_rend2_x64.dll | grep -F PE32+
-      - name: Create exact-base test package
+      - name: Package exact-base PBR V2 V3 candidate
         run: |
           set -Eeuo pipefail
-          python3 - <<'PY'
-          import io,zipfile,hashlib,json,struct
-          from pathlib import Path
-          H=lambda b:hashlib.sha256(b).hexdigest()
-          outer=zipfile.ZipFile('incoming/base_prod.zip')
-          inners=[n for n in outer.namelist() if n.lower().endswith('.zip')]
-          assert len(inners)==1,inners
-          z=zipfile.ZipFile(io.BytesIO(outer.read(inners[0])))
-          assert z.testzip() is None
-          entries={n:z.read(n) for n in z.namelist() if not n.endswith('/')}
-          roots={n.split('/',1)[0] for n in entries if '/' in n}
-          assert len(roots)==1,roots
-          oldroot=next(iter(roots))
-          renderer_key=oldroot+'/renderer_sp_rend2_x64.dll'
-          old=entries[renderer_key]
-          assert H(old)=='0b2ff0b28bbf69ff0df73417866eb330eb204c10b5be5fb0835b98f26797cc2d'
-          new=Path('incoming/build/build-binaries/renderer_sp_rend2_x64.dll').read_bytes()
-          assert new[:2]==b'MZ'
-          pe=struct.unpack_from('<I',new,60)[0]
-          assert new[pe:pe+4]==b'PE\x00\x00'
-          entries[renderer_key]=new
-          root=oldroot+'/'
-          cfgs={
-            'DW_PBR_LEGACY_OFF.cfg':'seta r_pbr "0"\nvid_restart\n',
-            'DW_PBR_LEGACY_V1.cfg':'seta r_pbr "1"\nseta r_normalMapping "1"\nseta r_specularMapping "1"\nseta r_cubeMapping "1"\nvid_restart\n',
-            'DW_PBR2_CORE.cfg':'seta r_pbr "2"\nseta r_normalMapping "1"\nseta r_specularMapping "1"\nseta r_cubeMapping "1"\nvid_restart\n',
-            'DW_PBR2_MODERN_ORM.cfg':'seta r_pbr "2"\nseta r_normalMapping "1"\nseta r_specularMapping "1"\nseta r_cubeMapping "1"\nvid_restart\n',
-            'DW_PBR2_V3_IBL.cfg':'seta r_pbr "3"\nseta r_normalMapping "1"\nseta r_specularMapping "1"\nseta r_cubeMapping "1"\nvid_restart\n',
-          }
-          for n,c in cfgs.items(): entries[root+'Main/'+n]=c.encode('ascii')
-          readme='''DarkWolf PBR V2 V1-V3 - Win64 TEST
-Base: Clean Production #42217883095
-Validated build: #42402994791
-
-r_pbr 0 = unchanged legacy non-PBR
-r_pbr 1 = unchanged inherited Rend2 PBR
-r_pbr 2 = PBR2 GGX core + exact transfer + ORM
-r_pbr 3 = PBR2 + conservative V3 environment BRDF / roughness LOD
-
-Modern maps:
-  BaseColor = original diffuse/base
-  _n   = Normal
-  _nh  = Normal+Height
-  _orm = R AO, G Roughness, B Metallic
-Legacy _s remains a fallback.
-
-Production default remains r_pbr 0.
-Cubemap capture/export is unchanged in V3. True GGX cubemap prefilter is deferred to V3.1.
-'''
-          entries[root+'README_DARKWOLF_PBR_V2_V3_TEST.txt']=readme.encode()
-          handoff=Path('docs/DARKWOLF_PBR_V2_ARCHITECTURE_HANDOFF_2026-11-07.md')
-          entries[root+'docs/'+handoff.name]=handoff.read_bytes()
-          for src in Path('incoming/build/evidence').glob('PBR_V*_*.json'):
-              entries[root+'docs/'+src.name]=src.read_bytes()
-          for k in list(entries):
-              if k.endswith('/SHA256SUMS.txt'): del entries[k]
-          entries[root+'SHA256SUMS_PBR_V2_V3.txt']="".join(
-              H(v)+"  "+k[len(root):]+"\n" for k,v in sorted(entries.items())
-          ).encode('ascii')
-          newroot='DarkWolf_PBR_V2_V3_From_42217883095_Win64_TEST'
-          target=Path('dist/'+newroot+'.zip')
-          with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as out:
-              for k,v in sorted(entries.items()):
-                  rel=k.split('/',1)[1] if '/' in k else k
-                  out.writestr(newroot+'/'+rel,v)
-          assert zipfile.ZipFile(target).testzip() is None
-          proof={
-            'base_run':42217883095,
-            'validated_build_run':42402994791,
-            'old_renderer_sha256':H(old),
-            'new_renderer_sha256':H(new),
-            'package_sha256':H(target.read_bytes()),
-            'r_pbr_default':0,
-            'orm':'R=AO G=Roughness B=Metallic',
-            'cubemap_capture_changed':False
-          }
-          Path('dist/PBR_V2_V3_RELEASE_PROOF.json').write_text(json.dumps(proof,indent=2)+'\n')
-          Path(str(target)+'.sha256').write_text(H(target.read_bytes())+'  '+target.name+'\n')
-          print(json.dumps(proof,indent=2))
-          PY
+          python3 integration/pbr-v2/package_test_release.py incoming/base_prod.zip incoming/build dist | tee dist/PACKAGE_LOG.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: DarkWolf-PBR-V2-V3-From-42217883095-Win64-TEST
@@ -117,5 +41,6 @@ Cubemap capture/export is unchanged in V3. True GGX cubemap prefilter is deferre
             dist/DarkWolf_PBR_V2_V3_From_42217883095_Win64_TEST.zip
             dist/DarkWolf_PBR_V2_V3_From_42217883095_Win64_TEST.zip.sha256
             dist/PBR_V2_V3_RELEASE_PROOF.json
+            dist/PACKAGE_LOG.txt
           if-no-files-found: error
           retention-days: 90
