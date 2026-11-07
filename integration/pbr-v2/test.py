@@ -30,6 +30,7 @@ checks={
  "legacy_square_fallback": 'diffuse.rgb *= diffuse.rgb;' in frag,
  "legacy_sqrt_fallback": 'gl_FragColor.rgb = sqrt(gl_FragColor.rgb);' in frag,
  "material_ao_indirect_only": 'ambientColor * diffuse.rgb * materialAO' in frag,
+ "missing_material_map_dielectric": 'u_EnableTextures.z < 0.5' in frag and 'metal = 0.0;' in frag and 'roughness = 0.78;' in frag,
  "ibl_v3": 'DW_EnvironmentBRDFApprox' in frag and 'roughness * roughness' in frag,
  "firevol_marker_preserved": 'FIREVOL_CLEAN_PRODUCTION' in backend,
  "crypt1_marker_preserved": 'DARKWOLF_FIREVOL_CRYPT1_SLOT6_REANCHOR_PRODUCTION' in backend,
