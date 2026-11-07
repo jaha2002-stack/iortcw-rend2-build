@@ -1,0 +1,127 @@
+name: DW Local AI Texture Restoration B2 V1
+on:
+  push:
+    branches: [test/texture-ai-b2-v1-from-42198541106]
+    paths:
+      - '.github/workflows/DW_TEXTURE_AI_B2_V1.yml'
+      - 'integration/texture-ai-b2-v1/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-texture-ai-b2-v1-\${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      GH_TOKEN: '\${{ github.token }}'
+      REALESRGAN_URL: 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Restore exact Clean Production 2026-11-06 lineage
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev unzip
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+
+      - name: Reuse proven in-game picker A-B and PK3 persistence infrastructure
+        run: |
+          set -Eeuo pipefail
+          python3 integration/texture-restoration-v1/apply.py source evidence | tee evidence/DWTR_B1_INFRA_APPLY.log
+          python3 integration/texture-restoration-v1/run_tests.py source/SP/code/rend2 evidence | tee evidence/DWTR_B1_INFRA_TESTS.log
+
+      - name: Replace conservative builder with Local AI B2 V1
+        run: |
+          set -Eeuo pipefail
+          python3 integration/texture-ai-b2-v1/apply.py source evidence | tee evidence/DW_TEXTURE_AI_B2_V1_APPLY.log
+          python3 integration/texture-ai-b2-v1/run_tests.py source/SP/code/rend2 evidence | tee evidence/DW_TEXTURE_AI_B2_V1_TESTS.log
+
+      - name: Fetch official portable Real-ESRGAN Win64 backend
+        run: |
+          set -Eeuo pipefail
+          mkdir -p third_party/realesrgan_win
+          curl -fL --retry 4 --retry-delay 2 "$REALESRGAN_URL" -o evidence/realesrgan-ncnn-vulkan-20220424-windows.zip
+          sha256sum evidence/realesrgan-ncnn-vulkan-20220424-windows.zip | tee evidence/REALESRGAN_RELEASE_SHA256.txt
+          unzip -q evidence/realesrgan-ncnn-vulkan-20220424-windows.zip -d third_party/realesrgan_win
+          find third_party/realesrgan_win -maxdepth 5 -type f | sort | tee evidence/REALESRGAN_RELEASE_FILES.txt
+          test "$(find third_party/realesrgan_win -name realesrgan-ncnn-vulkan.exe | wc -l)" -eq 1
+          test "$(find third_party/realesrgan_win -name realesrgan-x4plus.param | wc -l)" -eq 1
+          test "$(find third_party/realesrgan_win -name realesrgan-x4plus.bin | wc -l)" -eq 1
+          sha256sum "$(find third_party/realesrgan_win -name realesrgan-ncnn-vulkan.exe)" | tee evidence/REALESRGAN_EXE_SHA256.txt
+          sha256sum "$(find third_party/realesrgan_win -name realesrgan-x4plus.bin)" | tee evidence/REALESRGAN_X4PLUS_MODEL_SHA256.txt
+
+      - name: Build Win64 B2 candidate
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-Local-AI-Texture-B2-V1 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/BUILD.log 2>&1 || { tail -420 evidence/BUILD.log; exit 1; }
+
+      - name: Package inherited Clean Production plus real AI backend
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist
+          python3 integration/firevol-continuity-v4/package.py source evidence dist | tee evidence/PACKAGE_V4.log
+          python3 integration/firevol-chateau-v5/package.py dist | tee evidence/PACKAGE_V5.log
+          python3 integration/firevol-chateau-v6/package.py dist | tee evidence/PACKAGE_V6.log
+          python3 integration/firevol-clean-production/package.py dist | tee evidence/PACKAGE_CLEAN.log
+          python3 integration/texture-ai-b2-v1/package.py | tee evidence/PACKAGE_DW_TEXTURE_AI_B2_V1.log
+
+      - name: Verify B2 test archive
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee evidence/DW_TEXTURE_AI_B2_V1_ARTIFACT_VERIFY.log
+          from pathlib import Path
+          import json,zipfile
+          p=Path("dist/DarkWolf_Local_AI_Texture_Restoration_B2_V1_From_42198541106_Win64_TEST.zip")
+          assert p.exists() and p.stat().st_size > 20_000_000
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              dll=[n for n in names if n.endswith("/renderer_sp_rend2_x64.dll")]
+              assert len(dll)==1
+              d=z.read(dll[0])
+              for m in (b"dw_tex_ai_build",b"dw_tex_ai_info",b"dw_tex_pick",b"dw_tex_ab",b"dw_tex_save",b"realesrgan-x4plus",b"DWTR AI B2"):
+                  assert m in d,m
+              assert b'dw_tex_restore"' not in d
+              assert any(n.endswith("/Main/dw_ai/realesrgan-ncnn-vulkan.exe") for n in names)
+              assert any(n.endswith("/Main/dw_ai/models/realesrgan-x4plus.param") for n in names)
+              assert any(n.endswith("/Main/dw_ai/models/realesrgan-x4plus.bin") for n in names)
+              status=[n for n in names if n.endswith("/DW_TEXTURE_AI_B2_V1_BUILD_STATUS.json")]
+              assert len(status)==1
+              j=json.loads(z.read(status[0]))
+              assert j["base_clean_production_run"]==42198541106
+              assert j["ai_model"]=="realesrgan-x4plus"
+              assert j["network_required_at_runtime"] is False
+              assert j["conservative_builder_registered"] is False
+          print("PASS DW Local AI Texture Restoration B2 V1 archive")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Local-AI-Texture-Restoration-B2-V1-Win64-TEST
+          path: |
+            dist/DarkWolf_Local_AI_Texture_Restoration_B2_V1_From_42198541106_Win64_TEST.zip
+            dist/SHA256SUMS_DW_TEXTURE_AI_B2_V1.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Local-AI-Texture-Restoration-B2-V1-Build-Proof
+          path: evidence/**
+          retention-days: 90
