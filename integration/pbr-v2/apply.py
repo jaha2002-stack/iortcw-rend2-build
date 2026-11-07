@@ -456,6 +456,8 @@ if stage >= 2:
 				diffuse->bundle[TB_SPECULARMAP].image[0] = specularImg;
 
 				VectorSet4(diffuse->specularScale, 1.0f, 1.0f, 1.0f, 1.0f);
+				// REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION: automatic <diffuse>_s discovery.
+				diffuse->materialSpecularSource = MATDBG_SPEC_AUTO_SUFFIX;
 			}
 		}
 '''
@@ -463,6 +465,7 @@ if stage >= 2:
 		{
 			char specularName[MAX_QPATH];
 			image_t *specularImg = NULL;
+			qboolean pbrOrm = qfalse;
 			imgFlags_t specularFlags = (diffuseImg->flags & ~IMGFLAG_GENNORMALMAP) | IMGFLAG_NOLIGHTSCALE;
 
 			COM_StripExtension(diffuseImg->imgName, specularName, MAX_QPATH);
@@ -471,7 +474,10 @@ if stage >= 2:
 				Q_strcat(specularName, MAX_QPATH, "_orm");
 				specularImg = R_FindImageFile(specularName, IMGTYPE_COLORALPHA, specularFlags | IMGFLAG_PBRDATA);
 				if (specularImg)
+				{
 					VectorSet4(diffuse->specularScale, 1.0f, 1.0f, -1.0f, 1.0f);
+					pbrOrm = qtrue;
+				}
 			}
 			if (!specularImg)
 			{
@@ -487,6 +493,9 @@ if stage >= 2:
 				diffuse->bundle[TB_SPECULARMAP] = diffuse->bundle[0];
 				diffuse->bundle[TB_SPECULARMAP].numImageAnimations = 0;
 				diffuse->bundle[TB_SPECULARMAP].image[0] = specularImg;
+				// Both _orm and legacy _s are authored/automatic material inputs and must bypass MAT-1 fallback.
+				diffuse->materialSpecularSource = MATDBG_SPEC_AUTO_SUFFIX;
+				(void)pbrOrm;
 			}
 		}
 '''
