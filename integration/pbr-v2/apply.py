@@ -177,17 +177,29 @@ new='''  #if defined(USE_SPECULARMAP)
 	else
 	{
 		// Compatibility path for existing Rend2 PBR spec/gloss textures.
-		gloss = specular.r;
-		metal = clamp(specular.g, 0.0, 1.0);
+		// A missing material map is bound to whiteImage by the backend. Do not
+		// interpret that service texture as metallic=1: u_EnableTextures.z is
+		// the authoritative "real specular/material texture is present" flag.
+		if (u_EnableTextures.z < 0.5)
+		{
+			roughness = 0.78;
+			gloss = 1.0 - roughness;
+			metal = 0.0;
+		}
+		else
+		{
+			gloss = specular.r;
+			metal = clamp(specular.g, 0.0, 1.0);
   #if defined(GLOSS_IS_GLOSS)
-		roughness = exp2(-3.0 * gloss);
+			roughness = exp2(-3.0 * gloss);
   #elif defined(GLOSS_IS_SMOOTHNESS)
-		roughness = 1.0 - gloss;
+			roughness = 1.0 - gloss;
   #elif defined(GLOSS_IS_ROUGHNESS)
-		roughness = gloss;
+			roughness = gloss;
   #elif defined(GLOSS_IS_SHININESS)
-		roughness = pow(2.0 / (8190.0 * gloss + 2.0), 0.25);
+			roughness = pow(2.0 / (8190.0 * gloss + 2.0), 0.25);
   #endif
+		}
 	}
 	roughness = clamp(roughness, 0.045, 1.0);
 	specular.rgb = mix(vec3(0.04), diffuse.rgb, metal);
