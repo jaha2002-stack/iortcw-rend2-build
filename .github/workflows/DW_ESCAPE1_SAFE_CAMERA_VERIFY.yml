@@ -1,0 +1,93 @@
+name: DW Escape1 Safe Camera Verification
+on:
+  push:
+    branches:
+      - feature/pbr-v2-from-42217883095
+    paths:
+      - .github/workflows/DW_ESCAPE1_SAFE_CAMERA_VERIFY.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  shots:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - {id: torch_safe_1, x: -1504.0, y: 1118.0, z: 186.0, yaw: 180.0}
+          - {id: torch_safe_2, x: -1696.0, y: 1118.0, z: 186.0, yaw: 0.0}
+          - {id: guard_safe_1, x: -920.86, y: 798.0, z: -177.5, yaw: -150.0}
+          - {id: guard_safe_2, x: -920.86, y: 702.0, z: -177.5, yaw: 150.0}
+          - {id: outdoor_safe_1, x: -2004.86, y: -16.0, z: 1035.2, yaw: -150.0}
+          - {id: outdoor_safe_2, x: -2136.0, y: 19.14, z: 1035.2, yaw: -60.0}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+      RUNTIME_ARTIFACT_ID: "13587474733"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Prepare runtime and retail assets
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gh unzip xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev libsdl2-2.0-0 libopenal1 libcurl4
+          rm -rf native-runtime runtime home shotout protected-assets
+          mkdir -p native-runtime runtime/main home/main shotout
+          gh api repos/$GITHUB_REPOSITORY/actions/artifacts/$RUNTIME_ARTIFACT_ID/zip > runtime_art.zip
+          unzip -q runtime_art.zip -d native-runtime
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          cp -a native-runtime/. runtime/
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+          chmod +x runtime/iowolfsp* || true
+      - name: Capture real Escape1 safe-camera frame
+        run: |
+          set -Eeuo pipefail
+          cat > home/main/shot.cfg <<'CFG'
+          set g_cheats 1
+          set cg_draw2D 0
+          setviewpos ${{ matrix.x }} ${{ matrix.y }} ${{ matrix.z }} ${{ matrix.yaw }}
+          wait 12
+          screenshot ${{ matrix.id }}
+          wait 4
+          quit
+          CFG
+          exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 8s 90s "$exe"             +set fs_basepath "$PWD/runtime"             +set fs_homepath "$PWD/home"             +set com_introplayed 1             +set s_initsound 0             +set logfile 2             +set r_fullscreen 0             +set r_renderer rend2             +set r_mode -1             +set r_customwidth 1280             +set r_customheight 720             +set r_pbr 3             +set r_normalMapping 1             +set r_specularMapping 1             +set r_cubeMapping 1             +set r_dlightMode 2             +set r_forceSun 1             +devmap escape1             +wait 18             +exec shot.cfg
+          rc=$?
+          set -e
+          echo "$rc" > shotout/exit.txt
+          find home -type f \( -iname '*.tga' -o -iname '*.jpg' -o -iname '*.png' \) -exec cp {} shotout/ \;
+          qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+          test -n "$qlog" && cp "$qlog" shotout/qconsole.log || true
+          test "$(find shotout -type f \( -name '*.tga' -o -name '*.png' -o -name '*.jpg' \) | wc -l)" -ge 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: safe-${{ matrix.id }}
+          path: shotout/
+          if-no-files-found: warn
+          retention-days: 14
+  gather:
+    needs: shots
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: safe-*
+          path: all
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-Escape1-Safe-Camera-Verification
+          path: all/
+          if-no-files-found: warn
+          retention-days: 30
