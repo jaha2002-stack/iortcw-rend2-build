@@ -1,0 +1,203 @@
+name: DW Escape1 Real ORM A-B
+on:
+  push:
+    branches:
+      - feature/pbr-v2-from-42217883095
+    paths:
+      - .github/workflows/DW_ESCAPE1_REAL_ORM_AB.yml
+      - integration/pbr-v2/apply_testlab_autostart.py
+      - integration/pbr-v2/apply_testlab_orm_trace.py
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install build dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential git python3 libsdl2-dev libopenal-dev libcurl4-openssl-dev
+      - name: Reconstruct exact production, apply PBR V3 and TestLab-only gameplay harness
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence native-runtime
+          mkdir -p evidence native-runtime
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+          python3 integration/pbr-v2/apply.py source --stage 3 --proof evidence/PBR_V3_AB_PROOF.json
+          python3 integration/pbr-v2/test.py source --stage 3 --out evidence/PBR_V3_AB_STATIC.json
+          python3 integration/pbr-v2/apply_testlab_autostart.py source
+          python3 integration/pbr-v2/apply_testlab_orm_trace.py source
+          grep -Fq 'DW_PBR_TESTLAB_AUTOSTART' source/SP/code/cgame/cg_servercmds.c
+          grep -Fq 'DW_PBR_ORM_LOADED' source/SP/code/rend2/tr_shader.c
+      - name: Build native PBR V3 TestLab runtime
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/AB_NATIVE_BUILD.log 2>&1 || { tail -180 evidence/AB_NATIVE_BUILD.log; exit 1; }
+          exe="$(find source/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe"
+          cp -a "$(dirname "$exe")/." native-runtime/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: escape1-pbr-orm-ab-runtime
+          path: |
+            native-runtime/
+            evidence/PBR_V3_AB_PROOF.json
+            evidence/PBR_V3_AB_STATIC.json
+          if-no-files-found: error
+          retention-days: 3
+
+  shots:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - {id: torch_BASE, location: torch, variant: baseline, x: -1504.0, y: 1118.0, z: 122.0, yaw: 180.0, orm_path: textures/castle_wall/castle_grid_c19m_orm.tga}
+          - {id: torch_ORM, location: torch, variant: orm, x: -1504.0, y: 1118.0, z: 122.0, yaw: 180.0, orm_path: textures/castle_wall/castle_grid_c19m_orm.tga}
+          - {id: guard_BASE, location: guard, variant: baseline, x: -920.86, y: 798.0, z: -241.5, yaw: -150.0, orm_path: textures/metal_misc/ametal_m03_orm.tga}
+          - {id: guard_ORM, location: guard, variant: orm, x: -920.86, y: 798.0, z: -241.5, yaw: -150.0, orm_path: textures/metal_misc/ametal_m03_orm.tga}
+          - {id: outdoor_BASE, location: outdoor, variant: baseline, x: -2136.0, y: 19.14, z: 971.2, yaw: -60.0, orm_path: textures/snow/s_cathedrale_c06_orm.tga}
+          - {id: outdoor_ORM, location: outdoor, variant: orm, x: -2136.0, y: 19.14, z: 971.2, yaw: -60.0, orm_path: textures/snow/s_cathedrale_c06_orm.tga}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+      ORM_ARTIFACT_ID: "13588271414"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: escape1-pbr-orm-ab-runtime
+          path: native-runtime-artifact
+      - name: Install runtime and image verification dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gh unzip xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev libsdl2-2.0-0 libopenal1 libcurl4 python3-pil
+      - name: Prepare retail assets and optional ORM pack
+        run: |
+          set -Eeuo pipefail
+          rm -rf runtime home shotout protected-assets orm-artifact
+          mkdir -p runtime/main home/main shotout orm-artifact
+          cp -a native-runtime-artifact/native-runtime/. runtime/
+          chmod +x runtime/iowolfsp* || true
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+          gh api repos/$GITHUB_REPOSITORY/actions/artifacts/$ORM_ARTIFACT_ID/zip > orm_artifact.zip
+          unzip -q orm_artifact.zip -d orm-artifact
+          test -s orm-artifact/zz_dw_escape1_pbr_orm_test.pk3
+          cp orm-artifact/ORM_MANIFEST.json shotout/ORM_MANIFEST.json
+          if [ "${{ matrix.variant }}" = "orm" ]; then
+            cp orm-artifact/zz_dw_escape1_pbr_orm_test.pk3 runtime/main/
+          fi
+      - name: Capture real gameplay material frame
+        run: |
+          set -Eeuo pipefail
+          cat > home/main/shot.cfg <<'CFG'
+          god
+          notarget
+          noclip
+          set cg_draw2D 0
+          set cg_drawGun 0
+          setviewpos ${{ matrix.x }} ${{ matrix.y }} ${{ matrix.z }} ${{ matrix.yaw }}
+          wait 30
+          viewpos
+          screenshot ${{ matrix.id }}
+          wait 8
+          quit
+          CFG
+          exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 timeout -k 8s 210s xvfb-run -a "$exe"             +set fs_basepath "$PWD/runtime"             +set fs_homepath "$PWD/home"             +set com_introplayed 1             +set s_initsound 0             +set logfile 2             +set r_fullscreen 0             +set r_renderer rend2             +set r_mode -1             +set r_customwidth 1280             +set r_customheight 720             +set r_picmip 0             +set r_pbr 3             +set r_normalMapping 1             +set r_specularMapping 1             +set r_cubeMapping 1             +set r_dlightMode 2             +set r_forceSun 1             +spdevmap escape1             +wait 280             +exec shot.cfg
+          rc=$?
+          set -e
+          echo "$rc" > shotout/exit.txt
+          qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+          test -n "$qlog"
+          cp "$qlog" shotout/qconsole.log
+          grep -Fq 'DW_PBR_TESTLAB_AUTOSTART playerstart=1 render=1' shotout/qconsole.log
+          if [ "${{ matrix.variant }}" = "orm" ]; then
+            grep -Fq 'DW_PBR_ORM_LOADED path=${{ matrix.orm_path }}' shotout/qconsole.log
+          fi
+          shot="$(find home -type f -iname '${{ matrix.id }}.tga' -print -quit)"
+          test -n "$shot"
+          cp "$shot" shotout/${{ matrix.id }}.tga
+          python3 - <<'PY'
+          from PIL import Image,ImageStat
+          from pathlib import Path
+          import json
+          p=Path("shotout/${{ matrix.id }}.tga")
+          im=Image.open(p).convert("RGB")
+          im.save("shotout/${{ matrix.id }}.png")
+          g=im.convert("L")
+          hist=g.histogram()
+          pixels=im.width*im.height
+          nonblack=sum(hist[8:])
+          mean=ImageStat.Stat(g).mean[0]
+          metrics={
+            "id":"${{ matrix.id }}",
+            "location":"${{ matrix.location }}",
+            "variant":"${{ matrix.variant }}",
+            "camera":[${{ matrix.x }},${{ matrix.y }},${{ matrix.z }},${{ matrix.yaw }}],
+            "size":[im.width,im.height],
+            "mean_luma":round(mean,3),
+            "nonblack_ratio":round(nonblack/pixels,5),
+            "r_pbr":3,
+            "r_picmip":0,
+            "orm_expected":"${{ matrix.orm_path }}" if "${{ matrix.variant }}"=="orm" else None,
+          }
+          Path("shotout/metrics.json").write_text(json.dumps(metrics,indent=2)+"\n")
+          print(metrics)
+          assert nonblack/pixels > 0.20, "frame is mostly black"
+          assert mean > 8.0, "frame luminance too low"
+          PY
+          printf '%s\n'             'base_run=42217883095'             'pbr_build_run=42402994791'             'location=${{ matrix.location }}'             'variant=${{ matrix.variant }}'             'camera=${{ matrix.x }} ${{ matrix.y }} ${{ matrix.z }} ${{ matrix.yaw }}'             'orm_path=${{ matrix.orm_path }}'             > shotout/shot_proof.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: real-${{ matrix.id }}
+          path: shotout/
+          if-no-files-found: warn
+          retention-days: 30
+
+  gather:
+    needs: shots
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: real-*
+          path: results
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-Escape1-REAL-ORM-AB
+          path: results/
+          if-no-files-found: warn
+          retention-days: 90
