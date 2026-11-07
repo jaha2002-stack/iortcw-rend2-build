@@ -1,0 +1,110 @@
+name: DW PBR V2 V3 Escape1 TestLab
+on:
+  push:
+    branches:
+      - feature/pbr-v2-from-42217883095
+    paths:
+      - .github/workflows/DW_PBR_V2_V3_TESTLAB.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  testlab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install TestLab dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential git gh python3 libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+      - name: Reconstruct exact production source and apply PBR V3
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence runtime home protected-assets
+          mkdir -p evidence
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+          python3 integration/pbr-v2/apply.py source --stage 3 --proof evidence/PBR_V3_TESTLAB_PROOF.json
+          python3 integration/pbr-v2/test.py source --stage 3 --out evidence/PBR_V3_TESTLAB_STATIC.json
+      - name: Build native renderer for TestLab
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/PBR_TESTLAB_NATIVE_BUILD.log 2>&1 || { tail -180 evidence/PBR_TESTLAB_NATIVE_BUILD.log; exit 1; }
+      - name: Fetch protected retail assets
+        id: assets
+        run: |
+          set -Eeuo pipefail
+          if [ -z "$DARKWOLF_RTCW_ASSET_TOKEN" ]; then
+            echo "BLOCKED_MISSING_RETAIL_ASSET_TOKEN" | tee evidence/PBR_TESTLAB_STATUS.txt
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          test -n "$retail_main"
+          test -d "$retail_main"
+          echo "$retail_main" > evidence/retail_main_path.txt
+          echo "available=true" >> "$GITHUB_OUTPUT"
+      - name: Escape1 legacy and PBR V3 runtime checks
+        if: steps.assets.outputs.available == 'true'
+        run: |
+          set -Eeuo pipefail
+          exe="$(find source/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe"
+          buildroot="$(dirname "$exe")"
+          mkdir -p runtime/main home evidence/screenshots
+          cp -a "$buildroot/." runtime/
+          retail_main="$(cat evidence/retail_main_path.txt)"
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+          runtime_exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$runtime_exe"
+
+          run_case() {
+            mode="$1"
+            tag="$2"
+            case_home="$PWD/home/$tag"
+            mkdir -p "$case_home"
+            set +e
+            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 8s 80s "$runtime_exe"               +set fs_basepath "$PWD/runtime"               +set fs_homepath "$case_home"               +set com_introplayed 1               +set logfile 2               +set r_fullscreen 0               +set r_renderer rend2               +set r_mode -1               +set r_customwidth 1280               +set r_customheight 720               +set r_pbr "$mode"               +set r_normalMapping 1               +set r_specularMapping 1               +set r_cubeMapping 1               +set r_dlightMode 2               +set r_forceSun 1               +spdevmap escape1               +wait 450               +screenshot "$tag"               +wait 20               +quit
+            rc=$?
+            set -e
+            echo "$rc" > "evidence/$tag.exit.txt"
+            qlog="$(find "$case_home" -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+            test -n "$qlog"
+            cp "$qlog" "evidence/$tag.qconsole.log"
+            if grep -Eiq 'Could not load lightall shader|GLSL.*error|shader.*compile.*error|link.*shader.*error' "evidence/$tag.qconsole.log"; then
+              grep -Ein 'Could not load lightall shader|GLSL.*error|shader.*compile.*error|link.*shader.*error' "evidence/$tag.qconsole.log"
+              return 1
+            fi
+            find "$case_home" -type f \( -iname "$tag*.tga" -o -iname "$tag*.jpg" -o -iname "$tag*.png" \) -exec cp {} evidence/screenshots/ \; || true
+          }
+
+          run_case 0 pbr_legacy_escape1
+          run_case 3 pbr_v3_escape1
+          echo "PASS_ESCAPE1_LEGACY_AND_PBR_V3_NO_GLSL_ERRORS" | tee evidence/PBR_TESTLAB_STATUS.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DarkWolf-PBR-V2-V3-Escape1-TestLab
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 90
