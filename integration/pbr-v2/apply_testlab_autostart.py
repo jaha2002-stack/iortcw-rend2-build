@@ -32,4 +32,20 @@ new='''	if ( !strcmp( cmd, "rockandroll" ) ) {   // map loaded, game is ready to
 if s.count(old)!=1:
     raise SystemExit(f"rockandroll block anchor count={s.count(old)}")
 p.write_text(s.replace(old,new,1))
-print("DW_PBR_TESTLAB_AUTOSTART_APPLIED")
+
+# Add a TestLab-only console command that terminates any active intro camera
+# on both cgame and game sides immediately before material capture.
+cp=Path(args.source)/"SP/code/cgame/cg_consolecmds.c"
+cs=cp.read_text()
+anchor='''	{ "camera", CG_Camera_f },   // duffy
+	{ "fade", CG_Fade_f },   // duffy
+'''
+replacement='''	{ "camera", CG_Camera_f },   // duffy
+	{ "fade", CG_Fade_f },   // duffy
+	{ "dw_test_stopcamera", CG_StopCamera },
+'''
+if cs.count(anchor)!=1:
+    raise SystemExit(f"console camera anchor count={cs.count(anchor)}")
+cp.write_text(cs.replace(anchor,replacement,1))
+
+print("DW_PBR_TESTLAB_AUTOSTART_APPLIED stopcamera_command=1")
