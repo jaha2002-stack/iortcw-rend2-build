@@ -412,7 +412,7 @@ if stage >= 2:
 '''
     s=replace_once(s,old,new,"ormMap parser")
 
-    load_pat=r'(?m)^([ \\t]*)stage->bundle\\[0\\]\\.image\\[0\\]\\s*=\\s*R_FindImageFileExt\\([^;]+;'
+    load_pat=r'(?m)^([ \t]*)stage->bundle\[0\]\.image\[0\]\s*=\s*R_FindImageFileExt\([^;]+;'
     hits=list(re.finditer(load_pat,s))
     if len(hits)<2:
         raise SystemExit(f"shader image load anchors expected at least 2, found {len(hits)}")
