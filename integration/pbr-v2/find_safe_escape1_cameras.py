@@ -121,6 +121,7 @@ def yaw_to(a,b):
 
 targets=[
   {"id":"torch_wall","target":[-1600.0,1118.0,186.0],"shader":"textures/castle_wall/castle_grid_c19m","category":"torch"},
+  {"id":"torch_flame5000","target":[-1274.1,1337.1,37.2],"shader":"textures/sfx/xflame2_5000","category":"torch"},
   {"id":"guard_metal","target":[-1004.0,750.0,-177.5],"shader":"textures/metal_misc/ametal_m03","category":"guard"},
   {"id":"outdoor_wall","target":[-2088.0,-64.0,1035.2],"shader":"textures/snow/s_cathedrale_c06","category":"outdoor"},
 ]
