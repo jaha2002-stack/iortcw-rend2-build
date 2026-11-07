@@ -12,7 +12,7 @@ permissions:
 jobs:
   shots:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       max-parallel: 6
@@ -34,7 +34,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gh unzip xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev libsdl2-2.0-0 libopenal1 libcurl4
+          sudo apt-get install -y --no-install-recommends gh unzip xvfb xauth xdotool mesa-utils libgl1-mesa-dev libegl1-mesa-dev libsdl2-2.0-0 libopenal1 libcurl4
           rm -rf native-runtime runtime home shotout protected-assets
           mkdir -p native-runtime runtime/main home/main shotout
           gh api repos/$GITHUB_REPOSITORY/actions/artifacts/$RUNTIME_ARTIFACT_ID/zip > runtime_art.zip
@@ -46,31 +46,47 @@ jobs:
           cp -a native-runtime/. runtime/
           find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
           chmod +x runtime/iowolfsp* || true
-      - name: Capture real Escape1 safe-camera frame
+      - name: Capture real gameplay frame
         run: |
           set -Eeuo pipefail
           cat > home/main/shot.cfg <<'CFG'
-          set g_cheats 1
-          set cg_draw2D 0
           god
           notarget
           noclip
+          set cg_draw2D 0
+          set cg_drawGun 0
           setviewpos ${{ matrix.x }} ${{ matrix.y }} ${{ matrix.z }} ${{ matrix.yaw }}
-          wait 12
+          wait 20
           screenshot ${{ matrix.id }}
-          wait 4
+          wait 5
           quit
           CFG
           exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
           test -n "$exe"
           set +e
-          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 8s 90s "$exe"             +set fs_basepath "$PWD/runtime"             +set fs_homepath "$PWD/home"             +set com_introplayed 1             +set s_initsound 0             +set logfile 2             +set r_fullscreen 0             +set r_renderer rend2             +set r_mode -1             +set r_customwidth 1280             +set r_customheight 720             +set r_pbr 3             +set r_normalMapping 1             +set r_specularMapping 1             +set r_cubeMapping 1             +set r_dlightMode 2             +set r_forceSun 1             +devmap escape1             +wait 18             +exec shot.cfg
+          timeout -k 8s 200s xvfb-run -a bash -c '
+            export LIBGL_ALWAYS_SOFTWARE=1
+            exe="$1"
+            "$exe" +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720 +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1 +set r_cubeMapping 1 +set r_dlightMode 2 +set r_forceSun 1 +spdevmap escape1 +wait 300 +exec shot.cfg &
+            pid=$!
+            sleep 22
+            wid="$(xdotool search --onlyvisible --name ".*" 2>/dev/null | tail -1)"
+            if [ -n "$wid" ]; then
+              xdotool windowfocus "$wid" 2>/dev/null || true
+              xdotool mousemove --window "$wid" 120 120 click 1 2>/dev/null || true
+              echo "PREGAME_MOUSE1_SENT window=$wid"
+            else
+              echo "PREGAME_MOUSE1_NO_WINDOW"
+            fi
+            wait "$pid"
+          ' _ "$exe"
           rc=$?
           set -e
           echo "$rc" > shotout/exit.txt
           find home -type f \( -iname '*.tga' -o -iname '*.jpg' -o -iname '*.png' \) -exec cp {} shotout/ \;
           qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
           test -n "$qlog" && cp "$qlog" shotout/qconsole.log || true
+          grep -E 'Wrote screenshots|rockandroll|playerstart|cg_norender' shotout/qconsole.log > shotout/key_events.txt || true
           test "$(find shotout -type f \( -name '*.tga' -o -name '*.png' -o -name '*.jpg' \) | wc -l)" -ge 1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
