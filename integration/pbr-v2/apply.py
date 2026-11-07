@@ -412,40 +412,16 @@ if stage >= 2:
 '''
     s=replace_once(s,old,new,"ormMap parser")
 
-    old='''				if (stage->type == ST_NORMALMAP || stage->type == ST_NORMALPARALLAXMAP)
-				{
-					type = IMGTYPE_NORMAL;
-					flags |= IMGFLAG_NOLIGHTSCALE;
-
-					if (stage->type == ST_NORMALPARALLAXMAP)
-						type = IMGTYPE_NORMALHEIGHT;
-				}
-				else
-				{
-					if (r_genNormalMaps->integer)
-						flags |= IMGFLAG_GENNORMALMAP;
-				}
-'''
-    new='''				if (stage->type == ST_NORMALMAP || stage->type == ST_NORMALPARALLAXMAP)
-				{
-					type = IMGTYPE_NORMAL;
-					flags |= IMGFLAG_NOLIGHTSCALE;
-
-					if (stage->type == ST_NORMALPARALLAXMAP)
-						type = IMGTYPE_NORMALHEIGHT;
-				}
-				else
-				{
-					if (stage->type == ST_SPECULARMAP && stage->specularScale[2] < 0.0f)
-						flags |= IMGFLAG_NOLIGHTSCALE | IMGFLAG_PBRDATA;
-					else if (r_genNormalMaps->integer)
-						flags |= IMGFLAG_GENNORMALMAP;
-				}
-'''
-    # map and clampmap contain the same anchor twice; replace both intentionally.
-    if s.count(old)!=2:
-        raise SystemExit(f"shader image flags anchor expected 2, found {s.count(old)}")
-    s=s.replace(old,new,2)
+    load_pat=r'(?m)^([ \\t]*)stage->bundle\\[0\\]\\.image\\[0\\] = R_FindImageFileExt\\( token, type, flags, shader\\.characterMip \\);'
+    hits=list(re.finditer(load_pat,s))
+    if len(hits)<2:
+        raise SystemExit(f"shader image load anchors expected at least 2, found {len(hits)}")
+    def add_pbrdata_guard(m):
+        indent=m.group(1)
+        return indent+'if (stage->type == ST_SPECULARMAP && stage->specularScale[2] < 0.0f)\\n'+indent+'\\tflags |= IMGFLAG_NOLIGHTSCALE | IMGFLAG_PBRDATA;\\n'+m.group(0)
+    s,n=re.subn(load_pat,add_pbrdata_guard,s,count=2)
+    if n!=2:
+        raise SystemExit(f"shader PBRDATA guard insertion expected 2, found {n}")
 
     old='''	if (r_specularMapping->integer)
 	{
