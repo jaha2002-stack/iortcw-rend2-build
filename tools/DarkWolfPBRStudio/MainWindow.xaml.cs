@@ -39,6 +39,9 @@ public partial class MainWindow : Window
         VariantList.ItemsSource = _variants;
         MaterialProfileCombo.ItemsSource = Enum.GetValues<MaterialKind>();
         MaterialProfileCombo.SelectedItem = MaterialKind.Auto;
+        GenerationModeCombo.ItemsSource = Enum.GetValues<PbrGenerationMode>();
+        GenerationModeCombo.SelectedItem = PbrGenerationMode.MacroReliefEnhanced;
+        ApplyGenerationModePreset(PbrGenerationMode.MacroReliefEnhanced);
 
         SdCliPathBox.Text = !string.IsNullOrWhiteSpace(_settings.StableDiffusionCliPath)
             ? _settings.StableDiffusionCliPath
@@ -168,6 +171,49 @@ public partial class MainWindow : Window
                 Status($"Material analysis: {analysis.Summary}");
             });
         });
+    }
+
+    private void GenerationModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_applyingProfile || GenerationModeCombo.SelectedItem is not PbrGenerationMode mode) return;
+        ApplyGenerationModePreset(mode);
+        ResetPbrPreview();
+    }
+
+    private void ApplyGenerationModePreset(PbrGenerationMode mode)
+    {
+        _applyingProfile = true;
+        try
+        {
+            switch (mode)
+            {
+                case PbrGenerationMode.ReferenceHandGenerated:
+                    NormalStrengthSlider.Value = 20;
+                    HeightContrastSlider.Value = 1.00;
+                    MacroReliefBoostSlider.Value = 0.00;
+                    GenerationModeHintText.Text = "Exact First Hand-Generated reference: 74% fine + 26% coarse absolute luminance, original successful ORM response, no artificial groove/pit detector.";
+                    break;
+
+                case PbrGenerationMode.MacroReliefEnhanced:
+                    NormalStrengthSlider.Value = 24;
+                    HeightContrastSlider.Value = 1.00;
+                    MacroReliefBoostSlider.Value = 0.42;
+                    GenerationModeHintText.Text = "Enhanced Macro Relief: starts from the hand-generated reference and boosts only a broad low-frequency band. Local dark specks are never converted into holes.";
+                    break;
+
+                default:
+                    NormalStrengthSlider.Value = 20;
+                    HeightContrastSlider.Value = 1.00;
+                    MacroReliefBoostSlider.Value = 0.42;
+                    GenerationModeHintText.Text = "V2.02 compatibility mode.";
+                    break;
+            }
+            UpdateSliderLabels();
+        }
+        finally
+        {
+            _applyingProfile = false;
+        }
     }
 
     private void MaterialProfileCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -356,7 +402,7 @@ public partial class MainWindow : Window
         var settings = ReadPbrSettings();
         var source = _current;
 
-        await BusyAsync("PBR V2: decomposing Height / Normal / AO / Roughness / Metallic…", async ct =>
+        await BusyAsync("PBR V2.03: generating Height / Normal / AO / Roughness / Metallic…", async ct =>
         {
             var result = await Task.Run(() => PbrGenerator.Generate(source, settings), ct);
             await Dispatcher.InvokeAsync(() =>
@@ -402,7 +448,7 @@ public partial class MainWindow : Window
         var d = new SaveFileDialog
         {
             Filter = "RTCW PK3 (*.pk3)|*.pk3",
-            FileName = $"zzz_dw_{stem}_pbr3_v2.pk3"
+            FileName = $"zzz_dw_{stem}_pbr3_v203.pk3"
         };
         if (d.ShowDialog(this) != true) return;
 
@@ -426,7 +472,7 @@ public partial class MainWindow : Window
 
             Status($"Exported: {d.FileName}");
             MessageBox.Show(this,
-                "PBR Studio V2 override PK3 created. The source PK3 was not modified.\n\n" +
+                "PBR Studio V2.03 override PK3 created. The source PK3 was not modified.\n\n" +
                 $"{_asset.ShaderName}_n.tga\n{_asset.ShaderName}_orm.tga{parallax}\n\n" +
                 _pbrResult.Report.Summary,
                 "Export complete", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -445,6 +491,9 @@ public partial class MainWindow : Window
             : selected;
 
         var settings = PbrSettings.FromProfile(MaterialProfile.For(actual));
+        settings.GenerationMode = GenerationModeCombo.SelectedItem is PbrGenerationMode gm
+            ? gm : PbrGenerationMode.MacroReliefEnhanced;
+        settings.MacroReliefBoost = MacroReliefBoostSlider.Value;
         settings.NormalStrength = NormalStrengthSlider.Value;
         settings.HeightContrast = HeightContrastSlider.Value;
         settings.RoughnessMin = Math.Min(RoughnessMinSlider.Value, RoughnessMaxSlider.Value);
@@ -476,6 +525,7 @@ public partial class MainWindow : Window
         RoughnessText.Text = $"{RoughnessMinSlider.Value:0.00} / {RoughnessMaxSlider.Value:0.00}";
         MetallicText.Text = MetallicSlider.Value.ToString("0.00");
         ParallaxDepthText.Text = ParallaxDepthSlider.Value.ToString("0.000");
+        MacroReliefBoostText.Text = MacroReliefBoostSlider.Value.ToString("0.00");
     }
 
     private async Task BusyAsync(string message, Func<CancellationToken, Task> work)
@@ -497,7 +547,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Status("Error.");
-            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2.03", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -516,6 +566,8 @@ public partial class MainWindow : Window
         TextureList.IsEnabled = enabled;
         VariantList.IsEnabled = enabled;
         MaterialProfileCombo.IsEnabled = enabled;
+        GenerationModeCombo.IsEnabled = enabled;
+        MacroReliefBoostSlider.IsEnabled = enabled;
     }
 
     private void SaveSettings()
