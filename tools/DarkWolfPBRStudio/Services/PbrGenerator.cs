@@ -16,14 +16,19 @@ public static class PbrGenerator
     {
         var px = ImageService.ToBgra(input, out int w, out int h);
         int count = w * h;
-        var lum = new double[count];
+        var lumLinear = new double[count];
+        var lumSrgb = new double[count];
         var saturation = new double[count];
 
         for (int i = 0, p = 0; i < count; i++, p += 4)
         {
             double bS = px[p] / 255.0, gS = px[p + 1] / 255.0, rS = px[p + 2] / 255.0;
             double b = SrgbToLinear(bS), g = SrgbToLinear(gS), r = SrgbToLinear(rS);
-            lum[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            lumLinear[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            // Geometry intentionally follows perceptual/sRGB structure. This is what
+            // made the original Escape1 reference preserve broad stone blocks instead
+            // of amplifying tiny dark JPEG variations after linearization.
+            lumSrgb[i] = 0.2126 * rS + 0.7152 * gS + 0.0722 * bS;
 
             double mx = Math.Max(rS, Math.Max(gS, bS));
             double mn = Math.Min(rS, Math.Min(gS, bS));
@@ -31,34 +36,44 @@ public static class PbrGenerator
         }
 
         int minDim = Math.Min(w, h);
-        int denoiseRadius = Math.Max(1, minDim / 512);
-        int midRadius = Math.Max(2, minDim / 110);
-        int macroRadius = Math.Max(4, minDim / 34);
 
-        // Tile-safe multi-scale intrinsic decomposition. The large-scale component
-        // absorbs baked/painted illumination so it is not blindly converted into relief.
-        var denoise = BoxBlurWrap(lum, w, h, denoiseRadius);
-        var mid = BoxBlurWrap(denoise, w, h, midRadius);
-        var macro = BoxBlurWrap(mid, w, h, macroRadius);
+        // V2.02: edge-preserving denoise + absolute multi-scale structure.
+        // Do not high-pass and percentile-normalize the texture: that was the V2.01
+        // failure mode which converted JPEG/color micro-variation into embossed noise.
+        int bilateralRadius = Math.Clamp(minDim / 256, 2, 3);
+        var edgePreserved = BilateralFilterWrap(lumSrgb, w, h, bilateralRadius, 0.075);
+        var fine = GaussianBlurWrap(edgePreserved, w, h, Math.Max(0.70, minDim / 320.0));
+        var mid = GaussianBlurWrap(edgePreserved, w, h, Math.Max(1.8, minDim / 110.0));
+        var coarse = GaussianBlurWrap(edgePreserved, w, h, Math.Max(2.8, minDim / 72.0));
 
-        var heightRaw = new double[count];
-        for (int i = 0; i < count; i++)
+        double grooveStrength = settings.MaterialKind switch
         {
-            double fine = denoise[i] - mid[i];
-            double coarse = mid[i] - macro[i];
+            MaterialKind.Stone => 0.34,
+            MaterialKind.SnowyStone => 0.30,
+            MaterialKind.Brick => 0.38,
+            MaterialKind.Soil => 0.22,
+            MaterialKind.Wood => 0.10,
+            _ => 0.08
+        };
 
-            // Highly saturated color changes are more likely pigment/paint than geometry.
-            double pigmentGuard = Math.Clamp(1.0 - settings.ChromaSuppression * saturation[i], 0.18, 1.0);
-            double detail = settings.FineWeight * fine * 2.15 + settings.CoarseWeight * coarse * 1.70;
-            heightRaw[i] = detail * pigmentGuard;
-        }
-
-        var heightBase = RobustNormalizeSigned(heightRaw, 0.20, 0.80);
         var height = new double[count];
         double heightContrast = Math.Clamp(settings.HeightContrast, 0.30, 1.60);
         for (int i = 0; i < count; i++)
-            height[i] = Math.Clamp(0.5 + (heightBase[i] - 0.5) * heightContrast, 0.02, 0.98);
-        var heightForAo = BoxBlurWrap(height, w, h, Math.Max(2, minDim / 70));
+        {
+            // Same successful principle as the first hand-generated material:
+            // broad absolute luminance carries the stone shape. FineWeight/CoarseWeight
+            // now blend denoised structural scales, not high-pass residuals.
+            double structure = settings.FineWeight * fine[i] + settings.CoarseWeight * coarse[i];
+
+            // Dark local valleys relative to their neighborhood are likely mortar/cracks.
+            // Deepen them gently, while chroma suppresses colored paint/stains.
+            double valley = Math.Max(0.0, mid[i] - fine[i]);
+            double pigmentGuard = Math.Clamp(1.0 - settings.ChromaSuppression * saturation[i], 0.30, 1.0);
+            double h0 = structure - grooveStrength * valley * pigmentGuard;
+
+            height[i] = Math.Clamp(0.5 + (h0 - 0.5) * heightContrast, 0.02, 0.98);
+        }
+        var heightForAo = GaussianBlurWrap(height, w, h, Math.Max(1.6, minDim / 100.0));
 
         var normal = new byte[count * 4];
         var normalHeight = new byte[count * 4];
@@ -83,13 +98,18 @@ public static class PbrGenerator
                 double gy = (H(xm, yp) + 2 * H(x, yp) + H(xp, yp)
                            - H(xm, ym) - 2 * H(x, ym) - H(xp, ym)) / 8.0;
 
+                // Ignore sub-pixel gradient chatter left by JPEG ringing. Large stone
+                // boundaries and mortar survive because they remain well above this floor.
+                const double gradientNoiseFloor = 0.00055;
+                if (Math.Abs(gx) < gradientNoiseFloor) gx = 0.0;
+                if (Math.Abs(gy) < gradientNoiseFloor) gy = 0.0;
+
                 double nx = -gx * settings.NormalStrength;
                 double ny =  gy * settings.NormalStrength;
 
-                // Keep generated normals within a physically useful range. Old diffuse
-                // textures may contain hard painted edges that would otherwise create
-                // near-horizontal normals and unstable PBR/parallax response.
-                const double maxNormalAngleDeg = 55.0;
+                // The successful hand reference had P95 around 45 degrees. A 50-degree
+                // cap preserves readable relief without the V2.01 near-horizontal spikes.
+                const double maxNormalAngleDeg = 50.0;
                 double maxSlope = Math.Tan(maxNormalAngleDeg * Math.PI / 180.0);
                 double slope = Math.Sqrt(nx * nx + ny * ny);
                 if (slope > maxSlope)
@@ -124,17 +144,20 @@ public static class PbrGenerator
                 heightPixels[p] = heightPixels[p + 1] = heightPixels[p + 2] = bh;
                 heightPixels[p + 3] = 255;
 
-                // AO is derived from local concavity of the reconstructed surface,
-                // not directly from darkness in BaseColor.
-                double concavity = Math.Max(0.0, heightForAo[i] - height[i]);
-                double ao = Math.Clamp(1.0 - settings.AoStrength * concavity * 3.4, settings.AoFloor, 1.0);
+                // AO V2.02 intentionally follows the successful first material:
+                // broad local valleys darken, but flat dark albedo is not forced to zero.
+                double local = Math.Clamp(fine[i] - heightForAo[i], -0.30, 0.30);
+                double ao = Math.Clamp(
+                    0.72 + 0.25 * lumSrgb[i] + 0.30 * settings.AoStrength * local,
+                    settings.AoFloor, 1.0);
 
-                // Micro-roughness follows high-frequency surface energy. Brightness
-                // influence is profile-specific and intentionally small.
-                double micro = Math.Clamp(Math.Abs(denoise[i] - mid[i]) * 8.0, 0.0, 1.0);
+                // Roughness follows material brightness plus structural edge energy,
+                // not high-frequency noise. Exposed darker stone can catch a readable
+                // grazing response while snow/bright mineral remains rougher.
+                double structureEnergy = Math.Clamp(Math.Abs(fine[i] - coarse[i]) * 5.0, 0.0, 1.0);
                 double rough = settings.RoughnessBase
-                             + settings.MicroRoughness * micro
-                             + settings.BrightnessRoughness * (lum[i] - 0.5);
+                             + settings.MicroRoughness * structureEnergy
+                             + settings.BrightnessRoughness * lumSrgb[i];
                 rough = Math.Clamp(rough, settings.RoughnessMin, settings.RoughnessMax);
 
                 double metallic = Math.Clamp(settings.Metallic, 0.0, 1.0);
@@ -244,6 +267,79 @@ public static class PbrGenerator
         if (a == b) return copy[a];
         double t = pos - a;
         return copy[a] * (1.0 - t) + copy[b] * t;
+    }
+
+    private static double[] GaussianBlurWrap(double[] src, int w, int h, double sigma)
+    {
+        sigma = Math.Clamp(sigma, 0.55, 18.0);
+        int radius = Math.Clamp((int)Math.Ceiling(sigma * 2.5), 1, 48);
+        var kernel = new double[radius * 2 + 1];
+        double sumK = 0.0;
+        for (int i = -radius; i <= radius; i++)
+        {
+            double v = Math.Exp(-(i * i) / (2.0 * sigma * sigma));
+            kernel[i + radius] = v;
+            sumK += v;
+        }
+        for (int i = 0; i < kernel.Length; i++) kernel[i] /= sumK;
+
+        var tmp = new double[src.Length];
+        var dst = new double[src.Length];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                double s = 0.0;
+                for (int k = -radius; k <= radius; k++)
+                    s += src[y * w + Wrap(x + k, w)] * kernel[k + radius];
+                tmp[y * w + x] = s;
+            }
+        }
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                double s = 0.0;
+                for (int k = -radius; k <= radius; k++)
+                    s += tmp[Wrap(y + k, h) * w + x] * kernel[k + radius];
+                dst[y * w + x] = s;
+            }
+        }
+        return dst;
+    }
+
+    private static double[] BilateralFilterWrap(double[] src, int w, int h, int radius, double sigmaRange)
+    {
+        radius = Math.Clamp(radius, 1, 4);
+        sigmaRange = Math.Clamp(sigmaRange, 0.02, 0.25);
+        double sigmaSpatial = Math.Max(0.8, radius * 0.85);
+        var dst = new double[src.Length];
+
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                double center = src[y * w + x];
+                double weighted = 0.0, weightSum = 0.0;
+                for (int oy = -radius; oy <= radius; oy++)
+                {
+                    int yy = Wrap(y + oy, h);
+                    for (int ox = -radius; ox <= radius; ox++)
+                    {
+                        int xx = Wrap(x + ox, w);
+                        double v = src[yy * w + xx];
+                        double spatial = Math.Exp(-(ox * ox + oy * oy) / (2.0 * sigmaSpatial * sigmaSpatial));
+                        double d = v - center;
+                        double range = Math.Exp(-(d * d) / (2.0 * sigmaRange * sigmaRange));
+                        double wt = spatial * range;
+                        weighted += v * wt;
+                        weightSum += wt;
+                    }
+                }
+                dst[y * w + x] = weightSum > 1e-12 ? weighted / weightSum : center;
+            }
+        }
+        return dst;
     }
 
     private static double[] BoxBlurWrap(double[] src, int w, int h, int radius)
