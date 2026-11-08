@@ -19,6 +19,7 @@ image=txt("tr_image.c")
 local=txt("tr_local.h")
 init=txt("tr_init.c")
 backend=txt("tr_backend.c")
+light=txt("tr_light.c")
 
 checks={
  "pbr_default_off": 'r_pbr = ri.Cvar_Get("r_pbr", "0"' in init,
@@ -35,6 +36,8 @@ checks={
  "bsp_relight_v4_shader": all(x in frag for x in ("USE_PBR2_BSP_RELIGHT_V4","dwBakedIrradiance","dwDirectionalShare","dwDirectionConfidence")),
  "bsp_relight_v4_direct_ggx": "dominant baked-light direction" in frag and "DW_CalcSpecularGGX(specular.rgb, NL, NE, NH, EH, roughness) * 0.60" in frag,
  "legacy_bsp_ambient_preserved": "lightColor *= 0.75;" in frag,
+ "bsp_direction_recovery_v41": all(x in light for x in ("PBR2 BSP directional recovery V4.1","r_pbr->integer >= 3","0.35f - ndl","VectorNormalize(lightDir)")),
+ "legacy_lightdir_fallback_preserved": "VectorCopy(normal, lightDir);" in light,
  "firevol_marker_preserved": 'FIREVOL_CLEAN_PRODUCTION' in backend,
  "crypt1_marker_preserved": 'DARKWOLF_FIREVOL_CRYPT1_SLOT6_REANCHOR_PRODUCTION' in backend,
 }
