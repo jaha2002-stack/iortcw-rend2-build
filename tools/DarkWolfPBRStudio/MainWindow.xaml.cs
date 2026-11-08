@@ -2,7 +2,6 @@ using DarkWolfPBRStudio.Models;
 using DarkWolfPBRStudio.Services;
 using Microsoft.Win32;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
@@ -23,28 +22,36 @@ public partial class MainWindow : Window
     private TextureAsset? _asset;
     private BitmapSource? _original;
     private BitmapSource? _current;
-    private BitmapSource? _normal;
-    private BitmapSource? _orm;
+    private PbrResult? _pbrResult;
+    private MaterialAnalysis? _analysis;
     private string? _aiSourcePath;
     private bool _hasMaterialDefinition;
+    private bool _applyingProfile;
     private CancellationTokenSource? _busyCts;
 
     public MainWindow()
     {
         InitializeComponent();
-        _sessionDir = Path.Combine(Path.GetTempPath(), "DarkWolfPBRStudio", Guid.NewGuid().ToString("N"));
+
+        _sessionDir = Path.Combine(Path.GetTempPath(), "DarkWolfPBRStudioV2", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_sessionDir);
 
         VariantList.ItemsSource = _variants;
+        MaterialProfileCombo.ItemsSource = Enum.GetValues<MaterialKind>();
+        MaterialProfileCombo.SelectedItem = MaterialKind.Auto;
+
         SdCliPathBox.Text = !string.IsNullOrWhiteSpace(_settings.StableDiffusionCliPath)
             ? _settings.StableDiffusionCliPath
             : (_sd.IsBundledAvailable ? _sd.BundledCliPath : "");
         SdModelPathBox.Text = _settings.StableDiffusionModelPath;
         SdExtraArgsBox.Text = _settings.StableDiffusionExtraArgs;
         AiStrengthSlider.Value = _settings.AiStrength;
+
+        ApplyProfile(MaterialProfile.For(MaterialKind.GenericDielectric), keepComboSelection: true);
         UpdateSliderLabels();
 
         Status($"Ready. Real-ESRGAN: {(_restore.IsAvailable ? "bundled" : "missing")}; stable-diffusion.cpp: {(_sd.IsBundledAvailable ? "bundled" : "missing")}.");
+
         Closed += (_, _) =>
         {
             SaveSettings();
@@ -91,36 +98,110 @@ public partial class MainWindow : Window
         if (_pk3Path is null || TextureList.SelectedItem is not TextureAsset asset) return;
         _asset = asset;
 
-        await BusyAsync($"Loading {asset.EntryPath}…", async ct =>
+        await BusyAsync($"Loading and analyzing {asset.EntryPath}…", async ct =>
         {
             byte[] bytes = await Task.Run(() => _pk3.ReadEntry(_pk3Path, asset.EntryPath), ct);
             BitmapSource bmp = await Dispatcher.InvokeAsync(() => ImageService.Load(bytes, asset.Extension));
             string originalPath = Path.Combine(_sessionDir, $"original_{Guid.NewGuid():N}.png");
-            ImageService.SavePng(bmp, originalPath);
+            await Dispatcher.InvokeAsync(() => ImageService.SavePng(bmp, originalPath));
 
             bool hasDef = await Task.Run(() => _pk3.HasMaterialDefinitionInDirectory(_pk3Path, asset.ShaderName), ct);
+            MaterialAnalysis analysis = await Task.Run(() => MaterialClassifier.Analyze(asset.EntryPath, bmp), ct);
 
             await Dispatcher.InvokeAsync(() =>
             {
                 _original = _current = bmp;
-                _normal = _orm = null;
                 OriginalImage.Source = bmp;
                 CurrentImage.Source = bmp;
-                NormalImage.Source = null;
-                OrmImage.Source = null;
+                ResetPbrPreview();
+
                 _variants.Clear();
                 _variants.Add(new VariantItem { Name = "Original", FilePath = originalPath, Kind = "Original" });
                 VariantList.SelectedIndex = 0;
                 _aiSourcePath = originalPath;
+
                 _hasMaterialDefinition = hasDef;
                 MaterialStatusText.Text = hasDef ? "Material: scripted" : "Material: implicit";
                 ExplicitMtrCheck.IsChecked = !hasDef;
                 CompatibilityHintText.Text = hasDef
-                    ? "Existing material definition detected in the PK3 directory. Safe default: export maps/basecolor only; do not override the scripted material unless you deliberately enable explicit MTR."
-                    : "No scripted material definition detected. Explicit BSP PBR MTR is appropriate for this implicit texture.";
-                Status($"{asset.EntryPath} — {bmp.PixelWidth}×{bmp.PixelHeight}.");
+                    ? "Existing scripted material detected. Safe default: export maps/BaseColor only. Enable explicit MTR only after reviewing the original shader stages."
+                    : "Implicit texture: explicit BSP PBR MTR is appropriate and enables the complete Normal/ORM/lightmap path.";
+
+                SetAnalysis(analysis, applyRecommendedProfile: true);
+                Status($"{asset.EntryPath} — {bmp.PixelWidth}×{bmp.PixelHeight}; {MaterialProfile.For(analysis.Kind).DisplayName}.");
             });
         });
+    }
+
+    private void SetAnalysis(MaterialAnalysis analysis, bool applyRecommendedProfile)
+    {
+        _analysis = analysis;
+        MaterialAnalysisText.Text = analysis.Summary;
+
+        if (applyRecommendedProfile)
+        {
+            _applyingProfile = true;
+            MaterialProfileCombo.SelectedItem = analysis.Kind;
+            _applyingProfile = false;
+            ApplyProfile(MaterialProfile.For(analysis.Kind), keepComboSelection: true);
+
+            if (string.IsNullOrWhiteSpace(PromptBox.Text) || PromptBox.Text.Contains("restore authentic", StringComparison.OrdinalIgnoreCase))
+                PromptBox.Text = BuildPrompt(MaterialProfile.For(analysis.Kind));
+            else if (!PromptBox.Text.Contains(MaterialProfile.For(analysis.Kind).PromptHint, StringComparison.OrdinalIgnoreCase))
+                PromptBox.Text = BuildPrompt(MaterialProfile.For(analysis.Kind));
+        }
+    }
+
+    private string BuildPrompt(MaterialProfile profile)
+        => $"{profile.PromptHint}, preserve original UV layout, exact composition and color identity, seamless game texture, physically plausible PBR source";
+
+    private async void AnalyzeMaterialButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_current is null || _asset is null) return;
+
+        await BusyAsync("Analyzing material…", async ct =>
+        {
+            MaterialAnalysis analysis = await Task.Run(() => MaterialClassifier.Analyze(_asset.EntryPath, _current), ct);
+            await Dispatcher.InvokeAsync(() =>
+            {
+                SetAnalysis(analysis, applyRecommendedProfile: true);
+                Status($"Material analysis: {analysis.Summary}");
+            });
+        });
+    }
+
+    private void MaterialProfileCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_applyingProfile || MaterialProfileCombo.SelectedItem is not MaterialKind selected) return;
+
+        MaterialKind actual = selected == MaterialKind.Auto
+            ? (_analysis?.Kind ?? MaterialKind.GenericDielectric)
+            : selected;
+
+        ApplyProfile(MaterialProfile.For(actual), keepComboSelection: true);
+        ResetPbrPreview();
+        Status($"PBR profile: {MaterialProfile.For(actual).DisplayName}.");
+    }
+
+    private void ApplyProfile(MaterialProfile profile, bool keepComboSelection)
+    {
+        _applyingProfile = true;
+        try
+        {
+            NormalStrengthSlider.Value = profile.NormalStrength;
+            HeightContrastSlider.Value = profile.HeightContrast;
+            RoughnessMinSlider.Value = profile.RoughnessMin;
+            RoughnessMaxSlider.Value = profile.RoughnessMax;
+            MetallicSlider.Value = profile.Metallic;
+            ParallaxCheck.IsChecked = profile.ParallaxRecommended;
+            ParallaxDepthSlider.Value = profile.ParallaxDepth;
+            if (!keepComboSelection) MaterialProfileCombo.SelectedItem = profile.Kind;
+            UpdateSliderLabels();
+        }
+        finally
+        {
+            _applyingProfile = false;
+        }
     }
 
     private async void RestoreButton_Click(object sender, RoutedEventArgs e)
@@ -128,7 +209,7 @@ public partial class MainWindow : Window
         if (_current is null) { MessageBox.Show(this, "Select a texture first."); return; }
         if (!_restore.IsAvailable)
         {
-            MessageBox.Show(this, "Real-ESRGAN backend is not present in this development build. Use the packaged Windows artifact where it is bundled.", "AI backend");
+            MessageBox.Show(this, "Bundled Real-ESRGAN backend is not present in this build.", "AI backend");
             return;
         }
 
@@ -139,9 +220,15 @@ public partial class MainWindow : Window
             await Dispatcher.InvokeAsync(() => ImageService.SavePng(_current, input));
             await _restore.RestoreX4Async(input, output, ct);
             var bmp = ImageService.LoadFile(output);
+
             await Dispatcher.InvokeAsync(() =>
             {
-                var item = new VariantItem { Name = $"AI Restore ×4 #{_variants.Count}", FilePath = output, Kind = "AI Restoration" };
+                var item = new VariantItem
+                {
+                    Name = $"AI Restore ×4 #{_variants.Count}",
+                    FilePath = output,
+                    Kind = "AI Restoration"
+                };
                 _variants.Add(item);
                 VariantList.SelectedItem = item;
                 _aiSourcePath = output;
@@ -224,23 +311,26 @@ public partial class MainWindow : Window
         var v = GetSelectedVariant();
         if (v is null) return;
         _aiSourcePath = v.FilePath;
-        Status($"AI source fixed to: {v.Name}. Next will generate alternatives from this source.");
+        Status($"AI source fixed to: {v.Name}. AI Next will branch from this source.");
     }
 
     private void VariantList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         var v = GetSelectedVariant();
         if (v is null || !File.Exists(v.FilePath)) return;
+
         try
         {
             _current = ImageService.LoadFile(v.FilePath);
             CurrentImage.Source = _current;
             IncludeBaseColorCheck.IsChecked = v.Kind != "Original";
-            _normal = _orm = null;
-            NormalImage.Source = OrmImage.Source = null;
+            ResetPbrPreview();
             Status($"Selected variant: {v.Name}.");
         }
-        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Variant load error"); }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Variant load error");
+        }
     }
 
     private VariantItem? GetSelectedVariant() => VariantList.SelectedItem as VariantItem;
@@ -262,29 +352,40 @@ public partial class MainWindow : Window
     private async void GeneratePbrButton_Click(object sender, RoutedEventArgs e)
     {
         if (_current is null) { MessageBox.Show(this, "Select a texture or variant first."); return; }
+
         var settings = ReadPbrSettings();
         var source = _current;
 
-        await BusyAsync("Generating Normal + ORM for r_pbr 3…", async ct =>
+        await BusyAsync("PBR V2: decomposing Height / Normal / AO / Roughness / Metallic…", async ct =>
         {
             var result = await Task.Run(() => PbrGenerator.Generate(source, settings), ct);
             await Dispatcher.InvokeAsync(() =>
             {
-                _normal = result.Normal;
-                _orm = result.Orm;
-                NormalImage.Source = _normal;
-                OrmImage.Source = _orm;
-                Status("PBR maps generated: Normal + ORM (R=AO, G=Roughness, B=Metallic).");
+                _pbrResult = result;
+                HeightImage.Source = result.Height;
+                NormalImage.Source = result.Normal;
+                OrmImage.Source = result.Orm;
+                ValidationText.Text = "Validation: " + result.Report.Summary;
+                Status($"PBR3 material generated. {result.Report.Summary}");
             });
         });
+    }
+
+    private void ResetPbrPreview()
+    {
+        _pbrResult = null;
+        if (HeightImage is not null) HeightImage.Source = null;
+        if (NormalImage is not null) NormalImage.Source = null;
+        if (OrmImage is not null) OrmImage.Source = null;
+        if (ValidationText is not null) ValidationText.Text = "Validation: not generated";
     }
 
     private void ExportButton_Click(object sender, RoutedEventArgs e)
     {
         if (_asset is null || _current is null) { MessageBox.Show(this, "Select a texture first."); return; }
-        if (_normal is null || _orm is null)
+        if (_pbrResult is null)
         {
-            MessageBox.Show(this, "Generate Normal + ORM first.");
+            MessageBox.Show(this, "Generate the PBR3 material first.");
             return;
         }
 
@@ -292,7 +393,7 @@ public partial class MainWindow : Window
         if (_hasMaterialDefinition && explicitMtr)
         {
             var answer = MessageBox.Show(this,
-                "A scripted material with this shader name was detected. An explicit replacement MTR may change its original stages. Continue anyway?",
+                "A scripted material with this shader name was detected. An explicit replacement MTR may alter original stages. Continue anyway?",
                 "Compatibility warning", MessageBoxButton.YesNo, MessageBoxImage.Warning);
             if (answer != MessageBoxResult.Yes) return;
         }
@@ -301,45 +402,87 @@ public partial class MainWindow : Window
         var d = new SaveFileDialog
         {
             Filter = "RTCW PK3 (*.pk3)|*.pk3",
-            FileName = $"zzz_dw_{stem}_pbr3.pk3"
+            FileName = $"zzz_dw_{stem}_pbr3_v2.pk3"
         };
         if (d.ShowDialog(this) != true) return;
 
         try
         {
+            var settings = ReadPbrSettings();
             PbrExportService.Export(
-                d.FileName, _asset, _current, IncludeBaseColorCheck.IsChecked == true,
-                _normal, _orm, explicitMtr, ReadPbrSettings(),
+                d.FileName,
+                _asset,
+                _current,
+                IncludeBaseColorCheck.IsChecked == true,
+                _pbrResult,
+                explicitMtr,
+                settings,
+                _analysis,
                 GetSelectedVariant()?.Name ?? "Original");
+
+            string parallax = settings.ParallaxEnabled
+                ? $"
+{_asset.ShaderName}_nh.tga
+{_asset.ShaderName}_h.tga"
+                : "";
+
             Status($"Exported: {d.FileName}");
             MessageBox.Show(this,
-                "PBR override PK3 created. The original PK3 was not modified.\n\n" +
-                $"{_asset.ShaderName}_n.tga\n{_asset.ShaderName}_orm.tga",
+                "PBR Studio V2 override PK3 created. The source PK3 was not modified.
+
+" +
+                $"{_asset.ShaderName}_n.tga
+{_asset.ShaderName}_orm.tga{parallax}
+
+" +
+                _pbrResult.Report.Summary,
                 "Export complete", MessageBoxButton.OK, MessageBoxImage.Information);
         }
-        catch (Exception ex) { MessageBox.Show(this, ex.ToString(), "Export failed"); }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.ToString(), "Export failed");
+        }
     }
 
-    private PbrSettings ReadPbrSettings() => new()
+    private PbrSettings ReadPbrSettings()
     {
-        NormalStrength = NormalStrengthSlider.Value,
-        RoughnessMin = Math.Min(RoughnessMinSlider.Value, RoughnessMaxSlider.Value),
-        RoughnessMax = Math.Max(RoughnessMinSlider.Value, RoughnessMaxSlider.Value),
-        RoughnessBase = Math.Clamp((RoughnessMinSlider.Value + RoughnessMaxSlider.Value) * 0.5 - 0.06, 0.2, 0.95),
-        AoFloor = 0.46
-    };
+        MaterialKind selected = MaterialProfileCombo.SelectedItem is MaterialKind k ? k : MaterialKind.Auto;
+        MaterialKind actual = selected == MaterialKind.Auto
+            ? (_analysis?.Kind ?? MaterialKind.GenericDielectric)
+            : selected;
 
-    private void AiStrengthSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => UpdateSliderLabels();
-    private void NormalStrengthSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => UpdateSliderLabels();
-    private void RoughnessSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => UpdateSliderLabels();
+        var settings = PbrSettings.FromProfile(MaterialProfile.For(actual));
+        settings.NormalStrength = NormalStrengthSlider.Value;
+        settings.HeightContrast = HeightContrastSlider.Value;
+        settings.RoughnessMin = Math.Min(RoughnessMinSlider.Value, RoughnessMaxSlider.Value);
+        settings.RoughnessMax = Math.Max(RoughnessMinSlider.Value, RoughnessMaxSlider.Value);
+        settings.RoughnessBase = Math.Clamp(settings.RoughnessBase, settings.RoughnessMin, settings.RoughnessMax);
+        settings.Metallic = MetallicSlider.Value;
+        settings.ParallaxEnabled = ParallaxCheck.IsChecked == true;
+        settings.ParallaxDepth = ParallaxDepthSlider.Value;
+        return settings;
+    }
+
+    private void PbrSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        UpdateSliderLabels();
+        if (!_applyingProfile) ResetPbrPreview();
+    }
+
+    private void ParallaxCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_applyingProfile) ResetPbrPreview();
+    }
 
     private void UpdateSliderLabels()
     {
         if (AiStrengthText is null) return;
         AiStrengthText.Text = AiStrengthSlider.Value.ToString("0.00");
         NormalStrengthText.Text = NormalStrengthSlider.Value.ToString("0");
-        RoughnessMinText.Text = RoughnessMinSlider.Value.ToString("0.00");
-        RoughnessMaxText.Text = RoughnessMaxSlider.Value.ToString("0.00");
+        HeightContrastText.Text = HeightContrastSlider.Value.ToString("0.00");
+        RoughnessText.Text = $"{RoughnessMinSlider.Value:0.00} / {RoughnessMaxSlider.Value:0.00}";
+        MetallicText.Text = MetallicSlider.Value.ToString("0.00");
+        ParallaxDepthText.Text = ParallaxDepthSlider.Value.ToString("0.000");
     }
 
     private async Task BusyAsync(string message, Func<CancellationToken, Task> work)
@@ -349,12 +492,19 @@ public partial class MainWindow : Window
         BusyProgress.Visibility = Visibility.Visible;
         SetControlsEnabled(false);
         Status(message);
-        try { await work(_busyCts.Token); }
-        catch (OperationCanceledException) { Status("Cancelled."); }
+
+        try
+        {
+            await work(_busyCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            Status("Cancelled.");
+        }
         catch (Exception ex)
         {
             Status("Error.");
-            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -372,6 +522,7 @@ public partial class MainWindow : Window
         AiNextButton.IsEnabled = enabled;
         TextureList.IsEnabled = enabled;
         VariantList.IsEnabled = enabled;
+        MaterialProfileCombo.IsEnabled = enabled;
     }
 
     private void SaveSettings()
