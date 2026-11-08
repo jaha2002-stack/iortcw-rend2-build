@@ -1,0 +1,85 @@
+name: DW Escape1 Outdoor Wall Recon
+on:
+  push:
+    branches:
+      - test/pbr-v2-cagewall-orm-escape1
+    paths:
+      - .github/workflows/DW_ESCAPE1_OUTDOOR_WALL_RECON.yml
+      - integration/pbr-v2/discover_escape1_outdoor_wall.py
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  recon:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential git gh python3 libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+      - name: Reconstruct V4.2 renderer
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence protected-assets runtime home
+          mkdir -p evidence
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+          python3 integration/pbr-v2/apply.py source --stage 3 --proof evidence/PBR_V42_OUTDOOR_PROOF.json
+          python3 integration/pbr-v2/test.py source --stage 3 --out evidence/PBR_V42_OUTDOOR_STATIC.json
+          make -C source/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD.log 2>&1
+      - name: Fetch retail assets and discover exterior walls
+        run: |
+          set -Eeuo pipefail
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          test -d "$retail_main"
+          echo "$retail_main" > evidence/retail_main_path.txt
+          python3 integration/pbr-v2/discover_escape1_outdoor_wall.py "$retail_main" --out evidence/outdoor_candidates.json --cfg evidence/outdoor_recon.cfg
+      - name: Capture three real close-wall candidates
+        run: |
+          set -Eeuo pipefail
+          exe="$(find source/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe"
+          buildroot="$(dirname "$exe")"
+          mkdir -p runtime/main home/main evidence/screenshots
+          cp -a "$buildroot/." runtime/
+          retail_main="$(cat evidence/retail_main_path.txt)"
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+          cp evidence/outdoor_recon.cfg home/main/
+          runtime_exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 8s 120s "$runtime_exe"             +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home"             +set com_introplayed 1 +set s_initsound 0 +set logfile 2             +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1             +set r_customwidth 1280 +set r_customheight 720             +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1             +set r_cubeMapping 1 +set r_dlightMode 2 +set r_forceSun 1             +devmap escape1 +wait 28 +exec outdoor_recon.cfg
+          rc=$?
+          set -e
+          echo "$rc" > evidence/runtime_exit.txt
+          find home -type f \( -iname 'outdoor_candidate_*.tga' -o -iname 'outdoor_candidate_*.jpg' -o -iname 'outdoor_candidate_*.png' \) -exec cp {} evidence/screenshots/ \; || true
+          count="$(find evidence/screenshots -type f | wc -l)"
+          echo "REAL_OUTDOOR_RECON_SCREENSHOTS=$count" | tee evidence/STATUS.txt
+          test "$count" -ge 2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DarkWolf-Escape1-Outdoor-Wall-Recon
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 14
