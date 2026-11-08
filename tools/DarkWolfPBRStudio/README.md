@@ -67,7 +67,7 @@ Main output:
 - `<shader>_n.tga`
 - `<shader>_orm.tga`
 
-When the selected material profile recommends parallax and the user enables it:
+When the user explicitly enables parallax after validating the generated Height map:
 - `<shader>_nh.tga` — RGB tangent-space normal, A height
 - `<shader>_h.tga` — standalone authoring/debug height map
 
@@ -77,7 +77,7 @@ Explicit MTR export uses:
 - `stage ormMap`
 - existing BSP lightmap stage
 
-Parallax requires `r_parallaxMapping 1` in Rend2. If parallax is disabled, the exporter uses ordinary `stage normalMap`.
+Parallax is intentionally opt-in for diffuse-derived materials. It requires `r_parallaxMapping 1` in Rend2. The safe default exporter uses ordinary `stage normalMap`.
 
 ## V2 validation
 
