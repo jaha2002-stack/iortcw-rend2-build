@@ -51,6 +51,7 @@ public partial class MainWindow : Window
         AiStrengthSlider.Value = _settings.AiStrength;
 
         ApplyProfile(MaterialProfile.For(MaterialKind.GenericDielectric), keepComboSelection: true);
+        ApplyGenerationModePreset(PbrGenerationMode.MacroReliefEnhanced);
         UpdateSliderLabels();
 
         Status($"Ready. Real-ESRGAN: {(_restore.IsAvailable ? "bundled" : "missing")}; stable-diffusion.cpp: {(_sd.IsBundledAvailable ? "bundled" : "missing")}.");
@@ -147,6 +148,8 @@ public partial class MainWindow : Window
             MaterialProfileCombo.SelectedItem = analysis.Kind;
             _applyingProfile = false;
             ApplyProfile(MaterialProfile.For(analysis.Kind), keepComboSelection: true);
+            if (GenerationModeCombo.SelectedItem is PbrGenerationMode gm)
+                ApplyGenerationModePreset(gm);
 
             if (string.IsNullOrWhiteSpace(PromptBox.Text) || PromptBox.Text.Contains("restore authentic", StringComparison.OrdinalIgnoreCase))
                 PromptBox.Text = BuildPrompt(MaterialProfile.For(analysis.Kind));
