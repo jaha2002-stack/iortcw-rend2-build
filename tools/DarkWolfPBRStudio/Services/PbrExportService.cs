@@ -101,12 +101,12 @@ public static class PbrExportService
                     System.Text.Encoding.UTF8.GetBytes(asset.ShaderName)))
                 .ToLowerInvariant()[..10];
 
-            Write(zip, $"scripts/dw_pbrstudio_v202_{key}.mtr", System.Text.Encoding.UTF8.GetBytes(mtr));
+            Write(zip, $"scripts/dw_pbrstudio_v203_{key}.mtr", System.Text.Encoding.UTF8.GetBytes(mtr));
         }
 
         var manifest = new
         {
-            generator = "DarkWolf PBR Studio V2.02",
+            generator = "DarkWolf PBR Studio V2.03",
             target = "ioRTCW Rend2 DarkWolf r_pbr 3 / BSP Relight V4.2",
             source = asset.EntryPath,
             shader = asset.ShaderName,
@@ -130,6 +130,8 @@ public static class PbrExportService
                 ormChannels = "R=AO, G=Roughness, B=Metallic",
                 normalHeightChannels = settings.ParallaxEnabled ? "RGB=Normal XYZ, A=Height" : null
             },
+            generationMode = settings.GenerationMode.ToString(),
+            macroReliefBoost = settings.MacroReliefBoost,
             pbr = settings,
             validation = pbr.Report,
             explicitMtr = writeExplicitMtr,
