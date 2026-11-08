@@ -2,6 +2,11 @@ namespace DarkWolfPBRStudio.Services;
 
 public sealed class StableDiffusionService
 {
+    public string BundledCliPath =>
+        Path.Combine(AppContext.BaseDirectory, "Tools", "StableDiffusionCpp", "sd-cli.exe");
+
+    public bool IsBundledAvailable => File.Exists(BundledCliPath);
+
     public async Task<string> Img2ImgAsync(
         string cliPath, string modelPath, string inputPng, string outputPng,
         string prompt, double strength, long seed, string extraArgs, CancellationToken ct = default)
