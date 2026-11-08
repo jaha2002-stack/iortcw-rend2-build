@@ -31,6 +31,10 @@ checks={
  "legacy_sqrt_fallback": 'gl_FragColor.rgb = sqrt(gl_FragColor.rgb);' in frag,
  "material_ao_indirect_only": 'ambientColor * diffuse.rgb * materialAO' in frag,
  "ibl_v3": 'DW_EnvironmentBRDFApprox' in frag and 'roughness * roughness' in frag,
+ "bsp_relight_v4_define": '#define USE_PBR2_BSP_RELIGHT_V4' in glsl,
+ "bsp_relight_v4_shader": all(x in frag for x in ("DW_PBR2_BSP_RELIGHT_V4","dwBakedIrradiance","dwDirectionalShare","dwDirectionConfidence")),
+ "bsp_relight_v4_direct_ggx": "dominant baked-light direction" in frag and "DW_CalcSpecularGGX(specular.rgb, NL, NE, NH, EH, roughness) * 0.60" in frag,
+ "legacy_bsp_ambient_preserved": "lightColor *= 0.75;" in frag,
  "firevol_marker_preserved": 'FIREVOL_CLEAN_PRODUCTION' in backend,
  "crypt1_marker_preserved": 'DARKWOLF_FIREVOL_CRYPT1_SLOT6_REANCHOR_PRODUCTION' in backend,
 }
