@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private readonly StableDiffusionService _sd = new();
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly ObservableCollection<VariantItem> _variants = new();
+    private readonly ObservableCollection<BatchMaterialItem> _batchMaterials = new();
     private readonly string _sessionDir;
 
     private List<TextureAsset> _allTextures = new();
@@ -24,6 +25,7 @@ public partial class MainWindow : Window
     private BitmapSource? _current;
     private PbrResult? _pbrResult;
     private MaterialAnalysis? _analysis;
+    private MaterialDefinitionInfo? _currentMaterialDefinition;
     private string? _aiSourcePath;
     private bool _hasMaterialDefinition;
     private bool _applyingProfile;
@@ -37,6 +39,7 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(_sessionDir);
 
         VariantList.ItemsSource = _variants;
+        BatchList.ItemsSource = _batchMaterials;
         MaterialProfileCombo.ItemsSource = Enum.GetValues<MaterialKind>();
         MaterialProfileCombo.SelectedItem = MaterialKind.Auto;
         GenerationModeCombo.ItemsSource = Enum.GetValues<PbrGenerationMode>();
@@ -99,7 +102,13 @@ public partial class MainWindow : Window
 
     private async void TextureList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        SelectedTextureCountText.Text = $"Selected: {TextureList.SelectedItems.Count}";
         if (_pk3Path is null || TextureList.SelectedItem is not TextureAsset asset) return;
+        if (TextureList.SelectedItems.Count > 1)
+        {
+            Status($"{TextureList.SelectedItems.Count} textures selected for batch generation.");
+            return;
+        }
         _asset = asset;
 
         await BusyAsync($"Loading and analyzing {asset.EntryPath}…", async ct =>
@@ -109,7 +118,8 @@ public partial class MainWindow : Window
             string originalPath = Path.Combine(_sessionDir, $"original_{Guid.NewGuid():N}.png");
             await Dispatcher.InvokeAsync(() => ImageService.SavePng(bmp, originalPath));
 
-            bool hasDef = await Task.Run(() => _pk3.HasMaterialDefinitionInDirectory(_pk3Path, asset.ShaderName), ct);
+            MaterialDefinitionInfo? materialDef = await Task.Run(() => _pk3.FindMaterialDefinitionInDirectory(_pk3Path, asset.ShaderName), ct);
+            bool hasDef = materialDef is not null;
             MaterialAnalysis analysis = await Task.Run(() => MaterialClassifier.Analyze(asset.EntryPath, bmp), ct);
 
             await Dispatcher.InvokeAsync(() =>
@@ -125,11 +135,11 @@ public partial class MainWindow : Window
                 _aiSourcePath = originalPath;
 
                 _hasMaterialDefinition = hasDef;
-                MaterialStatusText.Text = hasDef ? "Material: scripted" : "Material: implicit";
-                ExplicitMtrCheck.IsChecked = !hasDef;
+                _currentMaterialDefinition = materialDef;
+                MaterialStatusText.Text = hasDef ? "Material: scripted → auto merge" : "Material: implicit → auto MTR";
                 CompatibilityHintText.Text = hasDef
-                    ? "Existing scripted material detected. Safe default: export maps/BaseColor only. Enable explicit MTR only after reviewing the original shader stages."
-                    : "Implicit texture: explicit BSP PBR MTR is appropriate and enables the complete Normal/ORM/lightmap path.";
+                    ? $"Existing scripted material: {materialDef!.SourcePk3} / {materialDef.ScriptPath}. V2.04 will preserve the block and merge Normal/ORM stages automatically."
+                    : "Implicit texture: V2.04 will automatically create the material block and connect BaseColor/Normal/ORM/lightmap.";
 
                 SetAnalysis(analysis, applyRecommendedProfile: true);
                 Status($"{asset.EntryPath} — {bmp.PixelWidth}×{bmp.PixelHeight}; {MaterialProfile.For(analysis.Kind).DisplayName}.");
@@ -432,57 +442,197 @@ public partial class MainWindow : Window
     private void ExportButton_Click(object sender, RoutedEventArgs e)
     {
         if (_asset is null || _current is null) { MessageBox.Show(this, "Select a texture first."); return; }
-        if (_pbrResult is null)
-        {
-            MessageBox.Show(this, "Generate the PBR3 material first.");
-            return;
-        }
-
-        bool explicitMtr = ExplicitMtrCheck.IsChecked == true;
-        if (_hasMaterialDefinition && explicitMtr)
-        {
-            var answer = MessageBox.Show(this,
-                "A scripted material with this shader name was detected. An explicit replacement MTR may alter original stages. Continue anyway?",
-                "Compatibility warning", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-            if (answer != MessageBoxResult.Yes) return;
-        }
+        if (_pbrResult is null) { MessageBox.Show(this, "Generate the PBR3 material first."); return; }
 
         string stem = Path.GetFileNameWithoutExtension(_asset.DisplayName);
         var d = new SaveFileDialog
         {
             Filter = "RTCW PK3 (*.pk3)|*.pk3",
-            FileName = $"zzz_dw_{stem}_pbr3_v203.pk3"
+            FileName = $"zzz_dw_{stem}_pbr3_v204.pk3"
         };
         if (d.ShowDialog(this) != true) return;
 
         try
         {
-            var settings = ReadPbrSettings();
-            PbrExportService.Export(
-                d.FileName,
-                _asset,
-                _current,
-                IncludeBaseColorCheck.IsChecked == true,
-                _pbrResult,
-                explicitMtr,
-                settings,
-                _analysis,
-                GetSelectedVariant()?.Name ?? "Original");
+            var analysis = _analysis ?? MaterialClassifier.Analyze(_asset.EntryPath, _current);
+            var item = new BatchMaterialItem
+            {
+                Asset = _asset,
+                BaseColor = _current,
+                Analysis = analysis,
+                Settings = ReadPbrSettings(),
+                Result = _pbrResult,
+                ExistingMaterial = _currentMaterialDefinition,
+                IncludeBaseColor = IncludeBaseColorCheck.IsChecked == true
+            };
 
-            string parallax = settings.ParallaxEnabled
-                ? $"\n{_asset.ShaderName}_nh.tga\n{_asset.ShaderName}_h.tga"
-                : "";
-
-            Status($"Exported: {d.FileName}");
+            BatchPbrExportService.Export(d.FileName, new[] { item });
+            Status($"Exported V2.04 material set: {d.FileName}");
             MessageBox.Show(this,
-                "PBR Studio V2.03 override PK3 created. The source PK3 was not modified.\n\n" +
-                $"{_asset.ShaderName}_n.tga\n{_asset.ShaderName}_orm.tga{parallax}\n\n" +
-                _pbrResult.Report.Summary,
+                "PBR Studio V2.04 PK3 created. MTR handling was automatic.\n\n" +
+                $"{_asset.ShaderName}_n.tga\n{_asset.ShaderName}_orm.tga\n" +
+                "scripts/dw_pbrstudio_v204_batch.mtr",
                 "Export complete", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.ToString(), "Export failed");
+        }
+    }
+
+    private async void GenerateBatchButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pk3Path is null)
+        {
+            MessageBox.Show(this, "Open a PK3 first.");
+            return;
+        }
+
+        var selected = TextureList.SelectedItems.Cast<TextureAsset>()
+            .GroupBy(x => x.ShaderName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(x => x.EntryPath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (selected.Count == 0)
+        {
+            MessageBox.Show(this, "Select two or more textures (Ctrl/Shift click) first.");
+            return;
+        }
+
+        var uiTemplate = ReadPbrSettings();
+        MaterialKind requestedKind = MaterialProfileCombo.SelectedItem is MaterialKind k ? k : MaterialKind.Auto;
+        var generated = new List<BatchMaterialItem>(selected.Count);
+
+        await BusyAsync($"Generating batch: 0/{selected.Count}…", async ct =>
+        {
+            for (int index = 0; index < selected.Count; index++)
+            {
+                ct.ThrowIfCancellationRequested();
+                TextureAsset asset = selected[index];
+
+                var item = await Task.Run(() =>
+                {
+                    byte[] bytes = _pk3.ReadEntry(_pk3Path, asset.EntryPath);
+                    BitmapSource source = ImageService.Load(bytes, asset.Extension);
+                    MaterialAnalysis analysis = MaterialClassifier.Analyze(asset.EntryPath, source);
+                    MaterialKind actual = requestedKind == MaterialKind.Auto ? analysis.Kind : requestedKind;
+
+                    PbrSettings settings = PbrSettings.FromProfile(MaterialProfile.For(actual));
+                    settings.GenerationMode = uiTemplate.GenerationMode;
+                    settings.MacroReliefBoost = uiTemplate.MacroReliefBoost;
+                    settings.NormalStrength = uiTemplate.NormalStrength;
+                    settings.HeightContrast = uiTemplate.HeightContrast;
+                    settings.RoughnessMin = uiTemplate.RoughnessMin;
+                    settings.RoughnessMax = uiTemplate.RoughnessMax;
+                    settings.RoughnessBase = Math.Clamp(settings.RoughnessBase, settings.RoughnessMin, settings.RoughnessMax);
+                    settings.Metallic = uiTemplate.Metallic;
+                    settings.ParallaxEnabled = uiTemplate.ParallaxEnabled;
+                    settings.ParallaxDepth = uiTemplate.ParallaxDepth;
+
+                    PbrResult result = PbrGenerator.Generate(source, settings);
+                    MaterialDefinitionInfo? existing = _pk3.FindMaterialDefinitionInDirectory(_pk3Path, asset.ShaderName);
+
+                    return new BatchMaterialItem
+                    {
+                        Asset = asset,
+                        BaseColor = source,
+                        Analysis = analysis,
+                        Settings = settings,
+                        Result = result,
+                        ExistingMaterial = existing,
+                        IncludeBaseColor = false
+                    };
+                }, ct);
+
+                generated.Add(item);
+                int done = index + 1;
+                await Dispatcher.InvokeAsync(() => Status($"Generating batch: {done}/{selected.Count} — {asset.EntryPath}"));
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                _batchMaterials.Clear();
+                foreach (var item in generated) _batchMaterials.Add(item);
+                if (_batchMaterials.Count > 0) BatchList.SelectedIndex = 0;
+                Status($"Batch ready: {_batchMaterials.Count} materials. Review them, remove any rejected item, then export ONE PK3.");
+            });
+        });
+    }
+
+    private void BatchList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (BatchList.SelectedItem is not BatchMaterialItem item) return;
+
+        OriginalImage.Source = item.BaseColor;
+        CurrentImage.Source = item.BaseColor;
+        HeightImage.Source = item.Result.Height;
+        NormalImage.Source = item.Result.Normal;
+        OrmImage.Source = item.Result.Orm;
+        ValidationText.Text = "Validation: " + item.Result.Report.Summary;
+
+        _asset = item.Asset;
+        _original = _current = item.BaseColor;
+        _pbrResult = item.Result;
+        _analysis = item.Analysis;
+        _currentMaterialDefinition = item.ExistingMaterial;
+        _hasMaterialDefinition = item.ExistingMaterial is not null;
+
+        MaterialStatusText.Text = item.ExistingMaterial is null
+            ? "Material: implicit → auto MTR"
+            : "Material: scripted → auto merge";
+        CompatibilityHintText.Text = item.ExistingMaterial is null
+            ? "Batch export will create this material block automatically."
+            : $"Batch export will merge PBR stages into {item.ExistingMaterial.SourcePk3} / {item.ExistingMaterial.ScriptPath} without dropping original stages.";
+        Status($"Batch review: {item.EntryPath} — {item.Validation}");
+    }
+
+    private void ClearBatchButton_Click(object sender, RoutedEventArgs e)
+    {
+        _batchMaterials.Clear();
+        BatchList.Items.Refresh();
+        Status("Batch cleared.");
+    }
+
+    private void RemoveBatchButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (BatchList.SelectedItem is BatchMaterialItem item)
+        {
+            _batchMaterials.Remove(item);
+            Status($"Removed from batch: {item.EntryPath}. Remaining: {_batchMaterials.Count}.");
+        }
+    }
+
+    private void ExportBatchButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_batchMaterials.Count == 0)
+        {
+            MessageBox.Show(this, "Generate and review a batch first.");
+            return;
+        }
+
+        var d = new SaveFileDialog
+        {
+            Filter = "RTCW PK3 (*.pk3)|*.pk3",
+            FileName = $"zzz_dw_pbrstudio_v204_batch_{_batchMaterials.Count}.pk3"
+        };
+        if (d.ShowDialog(this) != true) return;
+
+        try
+        {
+            BatchPbrExportService.Export(d.FileName, _batchMaterials.ToList());
+            Status($"Batch exported: {_batchMaterials.Count} materials → {d.FileName}");
+            MessageBox.Show(this,
+                $"Exported {_batchMaterials.Count} materials into ONE PK3.\n\n" +
+                "All generated Normal/ORM maps are included.\n" +
+                "Parallax maps are included only for items generated with Parallax enabled.\n" +
+                "One combined MTR: scripts/dw_pbrstudio_v204_batch.mtr\n" +
+                "Scripted materials were merged; implicit materials received automatic definitions.",
+                "Batch export complete", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.ToString(), "Batch export failed");
         }
     }
 
@@ -550,7 +700,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Status("Error.");
-            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2.03", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2.04", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -567,6 +717,7 @@ public partial class MainWindow : Window
         RestoreButton.IsEnabled = enabled;
         AiNextButton.IsEnabled = enabled;
         TextureList.IsEnabled = enabled;
+        BatchList.IsEnabled = enabled;
         VariantList.IsEnabled = enabled;
         MaterialProfileCombo.IsEnabled = enabled;
         GenerationModeCombo.IsEnabled = enabled;
