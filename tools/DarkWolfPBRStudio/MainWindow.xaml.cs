@@ -198,10 +198,10 @@ public partial class MainWindow : Window
                     break;
 
                 case PbrGenerationMode.MacroReliefEnhanced:
-                    NormalStrengthSlider.Value = 24;
+                    NormalStrengthSlider.Value = 20;
                     HeightContrastSlider.Value = 1.00;
-                    MacroReliefBoostSlider.Value = 0.42;
-                    GenerationModeHintText.Text = "Enhanced Macro Relief: starts from the hand-generated reference and boosts only a broad low-frequency band. Local dark specks are never converted into holes.";
+                    MacroReliefBoostSlider.Value = 0.75;
+                    GenerationModeHintText.Text = "Enhanced Macro Relief: keeps the First Hand-Generated height/ORM unchanged and strengthens only broad coherent stone-boundary normals. It cannot create new interior pits from dark JPEG specks.";
                     break;
 
                 default:
