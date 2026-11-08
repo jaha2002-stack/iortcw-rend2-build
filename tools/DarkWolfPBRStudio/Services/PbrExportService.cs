@@ -40,10 +40,14 @@ public static class PbrExportService
         string tmpO = Path.GetTempFileName();
         try
         {
-            TgaCodec.Save(pbr.Normal, tmpN);
-            TgaCodec.Save(pbr.NormalHeight, tmpNh);
-            TgaCodec.Save(pbr.Height, tmpH);
-            TgaCodec.Save(pbr.Orm, tmpO);
+            // Ordinary Normal and ORM must remain RGB/24-bit. The original successful
+            // hand-generated material used Pillow RGB TGA files. Writing alpha=255 here
+            // changes Rend2's packed-material interpretation and was the hidden reason
+            // the visually identical V2.03 maps rendered much darker than the reference.
+            TgaCodec.SaveRgb24PillowCompatible(pbr.Normal, tmpN);
+            TgaCodec.Save(pbr.NormalHeight, tmpNh); // _nh intentionally carries height in alpha.
+            TgaCodec.SaveRgb24PillowCompatible(pbr.Height, tmpH);
+            TgaCodec.SaveRgb24PillowCompatible(pbr.Orm, tmpO);
 
             Write(zip, normalPath, File.ReadAllBytes(tmpN));
             Write(zip, ormPath, File.ReadAllBytes(tmpO));
