@@ -305,3 +305,49 @@ B:
 The test must compile first, then capture both variants in clean processes and preserve
 the exact camera coordinates.  Visual acceptance requires a material-local difference
 without a global exposure/color shift or geometry change.
+
+
+### V4.1 / V4.2 TestLab result — 2026-11-08
+
+Exact validation point:
+- map: `escape1`
+- material: `textures/castle_wall/castle_c46_on_grid`
+- same fixed camera for A/B
+- A: explicit BaseColor + lightmap MTR
+- B: identical MTR + generated Normal + ORM
+- both runs use `r_pbr 3`.
+
+V4.1 preserved the tangential component of the lightgrid direction when legacy
+`R_LightDirForPoint()` would otherwise replace it with the macro surface normal.
+
+V4.2 added a normal-aware diffuse environment correction for lightmapped BSP:
+- existing per-probe cubemap is sampled at the material normal;
+- the same cubemap is sampled at the macro surface normal;
+- the ratio is normalized so a flat normal has zero correction;
+- the correction is applied to the baked irradiance contribution only in the
+  PBR3 lightmap path.
+
+Final validation run: **#42442320658 — SUCCESS**.
+
+For the final material test the normal map was refined to realistic coarse masonry relief:
+- mean normal deviation: ~16 degrees
+- median: ~14.2 degrees
+- 90th percentile: ~29.5 degrees
+- metallic: 0 (stone)
+- ORM remains AO/Roughness/Metallic.
+
+Matched A0/B0 measurements:
+- non-target/reference regions mean absolute RGB delta: ~0.50 / 255
+- target wall region mean absolute RGB delta: ~1.77 / 255
+- target/reference localization ratio: ~3.55x
+- target wall 95th percentile delta: ~5.67 / 255
+- target wall maximum local delta: ~37.3 / 255.
+
+The amplified difference image follows the actual masonry blocks and mortar lines rather
+than screen-wide exposure/color changes.  Therefore the BSP relight is a technical PASS:
+Normal/ORM now affect legacy lightmapped BSP locally while preserving the rest of the scene.
+
+The full-frame visual delta remains moderate at this location because the scene is dim and
+predominantly front/ambient lit.  Do not amplify the shader solely to make this test dramatic;
+the correct next visual validation is the same material model under a stronger side-light or
+sun-light configuration.
