@@ -68,16 +68,14 @@ for a in range(len(cages)):
         oa,ob=cages[a][2],cages[b][2]
         dd=math.sqrt(sum((oa[k]-ob[k])**2 for k in range(3)))
         dz=abs(oa[2]-ob[2])
-        mean_z=(oa[2]+ob[2])*0.5
-        if 70.0 <= dd <= 240.0 and dz <= 100.0:
-            # The requested start-area pair is the high ceiling pair.
-            # Prefer pairs above z=700; among them choose the tightest physical pair.
-            high_penalty=0.0 if mean_z >= 700.0 else (700.0-mean_z)*8.0
-            pairs.append((high_penalty + dd + dz*0.35,-mean_z,a,b))
+        # The user-described start/torture-area ceiling fixtures are the unique
+        # very close pair: two cagelighta models 56 units apart at the same height.
+        if 30.0 <= dd <= 100.0 and dz <= 20.0:
+            pairs.append((dd + dz*0.5,a,b))
 if not pairs:
-    raise SystemExit("no plausible adjacent cage-light pair found")
+    raise SystemExit("requested close ceiling cage-light pair not found")
 pairs.sort()
-_,_,ia,ib=pairs[0]
+_,ia,ib=pairs[0]
 cages=[cages[ia],cages[ib]]
 mid=[sum(x[2][k] for x in cages)/len(cages) for k in range(3)]
 
@@ -244,7 +242,7 @@ target_pt[2]=cam_z
 toward_cages=[mid[0]-target_pt[0],mid[1]-target_pt[1],0.0]
 sign=1 if toward_cages[0]*nxy[0] + toward_cages[1]*nxy[1] >= 0.0 else -1
 tangent=[-nxy[1],nxy[0],0.0]
-cam_z=mid[2]-100.0
+cam_z=mid[2]-55.0
 cam=[
     target_pt[0]+sign*nxy[0]*176+tangent[0]*112,
     target_pt[1]+sign*nxy[1]*176+tangent[1]*112,
