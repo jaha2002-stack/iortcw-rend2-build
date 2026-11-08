@@ -226,11 +226,15 @@ orm.save(orm_path)
 # Build a tangent-space normal map from the original stone texture.
 # The source is first lightly blurred so JPEG noise does not become false geometry,
 # then a Sobel gradient is converted to an OpenGL-style normal (X right, Y up, Z out).
-height=gray.filter(ImageFilter.GaussianBlur(radius=max(0.8,min(w,h)/220.0)))
+height_fine=gray.filter(ImageFilter.GaussianBlur(radius=max(0.7,min(w,h)/300.0)))
+height_coarse=gray.filter(ImageFilter.GaussianBlur(radius=max(2.0,min(w,h)/70.0)))
+# Preserve block/mortar structure while suppressing JPEG grain.  A modest
+# fine/coarse blend produces slopes appropriate for rough castle masonry.
+height=Image.blend(height_fine, height_coarse, 0.22)
 hpx=height.load()
 normal_img=Image.new("RGB",(w,h))
 npx=normal_img.load()
-strength=7.5
+strength=22.0
 for y in range(h):
     ym=max(0,y-1); yp=min(h-1,y+1)
     for x in range(w):
