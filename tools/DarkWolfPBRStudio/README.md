@@ -1,10 +1,16 @@
-# DarkWolf PBR Studio V2.02
+# DarkWolf PBR Studio V2.03
 
 Windows authoring tool for ioRTCW Rend2 DarkWolf **r_pbr 3** materials.
 
-V2.02 replaces the V2.01 high-pass/percentile-normalized relief path with a structure-preserving, noise-safe material decomposition pipeline. It was validated directly against the first successful hand-generated Escape1 PBR reference.
+V2.03 contains two first-class relief modes. **ReferenceHandGenerated** reproduces the first successful Escape1 hand-generated PBR recipe as a selectable option. **MacroReliefEnhanced** keeps that reference Height/AO/Roughness unchanged and increases only broad, coherent structural normal gradients, so extra macro relief cannot create new interior pits from JPEG specks.
 
-## V2.02 pipeline
+## V2.03 relief modes
+
+- **ReferenceHandGenerated** — direct compatibility/reference mode: 74% fine Gaussian structure + 26% coarse structure, no high-pass, no percentile normalization, no groove detector.
+- **MacroReliefEnhanced** — default: the exact same height and ORM response as ReferenceHandGenerated, with a multi-scale coherence mask that increases normal slope only on broad stone/block boundaries.
+- **StructurePreservingV202** — retained as a compatibility option for comparing earlier V2.02 behavior.
+
+## V2.03 pipeline
 
 1. Open a PK3 and choose a source texture.
 2. Optional AI Restoration x4 with bundled Real-ESRGAN Vulkan.
@@ -48,11 +54,11 @@ Profiles control physically meaningful defaults such as normal strength, height 
 
 The automatic classifier is deliberately conservative. It uses strong path semantics when available and falls back to image statistics. The user can always override the detected material type.
 
-## Why V2.02 fixes the V2.01 failure mode
+## Why V2.03 fixes the V2.01 failure mode
 
 V2.01 over-emphasized high-pass residuals. On old JPEG diffuse textures this could turn compression noise and tiny color variations into embossed micro-relief even when the individual maps looked technically valid.
 
-V2.02 instead uses:
+V2.03 instead uses:
 - edge-preserving denoise before geometry extraction;
 - perceptual/sRGB geometry luminance rather than linear-dark-region amplification;
 - absolute multi-scale structure, not high-pass-only relief;
@@ -81,7 +87,7 @@ Explicit MTR export uses:
 
 Parallax requires `r_parallaxMapping 1` in Rend2. If parallax is disabled, the exporter uses ordinary `stage normalMap`.
 
-## V2.02 validation
+## V2.03 validation
 
 The Windows CI executes a real self-test before packaging. It verifies:
 - SnowyStone and BareMetal classification;
@@ -110,3 +116,8 @@ dotnet publish tools\DarkWolfPBRStudio\DarkWolfPBRStudio.csproj -c Release -r wi
 ```
 
 CI: `.github/workflows/DW_PBR_STUDIO_WINDOWS.yml`
+
+
+## V2.03 anti-pit invariant
+
+The self-test verifies that ReferenceHandGenerated and MacroReliefEnhanced produce byte-identical Height maps. MacroReliefEnhanced may only alter tangent-space normal slopes at coherent macro boundaries; it is not allowed to invent new height depressions. AO and roughness remain the hand-reference response.
