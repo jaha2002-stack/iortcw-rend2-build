@@ -50,9 +50,9 @@ public static class PbrGenerator
             // Exact design of the first visually successful Escape1 material:
             // absolute smoothed luminance, 74% fine + 26% coarse, no high-pass,
             // no percentile normalization and no artificial groove detector.
-            fine = GaussianBlurWrap(gray601, w, h, Math.Max(0.65, minDim / 320.0));
-            coarse = GaussianBlurWrap(gray601, w, h, Math.Max(2.2, minDim / 72.0));
-            mid = GaussianBlurWrap(gray601, w, h, Math.Max(1.0, minDim / 100.0));
+            fine = GaussianBlurClamp(gray601, w, h, Math.Max(0.65, minDim / 320.0));
+            coarse = GaussianBlurClamp(gray601, w, h, Math.Max(2.2, minDim / 72.0));
+            mid = GaussianBlurClamp(gray601, w, h, Math.Max(1.0, minDim / 100.0));
             height = new double[count];
             for (int i = 0; i < count; i++)
             {
@@ -90,7 +90,7 @@ public static class PbrGenerator
             // A final sub-pixel smooth is applied ONLY to the normal source. This keeps
             // the broad height shape while removing pinprick normal dents.
             normalHeightSource = GaussianBlurWrap(height, w, h, 0.58);
-            aoBlur = GaussianBlurWrap(gray601, w, h, Math.Max(1.0, minDim / 100.0));
+            aoBlur = GaussianBlurClamp(gray601, w, h, Math.Max(1.0, minDim / 100.0));
         }
         else
         {
@@ -273,7 +273,9 @@ public static class PbrGenerator
                 sum += src[yy * w + xx];
             }
         }
-        return Math.Clamp(Math.Abs(8.0 * c - sum), 0.0, 1.0);
+        // Pillow FIND_EDGES uses a signed 8-neighbor Laplacian and clips negative
+        // values to zero; it is not absolute-value edge magnitude.
+        return Math.Clamp(8.0 * c - sum, 0.0, 1.0);
     }
 
     private static PbrValidationReport Validate(
@@ -335,6 +337,51 @@ public static class PbrGenerator
         if (a == b) return copy[a];
         double t = pos - a;
         return copy[a] * (1.0 - t) + copy[b] * t;
+    }
+
+    private static double[] GaussianBlurClamp(double[] src, int w, int h, double sigma)
+    {
+        sigma = Math.Clamp(sigma, 0.55, 18.0);
+        int radius = Math.Clamp((int)Math.Ceiling(sigma * 3.0), 1, 54);
+        var kernel = new double[radius * 2 + 1];
+        double sumK = 0.0;
+        for (int i = -radius; i <= radius; i++)
+        {
+            double v = Math.Exp(-(i * i) / (2.0 * sigma * sigma));
+            kernel[i + radius] = v;
+            sumK += v;
+        }
+        for (int i = 0; i < kernel.Length; i++) kernel[i] /= sumK;
+
+        var tmp = new double[src.Length];
+        var dst = new double[src.Length];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                double s = 0.0;
+                for (int k = -radius; k <= radius; k++)
+                {
+                    int xx = Math.Clamp(x + k, 0, w - 1);
+                    s += src[y * w + xx] * kernel[k + radius];
+                }
+                tmp[y * w + x] = s;
+            }
+        }
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                double s = 0.0;
+                for (int k = -radius; k <= radius; k++)
+                {
+                    int yy = Math.Clamp(y + k, 0, h - 1);
+                    s += tmp[yy * w + x] * kernel[k + radius];
+                }
+                dst[y * w + x] = s;
+            }
+        }
+        return dst;
     }
 
     private static double[] GaussianBlurWrap(double[] src, int w, int h, double sigma)
