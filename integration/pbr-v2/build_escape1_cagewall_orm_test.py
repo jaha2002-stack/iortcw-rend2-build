@@ -58,8 +58,23 @@ for i,e in enumerate(entities):
     if o and ("cagelighta.md3" in model or "cagelighta5k.md3" in model):
         cages.append((i,e,o))
 if len(cages)<2:
-    raise SystemExit(f"expected two cage lights, found {len(cages)}")
-cages=sorted(cages,key=lambda x:x[2][1])[:2]
+    raise SystemExit(f"expected at least two cage lights, found {len(cages)}")
+# Select the physical pair of adjacent hanging cages, not arbitrary cage lights elsewhere
+# on Escape1. Require a plausible pair separation and prefer the closest pair with
+# similar height; this resolves the start-area pair around (-160, 328..468, 8xx).
+pairs=[]
+for a in range(len(cages)):
+    for b in range(a+1,len(cages)):
+        oa,ob=cages[a][2],cages[b][2]
+        dd=math.sqrt(sum((oa[k]-ob[k])**2 for k in range(3)))
+        dz=abs(oa[2]-ob[2])
+        if 70.0 <= dd <= 240.0 and dz <= 100.0:
+            pairs.append((dd + dz*0.35,a,b))
+if not pairs:
+    raise SystemExit("no plausible adjacent cage-light pair found")
+pairs.sort()
+_,ia,ib=pairs[0]
+cages=[cages[ia],cages[ib]]
 mid=[sum(x[2][k] for x in cages)/len(cages) for k in range(3)]
 
 # Shaders.
@@ -219,19 +234,16 @@ nxy=[nxy[0]/nl,nxy[1]/nl,0.0]
 target_pt=list(target["center"])
 cam_z=max(target["mins"][2]+48,min(target["maxs"][2]-24,mid[2]-55))
 target_pt[2]=cam_z
-cams=[]
-for sign in (1,-1):
-    cam=[target_pt[0]+sign*nxy[0]*112,target_pt[1]+sign*nxy[1]*112,cam_z]
-    yaw=math.degrees(math.atan2(target_pt[1]-cam[1],target_pt[0]-cam[0]))
-    cams.append({"camera":[round(v,2) for v in cam],"yaw":round(yaw,2),"side":sign})
+# Place the camera on the same side of the wall as the two cages.
+toward_cages=[mid[0]-target_pt[0],mid[1]-target_pt[1],0.0]
+sign=1 if toward_cages[0]*nxy[0] + toward_cages[1]*nxy[1] >= 0.0 else -1
+cam=[target_pt[0]+sign*nxy[0]*112,target_pt[1]+sign*nxy[1]*112,cam_z]
+yaw=math.degrees(math.atan2(target_pt[1]-cam[1],target_pt[0]-cam[0]))
+camera={"camera":[round(v,2) for v in cam],"yaw":round(yaw,2),"side":sign}
 
-cfg=[]
-cfg += ['set g_cheats 1','set cg_draw2D 0','set cg_drawGun 0','set cg_drawCrosshair 0']
-# Capture both internally so one valid side can be selected after inspection.
-for i,c in enumerate(cams):
-    x,y,z=c["camera"]
-    cfg += [f'setviewpos {x} {y} {z} {c["yaw"]}','wait 45',f'screenshot cagewall_orm_side{i}','wait 15']
-cfg += ['quit']
+cfg=['set g_cheats 1','set cg_draw2D 0','set cg_drawGun 0','set cg_drawCrosshair 0']
+x,y,z=camera["camera"]
+cfg += [f'setviewpos {x} {y} {z} {camera["yaw"]}','wait 45','screenshot cagewall_orm_real','wait 15','quit']
 (outdir/"cagewall_orm_capture.cfg").write_text("\n".join(cfg)+"\n")
 
 report={
@@ -251,7 +263,7 @@ report={
     "orm_path":str(orm_path.name),
     "orm_channel_mean":{"AO":round(ImageStat.Stat(ao).mean[0]/255.0,4),"Roughness":round(ImageStat.Stat(rough).mean[0]/255.0,4),"Metallic":0.0},
     "pk3":pk3_path.name,
-    "camera_candidates":cams,
+    "camera":camera,
     "top_wall_candidates":[{"shader":s["shader"],"score":round(sc,2),"distance":round(dd,2),"center":[round(v,1) for v in s["center"]],"normal":None if not s["normal"] else [round(v,3) for v in s["normal"]]} for sc,dd,s in cand[:12]]
 }
 (outdir/"cagewall_orm_proof.json").write_text(json.dumps(report,indent=2)+"\n")
