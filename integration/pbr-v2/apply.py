@@ -373,6 +373,43 @@ new='''  #if defined(USE_PBR2)
 s=replace_once(s,old,new,"output transfer line")
 p.write_text(s); changed.append("SP/code/rend2/glsl/lightall_fp.glsl")
 
+# V3 BSP directional recovery: legacy RTCW falls back to the geometric surface
+# normal whenever the sampled lightgrid direction is too oblique.  That erases
+# the tangential component needed by normal-mapped lightmapped BSP materials.
+# Preserve legacy behavior for r_pbr 0/1/2; for r_pbr >= 3, fold the sampled
+# direction into the front hemisphere instead of replacing it with the normal.
+if stage >= 3:
+    p,s=read("tr_light.c")
+    old='''	if (DotProduct(ent.lightDir, normal) > 0.2f)
+		VectorCopy(ent.lightDir, lightDir);
+	else
+		VectorCopy(normal, lightDir);
+'''
+    new='''	{
+		float ndl = DotProduct(ent.lightDir, normal);
+		if (ndl > 0.2f)
+		{
+			VectorCopy(ent.lightDir, lightDir);
+		}
+		else if (r_pbr->integer >= 3)
+		{
+			// DarkWolf PBR2 BSP directional recovery V4.1.
+			// Retain the lightgrid tangent component and bias only enough toward
+			// the macro surface normal to keep the direction in the visible
+			// hemisphere.  Old Rend2 discarded the tangent component completely.
+			VectorMA(ent.lightDir, 0.35f - ndl, normal, lightDir);
+			if (VectorNormalize(lightDir) == 0.0f)
+				VectorCopy(normal, lightDir);
+		}
+		else
+		{
+			VectorCopy(normal, lightDir);
+		}
+	}
+'''
+    s=replace_once(s,old,new,"PBR2 BSP directional recovery")
+    p.write_text(s); changed.append("SP/code/rend2/tr_light.c")
+
 if stage >= 2:
     # Add a flag rather than a new texture unit/type. Packed ORM remains an ordinary RGBA image
     # but receives data-map mip filtering and no light scaling.
