@@ -12,10 +12,10 @@ public static class PbrExportService
         TextureAsset asset,
         BitmapSource currentBaseColor,
         bool includeBaseColor,
-        BitmapSource normal,
-        BitmapSource orm,
+        PbrResult pbr,
         bool writeExplicitMtr,
         PbrSettings settings,
+        MaterialAnalysis? analysis,
         string variantName)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outputPk3) ?? ".");
@@ -30,25 +30,53 @@ public static class PbrExportService
         }
 
         string normalPath = asset.ShaderName + "_n.tga";
+        string normalHeightPath = asset.ShaderName + "_nh.tga";
+        string heightPath = asset.ShaderName + "_h.tga";
         string ormPath = asset.ShaderName + "_orm.tga";
 
         string tmpN = Path.GetTempFileName();
+        string tmpNh = Path.GetTempFileName();
+        string tmpH = Path.GetTempFileName();
         string tmpO = Path.GetTempFileName();
         try
         {
-            TgaCodec.Save(normal, tmpN);
-            TgaCodec.Save(orm, tmpO);
+            TgaCodec.Save(pbr.Normal, tmpN);
+            TgaCodec.Save(pbr.NormalHeight, tmpNh);
+            TgaCodec.Save(pbr.Height, tmpH);
+            TgaCodec.Save(pbr.Orm, tmpO);
+
             Write(zip, normalPath, File.ReadAllBytes(tmpN));
             Write(zip, ormPath, File.ReadAllBytes(tmpO));
+
+            // _nh is the native Rend2 normal+height convention. Its RGB is tangent-space
+            // normal and alpha is height. The standalone _h is authoring/debug data.
+            if (settings.ParallaxEnabled)
+            {
+                Write(zip, normalHeightPath, File.ReadAllBytes(tmpNh));
+                Write(zip, heightPath, File.ReadAllBytes(tmpH));
+            }
         }
         finally
         {
-            try { File.Delete(tmpN); } catch { }
-            try { File.Delete(tmpO); } catch { }
+            foreach (string p in new[] { tmpN, tmpNh, tmpH, tmpO })
+                try { File.Delete(p); } catch { }
         }
 
         if (writeExplicitMtr)
         {
+            string normalStage = settings.ParallaxEnabled
+                ? $@"    {{
+        stage normalParallaxMap
+        map {asset.ShaderName}_nh
+        normalScale 1 1
+        parallaxDepth {settings.ParallaxDepth.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)}
+    }}"
+                : $@"    {{
+        stage normalMap
+        map {asset.ShaderName}_n
+        normalScale 1 1
+    }}";
+
             string mtr = $@"{asset.ShaderName}
 {{
     qer_editorimage {asset.EntryPath}
@@ -57,11 +85,7 @@ public static class PbrExportService
         map {asset.ShaderName}
         rgbGen identity
     }}
-    {{
-        stage normalMap
-        map {asset.ShaderName}_n
-        normalScale 1 1
-    }}
+{normalStage}
     {{
         stage ormMap
         map {asset.ShaderName}_orm
@@ -72,22 +96,46 @@ public static class PbrExportService
     }}
 }}
 ";
-            string key = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(asset.ShaderName))).ToLowerInvariant()[..10];
-            Write(zip, $"scripts/dw_pbrstudio_{key}.mtr", System.Text.Encoding.UTF8.GetBytes(mtr));
+            string key = Convert.ToHexString(
+                System.Security.Cryptography.SHA1.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(asset.ShaderName)))
+                .ToLowerInvariant()[..10];
+
+            Write(zip, $"scripts/dw_pbrstudio_v2_{key}.mtr", System.Text.Encoding.UTF8.GetBytes(mtr));
         }
 
         var manifest = new
         {
-            generator = "DarkWolf PBR Studio V1",
-            target = "ioRTCW Rend2 DarkWolf r_pbr 3",
+            generator = "DarkWolf PBR Studio V2",
+            target = "ioRTCW Rend2 DarkWolf r_pbr 3 / BSP Relight V4.2",
             source = asset.EntryPath,
             shader = asset.ShaderName,
             variant = variantName,
-            maps = new { normal = normalPath, orm = ormPath, ormChannels = "R=AO, G=Roughness, B=Metallic" },
+            material = analysis is null ? null : new
+            {
+                kind = analysis.Kind.ToString(),
+                confidence = analysis.Confidence,
+                reason = analysis.Reason,
+                analysis.MeanLuminance,
+                analysis.MeanSaturation,
+                analysis.LuminanceStdDev,
+                analysis.EdgeDensity
+            },
+            maps = new
+            {
+                normal = normalPath,
+                normalHeight = settings.ParallaxEnabled ? normalHeightPath : null,
+                height = settings.ParallaxEnabled ? heightPath : null,
+                orm = ormPath,
+                ormChannels = "R=AO, G=Roughness, B=Metallic",
+                normalHeightChannels = settings.ParallaxEnabled ? "RGB=Normal XYZ, A=Height" : null
+            },
             pbr = settings,
+            validation = pbr.Report,
             explicitMtr = writeExplicitMtr,
             generatedUtc = DateTime.UtcNow
         };
+
         Write(zip, $"darkwolf_pbrstudio/{Sanitize(asset.ShaderName)}.json",
             JsonSerializer.SerializeToUtf8Bytes(manifest, new JsonSerializerOptions { WriteIndented = true }));
     }
