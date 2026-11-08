@@ -96,6 +96,9 @@ try
         Size = 0
     };
 
+    // Standard V2.02 materials keep parallax off by default; enable it here only
+    // to verify the optional _nh/_h export contract.
+    settings.ParallaxEnabled = true;
     string pk3 = Path.Combine(temp, "test.pk3");
     PbrExportService.Export(pk3, asset, source, false, pbr, true, settings, analysis, "SelfTest");
 
@@ -106,7 +109,7 @@ try
     Require(names.Contains("textures/snow/s_cathedrale_c06_h.tga"), "export contains authoring height");
     Require(names.Contains("textures/snow/s_cathedrale_c06_orm.tga"), "export contains _orm");
 
-    var mtrEntry = zip.Entries.Single(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v2_", StringComparison.OrdinalIgnoreCase));
+    var mtrEntry = zip.Entries.Single(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v202_", StringComparison.OrdinalIgnoreCase));
     using var sr = new StreamReader(mtrEntry.Open());
     string mtr = sr.ReadToEnd();
     Require(mtr.Contains("stage normalParallaxMap"), "explicit MTR uses normalParallaxMap");
@@ -118,4 +121,4 @@ finally
     try { Directory.Delete(temp, true); } catch { }
 }
 
-Console.WriteLine("DARKWOLF_PBR_STUDIO_V2_SELFTEST_PASS");
+Console.WriteLine("DARKWOLF_PBR_STUDIO_V202_SELFTEST_PASS");
