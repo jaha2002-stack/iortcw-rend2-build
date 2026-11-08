@@ -130,6 +130,22 @@ try
     Require(names.Contains("textures/snow/s_cathedrale_c06_h.tga"), "export contains authoring height");
     Require(names.Contains("textures/snow/s_cathedrale_c06_orm.tga"), "export contains _orm");
 
+    byte TgaBpp(string name)
+    {
+        var e = zip.Entries.Single(x => x.FullName.Equals(name, StringComparison.OrdinalIgnoreCase));
+        using var s = e.Open();
+        Span<byte> header = stackalloc byte[18];
+        int read = s.Read(header);
+        if (read != 18) throw new Exception("SELFTEST FAIL: truncated TGA " + name);
+        return header[16];
+    }
+    Require(TgaBpp("textures/snow/s_cathedrale_c06_n.tga") == 24,
+        "ordinary Normal exports as reference-compatible 24-bit TGA");
+    Require(TgaBpp("textures/snow/s_cathedrale_c06_orm.tga") == 24,
+        "ORM exports as reference-compatible 24-bit TGA");
+    Require(TgaBpp("textures/snow/s_cathedrale_c06_nh.tga") == 32,
+        "_nh remains 32-bit because alpha carries Height");
+
     var mtrEntry = zip.Entries.Single(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v203_", StringComparison.OrdinalIgnoreCase));
     using var sr = new StreamReader(mtrEntry.Open());
     string mtr = sr.ReadToEnd();
