@@ -117,21 +117,40 @@ public static class PbrGenerator
         var roughValues = new double[count];
         var metallicValues = new double[count];
 
+        bool handGeometry = settings.GenerationMode is PbrGenerationMode.ReferenceHandGenerated or PbrGenerationMode.MacroReliefEnhanced;
         for (int y = 0; y < h; y++)
         {
-            int ym = settings.GenerationMode == PbrGenerationMode.ReferenceHandGenerated ? Math.Max(0, y - 1) : Wrap(y - 1, h);
-            int yp = settings.GenerationMode == PbrGenerationMode.ReferenceHandGenerated ? Math.Min(h - 1, y + 1) : Wrap(y + 1, h);
+            int ym = handGeometry ? Math.Max(0, y - 1) : Wrap(y - 1, h);
+            int yp = handGeometry ? Math.Min(h - 1, y + 1) : Wrap(y + 1, h);
 
             for (int x = 0; x < w; x++)
             {
-                int xm = settings.GenerationMode == PbrGenerationMode.ReferenceHandGenerated ? Math.Max(0, x - 1) : Wrap(x - 1, w);
-                int xp = settings.GenerationMode == PbrGenerationMode.ReferenceHandGenerated ? Math.Min(w - 1, x + 1) : Wrap(x + 1, w);
-                double H(int xx, int yy) => normalHeightSource[yy * w + xx];
+                int xm = handGeometry ? Math.Max(0, x - 1) : Wrap(x - 1, w);
+                int xp = handGeometry ? Math.Min(w - 1, x + 1) : Wrap(x + 1, w);
 
-                double gx = (H(xp, ym) + 2 * H(xp, y) + H(xp, yp)
-                           - H(xm, ym) - 2 * H(xm, y) - H(xm, yp)) / 8.0;
-                double gy = (H(xm, yp) + 2 * H(x, yp) + H(xp, yp)
-                           - H(xm, ym) - 2 * H(x, ym) - H(xp, ym)) / 8.0;
+                double gx, gy;
+                if (referenceHeightByte is not null)
+                {
+                    // Preserve the Python reference's integer Sobel numerator before
+                    // division. Doing the weighted sums in normalized doubles leaves
+                    // tiny negative cancellation errors that encode flat 0 as 127
+                    // instead of the reference value 128.
+                    int G(int xx, int yy) => referenceHeightByte[yy * w + xx];
+                    int gxNum = G(xp, ym) + 2 * G(xp, y) + G(xp, yp)
+                              - G(xm, ym) - 2 * G(xm, y) - G(xm, yp);
+                    int gyNum = G(xm, yp) + 2 * G(x, yp) + G(xp, yp)
+                              - G(xm, ym) - 2 * G(x, ym) - G(xp, ym);
+                    gx = gxNum / (8.0 * 255.0);
+                    gy = gyNum / (8.0 * 255.0);
+                }
+                else
+                {
+                    double H(int xx, int yy) => normalHeightSource[yy * w + xx];
+                    gx = (H(xp, ym) + 2 * H(xp, y) + H(xp, yp)
+                        - H(xm, ym) - 2 * H(xm, y) - H(xm, yp)) / 8.0;
+                    gy = (H(xm, yp) + 2 * H(x, yp) + H(xp, yp)
+                        - H(xm, ym) - 2 * H(x, ym) - H(xp, ym)) / 8.0;
+                }
 
                 if (settings.GenerationMode == PbrGenerationMode.MacroReliefEnhanced)
                 {
