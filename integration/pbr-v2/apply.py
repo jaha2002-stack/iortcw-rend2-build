@@ -310,8 +310,25 @@ s=replace_once(s,old,new,"direct GGX")
 old='''	gl_FragColor.rgb += ambientColor * diffuse.rgb;
 '''
 new='''	gl_FragColor.rgb += ambientColor * diffuse.rgb * materialAO;
+
+  #if defined(USE_PBR2_BSP_RELIGHT_V4) && defined(USE_LIGHTMAP) && defined(USE_CUBEMAP)
+	// DarkWolf PBR2 BSP diffuse-IBL relight V4.2.
+	// Legacy RTCW lightmaps contain irradiance magnitude but no per-pixel
+	// normal-aware ambient response. Use the existing cubemap as a low-frequency
+	// directional irradiance guide. Normalize against the macro surface normal
+	// so a flat material normal produces zero correction.
+	if (u_EnableTextures.w > 0.5 && u_EnableTextures.x > 0.5)
+	{
+		vec3 dwEnvN = DW_SRGBToLinear(textureCubeLod(u_CubeMap, N, ROUGHNESS_MIPS * 0.75).rgb);
+		vec3 dwEnvMacro = DW_SRGBToLinear(textureCubeLod(u_CubeMap, surfNormal, ROUGHNESS_MIPS * 0.75).rgb);
+		float dwEnvLumN = dot(dwEnvN, vec3(0.2126, 0.7152, 0.0722));
+		float dwEnvLumMacro = max(dot(dwEnvMacro, vec3(0.2126, 0.7152, 0.0722)), 0.015);
+		float dwEnvRatio = clamp(dwEnvLumN / dwEnvLumMacro, 0.65, 1.35);
+		gl_FragColor.rgb += dwBakedIrradiance * diffuse.rgb * materialAO * ((dwEnvRatio - 1.0) * 0.65);
+	}
+  #endif
 '''
-s=replace_once(s,old,new,"material AO")
+s=replace_once(s,old,new,"material AO + BSP diffuse IBL")
 
 old='''	reflectance = EnvironmentBRDF(roughness, NE, specular.rgb);
 '''
