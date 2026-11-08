@@ -44,8 +44,19 @@ Require(analysis.Kind == MaterialKind.SnowyStone, "snow cathedral path classifie
 Require(analysis.Confidence >= 0.60, "material classification has useful confidence");
 
 var settings = PbrSettings.FromProfile(MaterialProfile.For(analysis.Kind));
+settings.GenerationMode = PbrGenerationMode.ReferenceHandGenerated;
+settings.NormalStrength = 20;
+settings.HeightContrast = 1.0;
 var pbr = PbrGenerator.Generate(source, settings);
-Console.WriteLine("STONE REPORT: " + pbr.Report.Summary);
+Console.WriteLine("REFERENCE REPORT: " + pbr.Report.Summary);
+
+var macroSettings = PbrSettings.FromProfile(MaterialProfile.For(analysis.Kind));
+macroSettings.GenerationMode = PbrGenerationMode.MacroReliefEnhanced;
+macroSettings.NormalStrength = 20;
+macroSettings.HeightContrast = 1.0;
+macroSettings.MacroReliefBoost = 0.75;
+var macroPbr = PbrGenerator.Generate(source, macroSettings);
+Console.WriteLine("MACRO REPORT: " + macroPbr.Report.Summary);
 
 Require(pbr.Height.PixelWidth == 128 && pbr.Height.PixelHeight == 128, "Height dimensions preserved");
 Require(pbr.Normal.PixelWidth == 128 && pbr.Orm.PixelHeight == 128, "Normal/ORM dimensions preserved");
@@ -54,6 +65,16 @@ Require(pbr.Report.P90NormalAngleDeg < 58.5, "Normal slopes stay within safety r
 Require(pbr.Report.MeanMetallic < 0.02, "Snowy stone remains dielectric");
 Require(pbr.Report.MeanRoughness > 0.45 && pbr.Report.MeanRoughness < 0.98, "Roughness is physically plausible");
 Require(pbr.Report.MeanAo > 0.50 && pbr.Report.MeanAo <= 1.0, "AO is physically bounded");
+Require(macroPbr.Report.P90NormalAngleDeg > pbr.Report.P90NormalAngleDeg + 2.0,
+    "macro mode increases broad structural relief over hand reference");
+Require(Math.Abs(macroPbr.Report.MeanAo - pbr.Report.MeanAo) < 0.002,
+    "macro mode preserves hand-reference AO response");
+Require(Math.Abs(macroPbr.Report.MeanRoughness - pbr.Report.MeanRoughness) < 0.002,
+    "macro mode preserves hand-reference roughness response");
+var refHeightBytes = ImageService.ToBgra(pbr.Height, out _, out _);
+var macroHeightBytes = ImageService.ToBgra(macroPbr.Height, out _, out _);
+Require(refHeightBytes.SequenceEqual(macroHeightBytes),
+    "macro mode keeps exact hand-reference height field (no new pits/holes)");
 
 var nh = ImageService.ToBgra(pbr.NormalHeight, out var nw, out var nhh);
 byte minAlpha = 255, maxAlpha = 0;
@@ -109,7 +130,7 @@ try
     Require(names.Contains("textures/snow/s_cathedrale_c06_h.tga"), "export contains authoring height");
     Require(names.Contains("textures/snow/s_cathedrale_c06_orm.tga"), "export contains _orm");
 
-    var mtrEntry = zip.Entries.Single(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v202_", StringComparison.OrdinalIgnoreCase));
+    var mtrEntry = zip.Entries.Single(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v203_", StringComparison.OrdinalIgnoreCase));
     using var sr = new StreamReader(mtrEntry.Open());
     string mtr = sr.ReadToEnd();
     Require(mtr.Contains("stage normalParallaxMap"), "explicit MTR uses normalParallaxMap");
@@ -121,4 +142,4 @@ finally
     try { Directory.Delete(temp, true); } catch { }
 }
 
-Console.WriteLine("DARKWOLF_PBR_STUDIO_V202_SELFTEST_PASS");
+Console.WriteLine("DARKWOLF_PBR_STUDIO_V203_SELFTEST_PASS");
