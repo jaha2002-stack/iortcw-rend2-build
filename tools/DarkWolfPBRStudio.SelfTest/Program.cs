@@ -97,6 +97,10 @@ try
     };
 
     string pk3 = Path.Combine(temp, "test.pk3");
+    // Auto-generated parallax is intentionally OFF by default after close-wall
+    // validation. Enable it explicitly here only to test the optional export path.
+    settings.ParallaxEnabled = true;
+    settings.ParallaxDepth = 0.006;
     PbrExportService.Export(pk3, asset, source, false, pbr, true, settings, analysis, "SelfTest");
 
     using var zip = ZipFile.OpenRead(pk3);
