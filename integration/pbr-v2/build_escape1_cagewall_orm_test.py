@@ -214,8 +214,8 @@ for y in range(h):
         b=bpx[x,y]/255.0
         e=epx[x,y]/255.0
         local=max(-0.25,min(0.25,g-b))
-        a=max(0.55,min(1.0,0.78 + 0.20*g + 0.20*local))
-        r=max(0.62,min(0.96,0.78 + 0.12*(1.0-g) + 0.10*e))
+        a=max(0.48,min(1.0,0.72 + 0.24*g + 0.28*local))
+        r=max(0.50,min(0.90,0.66 + 0.15*(1.0-g) + 0.12*e))
         apx[x,y]=round(a*255)
         rpx[x,y]=round(r*255)
 metal=Image.new("L",(w,h),0)
@@ -230,7 +230,7 @@ height=gray.filter(ImageFilter.GaussianBlur(radius=max(0.8,min(w,h)/220.0)))
 hpx=height.load()
 normal_img=Image.new("RGB",(w,h))
 npx=normal_img.load()
-strength=2.25
+strength=7.5
 for y in range(h):
     ym=max(0,y-1); yp=min(h-1,y+1)
     for x in range(w):
@@ -251,11 +251,58 @@ for y in range(h):
 normal_path=outdir/(Path(shader).name+"_n.tga")
 normal_img.save(normal_path)
 
-# Two additive packages are emitted so A/B can be run in fresh processes:
-# A: no package (original material only)
-# B: full PBR package with Normal + ORM.
+# Build two explicit Rend2 .mtr overrides with identical diffuse/lightmap layout.
+# A contains only BaseColor + lightmap.
+# B contains the exact same layout plus Normal + ORM.
+# This makes the A/B delta attributable to the PBR maps rather than implicit-shader parsing.
+material_baseline = f"""{
+shader}
+{{
+    qer_editorimage {shader}.jpg
+    {{
+        stage diffuseMap
+        map {shader}
+        rgbGen identity
+    }}
+    {{
+        map $lightmap
+        blendFunc GL_DST_COLOR GL_ZERO
+    }}
+}}
+"""
+
+material_full = f"""{
+shader}
+{{
+    qer_editorimage {shader}.jpg
+    {{
+        stage diffuseMap
+        map {shader}
+        rgbGen identity
+    }}
+    {{
+        stage normalMap
+        map {shader}_n
+        normalScale 1 1
+    }}
+    {{
+        stage ormMap
+        map {shader}_orm
+    }}
+    {{
+        map $lightmap
+        blendFunc GL_DST_COLOR GL_ZERO
+    }}
+}}
+"""
+
+pk3_baseline=outdir/"zzz_dw_escape1_cage_wall_baseline.pk3"
+with zipfile.ZipFile(pk3_baseline,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+    z.writestr("scripts/dw_c46_ab.mtr", material_baseline.encode("utf-8"))
+
 pk3_full=outdir/"zzz_dw_escape1_cage_wall_pbr_full.pk3"
 with zipfile.ZipFile(pk3_full,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+    z.writestr("scripts/dw_c46_ab.mtr", material_full.encode("utf-8"))
     z.writestr(shader+"_n.tga",normal_path.read_bytes())
     z.writestr(shader+"_orm.tga",orm_path.read_bytes())
 
@@ -306,7 +353,10 @@ report={
     "normal_strength":strength,
     "orm_path":str(orm_path.name),
     "orm_channel_mean":{"AO":round(ImageStat.Stat(ao).mean[0]/255.0,4),"Roughness":round(ImageStat.Stat(rough).mean[0]/255.0,4),"Metallic":0.0},
+    "pk3_baseline":pk3_baseline.name,
     "pk3_full":pk3_full.name,
+    "baseline_mtr":material_baseline,
+    "full_mtr":material_full,
     "camera":camera,
     "top_wall_candidates":[{"shader":s["shader"],"score":round(sc,2),"distance":round(dd,2),"center":[round(v,1) for v in s["center"]],"normal":None if not s["normal"] else [round(v,3) for v in s["normal"]]} for sc,dd,s in cand[:12]]
 }
