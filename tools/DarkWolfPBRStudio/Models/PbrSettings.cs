@@ -2,6 +2,7 @@ namespace DarkWolfPBRStudio.Models;
 
 public sealed class PbrSettings
 {
+    public PbrGenerationMode GenerationMode { get; set; } = PbrGenerationMode.MacroReliefEnhanced;
     public MaterialKind MaterialKind { get; set; } = MaterialKind.GenericDielectric;
     public double NormalStrength { get; set; } = 14.0;
     public double HeightContrast { get; set; } = 0.72;
@@ -18,6 +19,7 @@ public sealed class PbrSettings
     public double Metallic { get; set; } = 0.0;
     public bool ParallaxEnabled { get; set; }
     public double ParallaxDepth { get; set; } = 0.01;
+    public double MacroReliefBoost { get; set; } = 0.42;
 
     public static PbrSettings FromProfile(MaterialProfile profile) => new()
     {
