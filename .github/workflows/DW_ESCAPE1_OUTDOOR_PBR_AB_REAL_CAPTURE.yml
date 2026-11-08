@@ -1,0 +1,144 @@
+name: DW Escape1 Outdoor Full PBR AB Real Capture
+on:
+  push:
+    branches:
+      - test/pbr-v2-cagewall-orm-escape1
+    paths:
+      - .github/workflows/DW_ESCAPE1_OUTDOOR_PBR_AB_REAL_CAPTURE.yml
+      - integration/pbr-v2/build_escape1_outdoor_wall_pbr.py
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+      SELECTED_RANK: "0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential git gh python3 python3-pil libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+      - name: Reconstruct and build V4.2 renderer
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence protected-assets runtime_a runtime_b home_a home_b pbrtest
+          mkdir -p evidence
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+          python3 integration/pbr-v2/apply.py source --stage 3 --proof evidence/PBR_V42_OUTDOOR_AB_PROOF.json
+          python3 integration/pbr-v2/test.py source --stage 3 --out evidence/PBR_V42_OUTDOOR_AB_STATIC.json
+          make -C source/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD.log 2>&1 || { tail -180 evidence/BUILD.log; exit 1; }
+      - name: Fetch assets, choose wall and generate full PBR material
+        run: |
+          set -Eeuo pipefail
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          test -d "$retail_main"
+          echo "$retail_main" > evidence/retail_main_path.txt
+          python3 integration/pbr-v2/discover_escape1_outdoor_wall.py "$retail_main" --out evidence/outdoor_candidates.json --cfg evidence/unused.cfg
+          mkdir -p pbrtest
+          python3 integration/pbr-v2/build_escape1_outdoor_wall_pbr.py "$retail_main" evidence/outdoor_candidates.json --rank "$SELECTED_RANK" --outdir pbrtest | tee evidence/PBR_MATERIAL_BUILD.log
+          cp pbrtest/outdoor_pbr_proof.json evidence/
+          python3 - <<'PY' > evidence/camera.env
+          import json, math
+          o=json.load(open('pbrtest/outdoor_pbr_proof.json'))
+          c=o['camera']; t=o['target']
+          v=[c[i]-t[i] for i in range(3)]
+          l=math.sqrt(sum(x*x for x in v))
+          v=[x/l for x in v]
+          # Almost against the wall, but outside the renderer near plane / collision surface.
+          d=42.0
+          n=[t[i]+v[i]*d for i in range(3)]
+          yaw=math.degrees(math.atan2(t[1]-n[1],t[0]-n[0]))
+          print(f'CAM_X={n[0]:.3f}')
+          print(f'CAM_Y={n[1]:.3f}')
+          print(f'CAM_Z={n[2]:.3f}')
+          print(f'CAM_YAW={yaw:.3f}')
+          PY
+      - name: Prepare isolated A and B runtimes
+        run: |
+          set -Eeuo pipefail
+          exe="$(find source/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe"
+          buildroot="$(dirname "$exe")"
+          mkdir -p runtime_a/main runtime_b/main home_a home_b evidence/screenshots
+          cp -a "$buildroot/." runtime_a/
+          cp -a "$buildroot/." runtime_b/
+          retail_main="$(cat evidence/retail_main_path.txt)"
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime_a/main/ \;
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime_b/main/ \;
+          cp pbrtest/zzz_dw_escape1_outdoor_baseline.pk3 runtime_a/main/
+          cp pbrtest/zzz_dw_escape1_outdoor_fullpbr.pk3 runtime_b/main/
+      - name: Capture A close original wall
+        run: |
+          set -Eeuo pipefail
+          source evidence/camera.env
+          exe="$(find runtime_a -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 8s 120s "$exe"             +set fs_basepath "$PWD/runtime_a" +set fs_homepath "$PWD/home_a"             +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0             +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1             +set r_customwidth 1280 +set r_customheight 720             +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1 +set r_cubeMapping 1             +set r_dlightMode 2 +set r_forceSun 1 +set cg_draw2D 0 +set cg_drawGun 0 +set cg_drawCrosshair 0             +devmap escape1 +wait 28 +setviewpos "$CAM_X" "$CAM_Y" "$CAM_Z" "$CAM_YAW"             +wait 14 +screenshot outdoor_A_original +wait 3 +quit
+          rc=$?
+          set -e
+          echo "$rc" > evidence/A_exit.txt
+          find home_a -type f \( -iname 'outdoor_A_original*.tga' -o -iname 'outdoor_A_original*.jpg' -o -iname 'outdoor_A_original*.png' \) -exec cp {} evidence/screenshots/ \;
+          test "$(find evidence/screenshots -type f -iname 'outdoor_A_original*' | wc -l)" -eq 1
+      - name: Capture B close full PBR wall
+        run: |
+          set -Eeuo pipefail
+          source evidence/camera.env
+          exe="$(find runtime_b -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 8s 120s "$exe"             +set fs_basepath "$PWD/runtime_b" +set fs_homepath "$PWD/home_b"             +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0             +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1             +set r_customwidth 1280 +set r_customheight 720             +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1 +set r_cubeMapping 1             +set r_dlightMode 2 +set r_forceSun 1 +set cg_draw2D 0 +set cg_drawGun 0 +set cg_drawCrosshair 0             +devmap escape1 +wait 28 +setviewpos "$CAM_X" "$CAM_Y" "$CAM_Z" "$CAM_YAW"             +wait 14 +screenshot outdoor_B_fullPBR +wait 3 +quit
+          rc=$?
+          set -e
+          echo "$rc" > evidence/B_exit.txt
+          find home_b -type f \( -iname 'outdoor_B_fullPBR*.tga' -o -iname 'outdoor_B_fullPBR*.jpg' -o -iname 'outdoor_B_fullPBR*.png' \) -exec cp {} evidence/screenshots/ \;
+          test "$(find evidence/screenshots -type f -iname 'outdoor_B_fullPBR*' | wc -l)" -eq 1
+      - name: Verify exact A/B material contract
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json,zipfile,pathlib,hashlib
+          p=json.load(open('pbrtest/outdoor_pbr_proof.json'))
+          za=zipfile.ZipFile('pbrtest/zzz_dw_escape1_outdoor_baseline.pk3')
+          zb=zipfile.ZipFile('pbrtest/zzz_dw_escape1_outdoor_fullpbr.pk3')
+          na=set(za.namelist()); nb=set(zb.namelist())
+          normal=p['shader']+'_n.tga'; orm=p['shader']+'_orm.tga'
+          assert normal not in na and orm not in na
+          assert normal in nb and orm in nb
+          shots=list(pathlib.Path('evidence/screenshots').glob('*'))
+          assert len(shots)==2,shots
+          print('SELECTED_SHADER',p['shader'])
+          print('ORIGINAL_SOURCE',p['original_texture_source'])
+          print('CLOSE_CAMERA',open('evidence/camera.env').read().strip())
+          for s in shots: print(s.name,hashlib.sha256(s.read_bytes()).hexdigest())
+          print('OUTDOOR_PBR_AB_REAL_CAPTURE_PASS')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DarkWolf-Escape1-Outdoor-FullPBR-AB-Real-Capture
+          path: |
+            evidence/
+            pbrtest/
+          if-no-files-found: warn
+          retention-days: 30
