@@ -45,6 +45,7 @@ Require(analysis.Confidence >= 0.60, "material classification has useful confide
 
 var settings = PbrSettings.FromProfile(MaterialProfile.For(analysis.Kind));
 var pbr = PbrGenerator.Generate(source, settings);
+Console.WriteLine("STONE REPORT: " + pbr.Report.Summary);
 
 Require(pbr.Height.PixelWidth == 128 && pbr.Height.PixelHeight == 128, "Height dimensions preserved");
 Require(pbr.Normal.PixelWidth == 128 && pbr.Orm.PixelHeight == 128, "Normal/ORM dimensions preserved");
