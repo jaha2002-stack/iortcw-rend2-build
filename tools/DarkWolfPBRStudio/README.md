@@ -1,4 +1,4 @@
-# DarkWolf PBR Studio V2.03
+# DarkWolf PBR Studio V2.04
 
 Windows authoring tool for ioRTCW Rend2 DarkWolf **r_pbr 3** materials.
 
@@ -121,3 +121,20 @@ CI: `.github/workflows/DW_PBR_STUDIO_WINDOWS.yml`
 ## V2.03 anti-pit invariant
 
 The self-test verifies that ReferenceHandGenerated and MacroReliefEnhanced produce byte-identical Height maps. MacroReliefEnhanced may only alter tangent-space normal slopes at coherent macro boundaries; it is not allowed to invent new height depressions. AO and roughness remain the hand-reference response.
+
+
+## V2.04 Batch Material Set
+
+V2.04 keeps the validated V2.03 ReferenceHandGenerated and MacroReliefEnhanced material quality and adds bulk authoring:
+
+- Ctrl/Shift multi-select many textures from one source PK3.
+- Generate the selected set with one shared profile/mode configuration.
+- Review every generated material in the Batch Review list before export.
+- Remove rejected items without discarding the rest of the batch.
+- Export all accepted materials into one PK3.
+- Export one combined `scripts/dw_pbrstudio_v204_batch.mtr` containing every material block.
+- Implicit textures automatically receive a complete diffuse/Normal/ORM/lightmap material definition.
+- Existing scripted materials are preserved and only their Normal/ORM stages are replaced or inserted; unrelated stages and surface properties stay intact.
+- Batch manifest records source shader, generated maps, validation, settings, and scripted-material provenance for every item.
+
+For a batch made from original retail BaseColor textures, the override PK3 contains the generated PBR maps and combined MTR without redundantly copying the source BaseColor images.
