@@ -101,12 +101,12 @@ public static class PbrExportService
                     System.Text.Encoding.UTF8.GetBytes(asset.ShaderName)))
                 .ToLowerInvariant()[..10];
 
-            Write(zip, $"scripts/dw_pbrstudio_v2_{key}.mtr", System.Text.Encoding.UTF8.GetBytes(mtr));
+            Write(zip, $"scripts/dw_pbrstudio_v202_{key}.mtr", System.Text.Encoding.UTF8.GetBytes(mtr));
         }
 
         var manifest = new
         {
-            generator = "DarkWolf PBR Studio V2",
+            generator = "DarkWolf PBR Studio V2.02",
             target = "ioRTCW Rend2 DarkWolf r_pbr 3 / BSP Relight V4.2",
             source = asset.EntryPath,
             shader = asset.ShaderName,
