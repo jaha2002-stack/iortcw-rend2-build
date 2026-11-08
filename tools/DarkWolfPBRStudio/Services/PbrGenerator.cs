@@ -165,7 +165,7 @@ public static class PbrGenerator
                 {
                     // Rust oxide is dielectric. Saturated/rough regions reduce the
                     // effective metallic response while intact darker metal retains it.
-                    double oxide = Math.Clamp(saturation[i] * 1.35 + micro * 0.25, 0.0, 1.0);
+                    double oxide = Math.Clamp(saturation[i] * 1.35 + structureEnergy * 0.25, 0.0, 1.0);
                     metallic *= 1.0 - oxide * 0.75;
                 }
 
