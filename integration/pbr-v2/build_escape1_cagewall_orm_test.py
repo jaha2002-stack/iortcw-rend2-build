@@ -68,12 +68,16 @@ for a in range(len(cages)):
         oa,ob=cages[a][2],cages[b][2]
         dd=math.sqrt(sum((oa[k]-ob[k])**2 for k in range(3)))
         dz=abs(oa[2]-ob[2])
+        mean_z=(oa[2]+ob[2])*0.5
         if 70.0 <= dd <= 240.0 and dz <= 100.0:
-            pairs.append((dd + dz*0.35,a,b))
+            # The requested start-area pair is the high ceiling pair.
+            # Prefer pairs above z=700; among them choose the tightest physical pair.
+            high_penalty=0.0 if mean_z >= 700.0 else (700.0-mean_z)*8.0
+            pairs.append((high_penalty + dd + dz*0.35,-mean_z,a,b))
 if not pairs:
     raise SystemExit("no plausible adjacent cage-light pair found")
 pairs.sort()
-_,ia,ib=pairs[0]
+_,_,ia,ib=pairs[0]
 cages=[cages[ia],cages[ib]]
 mid=[sum(x[2][k] for x in cages)/len(cages) for k in range(3)]
 
