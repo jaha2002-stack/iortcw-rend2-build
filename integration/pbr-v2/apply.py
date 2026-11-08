@@ -31,7 +31,10 @@ new='''	if (r_pbr->integer)
 	if (r_pbr->integer >= 2)
 		Q_strcat(dest, size, "#define USE_PBR2\\n");
 	if (r_pbr->integer >= 3)
+	{
 		Q_strcat(dest, size, "#define USE_PBR2_IBL_V3\\n");
+		Q_strcat(dest, size, "#define USE_PBR2_BSP_RELIGHT_V4\\n");
+	}
 '''
 s=replace_once(s,old,new,"tr_glsl USE_PBR")
 p.write_text(s); changed.append("SP/code/rend2/tr_glsl.c")
@@ -225,6 +228,59 @@ new='''  #if defined(USE_SPECULARMAP)
 '''
 s=replace_once(s,old,new,"material decode")
 
+old='''  #if !defined(USE_LIGHT_VECTOR)
+	ambientColor = lightColor;
+	float surfNL = clamp(dot(surfNormal, L), 0.0, 1.0);
+
+	// reserve 25% ambient to avoid black areas on normalmaps
+	lightColor *= 0.75;
+
+	// Scale the incoming light to compensate for the baked-in light angle
+	// attenuation.
+	lightColor /= max(surfNL, 0.25);
+
+	// Recover any unused light as ambient, in case attenuation is over 4x or
+	// light is below the surface
+	ambientColor = max(ambientColor - lightColor * surfNL, vec3(0.0));
+  #else
+	ambientColor = var_ColorAmbient.rgb;
+  #endif
+'''
+new='''  #if !defined(USE_LIGHT_VECTOR)
+	float surfNL = clamp(dot(surfNormal, L), 0.0, 1.0);
+  #if defined(USE_PBR2_BSP_RELIGHT_V4) && defined(USE_LIGHTMAP)
+	// DarkWolf PBR2 BSP relight V4.
+	// RTCW lightmaps contain baked irradiance but no per-texel direction.
+	// R_CalcVertexLightDirs supplies the best available dominant direction from
+	// the lightgrid and falls back to the macro surface normal.  Reproject the
+	// directional share of the baked irradiance onto the material normal while
+	// preserving a conservative indirect share.  With a flat normal N==surfNormal
+	// this resolves to the original baked irradiance (no baseline brightness shift).
+	vec3 dwBakedIrradiance = lightColor;
+	float dwDirectionConfidence = smoothstep(0.20, 0.80, surfNL);
+	float dwDirectionalShare = mix(0.72, 0.88, dwDirectionConfidence);
+	lightColor = dwBakedIrradiance * (dwDirectionalShare / max(surfNL, 0.25));
+	ambientColor = dwBakedIrradiance * (1.0 - dwDirectionalShare);
+  #else
+	ambientColor = lightColor;
+
+	// Legacy Rend2 behavior: reserve 25% ambient to avoid black areas on normalmaps.
+	lightColor *= 0.75;
+
+	// Scale the incoming light to compensate for the baked-in light angle
+	// attenuation.
+	lightColor /= max(surfNL, 0.25);
+
+	// Recover any unused light as ambient, in case attenuation is over 4x or
+	// light is below the surface.
+	ambientColor = max(ambientColor - lightColor * surfNL, vec3(0.0));
+  #endif
+  #else
+	ambientColor = var_ColorAmbient.rgb;
+  #endif
+'''
+s=replace_once(s,old,new,"PBR2 BSP lightmap relight")
+
 old='''  #if defined(r_deluxeSpecular)
     #if defined(USE_LIGHT_VECTOR)
 	reflectance += CalcSpecular(specular.rgb, NH, EH, roughness) * r_deluxeSpecular;
@@ -233,7 +289,13 @@ old='''  #if defined(r_deluxeSpecular)
     #endif
   #endif
 '''
-new='''  #if defined(r_deluxeSpecular)
+new='''  #if defined(USE_PBR2_BSP_RELIGHT_V4) && defined(USE_LIGHTMAP)
+	// A packed ORM map means the material has authored roughness/F0 data.
+	// Add a conservative GGX response from the dominant baked-light direction.
+	// This restores the material response that legacy lightmaps otherwise erase.
+	if (u_EnableTextures.z > 0.5)
+		reflectance += DW_CalcSpecularGGX(specular.rgb, NL, NE, NH, EH, roughness) * 0.60;
+  #elif defined(r_deluxeSpecular)
     #if defined(USE_PBR2)
 	reflectance += DW_CalcSpecularGGX(specular.rgb, NL, NE, NH, EH, roughness) * r_deluxeSpecular;
     #elif defined(USE_LIGHT_VECTOR)
