@@ -1,0 +1,313 @@
+name: DW Escape1 PBR Studio V2 AB Real Capture
+
+on:
+  push:
+    branches:
+      - test/pbr-studio-v2-escape1-ab
+    paths:
+      - .github/workflows/DW_ESCAPE1_PBR_STUDIO_V2_AB.yml
+      - tools/DarkWolfPBRStudio/**
+      - tools/DarkWolfPBRStudio.Cli/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  extract-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install extraction dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gh unzip python3
+
+      - name: Fetch retail source and extract exact previous-test texture
+        run: |
+          set -Eeuo pipefail
+          rm -rf protected-assets source-artifact
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          test -f "$retail_main/pak0.pk3"
+          mkdir -p source-artifact
+
+          python3 - "$retail_main/pak0.pk3" <<'PY'
+          import sys, zipfile, pathlib, hashlib, json
+          pak0=pathlib.Path(sys.argv[1])
+          entry="textures/snow/s_cathedrale_c06.jpg"
+          out=pathlib.Path("source-artifact/s_cathedrale_c06.jpg")
+          with zipfile.ZipFile(pak0) as z:
+              data=z.read(entry)
+          out.write_bytes(data)
+          proof={
+              "source":"pak0.pk3:"+entry,
+              "shader":"textures/snow/s_cathedrale_c06",
+              "sha256":hashlib.sha256(data).hexdigest(),
+              "bytes":len(data),
+              "previous_success_run":42447108559,
+              "camera":{"x":-2475.551,"y":263.887,"z":952.000,"yaw":107.241}
+          }
+          pathlib.Path("source-artifact/source_proof.json").write_text(json.dumps(proof,indent=2)+"\n")
+          print(json.dumps(proof,indent=2))
+          PY
+
+          cat > source-artifact/camera.env <<'EOF'
+          CAM_X=-2475.551
+          CAM_Y=263.887
+          CAM_Z=952.000
+          CAM_YAW=107.241
+          EOF
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pbrstudio-v2-escape1-source
+          path: source-artifact/
+          if-no-files-found: error
+          retention-days: 7
+
+  generate-v2:
+    needs: extract-source
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pbrstudio-v2-escape1-source
+          path: input
+
+      - name: Generate material with the actual PBR Studio V2 code
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet run --project tools/DarkWolfPBRStudio.Cli/DarkWolfPBRStudio.Cli.csproj -c Release -- --input "$PWD/input/s_cathedrale_c06.jpg" --outdir "$PWD/generated" --shader "textures/snow/s_cathedrale_c06" --entry "textures/snow/s_cathedrale_c06.jpg" --profile SnowyStone --parallax 1 | Tee-Object -FilePath "$PWD/PBR_STUDIO_V2_GENERATION.log"
+
+          if (-not (Select-String -Path "$PWD/PBR_STUDIO_V2_GENERATION.log" -Pattern 'DARKWOLF_PBR_STUDIO_V2_CLI_PASS' -Quiet)) {
+            throw 'PBR Studio V2 CLI did not report PASS'
+          }
+
+          Copy-Item input/camera.env generated/camera.env
+          Copy-Item input/source_proof.json generated/source_proof.json
+          Copy-Item PBR_STUDIO_V2_GENERATION.log generated/PBR_STUDIO_V2_GENERATION.log
+
+      - name: Verify V2 material contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $full = "$PWD/generated/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3"
+          $base = "$PWD/generated/zzz_dw_escape1_outdoor_original.pk3"
+          if (-not (Test-Path $full)) { throw 'full PBR V2 PK3 missing' }
+          if (-not (Test-Path $base)) { throw 'baseline PK3 missing' }
+
+          $zf=[System.IO.Compression.ZipFile]::OpenRead($full)
+          $names=@($zf.Entries | ForEach-Object { $_.FullName })
+          $zf.Dispose()
+          foreach($need in @(
+            'textures/snow/s_cathedrale_c06_n.tga',
+            'textures/snow/s_cathedrale_c06_nh.tga',
+            'textures/snow/s_cathedrale_c06_h.tga',
+            'textures/snow/s_cathedrale_c06_orm.tga'
+          )){
+            if($names -notcontains $need){ throw "missing V2 output $need" }
+          }
+          Get-Content generated/pbr_studio_v2_proof.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pbrstudio-v2-escape1-material
+          path: generated/
+          if-no-files-found: error
+          retention-days: 14
+
+  capture:
+    needs: [extract-source, generate-v2]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pbrstudio-v2-escape1-material
+          path: generated
+
+      - name: Install TestLab dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential git gh python3 python3-pil libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+
+      - name: Reconstruct and build the same r_pbr 3 V4.2 renderer
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence protected-assets runtime_a runtime_b home_a home_b
+          mkdir -p evidence/screenshots
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+          python3 integration/pbr-v2/apply.py source --stage 3 --proof evidence/PBR3_RENDERER_PROOF.json
+          python3 integration/pbr-v2/test.py source --stage 3 --out evidence/PBR3_RENDERER_STATIC.json
+          make -C source/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD.log 2>&1 || { tail -180 evidence/BUILD.log; exit 1; }
+
+      - name: Fetch retail Escape1 assets
+        run: |
+          set -Eeuo pipefail
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          test -d "$retail_main"
+          echo "$retail_main" > evidence/retail_main_path.txt
+
+      - name: Prepare isolated Original and PBR Studio V2 runtimes
+        run: |
+          set -Eeuo pipefail
+          exe="$(find source/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe"
+          buildroot="$(dirname "$exe")"
+          mkdir -p runtime_a/main runtime_b/main home_a home_b
+          cp -a "$buildroot/." runtime_a/
+          cp -a "$buildroot/." runtime_b/
+
+          retail_main="$(cat evidence/retail_main_path.txt)"
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime_a/main/ \;
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime_b/main/ \;
+
+          cp generated/zzz_dw_escape1_outdoor_original.pk3 runtime_a/main/
+          cp generated/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3 runtime_b/main/
+          cp generated/pbr_studio_v2_proof.json evidence/
+          cp generated/source_proof.json evidence/
+          cp generated/PBR_STUDIO_V2_GENERATION.log evidence/
+
+      - name: Capture A original material
+        run: |
+          set -Eeuo pipefail
+          source generated/camera.env
+          exe="$(find runtime_a -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 8s 120s "$exe"             +set fs_basepath "$PWD/runtime_a" +set fs_homepath "$PWD/home_a"             +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0             +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1             +set r_customwidth 1280 +set r_customheight 720             +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1 +set r_parallaxMapping 1 +set r_cubeMapping 1             +set r_dlightMode 2 +set r_forceSun 1 +set cg_draw2D 0 +set cg_drawGun 0 +set cg_drawCrosshair 0             +devmap escape1 +wait 28 +setviewpos "$CAM_X" "$CAM_Y" "$CAM_Z" "$CAM_YAW"             +wait 14 +screenshot pbrv2_A_original +wait 3 +quit
+          rc=$?
+          set -e
+          echo "$rc" > evidence/A_exit.txt
+          find home_a -type f \( -iname 'pbrv2_A_original*.tga' -o -iname 'pbrv2_A_original*.jpg' -o -iname 'pbrv2_A_original*.png' \) -exec cp {} evidence/screenshots/ \;
+          test "$(find evidence/screenshots -type f -iname 'pbrv2_A_original*' | wc -l)" -eq 1
+
+      - name: Capture B PBR Studio V2 material
+        run: |
+          set -Eeuo pipefail
+          source generated/camera.env
+          exe="$(find runtime_b -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 8s 120s "$exe"             +set fs_basepath "$PWD/runtime_b" +set fs_homepath "$PWD/home_b"             +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0             +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1             +set r_customwidth 1280 +set r_customheight 720             +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1 +set r_parallaxMapping 1 +set r_cubeMapping 1             +set r_dlightMode 2 +set r_forceSun 1 +set cg_draw2D 0 +set cg_drawGun 0 +set cg_drawCrosshair 0             +devmap escape1 +wait 28 +setviewpos "$CAM_X" "$CAM_Y" "$CAM_Z" "$CAM_YAW"             +wait 14 +screenshot pbrv2_B_material +wait 3 +quit
+          rc=$?
+          set -e
+          echo "$rc" > evidence/B_exit.txt
+          find home_b -type f \( -iname 'pbrv2_B_material*.tga' -o -iname 'pbrv2_B_material*.jpg' -o -iname 'pbrv2_B_material*.png' \) -exec cp {} evidence/screenshots/ \;
+          test "$(find evidence/screenshots -type f -iname 'pbrv2_B_material*' | wc -l)" -eq 1
+
+      - name: Build clean PNG A-B evidence and quantitative diff
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from PIL import Image,ImageChops,ImageEnhance,ImageDraw
+          from pathlib import Path
+          import json,hashlib,zipfile
+
+          d=Path("evidence/screenshots")
+          a=next(d.glob("pbrv2_A_original*"))
+          b=next(d.glob("pbrv2_B_material*"))
+          A=Image.open(a).convert("RGB")
+          B=Image.open(b).convert("RGB")
+          assert A.size==B.size==(1280,720),(A.size,B.size)
+
+          ap=d/"pbrv2_A_original.png"
+          bp=d/"pbrv2_B_material.png"
+          A.save(ap)
+          B.save(bp)
+
+          side=Image.new("RGB",(A.width*2,A.height),(0,0,0))
+          side.paste(A,(0,0))
+          side.paste(B,(A.width,0))
+          draw=ImageDraw.Draw(side)
+          draw.rectangle((0,0,260,34),fill=(0,0,0))
+          draw.text((10,8),"A - Original",fill=(255,255,255))
+          draw.rectangle((A.width,0,A.width+390,34),fill=(0,0,0))
+          draw.text((A.width+10,8),"B - PBR Studio V2",fill=(255,255,255))
+          side.save(d/"pbrv2_AB_side_by_side.png")
+
+          diff=ImageChops.difference(A,B)
+          ImageEnhance.Brightness(diff).enhance(8.0).save(d/"pbrv2_AB_diff_x8.png")
+          vals=list(diff.getdata())
+          scalar=[(r+g+b)/3 for r,g,b in vals]
+          ss=sorted(scalar)
+          p95=ss[int(round((len(ss)-1)*.95))]
+          gt5=sum(v>5 for v in scalar)/len(scalar)*100
+          metrics={
+              "mean_abs_rgb":round(sum(scalar)/len(scalar),4),
+              "p95_abs_rgb":round(p95,4),
+              "pixels_diff_gt_5_percent":round(gt5,2),
+              "A_sha256":hashlib.sha256(ap.read_bytes()).hexdigest(),
+              "B_sha256":hashlib.sha256(bp.read_bytes()).hexdigest()
+          }
+          Path("evidence/AB_METRICS.json").write_text(json.dumps(metrics,indent=2)+"\n")
+          print(json.dumps(metrics,indent=2))
+
+          proof=json.load(open("generated/pbr_studio_v2_proof.json"))
+          assert proof["shader"]=="textures/snow/s_cathedrale_c06"
+          full=zipfile.ZipFile("generated/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3")
+          names=set(full.namelist())
+          for n in [
+              "textures/snow/s_cathedrale_c06_n.tga",
+              "textures/snow/s_cathedrale_c06_nh.tga",
+              "textures/snow/s_cathedrale_c06_h.tga",
+              "textures/snow/s_cathedrale_c06_orm.tga"
+          ]:
+              assert n in names,n
+          print("PBR_STUDIO_V2_ESCAPE1_REAL_AB_PASS")
+          PY
+
+          cp generated/s_cathedrale_c06_h_preview.png evidence/screenshots/
+          cp generated/s_cathedrale_c06_n_preview.png evidence/screenshots/
+          cp generated/s_cathedrale_c06_orm_preview.png evidence/screenshots/
+          cp generated/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3 evidence/
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DarkWolf-Escape1-PBRStudioV2-Real-AB
+          path: |
+            evidence/
+            generated/pbr_studio_v2_proof.json
+            generated/source_proof.json
+            generated/camera.env
+          if-no-files-found: warn
+          retention-days: 30
