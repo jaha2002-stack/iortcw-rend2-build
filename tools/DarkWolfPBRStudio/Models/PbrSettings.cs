@@ -19,7 +19,7 @@ public sealed class PbrSettings
     public double Metallic { get; set; } = 0.0;
     public bool ParallaxEnabled { get; set; }
     public double ParallaxDepth { get; set; } = 0.01;
-    public double MacroReliefBoost { get; set; } = 0.42;
+    public double MacroReliefBoost { get; set; } = 0.75;
 
     public static PbrSettings FromProfile(MaterialProfile profile) => new()
     {
