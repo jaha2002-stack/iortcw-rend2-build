@@ -36,13 +36,15 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(_sessionDir);
 
         VariantList.ItemsSource = _variants;
-        SdCliPathBox.Text = _settings.StableDiffusionCliPath;
+        SdCliPathBox.Text = !string.IsNullOrWhiteSpace(_settings.StableDiffusionCliPath)
+            ? _settings.StableDiffusionCliPath
+            : (_sd.IsBundledAvailable ? _sd.BundledCliPath : "");
         SdModelPathBox.Text = _settings.StableDiffusionModelPath;
         SdExtraArgsBox.Text = _settings.StableDiffusionExtraArgs;
         AiStrengthSlider.Value = _settings.AiStrength;
         UpdateSliderLabels();
 
-        Status($"Ready. Real-ESRGAN: {(_restore.IsAvailable ? "bundled" : "not found in this build")}.");
+        Status($"Ready. Real-ESRGAN: {(_restore.IsAvailable ? "bundled" : "missing")}; stable-diffusion.cpp: {(_sd.IsBundledAvailable ? "bundled" : "missing")}.");
         Closed += (_, _) =>
         {
             SaveSettings();
