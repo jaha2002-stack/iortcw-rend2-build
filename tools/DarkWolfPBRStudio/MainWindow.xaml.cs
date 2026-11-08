@@ -421,20 +421,13 @@ public partial class MainWindow : Window
                 GetSelectedVariant()?.Name ?? "Original");
 
             string parallax = settings.ParallaxEnabled
-                ? $"
-{_asset.ShaderName}_nh.tga
-{_asset.ShaderName}_h.tga"
+                ? $"\n{_asset.ShaderName}_nh.tga\n{_asset.ShaderName}_h.tga"
                 : "";
 
             Status($"Exported: {d.FileName}");
             MessageBox.Show(this,
-                "PBR Studio V2 override PK3 created. The source PK3 was not modified.
-
-" +
-                $"{_asset.ShaderName}_n.tga
-{_asset.ShaderName}_orm.tga{parallax}
-
-" +
+                "PBR Studio V2 override PK3 created. The source PK3 was not modified.\n\n" +
+                $"{_asset.ShaderName}_n.tga\n{_asset.ShaderName}_orm.tga{parallax}\n\n" +
                 _pbrResult.Report.Summary,
                 "Export complete", MessageBoxButton.OK, MessageBoxImage.Information);
         }
