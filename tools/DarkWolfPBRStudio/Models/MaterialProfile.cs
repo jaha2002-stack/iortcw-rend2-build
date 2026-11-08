@@ -1,0 +1,56 @@
+namespace DarkWolfPBRStudio.Models;
+
+public sealed record MaterialProfile(
+    MaterialKind Kind,
+    string DisplayName,
+    double NormalStrength,
+    double HeightContrast,
+    double FineWeight,
+    double CoarseWeight,
+    double ChromaSuppression,
+    double AoStrength,
+    double AoFloor,
+    double RoughnessBase,
+    double RoughnessMin,
+    double RoughnessMax,
+    double MicroRoughness,
+    double BrightnessRoughness,
+    double Metallic,
+    bool ParallaxRecommended,
+    double ParallaxDepth,
+    string PromptHint)
+{
+    public static MaterialProfile For(MaterialKind kind) => kind switch
+    {
+        MaterialKind.Stone => new(kind, "Stone", 22, 1.12, .72, .28, .62, 1.10, .50, .72, .52, .94, .20, .04, 0.0, true, .030,
+            "authentic rough stone masonry, preserve block layout and mortar, natural mineral microdetail"),
+        MaterialKind.SnowyStone => new(kind, "Snowy Stone", 20, 1.05, .70, .30, .58, 1.00, .52, .76, .56, .96, .18, .10, 0.0, true, .026,
+            "authentic snowy stone masonry, preserve exact stones and snow placement, natural mineral and packed snow detail"),
+        MaterialKind.Brick => new(kind, "Brick", 24, 1.20, .70, .30, .58, 1.18, .46, .74, .50, .94, .20, .05, 0.0, true, .032,
+            "authentic old brick and mortar, preserve brick layout, deep mortar seams, porous fired clay detail"),
+        MaterialKind.Concrete => new(kind, "Concrete", 15, .82, .78, .22, .70, .78, .58, .78, .62, .96, .15, .03, 0.0, false, .015,
+            "authentic aged concrete, preserve stains and cracks without turning painted discoloration into geometry"),
+        MaterialKind.Plaster => new(kind, "Plaster", 10, .58, .82, .18, .82, .62, .66, .82, .68, .98, .10, .02, 0.0, false, .010,
+            "authentic old plaster, subtle bumps, cracks and wear, preserve painted color"),
+        MaterialKind.Wood => new(kind, "Wood", 14, .76, .82, .18, .45, .70, .62, .68, .45, .88, .17, -.10, 0.0, false, .012,
+            "authentic aged wood grain, preserve plank seams and grain direction, natural fibers"),
+        MaterialKind.BareMetal => new(kind, "Bare Metal", 7, .38, .86, .14, .88, .34, .78, .28, .12, .62, .22, -.08, 1.0, false, .004,
+            "authentic bare metal surface, preserve machining and wear, no invented rust or paint"),
+        MaterialKind.PaintedMetal => new(kind, "Painted Metal", 8, .44, .84, .16, .82, .42, .74, .48, .28, .78, .18, .00, 0.0, false, .005,
+            "authentic painted metal, preserve paint chips and panel structure, paint remains dielectric"),
+        MaterialKind.RustedMetal => new(kind, "Rusted Metal", 13, .72, .78, .22, .55, .82, .58, .68, .40, .94, .24, .04, .20, false, .008,
+            "authentic corroded iron, preserve rust scale, pits and remaining metal, no invented geometry"),
+        MaterialKind.Ceramic => new(kind, "Ceramic", 6, .34, .88, .12, .90, .28, .84, .24, .12, .48, .10, -.04, 0.0, false, .003,
+            "authentic ceramic or glazed tile, preserve pattern, subtle surface imperfections"),
+        MaterialKind.Fabric => new(kind, "Fabric", 11, .50, .92, .08, .52, .48, .70, .88, .70, .98, .13, .02, 0.0, false, .004,
+            "authentic woven fabric, preserve pattern, weave and fiber detail, no hard relief"),
+        MaterialKind.Leather => new(kind, "Leather", 10, .48, .86, .14, .55, .50, .72, .58, .38, .82, .15, -.03, 0.0, false, .004,
+            "authentic worn leather, preserve grain, creases and patina"),
+        MaterialKind.SnowIce => new(kind, "Snow / Ice", 9, .52, .84, .16, .66, .60, .70, .66, .32, .96, .14, .20, 0.0, false, .010,
+            "authentic packed snow and ice, preserve snow shape, fine crystalline detail, physically plausible wetness"),
+        MaterialKind.Soil => new(kind, "Soil / Ground", 20, 1.00, .72, .28, .48, 1.05, .48, .82, .62, .98, .24, .02, 0.0, true, .024,
+            "authentic soil and ground, preserve stones, ruts and dirt clumps, natural granular relief"),
+        _ => new(MaterialKind.GenericDielectric, "Generic Dielectric", 14, .72, .78, .22, .70, .72, .62, .72, .48, .94, .14, .00, 0.0, false, .010,
+            "restore authentic original material, preserve layout and color, physically plausible microdetail")
+    };
+}
