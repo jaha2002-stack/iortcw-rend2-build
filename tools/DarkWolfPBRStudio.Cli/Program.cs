@@ -31,6 +31,9 @@ internal static class Program
 
             var profile = MaterialProfile.For(kind);
             var settings = PbrSettings.FromProfile(profile);
+            if (opt.TryGetValue("mode", out var modeName) &&
+                Enum.TryParse<PbrGenerationMode>(modeName, true, out var mode))
+                settings.GenerationMode = mode;
             ApplyOverrides(opt, settings);
 
             if (opt.TryGetValue("parallax", out var p))
@@ -117,6 +120,7 @@ internal static class Program
         SetDouble(opt, "micro-roughness", v => s.MicroRoughness = v);
         SetDouble(opt, "brightness-roughness", v => s.BrightnessRoughness = v);
         SetDouble(opt, "metallic", v => s.Metallic = v);
+        SetDouble(opt, "macro-relief-boost", v => s.MacroReliefBoost = v);
     }
 
     private static void SetDouble(Dictionary<string,string> opt, string key, Action<double> setter)
