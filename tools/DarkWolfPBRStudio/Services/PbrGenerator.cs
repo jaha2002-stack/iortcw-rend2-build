@@ -43,6 +43,7 @@ public static class PbrGenerator
         double[] coarse;
         double[] height;
         double[] normalHeightSource;
+        double[] macroNormalSource;
         double[] aoBlur;
 
         if (settings.GenerationMode == PbrGenerationMode.ReferenceHandGenerated)
@@ -60,37 +61,30 @@ public static class PbrGenerator
                 height[i] = Math.Clamp(0.5 + (v - 0.5) * settings.HeightContrast, 0.02, 0.98);
             }
             normalHeightSource = height;
+            macroNormalSource = height;
             aoBlur = mid;
         }
         else if (settings.GenerationMode == PbrGenerationMode.MacroReliefEnhanced)
         {
-            // V2.03 macro mode starts from the successful hand-generated solution and
-            // adds ONLY a low-frequency band. There is no local-valley/groove term, so
-            // isolated JPEG dark specks cannot become pits or holes.
-            fine = GaussianBlurWrap(gray601, w, h, Math.Max(0.82, minDim / 300.0));
-            mid = GaussianBlurWrap(gray601, w, h, Math.Max(1.8, minDim / 112.0));
-            coarse = GaussianBlurWrap(gray601, w, h, Math.Max(2.8, minDim / 70.0));
-            var macro = GaussianBlurWrap(gray601, w, h, Math.Max(5.2, minDim / 34.0));
+            // V2.03 final macro design: keep the successful hand-generated HEIGHT
+            // unchanged. Macro relief is produced only by selectively increasing normal
+            // slope at broad, coherent structural boundaries. This cannot create new
+            // dark pits/holes inside stone faces because no macro luminance band is added
+            // to the height field.
+            fine = GaussianBlurClamp(gray601, w, h, Math.Max(0.65, minDim / 320.0));
+            coarse = GaussianBlurClamp(gray601, w, h, Math.Max(2.2, minDim / 72.0));
+            mid = GaussianBlurClamp(gray601, w, h, Math.Max(1.0, minDim / 100.0));
 
             height = new double[count];
-            double boost = Math.Clamp(settings.MacroReliefBoost, 0.0, 1.0);
             for (int i = 0; i < count; i++)
             {
-                double referenceBase = 0.70 * fine[i] + 0.30 * coarse[i];
-
-                // Broad local shape only. Soft limiting prevents large illumination
-                // transitions from exploding while keeping stone-block relief readable.
-                double macroBand = coarse[i] - macro[i];
-                double macroSoft = Math.Tanh(macroBand / 0.11) * 0.11;
-
-                double v = referenceBase + boost * macroSoft;
+                double v = 0.74 * fine[i] + 0.26 * coarse[i];
                 height[i] = Math.Clamp(0.5 + (v - 0.5) * settings.HeightContrast, 0.02, 0.98);
             }
 
-            // A final sub-pixel smooth is applied ONLY to the normal source. This keeps
-            // the broad height shape while removing pinprick normal dents.
-            normalHeightSource = GaussianBlurWrap(height, w, h, 0.58);
-            aoBlur = GaussianBlurClamp(gray601, w, h, Math.Max(1.0, minDim / 100.0));
+            normalHeightSource = height;
+            macroNormalSource = GaussianBlurClamp(height, w, h, 2.8);
+            aoBlur = mid;
         }
         else
         {
@@ -121,6 +115,7 @@ public static class PbrGenerator
                 height[i] = Math.Clamp(0.5 + (h0 - 0.5) * settings.HeightContrast, 0.02, 0.98);
             }
             normalHeightSource = height;
+            macroNormalSource = height;
             aoBlur = GaussianBlurWrap(height, w, h, Math.Max(1.6, minDim / 100.0));
         }
 
@@ -149,6 +144,30 @@ public static class PbrGenerator
                            - H(xm, ym) - 2 * H(xm, y) - H(xm, yp)) / 8.0;
                 double gy = (H(xm, yp) + 2 * H(x, yp) + H(xp, yp)
                            - H(xm, ym) - 2 * H(x, ym) - H(xp, ym)) / 8.0;
+
+                if (settings.GenerationMode == PbrGenerationMode.MacroReliefEnhanced)
+                {
+                    double C(int xx, int yy) => macroNormalSource[yy * w + xx];
+                    double cgx = (C(xp, ym) + 2 * C(xp, y) + C(xp, yp)
+                                - C(xm, ym) - 2 * C(xm, y) - C(xm, yp)) / 8.0;
+                    double cgy = (C(xm, yp) + 2 * C(x, yp) + C(xp, yp)
+                                - C(xm, ym) - 2 * C(x, ym) - C(xp, ym)) / 8.0;
+
+                    double bmag = Math.Sqrt(gx * gx + gy * gy);
+                    double cmag = Math.Sqrt(cgx * cgx + cgy * cgy);
+                    double align = bmag > 1e-8 && cmag > 1e-8
+                        ? Math.Max(0.0, (gx * cgx + gy * cgy) / (bmag * cmag))
+                        : 0.0;
+
+                    // Broad gradients around 0.006..0.026 on the 512px reference
+                    // correspond to stone-block boundaries; smoothstep avoids halos.
+                    double t = Math.Clamp((cmag - 0.006) / 0.020, 0.0, 1.0);
+                    t = t * t * (3.0 - 2.0 * t);
+                    double structural = align * t;
+                    double gain = 1.0 + Math.Clamp(settings.MacroReliefBoost, 0.0, 1.25) * structural;
+                    gx *= gain;
+                    gy *= gain;
+                }
 
                 if (settings.GenerationMode != PbrGenerationMode.ReferenceHandGenerated)
                 {
