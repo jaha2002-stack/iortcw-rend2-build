@@ -57,14 +57,14 @@ internal static class Program
 
             string fullPk3 = Path.Combine(outDir, "zzz_dw_escape1_outdoor_pbrstudio_v2.pk3");
             PbrExportService.Export(
-                fullPk3, asset, image, false, result, true, settings, analysis, "PBR Studio V2.02 structure-preserving");
+                fullPk3, asset, image, false, result, true, settings, analysis, "PBR Studio V2.03 " + settings.GenerationMode);
 
             string baselinePk3 = Path.Combine(outDir, "zzz_dw_escape1_outdoor_original.pk3");
             WriteBaselinePk3(baselinePk3, shader, entry);
 
             var proof = new
             {
-                generator = "DarkWolf PBR Studio V2.02 CLI",
+                generator = "DarkWolf PBR Studio V2.03 CLI",
                 source = entry,
                 shader,
                 imageSize = new[] { image.PixelWidth, image.PixelHeight },
