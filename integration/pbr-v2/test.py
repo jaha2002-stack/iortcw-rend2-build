@@ -38,6 +38,8 @@ checks={
  "legacy_bsp_ambient_preserved": "lightColor *= 0.75;" in frag,
  "bsp_direction_recovery_v41": all(x in light for x in ("PBR2 BSP directional recovery V4.1","r_pbr->integer >= 3","0.35f - ndl","VectorNormalize(lightDir)")),
  "legacy_lightdir_fallback_preserved": "VectorCopy(normal, lightDir);" in light,
+ "bsp_diffuse_ibl_v42": all(x in frag for x in ("BSP diffuse-IBL relight V4.2","dwEnvN","dwEnvMacro","dwEnvRatio","ROUGHNESS_MIPS * 0.75")),
+ "bsp_diffuse_ibl_flat_normal_zero_delta": "dwEnvRatio - 1.0" in frag,
  "firevol_marker_preserved": 'FIREVOL_CLEAN_PRODUCTION' in backend,
  "crypt1_marker_preserved": 'DARKWOLF_FIREVOL_CRYPT1_SLOT6_REANCHOR_PRODUCTION' in backend,
 }
