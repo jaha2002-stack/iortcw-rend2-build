@@ -32,5 +32,5 @@ public static class ProcessRunner
         return log.ToString();
     }
 
-    public static string Q(string value) => """ + value.Replace(""", "\\"") + """;
+    public static string Q(string value) => "\"" + value.Replace("\"", "\\\"") + "\"";
 }
