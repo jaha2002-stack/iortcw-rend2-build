@@ -31,6 +31,7 @@ internal static class Program
 
             var profile = MaterialProfile.For(kind);
             var settings = PbrSettings.FromProfile(profile);
+            ApplyOverrides(opt, settings);
 
             if (opt.TryGetValue("parallax", out var p))
                 settings.ParallaxEnabled = p != "0" && !p.Equals("false", StringComparison.OrdinalIgnoreCase);
@@ -99,6 +100,32 @@ internal static class Program
             Console.Error.WriteLine(ex);
             return 1;
         }
+    }
+
+    private static void ApplyOverrides(Dictionary<string,string> opt, PbrSettings s)
+    {
+        SetDouble(opt, "normal-strength", v => s.NormalStrength = v);
+        SetDouble(opt, "height-contrast", v => s.HeightContrast = v);
+        SetDouble(opt, "fine-weight", v => s.FineWeight = v);
+        SetDouble(opt, "coarse-weight", v => s.CoarseWeight = v);
+        SetDouble(opt, "chroma-suppression", v => s.ChromaSuppression = v);
+        SetDouble(opt, "ao-strength", v => s.AoStrength = v);
+        SetDouble(opt, "ao-floor", v => s.AoFloor = v);
+        SetDouble(opt, "roughness-base", v => s.RoughnessBase = v);
+        SetDouble(opt, "roughness-min", v => s.RoughnessMin = v);
+        SetDouble(opt, "roughness-max", v => s.RoughnessMax = v);
+        SetDouble(opt, "micro-roughness", v => s.MicroRoughness = v);
+        SetDouble(opt, "brightness-roughness", v => s.BrightnessRoughness = v);
+        SetDouble(opt, "metallic", v => s.Metallic = v);
+    }
+
+    private static void SetDouble(Dictionary<string,string> opt, string key, Action<double> setter)
+    {
+        if (!opt.TryGetValue(key, out var raw)) return;
+        if (!double.TryParse(raw, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var value))
+            throw new ArgumentException($"Invalid --{key} value '{raw}'");
+        setter(value);
     }
 
     private static void WriteBaselinePk3(string path, string shader, string entry)
