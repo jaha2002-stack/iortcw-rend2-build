@@ -223,9 +223,40 @@ orm=Image.merge("RGB",(ao,rough,metal))
 orm_path=outdir/(Path(shader).name+"_orm.tga")
 orm.save(orm_path)
 
-# Package only the ORM, preserving original shader/diffuse assets.
-pk3_path=outdir/"zzz_dw_escape1_cage_wall_orm.pk3"
-with zipfile.ZipFile(pk3_path,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+# Build a tangent-space normal map from the original stone texture.
+# The source is first lightly blurred so JPEG noise does not become false geometry,
+# then a Sobel gradient is converted to an OpenGL-style normal (X right, Y up, Z out).
+height=gray.filter(ImageFilter.GaussianBlur(radius=max(0.8,min(w,h)/220.0)))
+hpx=height.load()
+normal_img=Image.new("RGB",(w,h))
+npx=normal_img.load()
+strength=2.25
+for y in range(h):
+    ym=max(0,y-1); yp=min(h-1,y+1)
+    for x in range(w):
+        xm=max(0,x-1); xp=min(w-1,x+1)
+        # Sobel derivative in texture space.
+        gx=(hpx[xp,ym] + 2*hpx[xp,y] + hpx[xp,yp] -
+            hpx[xm,ym] - 2*hpx[xm,y] - hpx[xm,yp]) / (8.0*255.0)
+        gy=(hpx[xm,yp] + 2*hpx[x,yp] + hpx[xp,yp] -
+            hpx[xm,ym] - 2*hpx[x,ym] - hpx[xp,ym]) / (8.0*255.0)
+        nx=-gx*strength
+        ny= gy*strength
+        nz=1.0
+        ll=math.sqrt(nx*nx+ny*ny+nz*nz)
+        nx/=ll; ny/=ll; nz/=ll
+        npx[x,y]=(round((nx*0.5+0.5)*255),
+                  round((ny*0.5+0.5)*255),
+                  round((nz*0.5+0.5)*255))
+normal_path=outdir/(Path(shader).name+"_n.tga")
+normal_img.save(normal_path)
+
+# Two additive packages are emitted so A/B can be run in fresh processes:
+# A: no package (original material only)
+# B: full PBR package with Normal + ORM.
+pk3_full=outdir/"zzz_dw_escape1_cage_wall_pbr_full.pk3"
+with zipfile.ZipFile(pk3_full,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+    z.writestr(shader+"_n.tga",normal_path.read_bytes())
     z.writestr(shader+"_orm.tga",orm_path.read_bytes())
 
 # Camera: build two legal candidates on either side; first points at wall center.
@@ -270,9 +301,12 @@ report={
     "selected_wall_normal":[round(v,5) for v in normal],
     "original_texture_source":tex_source,
     "original_texture_size":[w,h],
+    "normal_path":str(normal_path.name),
+    "normal_mean_rgb":[round(v,2) for v in ImageStat.Stat(normal_img).mean],
+    "normal_strength":strength,
     "orm_path":str(orm_path.name),
     "orm_channel_mean":{"AO":round(ImageStat.Stat(ao).mean[0]/255.0,4),"Roughness":round(ImageStat.Stat(rough).mean[0]/255.0,4),"Metallic":0.0},
-    "pk3":pk3_path.name,
+    "pk3_full":pk3_full.name,
     "camera":camera,
     "top_wall_candidates":[{"shader":s["shader"],"score":round(sc,2),"distance":round(dd,2),"center":[round(v,1) for v in s["center"]],"normal":None if not s["normal"] else [round(v,3) for v in s["normal"]]} for sc,dd,s in cand[:12]]
 }
