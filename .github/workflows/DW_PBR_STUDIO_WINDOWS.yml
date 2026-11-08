@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build:
@@ -46,38 +47,40 @@ jobs:
           $ErrorActionPreference = 'Stop'
           dotnet publish tools/DarkWolfPBRStudio/DarkWolfPBRStudio.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o "$PWD/out/DarkWolfPBRStudio"
 
-      - name: Bundle Real-ESRGAN portable Vulkan runtime
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $url = 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip'
-          $zip = "$env:RUNNER_TEMP/realesrgan.zip"
-          $dir = "$env:RUNNER_TEMP/realesrgan"
-          & curl.exe -L --fail --retry 6 --retry-delay 5 --retry-all-errors -o $zip $url
-          if ($LASTEXITCODE -ne 0) { throw "Download failed: $url" }
-          Expand-Archive -Path $zip -DestinationPath $dir -Force
-          $exe = Get-ChildItem $dir -Filter 'realesrgan-ncnn-vulkan.exe' -Recurse | Select-Object -First 1
-          if (-not $exe) { throw 'Real-ESRGAN executable not found in archive' }
-          $dst = "$PWD/out/DarkWolfPBRStudio/Tools/RealESRGAN"
-          New-Item -ItemType Directory -Force $dst | Out-Null
-          Copy-Item "$($exe.Directory.FullName)/*" $dst -Recurse -Force
-          if (-not (Test-Path "$dst/realesrgan-ncnn-vulkan.exe")) { throw 'Real-ESRGAN bundle verification failed' }
+      - name: Reuse validated V1 AI runtime artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: DarkWolf-PBR-Studio-V1-Win64
+          path: out/v1artifact
+          repository: jaha2002-stack/iortcw-rend2-build
+          run-id: 42451974341
+          github-token: ${{ github.token }}
 
-      - name: Bundle stable-diffusion.cpp Win64 Vulkan runtime
+      - name: Bundle validated AI runtimes from V1
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $url = 'https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1056-9234ad8/sd-master-9234ad8-bin-win-vulkan-x64.zip'
-          $zip = "$env:RUNNER_TEMP/sdcpp.zip"
-          $dir = "$env:RUNNER_TEMP/sdcpp"
-          Invoke-WebRequest -Uri $url -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath $dir -Force
-          $exe = Get-ChildItem $dir -Filter 'sd-cli.exe' -Recurse | Select-Object -First 1
-          if (-not $exe) { throw 'stable-diffusion.cpp sd-cli.exe not found in archive' }
-          $dst = "$PWD/out/DarkWolfPBRStudio/Tools/StableDiffusionCpp"
-          New-Item -ItemType Directory -Force $dst | Out-Null
-          Copy-Item "$($exe.Directory.FullName)/*" $dst -Recurse -Force
-          if (-not (Test-Path "$dst/sd-cli.exe")) { throw 'stable-diffusion.cpp bundle verification failed' }
+          $v1zip = Get-ChildItem "$PWD/out/v1artifact" -Filter 'DarkWolf_PBR_Studio_V1_Win64.zip' -Recurse | Select-Object -First 1
+          if (-not $v1zip) { throw 'Validated V1 package was not found in downloaded artifact' }
+
+          $v1dir = "$env:RUNNER_TEMP/pbrstudio_v1_runtime"
+          Expand-Archive -Path $v1zip.FullName -DestinationPath $v1dir -Force
+
+          $real = Get-ChildItem $v1dir -Filter 'realesrgan-ncnn-vulkan.exe' -Recurse | Select-Object -First 1
+          $sd = Get-ChildItem $v1dir -Filter 'sd-cli.exe' -Recurse | Select-Object -First 1
+          if (-not $real) { throw 'Validated V1 Real-ESRGAN runtime not found' }
+          if (-not $sd) { throw 'Validated V1 stable-diffusion.cpp runtime not found' }
+
+          $realDst = "$PWD/out/DarkWolfPBRStudio/Tools/RealESRGAN"
+          $sdDst = "$PWD/out/DarkWolfPBRStudio/Tools/StableDiffusionCpp"
+          New-Item -ItemType Directory -Force $realDst | Out-Null
+          New-Item -ItemType Directory -Force $sdDst | Out-Null
+
+          Copy-Item "$($real.Directory.FullName)/*" $realDst -Recurse -Force
+          Copy-Item "$($sd.Directory.FullName)/*" $sdDst -Recurse -Force
+
+          if (-not (Test-Path "$realDst/realesrgan-ncnn-vulkan.exe")) { throw 'Real-ESRGAN runtime reuse verification failed' }
+          if (-not (Test-Path "$sdDst/sd-cli.exe")) { throw 'stable-diffusion.cpp runtime reuse verification failed' }
 
       - name: Add build metadata and verify package
         shell: pwsh
