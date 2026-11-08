@@ -1,70 +1,110 @@
-# DarkWolf PBR Studio V1
+# DarkWolf PBR Studio V2
 
-Windows desktop tool for preparing ioRTCW Rend2 DarkWolf r_pbr 3 materials.
+Windows authoring tool for ioRTCW Rend2 DarkWolf **r_pbr 3** materials.
 
-## V1 goals
+V2 replaces the V1 one-size-fits-all luminance conversion with a material-aware, tile-safe PBR decomposition pipeline.
 
-- Open an RTCW .pk3 archive directly.
-- Browse/search JPG/TGA/PNG texture entries.
-- Preview the selected original texture.
-- Create local AI Restoration x4 with Real-ESRGAN.
-- Create multiple local AI img2img variants with stable-diffusion.cpp.
-- Press AI Next repeatedly to generate a new variant with a new seed while retaining previous candidates.
-- Select any candidate from history before PBR generation.
-- Generate *_n.tga tangent-space Normal and *_orm.tga with R=AO, G=Roughness, B=Metallic.
-- A/B preview original vs selected variant, plus Normal and ORM previews.
-- Export a new override PK3. The source PK3 is always read-only.
-- Optional explicit BSP .mtr for implicit textures.
-- Detect scripted material names in sibling PK3 files and warn before overriding them.
+## V2 pipeline
+
+1. Open a PK3 and choose a source texture.
+2. Optional AI Restoration x4 with bundled Real-ESRGAN Vulkan.
+3. Optional AI img2img variants with bundled stable-diffusion.cpp runtime and a user-selected local checkpoint.
+4. Hybrid material classification from texture path + image statistics.
+5. Material profile selection / manual override.
+6. Tile-safe intrinsic decomposition:
+   - removes broad baked/painted illumination from the relief signal;
+   - suppresses saturated pigment changes from becoming false height;
+   - separates fine and coarse material structure.
+7. Generate:
+   - Height authoring map;
+   - tangent-space Normal;
+   - Rend2 NormalHeight `*_nh.tga` with height in alpha;
+   - ORM `*_orm.tga` with R=AO, G=Roughness, B=Metallic.
+8. Validate normal slope, AO, roughness, metallic, height range and texture seams.
+9. Export a new override PK3. The source PK3 is never modified.
+
+## Material profiles
+
+- Generic dielectric
+- Stone
+- Snowy stone
+- Brick
+- Concrete
+- Plaster
+- Wood
+- Bare metal
+- Painted metal
+- Rusted metal
+- Ceramic
+- Fabric
+- Leather
+- Snow / ice
+- Soil / ground
+
+Profiles control physically meaningful defaults such as normal strength, height contrast, AO, roughness, metallic and parallax depth.
+
+The automatic classifier is deliberately conservative. It uses strong path semantics when available and falls back to image statistics. The user can always override the detected material type.
+
+## Why V2 is more accurate than V1
+
+V1 derived normal/AO/roughness mainly from source luminance.
+
+V2 instead uses:
+- sRGB-to-linear analysis;
+- multi-scale local detail;
+- large-scale illumination removal;
+- chroma/pigment suppression;
+- AO from reconstructed surface concavity rather than raw darkness;
+- roughness from profile + micro-surface energy;
+- material-specific metallic constraints;
+- wrap-around filtering/gradients so tiled RTCW textures do not receive artificial edge seams.
+
+This still cannot reconstruct ground-truth scanned material data from a single old diffuse texture, but it is substantially closer to the useful input range of DarkWolf PBR3.
+
+## Rend2 compatibility
+
+Main output:
+- `<shader>_n.tga`
+- `<shader>_orm.tga`
+
+When the selected material profile recommends parallax and the user enables it:
+- `<shader>_nh.tga` — RGB tangent-space normal, A height
+- `<shader>_h.tga` — standalone authoring/debug height map
+
+Explicit MTR export uses:
+- `stage normalParallaxMap`
+- `parallaxDepth <profile value>`
+- `stage ormMap`
+- existing BSP lightmap stage
+
+Parallax requires `r_parallaxMapping 1` in Rend2. If parallax is disabled, the exporter uses ordinary `stage normalMap`.
+
+## V2 validation
+
+The Windows CI executes a real self-test before packaging. It verifies:
+- SnowyStone and BareMetal classification;
+- Normal/ORM dimensions;
+- normal slope safety;
+- dielectric/metal metallic rules;
+- AO/roughness bounds;
+- meaningful Height range;
+- `_nh` alpha height;
+- PK3 export;
+- `normalParallaxMap`, `parallaxDepth` and `ormMap` output.
 
 ## Local AI
 
-### Restoration
+Real-ESRGAN runtime is bundled.
 
-The packaged Windows build includes the portable Real-ESRGAN NCNN/Vulkan runtime and its standard models.
-The application uses realesrgan-x4plus for general RTCW texture restoration/upscale.
+stable-diffusion.cpp Vulkan runtime is bundled. Model weights are not redistributed; select a local compatible `.safetensors`, `.gguf` or `.ckpt` model once in the UI.
 
-### AI Variants / Next
-
-The packaged Windows build also includes a pinned stable-diffusion.cpp Win64 Vulkan runtime.
-A diffusion checkpoint is intentionally not embedded because checkpoints are multi-gigabyte and have their own licenses.
-Choose a local .safetensors, .gguf, or .ckpt once in the UI. The path is remembered in
-%LOCALAPPDATA%/DarkWolfPBRStudio/settings.json.
-
-Each AI Next operation uses img2img, a new random seed, the configured strength and the user prompt.
-Generated variants remain in session history and can be reviewed before PBR maps are generated.
-Recommended texture-preserving img2img strength: 0.18-0.35.
-
-## PBR3 material convention
-
-For source textures/snow/s_cathedrale_c06.jpg the application exports:
-- textures/snow/s_cathedrale_c06_n.tga
-- textures/snow/s_cathedrale_c06_orm.tga
-
-ORM convention: R = Ambient Occlusion, G = Roughness, B = Metallic.
-Stone/wood/plaster should normally remain metallic 0.
-
-## Export modes
-
-### Safe map-only mode
-
-Recommended when an existing scripted material is detected. The exported PK3 contains BaseColor (when selected),
-Normal, ORM and a manifest. Rend2 PBR3 can use the maps without replacing the original shader definition.
-
-### Explicit BSP PBR MTR
-
-Recommended for an implicit lightmapped BSP texture. PBR Studio writes a small .mtr containing
-Diffuse + Normal + ORM + lightmap stages. This is the same structure validated by the Escape1 PBR TestLab.
-Do not force this mode over complex animated/blended shaders without reviewing the result.
-
-## V1 scope
-
-V1 is optimized for RTCW BSP/lightmapped world textures, because that is the path validated by
-DarkWolf PBR BSP Relight V4.2. Model/character material tooling can be expanded after the BSP workflow is stable.
+The **AI Next** workflow remains intentionally separate from deterministic PBR decomposition: AI may improve/restore the BaseColor candidate, while the final PBR maps are generated under physical material constraints.
 
 ## Build
 
-dotnet publish tools/DarkWolfPBRStudio/DarkWolfPBRStudio.csproj -c Release -r win-x64 --self-contained true
+```powershell
+dotnet run --project tools\DarkWolfPBRStudio.SelfTest\DarkWolfPBRStudio.SelfTest.csproj -c Release
+dotnet publish tools\DarkWolfPBRStudio\DarkWolfPBRStudio.csproj -c Release -r win-x64 --self-contained true
+```
 
-GitHub Actions workflow: .github/workflows/DW_PBR_STUDIO_WINDOWS.yml
-The CI package downloads and bundles pinned local AI runtimes before creating the Win64 ZIP.
+CI: `.github/workflows/DW_PBR_STUDIO_WINDOWS.yml`
