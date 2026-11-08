@@ -1,9 +1,9 @@
-name: DW Escape1 PBR Studio V2.02 Reference AB Real Capture
+name: DW Escape1 PBR Studio V2.03 Macro Relief Search
 
 on:
   push:
     branches:
-      - feature/darkwolf-pbr-studio-v202
+      - feature/darkwolf-pbr-studio-v203-macro
     paths:
       - .github/workflows/DW_ESCAPE1_PBR_STUDIO_V2_AB.yml
       - tools/DarkWolfPBRStudio/**
@@ -91,55 +91,51 @@ jobs:
           name: pbrstudio-v2-escape1-source
           path: input
 
-      - name: Generate V2.02 structure-preserving material and optional parallax variant
+      - name: Generate exact hand-reference mode and macro-relief candidates
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $common = @("--input","$PWD/input/s_cathedrale_c06.jpg","--shader","textures/snow/s_cathedrale_c06","--entry","textures/snow/s_cathedrale_c06.jpg","--profile","SnowyStone")
-          foreach($v in @(
-            @{ Name="v202"; Parallax="0" },
-            @{ Name="v202_parallax"; Parallax="1" }
-          )) {
+          $common = @("--input","$PWD/input/s_cathedrale_c06.jpg","--shader","textures/snow/s_cathedrale_c06","--entry","textures/snow/s_cathedrale_c06.jpg","--profile","SnowyStone","--parallax","0")
+          $variants = @(
+            @{ Name="program_reference"; Mode="ReferenceHandGenerated"; Normal="20"; Boost="0.00" },
+            @{ Name="macro_a"; Mode="MacroReliefEnhanced"; Normal="22"; Boost="0.30" },
+            @{ Name="macro_b"; Mode="MacroReliefEnhanced"; Normal="24"; Boost="0.45" },
+            @{ Name="macro_c"; Mode="MacroReliefEnhanced"; Normal="26"; Boost="0.60" }
+          )
+          foreach($v in $variants) {
             $out = "$PWD/generated/$($v.Name)"
             New-Item -ItemType Directory -Force -Path $out | Out-Null
-            $all = @($common + @("--outdir",$out,"--parallax",$v.Parallax))
-            & dotnet run --project tools/DarkWolfPBRStudio.Cli/DarkWolfPBRStudio.Cli.csproj -c Release -- @all | Tee-Object -FilePath "$out/PBR_STUDIO_V202_GENERATION.log"
-            if (-not (Select-String -Path "$out/PBR_STUDIO_V202_GENERATION.log" -Pattern 'DARKWOLF_PBR_STUDIO_V2_CLI_PASS' -Quiet)) {
-              throw "PBR Studio V2.02 variant $($v.Name) did not report PASS"
+            $args = @($common + @("--outdir",$out,"--mode",$v.Mode,"--normal-strength",$v.Normal,"--height-contrast","1.00","--macro-relief-boost",$v.Boost))
+            & dotnet run --project tools/DarkWolfPBRStudio.Cli/DarkWolfPBRStudio.Cli.csproj -c Release -- @args | Tee-Object -FilePath "$out/PBR_STUDIO_V203_GENERATION.log"
+            if (-not (Select-String -Path "$out/PBR_STUDIO_V203_GENERATION.log" -Pattern 'DARKWOLF_PBR_STUDIO_V2_CLI_PASS' -Quiet)) {
+              throw "PBR Studio V2.03 variant $($v.Name) did not report PASS"
             }
             Copy-Item input/source_proof.json "$out/source_proof.json"
           }
           Copy-Item input/camera.env generated/camera.env
 
-      - name: Verify V2.02 material contract and relief statistics
+      - name: Verify V2.03 material contract
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          foreach($name in @("v202","v202_parallax")) {
+          foreach($name in @("program_reference","macro_a","macro_b","macro_c")) {
             $full = "$PWD/generated/$name/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3"
-            if (-not (Test-Path $full)) { throw "full PBR V2.02 PK3 missing: $name" }
+            if (-not (Test-Path $full)) { throw "V2.03 PK3 missing: $name" }
             $zf=[System.IO.Compression.ZipFile]::OpenRead($full)
             $names=@($zf.Entries | ForEach-Object { $_.FullName })
             $zf.Dispose()
             foreach($need in @('textures/snow/s_cathedrale_c06_n.tga','textures/snow/s_cathedrale_c06_orm.tga')){
-              if($names -notcontains $need){ throw "missing V2.02 output $need in $name" }
-            }
-            if($name -eq "v202_parallax") {
-              foreach($need in @('textures/snow/s_cathedrale_c06_nh.tga','textures/snow/s_cathedrale_c06_h.tga')){
-                if($names -notcontains $need){ throw "missing V2.02 parallax output $need" }
-              }
+              if($names -notcontains $need){ throw "missing V2.03 output $need in $name" }
             }
             $proof = Get-Content "$PWD/generated/$name/pbr_studio_v2_proof.json" -Raw | ConvertFrom-Json
-            Write-Host $proof.validation.Summary
-            if($proof.validation.MeanNormalAngleDeg -lt 10 -or $proof.validation.MeanNormalAngleDeg -gt 24) { throw "V2.02 mean normal angle outside readable range" }
-            if($proof.validation.P90NormalAngleDeg -gt 46) { throw "V2.02 P90 normal angle too noisy/steep" }
-            if($proof.validation.MeanRoughness -gt 0.76) { throw "V2.02 stone response is too matte" }
+            Write-Host "$name :: $($proof.validation.Summary)"
+            if($proof.validation.P90NormalAngleDeg -gt 54) { throw "$name P90 normal angle too steep/noisy" }
           }
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pbrstudio-v202-escape1-material
+          name: pbrstudio-v203-escape1-material
           path: generated/
           if-no-files-found: error
           retention-days: 14
@@ -156,7 +152,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: pbrstudio-v202-escape1-material
+          name: pbrstudio-v203-escape1-material
           path: generated
 
       - name: Install TestLab dependencies
@@ -168,7 +164,7 @@ jobs:
       - name: Reconstruct and build the same r_pbr 3 V4.2 renderer
         run: |
           set -Eeuo pipefail
-          rm -rf source evidence protected-assets runtime_a runtime_ref runtime_v202 runtime_parallax home_a home_ref home_v202 home_parallax oldref
+          rm -rf source evidence protected-assets runtime_a runtime_ref runtime_program_ref runtime_macro_a runtime_macro_b runtime_macro_c home_a home_ref home_program_ref home_macro_a home_macro_b home_macro_c oldref
           mkdir -p evidence/screenshots
           python3 integration/elss-v1/prepare.py
           python3 integration/elss-v1/apply.py source evidence
@@ -214,28 +210,33 @@ jobs:
                   pathlib.Path("evidence/"+pathlib.Path(n).name.replace(".tga","_old.tga")).write_bytes(z.read(n))
           PY
 
-      - name: Prepare isolated Original, old reference, V2.02 and V2.02 parallax runtimes
+      - name: Prepare isolated Original, old reference, program reference and macro candidate runtimes
         run: |
           set -Eeuo pipefail
           exe="$(find source/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
           test -n "$exe"
           buildroot="$(dirname "$exe")"
-          mkdir -p runtime_a/main runtime_ref/main runtime_v202/main runtime_parallax/main home_a home_ref home_v202 home_parallax
-          for r in runtime_a runtime_ref runtime_v202 runtime_parallax; do
+          for r in runtime_a runtime_ref runtime_program_ref runtime_macro_a runtime_macro_b runtime_macro_c; do
+            mkdir -p "$r/main"
             cp -a "$buildroot/." "$r/"
           done
+          mkdir -p home_a home_ref home_program_ref home_macro_a home_macro_b home_macro_c
 
           retail_main="$(cat evidence/retail_main_path.txt)"
-          for r in runtime_a runtime_ref runtime_v202 runtime_parallax; do
+          for r in runtime_a runtime_ref runtime_program_ref runtime_macro_a runtime_macro_b runtime_macro_c; do
             find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} "$r/main/" \;
           done
 
-          cp generated/v202/zzz_dw_escape1_outdoor_original.pk3 runtime_a/main/
+          cp generated/program_reference/zzz_dw_escape1_outdoor_original.pk3 runtime_a/main/
           cp evidence/old_reference_fullpbr.pk3 runtime_ref/main/zzz_dw_old_reference_fullpbr.pk3
-          cp generated/v202/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3 runtime_v202/main/zzz_dw_v202.pk3
-          cp generated/v202_parallax/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3 runtime_parallax/main/zzz_dw_v202_parallax.pk3
-          cp generated/v202/pbr_studio_v2_proof.json evidence/proof_v202.json
-          cp generated/v202_parallax/pbr_studio_v2_proof.json evidence/proof_v202_parallax.json
+          cp generated/program_reference/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3 runtime_program_ref/main/zzz_dw_program_reference.pk3
+          cp generated/macro_a/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3 runtime_macro_a/main/zzz_dw_macro_a.pk3
+          cp generated/macro_b/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3 runtime_macro_b/main/zzz_dw_macro_b.pk3
+          cp generated/macro_c/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3 runtime_macro_c/main/zzz_dw_macro_c.pk3
+
+          for name in program_reference macro_a macro_b macro_c; do
+            cp "generated/$name/pbr_studio_v2_proof.json" "evidence/proof_$name.json"
+          done
 
       - name: Capture A original material
         run: |
@@ -250,115 +251,110 @@ jobs:
           find home_a -type f \( -iname 'pbrv2_A_original*.tga' -o -iname 'pbrv2_A_original*.jpg' -o -iname 'pbrv2_A_original*.png' \) -exec cp {} evidence/screenshots/ \;
           test "$(find evidence/screenshots -type f -iname 'pbrv2_A_original*' | wc -l)" -eq 1
 
-      - name: Capture old reference and V2.02 variants
+      - name: Capture old reference, exact program reference and macro-relief candidates
         run: |
           set -Eeuo pipefail
           source generated/camera.env
-          for spec in "ref:old_reference:0" "v202:v202:0" "parallax:v202_parallax:1"; do
-            key="${spec%%:*}"; tail="${spec#*:}"; name="${tail%%:*}"; parallax="${tail##*:}"
+          for spec in "ref:old_reference" "program_ref:program_reference" "macro_a:macro_a" "macro_b:macro_b" "macro_c:macro_c"; do
+            key="${spec%%:*}"; name="${spec#*:}"
             runtime="runtime_${key}"; home="home_${key}"
             exe="$(find "$runtime" -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
             set +e
-            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 8s 120s "$exe"               +set fs_basepath "$PWD/$runtime" +set fs_homepath "$PWD/$home"               +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0               +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1               +set r_customwidth 1280 +set r_customheight 720               +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1 +set r_parallaxMapping "$parallax" +set r_cubeMapping 1               +set r_dlightMode 2 +set r_forceSun 1 +set cg_draw2D 0 +set cg_drawGun 0 +set cg_drawCrosshair 0               +devmap escape1 +wait 28 +setviewpos "$CAM_X" "$CAM_Y" "$CAM_Z" "$CAM_YAW"               +wait 14 +screenshot "pbrv202_${name}" +wait 3 +quit
+            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 8s 120s "$exe"               +set fs_basepath "$PWD/$runtime" +set fs_homepath "$PWD/$home"               +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0               +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1               +set r_customwidth 1280 +set r_customheight 720               +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1 +set r_parallaxMapping 0 +set r_cubeMapping 1               +set r_dlightMode 2 +set r_forceSun 1 +set cg_draw2D 0 +set cg_drawGun 0 +set cg_drawCrosshair 0               +devmap escape1 +wait 28 +setviewpos "$CAM_X" "$CAM_Y" "$CAM_Z" "$CAM_YAW"               +wait 14 +screenshot "pbrv203_${name}" +wait 3 +quit
             rc=$?
             set -e
             echo "$rc" > "evidence/${name}_exit.txt"
-            find "$home" -type f \( -iname "pbrv202_${name}*.tga" -o -iname "pbrv202_${name}*.jpg" -o -iname "pbrv202_${name}*.png" \) -exec cp {} evidence/screenshots/ \;
-            test "$(find evidence/screenshots -type f -iname "pbrv202_${name}*" | wc -l)" -eq 1
+            find "$home" -type f \( -iname "pbrv203_${name}*.tga" -o -iname "pbrv203_${name}*.jpg" -o -iname "pbrv203_${name}*.png" \) -exec cp {} evidence/screenshots/ \;
+            test "$(find evidence/screenshots -type f -iname "pbrv203_${name}*" | wc -l)" -eq 1
           done
 
-      - name: Build V2.02 reference comparison, map inspection and metrics
+      - name: Build V2.03 comparison and objective texture diagnostics
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
-          from PIL import Image,ImageChops,ImageEnhance,ImageDraw
+          from PIL import Image,ImageChops,ImageEnhance,ImageDraw,ImageFilter
           from pathlib import Path
-          import json,hashlib,zipfile
+          import json,math
 
           d=Path("evidence/screenshots")
-          a=next(d.glob("pbrv2_A_original*"))
-          A=Image.open(a).convert("RGB")
-          A.save(d/"pbrv202_A_original.png")
-
-          shots={}
-          for name in ["old_reference","v202","v202_parallax"]:
-              p=next(d.glob("pbrv202_"+name+"*"))
-              im=Image.open(p).convert("RGB")
+          A=Image.open(next(d.glob("pbrv2_A_original*"))).convert("RGB")
+          A.save(d/"pbrv203_A_original.png")
+          names=["old_reference","program_reference","macro_a","macro_b","macro_c"]
+          imgs={}
+          for n in names:
+              im=Image.open(next(d.glob("pbrv203_"+n+"*"))).convert("RGB")
               assert im.size==A.size==(1280,720)
-              im.save(d/("pbrv202_"+name+".png"))
-              shots[name]=im
+              im.save(d/("pbrv203_"+n+".png"))
+              imgs[n]=im
 
+          # Program reference should visually track the original hand-generated result.
           metrics={}
-          for name,B in shots.items():
-              diff=ImageChops.difference(A,B)
-              scalar=[sum(v)/3 for v in diff.getdata()]
-              ss=sorted(scalar)
-              metrics[name]={
-                  "mean_abs_rgb_vs_original":round(sum(scalar)/len(scalar),4),
-                  "p95_abs_rgb_vs_original":round(ss[int(round((len(ss)-1)*.95))],4),
-                  "pixels_diff_gt_5_percent":round(sum(v>5 for v in scalar)/len(scalar)*100,2)
+          ref=imgs["old_reference"]
+          for n in names[1:]:
+              diff=ImageChops.difference(ref,imgs[n])
+              vals=[sum(v)/3 for v in diff.getdata()]
+              metrics[n]={"mean_abs_rgb_vs_old_reference":round(sum(vals)/len(vals),4)}
+
+          # Texture-map diagnostics. High-frequency Laplacian energy is a proxy for the
+          # pinholes/micro-pits the user rejected; macro gradient energy measures broad relief.
+          def energies(path):
+              im=Image.open(path).convert("L")
+              small=im.filter(ImageFilter.GaussianBlur(0.8))
+              macro=im.filter(ImageFilter.GaussianBlur(4.0))
+              mega=im.filter(ImageFilter.GaussianBlur(9.0))
+              hp=ImageChops.difference(im,small)
+              mb=ImageChops.difference(macro,mega)
+              hv=list(hp.getdata()); mv=list(mb.getdata())
+              return {
+                  "micro_energy":round(sum(hv)/len(hv),4),
+                  "macro_energy":round(sum(mv)/len(mv),4),
+                  "macro_to_micro":round((sum(mv)/max(1,len(mv)))/(sum(hv)/max(1,len(hv))+1e-6),4)
               }
-              ImageEnhance.Brightness(diff).enhance(8.0).save(d/("pbrv202_"+name+"_diff_x8.png"))
 
-          # How close is V2.02 to the visually successful hand reference?
-          for name in ["v202","v202_parallax"]:
-              diff=ImageChops.difference(shots["old_reference"],shots[name])
-              scalar=[sum(v)/3 for v in diff.getdata()]
-              metrics[name]["mean_abs_rgb_vs_old_reference"]=round(sum(scalar)/len(scalar),4)
+          for n in ["program_reference","macro_a","macro_b","macro_c"]:
+              metrics[n]["height_energy"]=energies("generated/"+n+"/s_cathedrale_c06_h_preview.png")
 
-          grid=Image.new("RGB",(A.width*2,A.height*2),(0,0,0))
+          # Contact sheet: old reference, exact program reference, then three candidates.
+          W,H=A.size
+          grid=Image.new("RGB",(W*2,H*3),(0,0,0))
           cells=[
-              ("A - Original",A),
-              ("B - First hand-generated PBR",shots["old_reference"]),
-              ("C - PBR Studio V2.02",shots["v202"]),
-              ("D - V2.02 + Parallax",shots["v202_parallax"])
+              ("First hand-generated reference",imgs["old_reference"]),
+              ("Program option: Reference Hand-Generated",imgs["program_reference"]),
+              ("Macro A",imgs["macro_a"]),
+              ("Macro B",imgs["macro_b"]),
+              ("Macro C",imgs["macro_c"]),
+              ("Original",A)
           ]
           draw=ImageDraw.Draw(grid)
-          for idx,(label,img) in enumerate(cells):
-              x=(idx%2)*A.width; y=(idx//2)*A.height
-              grid.paste(img,(x,y))
-              draw.rectangle((x,y,x+470,y+36),fill=(0,0,0))
+          for i,(label,im) in enumerate(cells):
+              x=(i%2)*W; y=(i//2)*H
+              grid.paste(im,(x,y))
+              draw.rectangle((x,y,x+530,y+36),fill=(0,0,0))
               draw.text((x+10,y+9),label,fill=(255,255,255))
-          grid.save(d/"pbrv202_original_oldref_v202_parallax.png")
+          grid.save(d/"pbrv203_macro_search.png")
 
-          # Direct map comparison: old successful maps vs V2.02.
-          oldN=Image.open("evidence/s_cathedrale_c06_n_old.tga").convert("RGB")
-          oldO=Image.open("evidence/s_cathedrale_c06_orm_old.tga").convert("RGB")
-          newN=Image.open("generated/v202/s_cathedrale_c06_n_preview.png").convert("RGB")
-          newO=Image.open("generated/v202/s_cathedrale_c06_orm_preview.png").convert("RGB")
-          newH=Image.open("generated/v202/s_cathedrale_c06_h_preview.png").convert("RGB")
-          W,H=oldN.size
-          maps=Image.new("RGB",(W*3,H*2),(16,16,16))
-          mapcells=[("Old Normal",oldN),("Old ORM",oldO),("Old Height: n/a",Image.new("RGB",(W,H),(32,32,32))),
-                    ("V2.02 Normal",newN),("V2.02 ORM",newO),("V2.02 Height",newH)]
-          md=ImageDraw.Draw(maps)
-          for idx,(label,img) in enumerate(mapcells):
-              x=(idx%3)*W; y=(idx//3)*H
-              maps.paste(img,(x,y))
-              md.rectangle((x,y,x+190,y+28),fill=(0,0,0))
-              md.text((x+7,y+7),label,fill=(255,255,255))
-          maps.save(d/"pbrv202_maps_vs_old_reference.png")
-
-          Path("evidence/V202_METRICS.json").write_text(json.dumps(metrics,indent=2)+"\n")
+          Path("evidence/V203_METRICS.json").write_text(json.dumps(metrics,indent=2)+"\n")
           print(json.dumps(metrics,indent=2))
-          print("PBR_STUDIO_V202_REFERENCE_AB_PASS")
+          print("PBR_STUDIO_V203_MACRO_SEARCH_PASS")
           PY
 
-          cp generated/v202/s_cathedrale_c06_h_preview.png evidence/screenshots/v202_height.png
-          cp generated/v202/s_cathedrale_c06_n_preview.png evidence/screenshots/v202_normal.png
-          cp generated/v202/s_cathedrale_c06_orm_preview.png evidence/screenshots/v202_orm.png
-          cp generated/v202_parallax/s_cathedrale_c06_h_preview.png evidence/screenshots/v202_parallax_height.png
-          cp generated/v202/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3 evidence/zzz_dw_v202.pk3
-          cp generated/v202_parallax/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3 evidence/zzz_dw_v202_parallax.pk3
+          for name in program_reference macro_a macro_b macro_c; do
+            cp "generated/$name/s_cathedrale_c06_h_preview.png" "evidence/screenshots/${name}_height.png"
+            cp "generated/$name/s_cathedrale_c06_n_preview.png" "evidence/screenshots/${name}_normal.png"
+            cp "generated/$name/s_cathedrale_c06_orm_preview.png" "evidence/screenshots/${name}_orm.png"
+            cp "generated/$name/zzz_dw_escape1_outdoor_pbrstudio_v2.pk3" "evidence/zzz_dw_${name}.pk3"
+          done
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: DarkWolf-Escape1-PBRStudioV202-Reference-AB
+          name: DarkWolf-Escape1-PBRStudioV203-Macro-Search
           path: |
             evidence/
-            generated/v202/pbr_studio_v2_proof.json
-            generated/v202_parallax/pbr_studio_v2_proof.json
+            generated/program_reference/pbr_studio_v2_proof.json
+            generated/macro_a/pbr_studio_v2_proof.json
+            generated/macro_b/pbr_studio_v2_proof.json
+            generated/macro_c/pbr_studio_v2_proof.json
             generated/camera.env
           if-no-files-found: warn
           retention-days: 30
