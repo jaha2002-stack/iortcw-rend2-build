@@ -14,7 +14,7 @@ public sealed class StableDiffusionService
         if (!File.Exists(cliPath)) throw new FileNotFoundException("sd-cli.exe was not found.", cliPath);
         if (!File.Exists(modelPath)) throw new FileNotFoundException("Stable Diffusion model was not found.", modelPath);
 
-        string safePrompt = prompt.Replace(""", "'");
+        string safePrompt = prompt.Replace("\"", "'");
         string args =
             $"-m {ProcessRunner.Q(modelPath)} -p {ProcessRunner.Q(safePrompt)} " +
             $"-i {ProcessRunner.Q(inputPng)} -o {ProcessRunner.Q(outputPng)} " +
