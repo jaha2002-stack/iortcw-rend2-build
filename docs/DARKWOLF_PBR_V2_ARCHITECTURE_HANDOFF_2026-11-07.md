@@ -254,3 +254,54 @@ True GGX cubemap prefilter is deliberately separated from this first V3:
 - deterministic export path
 
 It should be attempted only after V1/V2/V3 receive visual acceptance on PC, because it changes the cubemap generation path rather than only the material-lighting interpretation.
+
+
+## 8. V3.2 / BSP Lightmap Relight V4 — 2026-11-08
+
+### TestLab finding
+
+The real Escape1 A/B test on `textures/castle_wall/castle_c46_on_grid` proved that
+loading a valid Normal + ORM pair is not sufficient to create a strong material response
+on legacy lightmapped BSP surfaces.
+
+The relevant inherited code path is:
+
+- `R_CalcVertexLightDirs()` computes one dominant direction per BSP vertex.
+- `R_LightDirForPoint()` samples the world lightgrid.
+- if `dot(lightDir, surfaceNormal) <= 0.2`, the function replaces the sampled direction
+  with the macro geometric surface normal.
+- `lightall_fp.glsl` then reconstructs the baked lightmap as 75% directional and 25% ambient.
+
+On old RTCW maps this frequently makes a material normal look nearly front-lit, so normal
+detail is visually suppressed even when the normal texture is correctly loaded.
+
+### V4 implementation
+
+For `r_pbr >= 3` only:
+
+- inject `USE_PBR2_BSP_RELIGHT_V4`;
+- only activate the new logic on `USE_LIGHTMAP` shader variants;
+- preserve the baked lightmap as total irradiance;
+- split it into a confidence-weighted directional and indirect component;
+- reproject only the directional component onto the material normal;
+- apply ORM AO only to the indirect component;
+- when an ORM/specular data texture is bound, add a conservative GGX response from the
+  same dominant baked-light direction;
+- with a flat normal, the relight resolves to the original baked irradiance, avoiding a
+  baseline brightness shift;
+- legacy `r_pbr 0/1` and PBR2 core paths remain source-preserved.
+
+### Acceptance
+
+The same Escape1 camera and the same material packages are reused:
+
+A:
+- explicit MTR BaseColor + lightmap only.
+
+B:
+- identical MTR layout;
+- BaseColor + generated Normal + generated ORM.
+
+The test must compile first, then capture both variants in clean processes and preserve
+the exact camera coordinates.  Visual acceptance requires a material-local difference
+without a global exposure/color shift or geometry change.
