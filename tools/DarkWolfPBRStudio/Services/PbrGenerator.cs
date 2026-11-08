@@ -50,10 +50,14 @@ public static class PbrGenerator
             // Highly saturated color changes are more likely pigment/paint than geometry.
             double pigmentGuard = Math.Clamp(1.0 - settings.ChromaSuppression * saturation[i], 0.18, 1.0);
             double detail = settings.FineWeight * fine * 2.15 + settings.CoarseWeight * coarse * 1.70;
-            heightRaw[i] = detail * pigmentGuard * settings.HeightContrast;
+            heightRaw[i] = detail * pigmentGuard;
         }
 
-        var height = RobustNormalizeSigned(heightRaw, 0.06, 0.94);
+        var heightBase = RobustNormalizeSigned(heightRaw, 0.20, 0.80);
+        var height = new double[count];
+        double heightContrast = Math.Clamp(settings.HeightContrast, 0.30, 1.60);
+        for (int i = 0; i < count; i++)
+            height[i] = Math.Clamp(0.5 + (heightBase[i] - 0.5) * heightContrast, 0.02, 0.98);
         var heightForAo = BoxBlurWrap(height, w, h, Math.Max(2, minDim / 70));
 
         var normal = new byte[count * 4];
@@ -81,6 +85,20 @@ public static class PbrGenerator
 
                 double nx = -gx * settings.NormalStrength;
                 double ny =  gy * settings.NormalStrength;
+
+                // Keep generated normals within a physically useful range. Old diffuse
+                // textures may contain hard painted edges that would otherwise create
+                // near-horizontal normals and unstable PBR/parallax response.
+                const double maxNormalAngleDeg = 55.0;
+                double maxSlope = Math.Tan(maxNormalAngleDeg * Math.PI / 180.0);
+                double slope = Math.Sqrt(nx * nx + ny * ny);
+                if (slope > maxSlope)
+                {
+                    double k = maxSlope / slope;
+                    nx *= k;
+                    ny *= k;
+                }
+
                 double nz = 1.0;
                 double len = Math.Sqrt(nx * nx + ny * ny + nz * nz);
                 nx /= len; ny /= len; nz /= len;
