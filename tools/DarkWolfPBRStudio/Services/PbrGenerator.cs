@@ -19,6 +19,7 @@ public static class PbrGenerator
         var lumLinear = new double[count];
         var lumSrgb = new double[count];
         var gray601 = new double[count];
+        var gray601Byte = new byte[count];
         var saturation = new double[count];
 
         for (int i = 0, p = 0; i < count; i++, p += 4)
@@ -28,9 +29,11 @@ public static class PbrGenerator
             lumLinear[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
             lumSrgb[i] = 0.2126 * rS + 0.7152 * gS + 0.0722 * bS;
 
-            // Match the successful first hand-generated material. PIL convert("L")
-            // is effectively Rec.601 perceptual luminance, not linear-light luminance.
-            gray601[i] = Math.Clamp(0.299 * rS + 0.587 * gS + 0.114 * bS, 0.0, 1.0);
+            // Byte-exact Pillow RGB -> L conversion used by the first hand generator.
+            int r8 = px[p + 2], g8 = px[p + 1], b8 = px[p];
+            byte l8 = (byte)Math.Clamp((r8 * 19595 + g8 * 38470 + b8 * 7471 + 32768) >> 16, 0, 255);
+            gray601Byte[i] = l8;
+            gray601[i] = l8 / 255.0;
 
             double mx = Math.Max(rS, Math.Max(gS, bS));
             double mn = Math.Min(rS, Math.Min(gS, bS));
@@ -45,45 +48,30 @@ public static class PbrGenerator
         double[] normalHeightSource;
         double[] macroNormalSource;
         double[] aoBlur;
+        byte[]? referenceHeightByte = null;
+        byte[]? referenceAoByte = null;
+        byte[]? referenceRoughByte = null;
 
         if (settings.GenerationMode == PbrGenerationMode.ReferenceHandGenerated)
         {
-            // Exact design of the first visually successful Escape1 material:
-            // absolute smoothed luminance, 74% fine + 26% coarse, no high-pass,
-            // no percentile normalization and no artificial groove detector.
-            fine = GaussianBlurClamp(gray601, w, h, Math.Max(0.65, minDim / 320.0));
-            coarse = GaussianBlurClamp(gray601, w, h, Math.Max(2.2, minDim / 72.0));
-            mid = GaussianBlurClamp(gray601, w, h, Math.Max(1.0, minDim / 100.0));
-            height = new double[count];
-            for (int i = 0; i < count; i++)
-            {
-                double v = 0.74 * fine[i] + 0.26 * coarse[i];
-                height[i] = Math.Clamp(0.5 + (v - 0.5) * settings.HeightContrast, 0.02, 0.98);
-            }
+            BuildReferenceFields(gray601Byte, w, h, minDim,
+                out fine, out mid, out coarse, out height,
+                out referenceHeightByte, out referenceAoByte, out referenceRoughByte);
             normalHeightSource = height;
             macroNormalSource = height;
             aoBlur = mid;
         }
         else if (settings.GenerationMode == PbrGenerationMode.MacroReliefEnhanced)
         {
-            // V2.03 final macro design: keep the successful hand-generated HEIGHT
-            // unchanged. Macro relief is produced only by selectively increasing normal
-            // slope at broad, coherent structural boundaries. This cannot create new
-            // dark pits/holes inside stone faces because no macro luminance band is added
-            // to the height field.
-            fine = GaussianBlurClamp(gray601, w, h, Math.Max(0.65, minDim / 320.0));
-            coarse = GaussianBlurClamp(gray601, w, h, Math.Max(2.2, minDim / 72.0));
-            mid = GaussianBlurClamp(gray601, w, h, Math.Max(1.0, minDim / 100.0));
-
-            height = new double[count];
-            for (int i = 0; i < count; i++)
-            {
-                double v = 0.74 * fine[i] + 0.26 * coarse[i];
-                height[i] = Math.Clamp(0.5 + (v - 0.5) * settings.HeightContrast, 0.02, 0.98);
-            }
-
+            // Height and ORM are byte-identical to the successful hand-generated mode.
+            // Macro enhancement is allowed to affect normals only.
+            BuildReferenceFields(gray601Byte, w, h, minDim,
+                out fine, out mid, out coarse, out height,
+                out referenceHeightByte, out referenceAoByte, out referenceRoughByte);
             normalHeightSource = height;
-            macroNormalSource = GaussianBlurClamp(height, w, h, 2.8);
+            byte[] macro8 = PillowGaussianBlur(referenceHeightByte, w, h, 2.8);
+            macroNormalSource = new double[count];
+            for (int i = 0; i < count; i++) macroNormalSource[i] = macro8[i] / 255.0;
             aoBlur = mid;
         }
         else
@@ -201,7 +189,7 @@ public static class PbrGenerator
                 byte bx = ToByte(nx * 0.5 + 0.5);
                 byte by = ToByte(ny * 0.5 + 0.5);
                 byte bz = ToByte(nz * 0.5 + 0.5);
-                byte bh = ToByte(height[i]);
+                byte bh = referenceHeightByte is null ? ToByte(height[i]) : referenceHeightByte[i];
 
                 normal[p] = bz;
                 normal[p + 1] = by;
@@ -222,17 +210,8 @@ public static class PbrGenerator
 
                 if (settings.GenerationMode is PbrGenerationMode.ReferenceHandGenerated or PbrGenerationMode.MacroReliefEnhanced)
                 {
-                    // Match the first hand-generated ORM response. This material looked
-                    // more convincingly PBR because exposed dark stone could catch light
-                    // while bright snowy/mineral areas remained rough.
-                    double g = gray601[i];
-                    double b = aoBlur[i];
-                    double local = Math.Clamp(g - b, -0.30, 0.30);
-                    double edge = LaplacianEdge(gray601, w, h, x, y);
-
-                    ao = Math.Clamp(0.72 + 0.25 * g + 0.30 * local, settings.AoFloor, 1.0);
-                    rough = Math.Clamp(0.60 + 0.22 * g + 0.10 * edge,
-                        settings.RoughnessMin, settings.RoughnessMax);
+                    ao = referenceAoByte![i] / 255.0;
+                    rough = referenceRoughByte![i] / 255.0;
                 }
                 else
                 {
@@ -255,8 +234,8 @@ public static class PbrGenerator
                 }
 
                 orm[p] = ToByte(metallic);
-                orm[p + 1] = ToByte(rough);
-                orm[p + 2] = ToByte(ao);
+                orm[p + 1] = referenceRoughByte is null ? ToByte(rough) : referenceRoughByte[i];
+                orm[p + 2] = referenceAoByte is null ? ToByte(ao) : referenceAoByte[i];
                 orm[p + 3] = 255;
 
                 normalAngles[i] = Math.Acos(Math.Clamp(nz, -1.0, 1.0)) * 180.0 / Math.PI;
@@ -276,6 +255,131 @@ public static class PbrGenerator
             ImageService.FromBgra(normalHeight, w, h),
             ImageService.FromBgra(orm, w, h),
             report);
+    }
+
+    private static void BuildReferenceFields(
+        byte[] gray, int w, int h, int minDim,
+        out double[] fine, out double[] mid, out double[] coarse, out double[] height,
+        out byte[] heightByte, out byte[] aoByte, out byte[] roughByte)
+    {
+        byte[] fine8 = PillowGaussianBlur(gray, w, h, Math.Max(0.65, minDim / 320.0));
+        byte[] coarse8 = PillowGaussianBlur(gray, w, h, Math.Max(2.2, minDim / 72.0));
+        byte[] mid8 = PillowGaussianBlur(gray, w, h, Math.Max(1.0, minDim / 100.0));
+        byte[] edge8 = PillowFindEdges(gray, w, h);
+
+        int count = w * h;
+        fine = new double[count];
+        mid = new double[count];
+        coarse = new double[count];
+        height = new double[count];
+        heightByte = new byte[count];
+        aoByte = new byte[count];
+        roughByte = new byte[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            fine[i] = fine8[i] / 255.0;
+            mid[i] = mid8[i] / 255.0;
+            coarse[i] = coarse8[i] / 255.0;
+
+            // Pillow Image.blend(fine, coarse, 0.26): positive 8-bit result truncates.
+            byte hb = (byte)Math.Clamp((int)Math.Floor(fine8[i] * 0.74 + coarse8[i] * 0.26), 0, 255);
+            heightByte[i] = hb;
+            height[i] = hb / 255.0;
+
+            double g = gray[i] / 255.0;
+            double b = mid8[i] / 255.0;
+            double e = edge8[i] / 255.0;
+            double local = Math.Clamp(g - b, -0.30, 0.30);
+            double ao = Math.Clamp(0.72 + 0.25 * g + 0.30 * local, 0.46, 1.0);
+            double rough = Math.Clamp(0.60 + 0.22 * g + 0.10 * e, 0.46, 0.92);
+            aoByte[i] = ToByte(ao);
+            roughByte[i] = ToByte(rough);
+        }
+    }
+
+    private static byte[] PillowGaussianBlur(byte[] src, int w, int h, double requestedSigma)
+    {
+        const int passes = 3;
+        float sigma = (float)requestedSigma;
+        float sigma2 = sigma * sigma / passes;
+        float L = MathF.Sqrt(12.0f * sigma2 + 1.0f);
+        float l = MathF.Floor((L - 1.0f) / 2.0f);
+        float a = (2.0f * l + 1.0f) * (l * (l + 1.0f) - 3.0f * sigma2);
+        a /= 6.0f * (sigma2 - (l + 1.0f) * (l + 1.0f));
+        float radius = l + a;
+
+        byte[] cur = (byte[])src.Clone();
+        for (int p = 0; p < passes; p++) cur = PillowBoxBlurHorizontal(cur, w, h, radius);
+        for (int p = 0; p < passes; p++) cur = PillowBoxBlurVertical(cur, w, h, radius);
+        return cur;
+    }
+
+    private static byte[] PillowBoxBlurHorizontal(byte[] src, int w, int h, float floatRadius)
+    {
+        int radius = (int)floatRadius;
+        uint ww = (uint)((1u << 24) / (floatRadius * 2.0f + 1.0f));
+        uint fw = ((1u << 24) - (uint)(radius * 2 + 1) * ww) / 2u;
+        var dst = new byte[src.Length];
+
+        for (int y = 0; y < h; y++)
+        {
+            int row = y * w;
+            for (int x = 0; x < w; x++)
+            {
+                uint acc = 0;
+                for (int k = -radius; k <= radius; k++)
+                    acc += src[row + Math.Clamp(x + k, 0, w - 1)];
+
+                int left = Math.Clamp(x - radius - 1, 0, w - 1);
+                int right = Math.Clamp(x + radius + 1, 0, w - 1);
+                ulong bulk = (ulong)acc * ww + (ulong)(src[row + left] + src[row + right]) * fw;
+                dst[row + x] = (byte)((bulk + (1u << 23)) >> 24);
+            }
+        }
+        return dst;
+    }
+
+    private static byte[] PillowBoxBlurVertical(byte[] src, int w, int h, float floatRadius)
+    {
+        int radius = (int)floatRadius;
+        uint ww = (uint)((1u << 24) / (floatRadius * 2.0f + 1.0f));
+        uint fw = ((1u << 24) - (uint)(radius * 2 + 1) * ww) / 2u;
+        var dst = new byte[src.Length];
+
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                uint acc = 0;
+                for (int k = -radius; k <= radius; k++)
+                    acc += src[Math.Clamp(y + k, 0, h - 1) * w + x];
+
+                int top = Math.Clamp(y - radius - 1, 0, h - 1);
+                int bottom = Math.Clamp(y + radius + 1, 0, h - 1);
+                ulong bulk = (ulong)acc * ww + (ulong)(src[top * w + x] + src[bottom * w + x]) * fw;
+                dst[y * w + x] = (byte)((bulk + (1u << 23)) >> 24);
+            }
+        }
+        return dst;
+    }
+
+    private static byte[] PillowFindEdges(byte[] src, int w, int h)
+    {
+        var dst = (byte[])src.Clone();
+        for (int y = 1; y < h - 1; y++)
+        {
+            for (int x = 1; x < w - 1; x++)
+            {
+                int i = y * w + x;
+                int sum =
+                    src[(y - 1) * w + x - 1] + src[(y - 1) * w + x] + src[(y - 1) * w + x + 1] +
+                    src[y * w + x - 1] + src[y * w + x + 1] +
+                    src[(y + 1) * w + x - 1] + src[(y + 1) * w + x] + src[(y + 1) * w + x + 1];
+                dst[i] = (byte)Math.Clamp(8 * src[i] - sum, 0, 255);
+            }
+        }
+        return dst;
     }
 
     private static double LaplacianEdge(double[] src, int w, int h, int x, int y)
