@@ -152,10 +152,88 @@ try
     Require(mtr.Contains("stage normalParallaxMap"), "explicit MTR uses normalParallaxMap");
     Require(mtr.Contains("parallaxDepth"), "explicit MTR writes parallaxDepth");
     Require(mtr.Contains("stage ormMap"), "explicit MTR uses ormMap");
+
+    var asset2 = new TextureAsset
+    {
+        EntryPath = "textures/stone/floor_a.jpg",
+        DisplayName = "floor_a.jpg",
+        Extension = ".jpg",
+        ShaderName = "textures/stone/floor_a",
+        Size = 0
+    };
+    var scripted = new MaterialDefinitionInfo(
+        asset2.ShaderName,
+        "pak_custom.pk3",
+        "scripts/custom.shader",
+        @"textures/stone/floor_a
+{
+    qer_editorimage textures/stone/floor_a.jpg
+    surfaceParm slick
+    cull none
+    {
+        map textures/stone/floor_a
+        rgbGen identity
+    }
+    {
+        map textures/effects/glow
+        blendFunc add
+    }
+}");
+
+    var batchItems = new[]
+    {
+        new BatchMaterialItem
+        {
+            Asset = asset,
+            BaseColor = source,
+            Analysis = analysis,
+            Settings = macroSettings,
+            Result = macroPbr,
+            ExistingMaterial = null,
+            IncludeBaseColor = false
+        },
+        new BatchMaterialItem
+        {
+            Asset = asset2,
+            BaseColor = source,
+            Analysis = MaterialClassifier.Analyze(asset2.EntryPath, source),
+            Settings = macroSettings,
+            Result = macroPbr,
+            ExistingMaterial = scripted,
+            IncludeBaseColor = false
+        }
+    };
+
+    string batchPk3 = Path.Combine(temp, "batch_test.pk3");
+    BatchPbrExportService.Export(batchPk3, batchItems);
+
+    using var batchZip = ZipFile.OpenRead(batchPk3);
+    var batchNames = batchZip.Entries.Select(e => e.FullName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    Require(batchNames.Contains("scripts/dw_pbrstudio_v204_batch.mtr"), "batch export writes exactly one combined V2.04 MTR");
+    Require(batchNames.Contains("textures/snow/s_cathedrale_c06_n.tga"), "batch contains first Normal");
+    Require(batchNames.Contains("textures/snow/s_cathedrale_c06_orm.tga"), "batch contains first ORM");
+    Require(batchNames.Contains("textures/stone/floor_a_n.tga"), "batch contains second Normal");
+    Require(batchNames.Contains("textures/stone/floor_a_orm.tga"), "batch contains second ORM");
+    Require(batchNames.Count(x => x.StartsWith("scripts/", StringComparison.OrdinalIgnoreCase)) == 1,
+        "batch contains one script file for the entire material set");
+    Require(batchNames.Contains("darkwolf_pbrstudio/batch_manifest_v204.json"), "batch contains one inspectable manifest");
+
+    var batchMtrEntry = batchZip.Entries.Single(e => e.FullName.Equals("scripts/dw_pbrstudio_v204_batch.mtr", StringComparison.OrdinalIgnoreCase));
+    using var batchSr = new StreamReader(batchMtrEntry.Open());
+    string batchMtr = batchSr.ReadToEnd();
+    Require(batchMtr.Contains("textures/snow/s_cathedrale_c06"), "combined MTR contains implicit material block");
+    Require(batchMtr.Contains("textures/stone/floor_a"), "combined MTR contains scripted material block");
+    Require(batchMtr.Contains("surfaceParm slick"), "scripted merge preserves surfaceParm");
+    Require(batchMtr.Contains("cull none"), "scripted merge preserves cull state");
+    Require(batchMtr.Contains("textures/effects/glow"), "scripted merge preserves unrelated original stages");
+    Require(batchMtr.Contains("textures/stone/floor_a_n"), "scripted merge inserts generated Normal");
+    Require(batchMtr.Contains("textures/stone/floor_a_orm"), "scripted merge inserts generated ORM");
+    Require(batchMtr.Split("stage ormMap", StringSplitOptions.None).Length - 1 == 2,
+        "combined MTR has one ORM stage per material");
 }
 finally
 {
     try { Directory.Delete(temp, true); } catch { }
 }
 
-Console.WriteLine("DARKWOLF_PBR_STUDIO_V203_SELFTEST_PASS");
+Console.WriteLine("DARKWOLF_PBR_STUDIO_V204_SELFTEST_PASS");
