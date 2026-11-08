@@ -1,0 +1,130 @@
+name: DW PBR Studio V2.04 Win64
+on:
+  push:
+    branches:
+      - feature/darkwolf-pbr-studio-v204-batch
+    paths:
+      - tools/DarkWolfPBRStudio/**
+      - tools/DarkWolfPBRStudio.SelfTest/**
+      - .github/workflows/DW_PBR_STUDIO_WINDOWS.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet restore tools/DarkWolfPBRStudio/DarkWolfPBRStudio.csproj
+          dotnet restore tools/DarkWolfPBRStudio.SelfTest/DarkWolfPBRStudio.SelfTest.csproj
+
+      - name: Run PBR V2.04 material self-test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force "$PWD/out" | Out-Null
+          dotnet run --project tools/DarkWolfPBRStudio.SelfTest/DarkWolfPBRStudio.SelfTest.csproj -c Release | Tee-Object -FilePath "$PWD/out/PBR_STUDIO_V204_SELFTEST.txt"
+          if (-not (Select-String -Path "$PWD/out/PBR_STUDIO_V204_SELFTEST.txt" -Pattern 'DARKWOLF_PBR_STUDIO_V204_SELFTEST_PASS' -Quiet)) {
+            throw 'PBR Studio V2.04 self-test did not report PASS'
+          }
+
+      - name: Build and publish self-contained Win64 app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet publish tools/DarkWolfPBRStudio/DarkWolfPBRStudio.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o "$PWD/out/DarkWolfPBRStudio"
+
+      - name: Reuse validated V1 AI runtime artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: DarkWolf-PBR-Studio-V1-Win64
+          path: out/v1artifact
+          repository: jaha2002-stack/iortcw-rend2-build
+          run-id: 42451974341
+          github-token: ${{ github.token }}
+
+      - name: Bundle validated AI runtimes from V1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $v1zip = Get-ChildItem "$PWD/out/v1artifact" -Filter 'DarkWolf_PBR_Studio_V1_Win64.zip' -Recurse | Select-Object -First 1
+          if (-not $v1zip) { throw 'Validated V1 package was not found in downloaded artifact' }
+
+          $v1dir = "$env:RUNNER_TEMP/pbrstudio_v1_runtime"
+          Expand-Archive -Path $v1zip.FullName -DestinationPath $v1dir -Force
+
+          $real = Get-ChildItem $v1dir -Filter 'realesrgan-ncnn-vulkan.exe' -Recurse | Select-Object -First 1
+          $sd = Get-ChildItem $v1dir -Filter 'sd-cli.exe' -Recurse | Select-Object -First 1
+          if (-not $real) { throw 'Validated V1 Real-ESRGAN runtime not found' }
+          if (-not $sd) { throw 'Validated V1 stable-diffusion.cpp runtime not found' }
+
+          $realDst = "$PWD/out/DarkWolfPBRStudio/Tools/RealESRGAN"
+          $sdDst = "$PWD/out/DarkWolfPBRStudio/Tools/StableDiffusionCpp"
+          New-Item -ItemType Directory -Force $realDst | Out-Null
+          New-Item -ItemType Directory -Force $sdDst | Out-Null
+
+          Copy-Item "$($real.Directory.FullName)/*" $realDst -Recurse -Force
+          Copy-Item "$($sd.Directory.FullName)/*" $sdDst -Recurse -Force
+
+          if (-not (Test-Path "$realDst/realesrgan-ncnn-vulkan.exe")) { throw 'Real-ESRGAN runtime reuse verification failed' }
+          if (-not (Test-Path "$sdDst/sd-cli.exe")) { throw 'stable-diffusion.cpp runtime reuse verification failed' }
+
+      - name: Add build metadata and verify package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $info = @(
+            'DarkWolf PBR Studio V2.04',
+            'Target: ioRTCW Rend2 DarkWolf r_pbr 3 / BSP Relight V4.2',
+            'Platform: Win64 self-contained .NET 8',
+            'Material pipeline: V2.03 macro relief + multi-texture batch + automatic implicit/scripted MTR handling + optional _nh parallax',
+            'AI Restoration: Real-ESRGAN NCNN Vulkan 20220424',
+            'AI Variants: stable-diffusion.cpp master-1056-9234ad8 Vulkan',
+            'Source branch: feature/darkwolf-pbr-studio-v202'
+          )
+          $info | Set-Content "$PWD/out/DarkWolfPBRStudio/BUILD_INFO.txt"
+          Copy-Item tools/DarkWolfPBRStudio/README.md "$PWD/out/DarkWolfPBRStudio/README.md"
+          Copy-Item tools/DarkWolfPBRStudio/THIRD_PARTY.md "$PWD/out/DarkWolfPBRStudio/THIRD_PARTY.md"
+
+          $required = @(
+            "$PWD/out/DarkWolfPBRStudio/DarkWolfPBRStudio.exe",
+            "$PWD/out/DarkWolfPBRStudio/Tools/RealESRGAN/realesrgan-ncnn-vulkan.exe",
+            "$PWD/out/DarkWolfPBRStudio/Tools/StableDiffusionCpp/sd-cli.exe",
+            "$PWD/out/PBR_STUDIO_V204_SELFTEST.txt"
+          )
+          foreach ($p in $required) { if (-not (Test-Path $p)) { throw "Missing required file: $p" } }
+
+          Get-ChildItem "$PWD/out/DarkWolfPBRStudio" -Recurse | Select-Object FullName,Length | Out-File "$PWD/out/FILE_LIST.txt"
+          Get-FileHash "$PWD/out/DarkWolfPBRStudio/DarkWolfPBRStudio.exe" -Algorithm SHA256 | Format-List | Out-File "$PWD/out/EXE_SHA256.txt"
+
+      - name: Create release ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Compress-Archive -Path "$PWD/out/DarkWolfPBRStudio/*" -DestinationPath "$PWD/out/DarkWolf_PBR_Studio_V204_Win64.zip" -CompressionLevel Optimal
+          Get-FileHash "$PWD/out/DarkWolf_PBR_Studio_V204_Win64.zip" -Algorithm SHA256 | Format-List | Out-File "$PWD/out/ZIP_SHA256.txt"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-PBR-Studio-V204-Win64
+          path: |
+            out/DarkWolf_PBR_Studio_V204_Win64.zip
+            out/PBR_STUDIO_V204_SELFTEST.txt
+            out/FILE_LIST.txt
+            out/EXE_SHA256.txt
+            out/ZIP_SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
