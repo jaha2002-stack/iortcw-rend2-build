@@ -22,9 +22,9 @@ public sealed record MaterialProfile(
 {
     public static MaterialProfile For(MaterialKind kind) => kind switch
     {
-        MaterialKind.Stone => new(kind, "Stone", 22, 1.12, .72, .28, .62, 1.10, .50, .72, .52, .94, .20, .04, 0.0, false, .008,
+        MaterialKind.Stone => new(kind, "Stone", 20, 1.00, .74, .26, .72, 1.00, .46, .60, .46, .92, .10, .18, 0.0, false, .008,
             "authentic rough stone masonry, preserve block layout and mortar, natural mineral microdetail"),
-        MaterialKind.SnowyStone => new(kind, "Snowy Stone", 20, 1.05, .70, .30, .58, 1.00, .52, .76, .56, .96, .18, .10, 0.0, false, .006,
+        MaterialKind.SnowyStone => new(kind, "Snowy Stone", 20, 1.00, .74, .26, .72, 1.00, .46, .60, .46, .92, .10, .22, 0.0, false, .006,
             "authentic snowy stone masonry, preserve exact stones and snow placement, natural mineral and packed snow detail"),
         MaterialKind.Brick => new(kind, "Brick", 24, 1.20, .70, .30, .58, 1.18, .46, .74, .50, .94, .20, .05, 0.0, false, .008,
             "authentic old brick and mortar, preserve brick layout, deep mortar seams, porous fired clay detail"),
