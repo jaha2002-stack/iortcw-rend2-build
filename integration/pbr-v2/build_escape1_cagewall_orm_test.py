@@ -238,10 +238,18 @@ nxy=[nxy[0]/nl,nxy[1]/nl,0.0]
 target_pt=list(target["center"])
 cam_z=max(target["mins"][2]+48,min(target["maxs"][2]-24,mid[2]-55))
 target_pt[2]=cam_z
-# Place the camera on the same side of the wall as the two cages.
+# Place the camera on the same room side, below the hanging cages and offset
+# laterally so neither cage blocks the wall.  This emulates a player standing
+# beside the wall rather than a camera floating at ceiling height.
 toward_cages=[mid[0]-target_pt[0],mid[1]-target_pt[1],0.0]
 sign=1 if toward_cages[0]*nxy[0] + toward_cages[1]*nxy[1] >= 0.0 else -1
-cam=[target_pt[0]+sign*nxy[0]*112,target_pt[1]+sign*nxy[1]*112,cam_z]
+tangent=[-nxy[1],nxy[0],0.0]
+cam_z=mid[2]-100.0
+cam=[
+    target_pt[0]+sign*nxy[0]*176+tangent[0]*112,
+    target_pt[1]+sign*nxy[1]*176+tangent[1]*112,
+    cam_z
+]
 yaw=math.degrees(math.atan2(target_pt[1]-cam[1],target_pt[0]-cam[0]))
 camera={"camera":[round(v,2) for v in cam],"yaw":round(yaw,2),"side":sign}
 
