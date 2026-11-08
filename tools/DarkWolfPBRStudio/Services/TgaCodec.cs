@@ -89,6 +89,49 @@ public static class TgaCodec
         return bmp;
     }
 
+    public static void SaveRgb24PillowCompatible(BitmapSource source, string path)
+    {
+        var bgra = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+        int w = bgra.PixelWidth, h = bgra.PixelHeight;
+        int stride = w * 4;
+        var pixels = new byte[stride * h];
+        bgra.CopyPixels(pixels, stride, 0);
+
+        using var fs = File.Create(path);
+        Span<byte> header = stackalloc byte[18];
+        header.Clear();
+        header[2] = 2;
+        header[12] = (byte)(w & 0xFF);
+        header[13] = (byte)((w >> 8) & 0xFF);
+        header[14] = (byte)(h & 0xFF);
+        header[15] = (byte)((h >> 8) & 0xFF);
+        header[16] = 24;
+        header[17] = 0x00; // Pillow RGB TGA: bottom-left origin, no alpha.
+        fs.Write(header);
+
+        // TGA bottom-left origin: emit the in-memory top-left bitmap bottom row first.
+        var row = new byte[w * 3];
+        for (int y = h - 1; y >= 0; y--)
+        {
+            int srcRow = y * stride;
+            int q = 0;
+            for (int x = 0; x < w; x++)
+            {
+                int p = srcRow + x * 4;
+                row[q++] = pixels[p];     // B
+                row[q++] = pixels[p + 1]; // G
+                row[q++] = pixels[p + 2]; // R
+            }
+            fs.Write(row);
+        }
+
+        // Pillow writes a TGA 2.0 footer even when extension/developer offsets are zero.
+        Span<byte> footer = stackalloc byte[26];
+        footer.Clear();
+        "TRUEVISION-XFILE.\0"u8.CopyTo(footer[8..]);
+        fs.Write(footer);
+    }
+
     public static void Save(BitmapSource source, string path)
     {
         var bgra = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
