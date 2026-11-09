@@ -281,6 +281,48 @@ public static class PbrGenerator
                     rough = Math.Clamp(rough, settings.RoughnessMin, settings.RoughnessMax);
                 }
 
+                // V2.06 authored surface finish: keep dielectric/metal classification intact,
+                // but shape roughness/AO so PBR V3.2 GGX has physically meaningful wet/snow/moss response.
+                // These masks are deliberately broad and restrained; they do not alter Height/POM geometry.
+                double hPhys = height[i];
+                double darkMask = SmoothStep(0.72, 0.30, lumSrgb[i]);
+                double brightMask = SmoothStep(0.58, 0.88, lumSrgb[i]);
+                double recessMask = SmoothStep(0.58, 0.28, hPhys);
+
+                switch (settings.SurfaceFinish)
+                {
+                    case SurfaceFinish.Wet:
+                    {
+                        double wetMask = Math.Clamp(0.62 * darkMask + 0.38 * recessMask, 0.0, 1.0);
+                        rough = Math.Clamp(rough * (1.0 - 0.68 * wetMask), 0.10, 0.96);
+                        ao = Math.Clamp(ao - 0.08 * recessMask, settings.AoFloor * 0.88, 1.0);
+                        break;
+                    }
+                    case SurfaceFinish.Snowy:
+                    {
+                        double snowMask = Math.Clamp(0.72 * brightMask + 0.28 * SmoothStep(0.52, 0.76, hPhys), 0.0, 1.0);
+                        rough = Math.Clamp(rough + (0.88 - rough) * 0.82 * snowMask, 0.28, 0.98);
+                        ao = Math.Clamp(ao + 0.05 * snowMask, settings.AoFloor, 1.0);
+                        break;
+                    }
+                    case SurfaceFinish.WetSnow:
+                    {
+                        double snowMask = Math.Clamp(0.68 * brightMask + 0.32 * SmoothStep(0.54, 0.78, hPhys), 0.0, 1.0);
+                        double wetMask = Math.Clamp((1.0 - snowMask) * (0.58 * darkMask + 0.42 * recessMask), 0.0, 1.0);
+                        double wetRough = Math.Clamp(rough * (1.0 - 0.70 * wetMask), 0.09, 0.96);
+                        rough = Math.Clamp(wetRough + (0.90 - wetRough) * 0.86 * snowMask, 0.09, 0.98);
+                        ao = Math.Clamp(ao - 0.06 * wetMask + 0.04 * snowMask, settings.AoFloor * 0.88, 1.0);
+                        break;
+                    }
+                    case SurfaceFinish.Mossy:
+                    {
+                        double mossMask = Math.Clamp(0.50 * recessMask + 0.30 * darkMask + 0.20 * saturation[i], 0.0, 1.0);
+                        rough = Math.Clamp(rough + (0.92 - rough) * 0.60 * mossMask, 0.38, 0.98);
+                        ao = Math.Clamp(ao - 0.10 * mossMask, settings.AoFloor * 0.84, 1.0);
+                        break;
+                    }
+                }
+
                 double metallic = Math.Clamp(settings.Metallic, 0.0, 1.0);
                 if (settings.MaterialKind == MaterialKind.RustedMetal)
                 {
