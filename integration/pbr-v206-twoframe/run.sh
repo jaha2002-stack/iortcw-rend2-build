@@ -31,6 +31,7 @@ capture_one() {
   local z="$7"
   local yaw="$8"
   local forcesun="${9:-0}"
+  local sunlightmode="${10:-0}"
 
   local runtime="runtime_${label}"
   local home="home_${label}"
@@ -63,9 +64,9 @@ capture_one() {
   test -n "$(find "$EVIDENCE/v206_frames" -maxdepth 1 -type f -iname "${label}*" -print -quit)"
 }
 
-capture_one   escape_wetsnow_v1   escape1   textures/snow/s_cathedrale_c06   "$ESC_PK3"   -2475.551 263.887 952 107.241 1
+capture_one   escape_wetsnow_v1   escape1   textures/snow/s_cathedrale_c06   "$ESC_PK3"   -2475.551 263.887 952 107.241 1 2
 
-capture_one   crypt_wall_wet_v1   crypt1   textures/crypt/crypt_wall_03   "$CRYPT_PK3"   "$CRYPT_X" "$CRYPT_Y" "$CRYPT_Z" "$CRYPT_YAW" 0
+capture_one   crypt_wall_wet_v1   crypt1   textures/crypt/crypt_wall_03   "$CRYPT_PK3"   "$CRYPT_X" "$CRYPT_Y" "$CRYPT_Z" "$CRYPT_YAW" 0 0
 
 sha256sum "$EVIDENCE"/v206_frames/* | tee "$EVIDENCE/V206_TWO_FRAME_SHA256.txt"
 echo DARKWOLF_V206_TWO_REAL_GAMEPLAY_FRAMES_PASS
