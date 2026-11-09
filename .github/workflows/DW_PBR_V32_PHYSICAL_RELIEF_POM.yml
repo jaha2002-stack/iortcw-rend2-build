@@ -1,0 +1,316 @@
+name: DW PBR V3.2 Physical Relief POM from V3.1
+
+on:
+  push:
+    branches:
+      - feature/pbr-v32-physical-relief-pom-from-v31
+    paths:
+      - .github/workflows/DW_PBR_V32_PHYSICAL_RELIEF_POM.yml
+      - integration/pbr-v32-pom/**
+      - integration/pbr-v31-ibl/**
+      - integration/pbr-v2/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+      BASE_V31_ARTIFACT_ID: "13665648488"
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential git gh jq python3 python3-pil unzip zip file \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 \
+            xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+          python3 -m py_compile integration/pbr-v2/apply.py integration/pbr-v2/test.py
+          python3 -m py_compile integration/pbr-v31-ibl/apply.py integration/pbr-v31-ibl/test.py
+          python3 -m py_compile integration/pbr-v32-pom/apply.py integration/pbr-v32-pom/test.py integration/pbr-v32-pom/package_test_release.py
+
+      - name: Reconstruct exact V3.1 renderer state
+        run: |
+          set -Eeuo pipefail
+          rm -rf source source-clean source-v42 source-v31 source-v32 evidence runtime_* home_* protected-assets dist incoming
+          mkdir -p evidence
+
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42601679030 --jq .conclusion)" = "success"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42601679030 --jq .head_sha)" = "66629a4c6b270ec133bfdbab8e54d5e65f2d0a96"
+
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+
+          cp -a source source-clean
+          cp -a source-clean source-v42
+          python3 integration/pbr-v2/apply.py source-v42 --stage 3 --proof evidence/PBR_V42_PROOF.json
+          python3 integration/pbr-v2/test.py source-v42 --stage 3 --out evidence/PBR_V42_STATIC.json
+
+          cp -a source-v42 source-v31
+          python3 integration/pbr-v31-ibl/apply.py source-v31 --proof evidence/PBR_V31_PROOF.json
+          python3 integration/pbr-v31-ibl/test.py source-v31 --out evidence/PBR_V31_STATIC.json
+          echo EXACT_PBR_V31_STATE_RECONSTRUCTED
+
+      - name: Apply and validate PBR V3.2 Physical Relief
+        run: |
+          set -Eeuo pipefail
+          cp -a source-v31 source-v32
+          python3 integration/pbr-v32-pom/apply.py source-v32 --proof evidence/PBR_V32_PROOF.json
+          python3 integration/pbr-v32-pom/test.py source-v32 --out evidence/PBR_V32_STATIC.json
+          git -C source-v32 diff --check
+
+          python3 - <<'PY' | tee evidence/PBR_V32_CHANGED_FILES.txt
+          from pathlib import Path
+          a=Path("source-v31/SP"); b=Path("source-v32/SP")
+          rels={p.relative_to(a) for p in a.rglob("*") if p.is_file()}
+          rels|={p.relative_to(b) for p in b.rglob("*") if p.is_file()}
+          for rel in sorted(rels,key=lambda p:p.as_posix()):
+              pa=a/rel; pb=b/rel
+              if not pa.exists() or not pb.exists() or pa.read_bytes()!=pb.read_bytes():
+                  print("SP/"+rel.as_posix())
+          PY
+
+          cat > evidence/PBR_V32_ALLOWED_FILES.txt <<'EOF'
+          SP/code/rend2/glsl/lightall_fp.glsl
+          SP/code/rend2/tr_glsl.c
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          EOF
+          sort -o evidence/PBR_V32_ALLOWED_FILES.txt evidence/PBR_V32_ALLOWED_FILES.txt
+          diff -u evidence/PBR_V32_ALLOWED_FILES.txt evidence/PBR_V32_CHANGED_FILES.txt
+          echo PBR_V32_SCOPE_GATE_PASS
+
+      - name: Native compile
+        run: |
+          set -Eeuo pipefail
+          make -C source-v32/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/PBR_V32_NATIVE_BUILD.log 2>&1 || { tail -260 evidence/PBR_V32_NATIVE_BUILD.log; exit 1; }
+
+      - name: Fetch retail assets and create temporary POM proof material
+        run: |
+          set -Eeuo pipefail
+          test -n "$DARKWOLF_RTCW_ASSET_TOKEN"
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          test -d "$retail_main"
+          echo "$retail_main" > evidence/retail_main_path.txt
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,math
+          out=Path("evidence/pom_test_material.pk3")
+          w=h=256
+
+          def tga32():
+              hdr=bytearray(18); hdr[2]=2
+              hdr[12]=w&255; hdr[13]=(w>>8)&255
+              hdr[14]=h&255; hdr[15]=(h>>8)&255
+              hdr[16]=32; hdr[17]=0x28
+              data=bytearray()
+              for y in range(h):
+                  for x in range(w):
+                      bx=x%64; by=y%40
+                      seam=min(bx,63-bx,by,39-by)
+                      if seam<5:
+                          height=int(32 + seam/5*70)
+                      else:
+                          crown=0.5+0.5*math.cos((bx-32)/32*math.pi)*math.cos((by-20)/20*math.pi)
+                          height=int(190+45*crown)
+                      data.extend((255,128,128,max(8,min(245,height))))
+              return bytes(hdr)+bytes(data)
+
+          def tga24_orm():
+              hdr=bytearray(18); hdr[2]=2
+              hdr[12]=w&255; hdr[13]=(w>>8)&255
+              hdr[14]=h&255; hdr[15]=(h>>8)&255
+              hdr[16]=24; hdr[17]=0x20
+              return bytes(hdr)+bytes((0,190,245))*w*h
+
+          mat='''textures/snow/s_cathedrale_c06
+          {
+              qer_editorimage textures/snow/s_cathedrale_c06.jpg
+              {
+                  stage diffuseMap
+                  map textures/snow/s_cathedrale_c06
+                  rgbGen identity
+              }
+              {
+                  stage normalParallaxMap
+                  map textures/snow/s_cathedrale_c06_nh
+                  normalScale 1 1
+                  parallaxDepth 0.040
+              }
+              {
+                  stage ormMap
+                  map textures/snow/s_cathedrale_c06_orm
+              }
+              {
+                  map $lightmap
+                  blendFunc GL_DST_COLOR GL_ZERO
+              }
+          }
+          '''
+          with zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED) as z:
+              z.writestr("textures/snow/s_cathedrale_c06_nh.tga",tga32())
+              z.writestr("textures/snow/s_cathedrale_c06_orm.tga",tga24_orm())
+              z.writestr("scripts/dw_pom32_ci.shader",mat)
+              z.writestr("scripts/dw_pom32_ci.mtr",mat)
+          print(out)
+          PY
+
+      - name: Prepare isolated runtime copies
+        run: |
+          set -Eeuo pipefail
+          exe="$(find source-v32/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe"
+          buildroot="$(dirname "$exe")"
+          retail_main="$(cat evidence/retail_main_path.txt)"
+          for r in runtime_off runtime_on; do
+            mkdir -p "$r/main"
+            cp -a "$buildroot/." "$r/"
+            find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} "$r/main/" \;
+            cp evidence/pom_test_material.pk3 "$r/main/zzz_dw_pom32_ci.pk3"
+          done
+          mkdir -p home_off home_on
+
+      - name: Capture POM OFF / ON at identical camera
+        run: |
+          set -Eeuo pipefail
+          CAM_X=-2475.551
+          CAM_Y=263.887
+          CAM_Z=952
+          CAM_YAW=107.241
+
+          for mode in off on; do
+            runtime="runtime_$mode"; home="home_$mode"
+            exe="$(find "$runtime" -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+            if [ "$mode" = on ]; then
+              pm=2; ps=1
+            else
+              pm=0; ps=0
+            fi
+            set +e
+            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 150s "$exe" \
+              +set fs_basepath "$PWD/$runtime" +set fs_homepath "$PWD/$home" \
+              +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0 \
+              +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720 \
+              +set r_pbr 3 +set r_cubeMapping 0 +set r_normalMapping 1 +set r_specularMapping 1 \
+              +set r_parallaxMapping "$pm" +set r_parallaxMapShadows "$ps" \
+              +set r_pomMinLayers 20 +set r_pomMaxLayers 56 +set r_pomRefineSteps 5 +set r_pomMaxOffset 0.08 \
+              +devmap escape1 +wait 26 +setviewpos "$CAM_X" "$CAM_Y" "$CAM_Z" "$CAM_YAW" +wait 12 \
+              +screenshot "pbrv32_pom_$mode" +wait 3 +quit
+            rc=$?
+            set -e
+            echo "$rc" > "evidence/pom_"$mode"_exit.txt"
+            find "$home" -type f \( -iname "pbrv32_pom_$mode*.tga" -o -iname "pbrv32_pom_$mode*.png" -o -iname "pbrv32_pom_$mode*.jpg" \) -exec cp {} evidence/ \;
+            qlog="$(find "$home" -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+            test -n "$qlog"
+            cp "$qlog" "evidence/pom_"$mode"_qconsole.log"
+          done
+
+      - name: Verify real POM visual delta
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from PIL import Image,ImageChops,ImageDraw
+          from pathlib import Path
+          import json
+
+          d=Path("evidence")
+          offp=next(iter(list(d.glob("pbrv32_pom_off*"))),None)
+          onp=next(iter(list(d.glob("pbrv32_pom_on*"))),None)
+          assert offp and onp,(offp,onp)
+          off=Image.open(offp).convert("RGB")
+          on=Image.open(onp).convert("RGB")
+          assert off.size==on.size
+
+          w,h=off.size
+          crop=(int(w*0.05),int(h*0.08),int(w*0.72),int(h*0.92))
+          a=off.crop(crop); b=on.crop(crop)
+          diff=ImageChops.difference(a,b)
+          vals=[sum(px)/3 for px in diff.getdata()]
+          sv=sorted(vals)
+          mean=sum(vals)/len(vals)
+          p95=sv[int(len(sv)*0.95)]
+          changed=sum(v>3 for v in vals)/len(vals)
+
+          metrics={"mean_abs_rgb":mean,"p95":p95,"fraction_gt3":changed,"crop":crop}
+          Path("evidence/PBR_V32_POM_VISUAL_METRICS.json").write_text(json.dumps(metrics,indent=2)+"\n")
+          print(metrics)
+
+          assert mean>0.35,metrics
+          assert p95>2.0,metrics
+          assert changed>0.03,metrics
+
+          sheet=Image.new("RGB",(off.width*2,off.height))
+          sheet.paste(off,(0,0)); sheet.paste(on,(off.width,0))
+          dr=ImageDraw.Draw(sheet)
+          dr.rectangle((0,0,420,34),fill=(0,0,0)); dr.text((10,9),"POM OFF",fill=(255,255,255))
+          dr.rectangle((off.width,0,off.width+420,34),fill=(0,0,0)); dr.text((off.width+10,9),"PBR V3.2 POM ON",fill=(255,255,255))
+          sheet.save("evidence/PBR_V32_POM_OFF_ON.png")
+          print("PBR_V32_REAL_VISUAL_DELTA_PASS")
+          PY
+          ! grep -Eiq 'shader.*failed|compile.*error|GL_INVALID|framebuffer.*incomplete' evidence/pom_on_qconsole.log
+
+      - name: Win64 compile
+        run: |
+          set -Eeuo pipefail
+          make -C source-v32/SP -j2 release VERSION=1.51d-SP_DarkWolf-PBRV32-POM PLATFORM=mingw32 ARCH=x86_64 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres \
+            > evidence/PBR_V32_WIN64_BUILD.log 2>&1 || { tail -280 evidence/PBR_V32_WIN64_BUILD.log; exit 1; }
+          dll="$(find source-v32/SP/build -type f -name renderer_sp_rend2_x64.dll -print -quit)"
+          test -n "$dll"
+          mkdir -p build-binaries
+          cp "$dll" build-binaries/renderer_sp_rend2_x64.dll
+          file build-binaries/renderer_sp_rend2_x64.dll | grep -F PE32+
+          sha256sum build-binaries/renderer_sp_rend2_x64.dll | tee evidence/PBR_V32_RENDERER_SHA256.txt
+
+      - name: Package final Win64 TEST from V3.1 artifact
+        run: |
+          set -Eeuo pipefail
+          mkdir -p incoming dist
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/$BASE_V31_ARTIFACT_ID/zip > incoming/v31_outer.zip
+          test -s incoming/v31_outer.zip
+          python3 integration/pbr-v32-pom/package_test_release.py incoming/v31_outer.zip build-binaries/renderer_sp_rend2_x64.dll dist | tee dist/PACKAGE_LOG.txt
+          pkg="dist/DarkWolf_PBR32_Physical_Relief_POM_From_V31_Win64_TEST.zip"
+          unzip -t "$pkg" > evidence/PBR_V32_PACKAGE_ZIP_TEST.txt
+          unzip -l "$pkg" > evidence/PBR_V32_PACKAGE_CONTENTS.txt
+          grep -Fq 'DW_PBR32_PHYSICAL_RELIEF_POM.cfg' evidence/PBR_V32_PACKAGE_CONTENTS.txt
+          echo PBR_V32_PACKAGE_PASS
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DarkWolf-PBR-V32-Physical-Relief-POM-From-V31-Win64-TEST
+          path: |
+            dist/DarkWolf_PBR32_Physical_Relief_POM_From_V31_Win64_TEST.zip
+            dist/DarkWolf_PBR32_Physical_Relief_POM_From_V31_Win64_TEST.zip.sha256
+            dist/PBR_V32_RELEASE_PROOF.json
+            dist/PACKAGE_LOG.txt
+            evidence/
+            build-binaries/
+          if-no-files-found: warn
+          retention-days: 60
