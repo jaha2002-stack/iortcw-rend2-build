@@ -276,26 +276,33 @@ public static class BatchPbrExportService
         string cleaned = RemoveExistingPbrResponseStages(originalBlock);
         var blocks = FindTopLevelStageBlocks(cleaned);
 
-        TextRange? diffuse = blocks.FirstOrDefault(b =>
-            Regex.IsMatch(b.Text, @"(?im)^\s*stage\s+diffuseMap\b"));
+        TextRange? diffuse = blocks
+            .Where(b => Regex.IsMatch(b.Text, @"(?im)^\s*stage\s+diffuseMap\b"))
+            .Select(b => (TextRange?)b)
+            .FirstOrDefault();
 
-        if (diffuse is null || diffuse.Value.Text is null)
+        if (diffuse is null)
         {
             string imagePattern = $@"(?im)^\s*map\s+({Regex.Escape(asset.EntryPath)}|{Regex.Escape(asset.ShaderName)})\s*$";
-            diffuse = blocks.FirstOrDefault(b => Regex.IsMatch(b.Text, imagePattern));
+            diffuse = blocks
+                .Where(b => Regex.IsMatch(b.Text, imagePattern))
+                .Select(b => (TextRange?)b)
+                .FirstOrDefault();
         }
 
         int insertAt;
-        if (diffuse is not null && diffuse.Value.Text is not null)
+        if (diffuse is not null)
         {
             insertAt = diffuse.Value.End;
         }
         else
         {
-            var lightmap = blocks.FirstOrDefault(b =>
-                Regex.IsMatch(b.Text, @"(?im)^\s*map\s+\$lightmap\b"));
-            insertAt = lightmap.Text is not null
-                ? lightmap.Start
+            TextRange? lightmap = blocks
+                .Where(b => Regex.IsMatch(b.Text, @"(?im)^\s*map\s+\$lightmap\b"))
+                .Select(b => (TextRange?)b)
+                .FirstOrDefault();
+            insertAt = lightmap is not null
+                ? lightmap.Value.Start
                 : FindOuterClose(cleaned);
         }
 
