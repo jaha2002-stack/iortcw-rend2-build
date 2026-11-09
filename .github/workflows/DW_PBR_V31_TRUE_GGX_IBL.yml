@@ -1,0 +1,160 @@
+name: DW PBR V3.1 True GGX IBL from 42594561766
+
+on:
+  push:
+    branches:
+      - feature/pbr-v31-true-ggx-ibl-from-42594561766
+    paths:
+      - .github/workflows/DW_PBR_V31_TRUE_GGX_IBL.yml
+      - integration/pbr-v31-ibl/**
+      - integration/pbr-v2/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential git gh jq python3 unzip zip file \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 \
+            xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+          python3 -m py_compile integration/pbr-v2/apply.py integration/pbr-v2/test.py
+          python3 -m py_compile integration/pbr-v31-ibl/apply.py integration/pbr-v31-ibl/test.py
+
+      - name: Reconstruct exact Clean Production base and PBR V4.2 state
+        run: |
+          set -Eeuo pipefail
+          rm -rf source source-clean source-v42 source-v31 evidence runtime home protected-assets
+          mkdir -p evidence
+
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42594561766 --jq .conclusion)" = "success"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42594561766 --jq .head_sha)" = "957c425b3c3a8f521c72d5dd2bca9dba9b825938"
+
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+
+          cp -a source source-clean
+          cp -a source-clean source-v42
+          python3 integration/pbr-v2/apply.py source-v42 --stage 3 --proof evidence/PBR_V42_PROOF.json
+          python3 integration/pbr-v2/test.py source-v42 --stage 3 --out evidence/PBR_V42_STATIC.json
+          cp -a source-v42 source-v31
+
+      - name: Apply and validate PBR V3.1 true IBL
+        run: |
+          set -Eeuo pipefail
+          python3 integration/pbr-v31-ibl/apply.py source-v31 --proof evidence/PBR_V31_PROOF.json
+          python3 integration/pbr-v31-ibl/test.py source-v31 --out evidence/PBR_V31_STATIC.json
+          git -C source-v31 diff --check
+
+          { diff -qr source-v42/SP source-v31/SP || true; } \
+            | sed -n 's|^Files source-v42/\(.*\) and source-v31/.* differ$|\1|p; s|^Only in source-v31/\(.*\): \(.*\)$|SP/\1/\2|p' \
+            | sort -u | tee evidence/PBR_V31_CHANGED_FILES.txt
+
+          for must in \
+            SP/Makefile \
+            SP/code/rend2/glsl/iblprefilter_fp.glsl \
+            SP/code/rend2/glsl/iblbrdflut_fp.glsl \
+            SP/code/rend2/glsl/lightall_fp.glsl \
+            SP/code/rend2/tr_backend.c \
+            SP/code/rend2/tr_bsp.c \
+            SP/code/rend2/tr_fbo.c \
+            SP/code/rend2/tr_glsl.c \
+            SP/code/rend2/tr_local.h \
+            SP/code/rend2/tr_shade.c
+          do
+            grep -Fxq "$must" evidence/PBR_V31_CHANGED_FILES.txt || { echo "missing expected change $must"; exit 1; }
+          done
+
+          grep -Fq 'USE_PBR2_IBL_V31' source-v31/SP/code/rend2/glsl/lightall_fp.glsl
+          grep -Fq 'DW_IntegrateBRDF' source-v31/SP/code/rend2/glsl/iblbrdflut_fp.glsl
+          grep -Fq 'DW_ImportanceSampleGGX' source-v31/SP/code/rend2/glsl/iblprefilter_fp.glsl
+          echo PBR_V31_TRUE_IBL_STATIC_PASS
+
+      - name: Native compile
+        run: |
+          set -Eeuo pipefail
+          make -C source-v31/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/PBR_V31_NATIVE_BUILD.log 2>&1 || { tail -240 evidence/PBR_V31_NATIVE_BUILD.log; exit 1; }
+
+      - name: Runtime GLSL startup smoke
+        run: |
+          set -Eeuo pipefail
+          test -n "$DARKWOLF_RTCW_ASSET_TOKEN"
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          test -d "$retail_main"
+
+          exe="$(find source-v31/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe"
+          buildroot="$(dirname "$exe")"
+          mkdir -p runtime/main home
+          cp -a "$buildroot/." runtime/
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 8s 90s "$PWD/runtime/$(basename "$exe")" \
+            +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
+            +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 \
+            +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 640 +set r_customheight 480 \
+            +set r_pbr 3 +set r_cubeMapping 1 +set r_normalMapping 1 +set r_specularMapping 1 \
+            +wait 8 +quit
+          rc=$?
+          set -e
+          echo "$rc" > evidence/RUNTIME_EXIT.txt
+          qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+          test -n "$qlog"
+          cp "$qlog" evidence/PBR_V31_RUNTIME_QCONSOLE.log
+          grep -Eq 'loaded [0-9]+ GLSL shaders' evidence/PBR_V31_RUNTIME_QCONSOLE.log
+          ! grep -Eiq 'Could not load PBR V3.1|shader.*failed|compile.*error' evidence/PBR_V31_RUNTIME_QCONSOLE.log
+          echo PBR_V31_GLSL_RUNTIME_STARTUP_PASS
+
+      - name: Win64 compile
+        run: |
+          set -Eeuo pipefail
+          make -C source-v31/SP -j2 release VERSION=1.51d-SP_DarkWolf-PBRV31-GGXIBL PLATFORM=mingw32 ARCH=x86_64 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres \
+            > evidence/PBR_V31_WIN64_BUILD.log 2>&1 || { tail -260 evidence/PBR_V31_WIN64_BUILD.log; exit 1; }
+          dll="$(find source-v31/SP/build -type f -name renderer_sp_rend2_x64.dll -print -quit)"
+          test -n "$dll"
+          mkdir -p build-binaries
+          cp "$dll" build-binaries/renderer_sp_rend2_x64.dll
+          file build-binaries/renderer_sp_rend2_x64.dll | grep -F PE32+
+          sha256sum build-binaries/renderer_sp_rend2_x64.dll | tee evidence/PBR_V31_RENDERER_SHA256.txt
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DarkWolf-PBR-V31-True-GGX-IBL-Build-Evidence
+          path: |
+            evidence/
+            build-binaries/
+          if-no-files-found: warn
+          retention-days: 30
