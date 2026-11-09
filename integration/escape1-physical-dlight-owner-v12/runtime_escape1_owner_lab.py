@@ -167,16 +167,28 @@ def run(retail,out):
         evicted_surface=sum(1 for s in surface if s['evicted'] or not s['resident'])
         changes=sum(1 for i in range(1,len(samples))
                     if samples[i]['resident']!=samples[i-1]['resident'])
+        activations=sum(1 for i in range(1,len(samples))
+                        if samples[i-1]['resident']==0 and samples[i]['resident']==1)
+        deactivations=sum(1 for i in range(1,len(samples))
+                          if samples[i-1]['resident']==1 and samples[i]['resident']==0)
+        visible_deactivations=sum(
+            1 for i in range(1,len(samples))
+            if samples[i-1]['resident']==1 and samples[i]['resident']==0
+            and (samples[i-1]['tier']=='SURFACE_VISIBLE'
+                 or samples[i]['tier']=='SURFACE_VISIBLE'))
         guard_report[f]={
           'samples':len(samples),'surface_samples':len(surface),
           'surface_evicted_samples':evicted_surface,
           'resident_changes':changes,
+          'activations':activations,
+          'deactivations':deactivations,
+          'visible_deactivations':visible_deactivations,
           'ever_resident':1 if any(s['resident'] for s in samples) else 0
         }
         if surface and evicted_surface:
             faults.append(f'guard {f} evicted while SURFACE_VISIBLE')
-        if changes:
-            faults.append(f'guard {f} resident churn={changes}')
+        if visible_deactivations:
+            faults.append(f'guard {f} deactivated while visible={visible_deactivations}')
 
     report={
       'map':MAP,
