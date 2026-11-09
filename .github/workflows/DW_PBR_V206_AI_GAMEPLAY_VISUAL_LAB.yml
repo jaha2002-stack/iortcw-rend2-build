@@ -1,0 +1,393 @@
+name: DW PBR V2.06 AI Material Gameplay Visual Lab
+
+on:
+  push:
+    branches:
+      - feature/darkwolf-pbr-studio-v206-ai-material-authoring
+    paths:
+      - tools/DarkWolfPBRStudio/**
+      - .github/workflows/DW_PBR_V206_AI_GAMEPLAY_VISUAL_LAB.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  author-materials:
+    runs-on: windows-2022
+    timeout-minutes: 170
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish PBR Studio V2.06 with lab runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet publish tools/DarkWolfPBRStudio/DarkWolfPBRStudio.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o "$PWD/out/studio"
+          if (-not (Test-Path "$PWD/out/studio/DarkWolfPBRStudio.exe")) { throw 'Studio EXE missing' }
+
+      - name: Fetch retail RTCW assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:DARKWOLF_RTCW_ASSET_TOKEN) { throw 'DARKWOLF_RTCW_ASSET_TOKEN missing' }
+          $default = $env:GH_TOKEN
+          $env:GH_TOKEN = $env:DARKWOLF_RTCW_ASSET_TOKEN
+          $retail = (& bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | Select-Object -Last 1).Trim()
+          $env:GH_TOKEN = $default
+          if (-not (Test-Path $retail)) { throw "Retail main not found: $retail" }
+          $retail | Set-Content "$PWD/out/retail_main_path.txt"
+          Write-Host "Retail main: $retail"
+
+      - name: Build stable-diffusion.cpp CPU backend
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git clone --recursive https://github.com/leejet/stable-diffusion.cpp "$PWD/sdcpp"
+          cmake -S "$PWD/sdcpp" -B "$PWD/sdcpp/build" -A x64 -DGGML_NATIVE=OFF
+          cmake --build "$PWD/sdcpp/build" --config Release --parallel 2
+          $sd = Get-ChildItem "$PWD/sdcpp/build" -Filter 'sd-cli.exe' -Recurse | Select-Object -First 1
+          if (-not $sd) { throw 'sd-cli.exe not built' }
+          $sd.FullName | Set-Content "$PWD/out/sd_cli_path.txt"
+          Write-Host "sd-cli: $($sd.FullName)"
+
+      - name: Download SD1.5 FP16 single-file model
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force "$PWD/models" | Out-Null
+          $model = "$PWD/models/v1-5-pruned-emaonly-fp16.safetensors"
+          curl.exe -L --retry 5 --retry-delay 5 --fail --output $model "https://huggingface.co/Comfy-Org/stable-diffusion-1.5/resolve/main/v1-5-pruned-emaonly-fp16.safetensors"
+          if ((Get-Item $model).Length -lt 1500000000) { throw 'SD model download is unexpectedly small' }
+          $model | Set-Content "$PWD/out/sd_model_path.txt"
+
+      - name: Author Escape1 WetSnow - 3 variants
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $studio = "$PWD/out/studio/DarkWolfPBRStudio.exe"
+          $retail = (Get-Content "$PWD/out/retail_main_path.txt").Trim()
+          $sd = (Get-Content "$PWD/out/sd_cli_path.txt").Trim()
+          $model = (Get-Content "$PWD/out/sd_model_path.txt").Trim()
+          New-Item -ItemType Directory -Force "$PWD/authored/escape_snow" | Out-Null
+          & $studio --lab-author --pk3-dir $retail --shader textures/snow/s_cathedrale_c06 --material SnowyStone --finish WetSnow --out "$PWD/authored/escape_snow" --sd-cli $sd --sd-model $model --strength 0.32 --seeds 206101,206102,206103 --sd-extra "--width 512 --height 512"
+          if ($LASTEXITCODE -ne 0) { throw "Escape WetSnow authoring failed rc=$LASTEXITCODE" }
+          if (-not (Test-Path "$PWD/authored/escape_snow/variant_3.pk3")) { throw 'Escape variant_3 missing' }
+
+      - name: Author Crypt1 floor Wet - 3 variants
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $studio = "$PWD/out/studio/DarkWolfPBRStudio.exe"
+          $retail = (Get-Content "$PWD/out/retail_main_path.txt").Trim()
+          $sd = (Get-Content "$PWD/out/sd_cli_path.txt").Trim()
+          $model = (Get-Content "$PWD/out/sd_model_path.txt").Trim()
+          New-Item -ItemType Directory -Force "$PWD/authored/crypt_floor" | Out-Null
+          & $studio --lab-author --pk3-dir $retail --shader textures/crypt/crypt_d01_step --material Stone --finish Wet --out "$PWD/authored/crypt_floor" --sd-cli $sd --sd-model $model --strength 0.30 --seeds 206201,206202,206203 --sd-extra "--width 512 --height 512"
+          if ($LASTEXITCODE -ne 0) { throw "Crypt floor authoring failed rc=$LASTEXITCODE" }
+          if (-not (Test-Path "$PWD/authored/crypt_floor/variant_3.pk3")) { throw 'Crypt floor variant_3 missing' }
+
+      - name: Author Crypt1 torch wall Wet - 3 variants
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $studio = "$PWD/out/studio/DarkWolfPBRStudio.exe"
+          $retail = (Get-Content "$PWD/out/retail_main_path.txt").Trim()
+          $sd = (Get-Content "$PWD/out/sd_cli_path.txt").Trim()
+          $model = (Get-Content "$PWD/out/sd_model_path.txt").Trim()
+          New-Item -ItemType Directory -Force "$PWD/authored/crypt_wall" | Out-Null
+          & $studio --lab-author --pk3-dir $retail --shader textures/crypt/crypt_wall_03 --material Stone --finish Wet --out "$PWD/authored/crypt_wall" --sd-cli $sd --sd-model $model --strength 0.30 --seeds 206301,206302,206303 --sd-extra "--width 512 --height 512"
+          if ($LASTEXITCODE -ne 0) { throw "Crypt wall authoring failed rc=$LASTEXITCODE" }
+          if (-not (Test-Path "$PWD/authored/crypt_wall/variant_3.pk3")) { throw 'Crypt wall variant_3 missing' }
+
+      - name: Verify authored sets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pk3s = Get-ChildItem "$PWD/authored" -Filter 'variant_*.pk3' -Recurse
+          if ($pk3s.Count -ne 9) { throw "Expected 9 material PK3s, got $($pk3s.Count)" }
+          Get-ChildItem "$PWD/authored" -Recurse | Select-Object FullName,Length | Out-File "$PWD/authored/AUTHORED_FILE_LIST.txt"
+          Get-FileHash $pk3s.FullName -Algorithm SHA256 | Format-Table -AutoSize | Out-File "$PWD/authored/AUTHORED_PK3_SHA256.txt"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-PBR-Studio-V206-AI-Authored-Materials
+          path: authored/
+          if-no-files-found: error
+          retention-days: 30
+
+  gameplay-capture:
+    needs: author-materials
+    runs-on: ubuntu-24.04
+    timeout-minutes: 170
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install build and visual-test dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential git gh jq python3 python3-pil unzip zip file             libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+
+      - name: Reconstruct exact PBR V3.2 + Material Binding Audit state from Run 42619078136
+        run: |
+          set -Eeuo pipefail
+          rm -rf source source-clean source-v42 source-v31 source-v32 source-audit evidence runtime home protected-assets authored
+          mkdir -p evidence
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42619078136 --jq .conclusion)" = "success"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42619078136 --jq .head_sha)" = "6605640a47b52a89f05b42490146e6c021301d83"
+
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+
+          cp -a source source-clean
+          cp -a source-clean source-v42
+          python3 integration/pbr-v2/apply.py source-v42 --stage 3 --proof evidence/PBR_V42_PROOF.json
+          python3 integration/pbr-v2/test.py source-v42 --stage 3 --out evidence/PBR_V42_STATIC.json
+          cp -a source-v42 source-v31
+          python3 integration/pbr-v31-ibl/apply.py source-v31 --proof evidence/PBR_V31_PROOF.json
+          python3 integration/pbr-v31-ibl/test.py source-v31 --out evidence/PBR_V31_STATIC.json
+          cp -a source-v31 source-v32
+          python3 integration/pbr-v32-pom/apply.py source-v32 --proof evidence/PBR_V32_PROOF.json
+          python3 integration/pbr-v32-pom/test.py source-v32 --out evidence/PBR_V32_STATIC.json
+          cp -a source-v32 source-audit
+          python3 integration/pbr-v32-audit/apply.py source-audit --proof evidence/PBR_V32_AUDIT_PROOF.json
+          python3 integration/pbr-v32-audit/test.py source-audit --out evidence/PBR_V32_AUDIT_STATIC.json
+          echo EXACT_RUN_42619078136_RENDERER_STATE_RECONSTRUCTED
+
+      - name: Native compile exact audit renderer
+        run: |
+          set -Eeuo pipefail
+          make -C source-audit/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/NATIVE_BUILD.log 2>&1 || { tail -300 evidence/NATIVE_BUILD.log; exit 1; }
+
+      - name: Fetch retail assets
+        run: |
+          set -Eeuo pipefail
+          test -n "$DARKWOLF_RTCW_ASSET_TOKEN"
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          test -d "$retail_main"
+          echo "$retail_main" > evidence/retail_main_path.txt
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: DarkWolf-PBR-Studio-V206-AI-Authored-Materials
+          path: authored
+
+      - name: Locate Crypt1 target surfaces and derive deterministic cameras
+        run: |
+          set -Eeuo pipefail
+          retail_main="$(cat evidence/retail_main_path.txt)"
+          python3 - "$retail_main" <<'PY'
+          import sys,zipfile,struct,math,json,pathlib
+          root=pathlib.Path(sys.argv[1])
+          def read_bsp(name):
+              target=f"maps/{name}.bsp".lower()
+              for p in sorted(root.glob('*.pk3')):
+                  with zipfile.ZipFile(p) as z:
+                      for n in z.namelist():
+                          if n.lower()==target:
+                              return z.read(n),p.name
+              raise SystemExit(f"missing {target}")
+          def analyze(mapname, shader, kind):
+              data,pk3=read_bsp(mapname)
+              if data[:4]!=b'IBSP': raise SystemExit('not IBSP')
+              version=struct.unpack_from('<i',data,4)[0]
+              lumps=[struct.unpack_from('<ii',data,8+i*8) for i in range(17)]
+              def lump(i):
+                  o,l=lumps[i]; return data[o:o+l]
+              sh=lump(1); verts=lump(10); surfs=lump(13)
+              names=[]
+              for off in range(0,len(sh),72):
+                  if off+72>len(sh): break
+                  names.append(sh[off:off+64].split(b'\0',1)[0].decode('latin1').lower())
+              target=shader.lower()
+              try: si=names.index(target)
+              except ValueError: raise SystemExit(f'{shader} absent in {mapname} bsp')
+              cand=[]
+              for off in range(0,len(surfs),104):
+                  if off+104>len(surfs): break
+                  vals=struct.unpack_from('<12i3f9f2i',surfs,off)
+                  if vals[0]!=si: continue
+                  first,nv=vals[3],vals[4]
+                  pts=[]; norms=[]
+                  for j in range(nv):
+                      vo=(first+j)*44
+                      if vo+44>len(verts): break
+                      v=struct.unpack_from('<3f2f2f3f4B',verts,vo)
+                      pts.append(v[0:3]); norms.append(v[7:10])
+                  if not pts: continue
+                  c=[sum(p[k] for p in pts)/len(pts) for k in range(3)]
+                  n=[sum(q[k] for q in norms)/len(norms) for k in range(3)]
+                  ln=math.sqrt(sum(x*x for x in n)) or 1
+                  n=[x/ln for x in n]
+                  score=vals[6] if vals[6]>0 else nv
+                  cand.append((score,c,n,nv,vals[6]))
+              if not cand: raise SystemExit(f'no surfaces for {shader}')
+              if kind=='floor':
+                  good=[x for x in cand if x[2][2]>0.55] or sorted(cand,key=lambda x:x[2][2],reverse=True)[:5]
+              else:
+                  good=[x for x in cand if abs(x[2][2])<0.55] or sorted(cand,key=lambda x:abs(x[2][2]))[:5]
+              score,c,n,nv,ni=max(good,key=lambda x:x[0])
+              if kind=='floor':
+                  tx,ty=-n[1],n[0]
+                  if abs(tx)+abs(ty)<0.2: tx,ty=1.0,0.0
+                  tl=math.hypot(tx,ty); tx/=tl; ty/=tl
+                  cam=[c[0]+tx*110,c[1]+ty*110,c[2]+44]
+              else:
+                  cam=[c[0]+n[0]*88,c[1]+n[1]*88,c[2]+n[2]*88+4]
+              yaw=math.degrees(math.atan2(c[1]-cam[1],c[0]-cam[0]))
+              if yaw<0:yaw+=360
+              return dict(map=mapname,shader=shader,pk3=pk3,version=version,center=c,normal=n,camera=cam,yaw=yaw,score=score,numVerts=nv,numIndexes=ni)
+          out={
+            'floor':analyze('crypt1','textures/crypt/crypt_d01_step','floor'),
+            'wall':analyze('crypt1','textures/crypt/crypt_wall_03','wall')
+          }
+          pathlib.Path('evidence/CRYPT1_CAMERAS.json').write_text(json.dumps(out,indent=2))
+          with open('evidence/crypt_cameras.env','w') as f:
+              for key,v in out.items():
+                  x,y,z=v['camera']
+                  f.write(f'{key.upper()}_X={x:.3f}\n{key.upper()}_Y={y:.3f}\n{key.upper()}_Z={z:.3f}\n{key.upper()}_YAW={v["yaw"]:.3f}\n')
+          print(json.dumps(out,indent=2))
+          PY
+
+      - name: Capture all 9 real in-game variants
+        run: |
+          set -Eeuo pipefail
+          source evidence/crypt_cameras.env
+          retail_main="$(cat evidence/retail_main_path.txt)"
+          exe_src="$(find source-audit/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe_src"
+          buildroot="$(dirname "$exe_src")"
+          mkdir -p evidence/screens evidence/logs
+
+          capture_one() {
+            label="$1"; map="$2"; shader="$3"; pk3="$4"; x="$5"; y="$6"; z="$7"; yaw="$8"
+            rm -rf runtime home
+            mkdir -p runtime/main home
+            cp -a "$buildroot/." runtime/
+            find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+            cp "$pk3" runtime/main/zzzz_dw_v206_ai_material.pk3
+            exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+            set +e
+            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 12s 175s "$exe"               +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home"               +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0               +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720               +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1 +set r_cubeMapping 1               +set r_parallaxMapping 2 +set r_parallaxMapShadows 1 +set r_pomShadowStrength 0.18               +set r_pomMinLayers 20 +set r_pomMaxLayers 56 +set r_pomRefineSteps 5 +set r_pomMaxOffset 0.028               +set r_dlightmode 2 +set r_forcesun 1               +devmap "$map" +wait 38 +setviewpos "$x" "$y" "$z" "$yaw" +wait 16               +r_pbrMaterialAudit "$shader" +wait 3 +screenshot "$label" +wait 4 +quit
+            rc=$?
+            set -e
+            echo "$rc" > "evidence/logs/${label}_exit.txt"
+            qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+            test -n "$qlog"
+            cp "$qlog" "evidence/logs/${label}.log"
+            grep -Fq 'normalType=NORMALHEIGHT heightAlpha=1' "evidence/logs/${label}.log"
+            grep -Fq 'packedORM=1' "evidence/logs/${label}.log"
+            grep -Fq 'pomV32=ACTIVE' "evidence/logs/${label}.log"
+            find home -type f \( -iname "${label}*.tga" -o -iname "${label}*.png" -o -iname "${label}*.jpg" \) -exec cp {} evidence/screens/ \;
+            test -n "$(find evidence/screens -maxdepth 1 -type f -iname "${label}*" -print -quit)"
+          }
+
+          for v in 1 2 3; do
+            capture_one "escape_wetsnow_v${v}" escape1 textures/snow/s_cathedrale_c06 "authored/escape_snow/variant_${v}.pk3" -2475.551 263.887 952 107.241
+          done
+          for v in 1 2 3; do
+            capture_one "crypt_floor_wet_v${v}" crypt1 textures/crypt/crypt_d01_step "authored/crypt_floor/variant_${v}.pk3" "$FLOOR_X" "$FLOOR_Y" "$FLOOR_Z" "$FLOOR_YAW"
+          done
+          for v in 1 2 3; do
+            capture_one "crypt_wall_wet_v${v}" crypt1 textures/crypt/crypt_wall_03 "authored/crypt_wall/variant_${v}.pk3" "$WALL_X" "$WALL_Y" "$WALL_Z" "$WALL_YAW"
+          done
+
+      - name: Build comparison sheets and visual evidence
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from PIL import Image,ImageDraw,ImageChops
+          from pathlib import Path
+          import json
+          root=Path('evidence/screens')
+          groups={
+            'Escape1_WetSnow':['escape_wetsnow_v1','escape_wetsnow_v2','escape_wetsnow_v3'],
+            'Crypt1_Floor_Wet':['crypt_floor_wet_v1','crypt_floor_wet_v2','crypt_floor_wet_v3'],
+            'Crypt1_Wall_Wet':['crypt_wall_wet_v1','crypt_wall_wet_v2','crypt_wall_wet_v3']
+          }
+          metrics={}
+          def find(stem):
+              hits=[p for p in root.iterdir() if p.stem.lower().startswith(stem.lower())]
+              if not hits: raise SystemExit(f'missing screenshot {stem}')
+              return hits[0]
+          for title,stems in groups.items():
+              imgs=[Image.open(find(s)).convert('RGB') for s in stems]
+              w,h=imgs[0].size
+              sheet=Image.new('RGB',(w*3,h+42))
+              d=ImageDraw.Draw(sheet)
+              for i,im in enumerate(imgs):
+                  sheet.paste(im,(i*w,42))
+                  d.rectangle((i*w,0,(i+1)*w,42),fill=(0,0,0))
+                  d.text((i*w+12,13),f'{title}  Variant {i+1}',fill=(255,255,255))
+              out=Path('evidence')/(title+'_3_VARIANTS.png')
+              sheet.save(out)
+              vals=[]
+              for a,b in ((imgs[0],imgs[1]),(imgs[0],imgs[2]),(imgs[1],imgs[2])):
+                  diff=ImageChops.difference(a,b)
+                  pix=[sum(x)/3 for x in diff.getdata()]
+                  vals.append(sum(pix)/len(pix))
+              metrics[title]={'mean_pairwise_abs_rgb':vals,'min':min(vals),'max':max(vals)}
+          Path('evidence/V206_AI_VARIANT_VISUAL_METRICS.json').write_text(json.dumps(metrics,indent=2)+'\n')
+          print(json.dumps(metrics,indent=2))
+          PY
+
+      - name: Final proof manifest
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,hashlib
+          p=[]
+          for f in sorted(Path('authored').glob('*/*.pk3')):
+              p.append({'file':str(f),'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
+          proof={
+            'renderer_base_run':42619078136,
+            'studio':'DarkWolf PBR Studio V2.06 AI Material Authoring',
+            'materials':{
+              'escape1':{'shader':'textures/snow/s_cathedrale_c06','finish':'WetSnow','variants':3},
+              'crypt1_floor':{'shader':'textures/crypt/crypt_d01_step','finish':'Wet','variants':3},
+              'crypt1_wall':{'shader':'textures/crypt/crypt_wall_03','finish':'Wet','variants':3}
+            },
+            'runtime':{'r_pbr':3,'r_parallaxMapping':2,'r_parallaxMapShadows':1,'r_pomShadowStrength':0.18,'r_cubeMapping':1,'r_dlightmode':2,'r_forcesun':1},
+            'pk3s':p
+          }
+          Path('evidence/FINAL_PROOF.json').write_text(json.dumps(proof,indent=2)+'\n')
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DarkWolf-PBR-V206-AI-Gameplay-Visual-Proof
+          path: |
+            evidence/
+            authored/*/lab_manifest.json
+            authored/*/variant_*_basecolor.png
+            authored/*/variant_*_maps/*.png
+          if-no-files-found: warn
+          retention-days: 30
