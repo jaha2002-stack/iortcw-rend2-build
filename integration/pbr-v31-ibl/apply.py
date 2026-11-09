@@ -244,13 +244,9 @@ for name,data in (
 # ---------------------------------------------------------------------------
 p=sp/"Makefile"
 s=p.read_text()
-old='''  $(B)/rend2/glsl/generic_fp.o \
-  $(B)/rend2/glsl/generic_vp.o \
-  $(B)/rend2/glsl/lightall_fp.o \
+old='''  $(B)/rend2/glsl/lightall_fp.o \
 '''
-new='''  $(B)/rend2/glsl/generic_fp.o \
-  $(B)/rend2/glsl/generic_vp.o \
-  $(B)/rend2/glsl/iblprefilter_fp.o \
+new='''  $(B)/rend2/glsl/iblprefilter_fp.o \
   $(B)/rend2/glsl/iblprefilter_vp.o \
   $(B)/rend2/glsl/iblbrdflut_fp.o \
   $(B)/rend2/glsl/iblbrdflut_vp.o \
