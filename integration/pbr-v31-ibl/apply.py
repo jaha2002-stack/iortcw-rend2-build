@@ -530,9 +530,6 @@ s=replace_once(s,old,new,"V3.1 capability define")
 old='''	GLSL_FinishGPUShader(&tr.textureColorShader);
 
 	numEtcShaders++;
-
-
-	// DARKWOLF_DLIGHT_DIAGNOSTIC_V2
 '''
 new='''	GLSL_FinishGPUShader(&tr.textureColorShader);
 
@@ -564,8 +561,6 @@ new='''	GLSL_FinishGPUShader(&tr.textureColorShader);
 		numEtcShaders++;
 	}
 
-
-	// DARKWOLF_DLIGHT_DIAGNOSTIC_V2
 '''
 s=replace_once(s,old,new,"IBL shader program initialization")
 
