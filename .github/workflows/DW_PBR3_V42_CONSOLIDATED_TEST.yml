@@ -1,0 +1,140 @@
+name: DW Consolidated PBR V3 BSP Relight V4.2 Win64 TEST
+
+on:
+  push:
+    branches:
+      - release/pbr-v3-v42-from-42217883095-test
+    paths:
+      - .github/workflows/DW_PBR3_V42_CONSOLIDATED_TEST.yml
+      - integration/pbr-v2/**
+      - docs/DARKWOLF_PBR_V2_ARCHITECTURE_HANDOFF_2026-11-07.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BASE_ARTIFACT_ID: "13502112057"
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential git gh jq python3 unzip zip file libsdl2-dev libopenal-dev libcurl4-openssl-dev gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+          python3 -m py_compile integration/pbr-v2/apply.py integration/pbr-v2/test.py integration/pbr-v2/package_v42_test_release.py
+
+      - name: Reconstruct exact Clean Production #42217883095 source
+        run: |
+          set -Eeuo pipefail
+          rm -rf source source-clean source-v3 evidence dist incoming
+          mkdir -p evidence dist incoming
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42217883095 --jq .head_sha)" = "0ef4fc401daff30c230ccb8226a8029fb0a3519f"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42217883095 --jq .conclusion)" = "success"
+
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+
+          grep -Fq 'FIREVOL_CLEAN_PRODUCTION' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'DARKWOLF_FIREVOL_CRYPT1_SLOT6_REANCHOR_PRODUCTION' source/SP/code/rend2/tr_backend.c
+          grep -Fq 'r_pbr = ri.Cvar_Get("r_pbr", "0"' source/SP/code/rend2/tr_init.c
+
+          cp -a source source-clean
+          echo EXACT_BASE_42217883095_RECONSTRUCTED
+
+      - name: Apply consolidated PBR V3 + BSP Relight V4.2
+        run: |
+          set -Eeuo pipefail
+          cp -a source-clean source-v3
+          python3 integration/pbr-v2/apply.py source-v3 --stage 3 --proof evidence/PBR_V3_V42_PROOF.json
+          python3 integration/pbr-v2/test.py source-v3 --stage 3 --out evidence/PBR_V3_V42_TESTS.json
+          git -C source-v3 diff --check
+
+          git -C source-v3 diff --name-only | sort > evidence/PBR_V3_V42_CHANGED_FILES.txt
+          cat > evidence/PBR_V3_V42_ALLOWED_FILES.txt <<'EOF'
+          SP/code/rend2/glsl/lightall_fp.glsl
+          SP/code/rend2/tr_glsl.c
+          SP/code/rend2/tr_image.c
+          SP/code/rend2/tr_light.c
+          SP/code/rend2/tr_local.h
+          SP/code/rend2/tr_shader.c
+          EOF
+          sort -o evidence/PBR_V3_V42_ALLOWED_FILES.txt evidence/PBR_V3_V42_ALLOWED_FILES.txt
+          diff -u evidence/PBR_V3_V42_ALLOWED_FILES.txt evidence/PBR_V3_V42_CHANGED_FILES.txt
+
+          ! grep -R -n -E 'TestLab-only|auto-start patch|intro camera suppression|ORM auto-discovery trace' source-v3/SP/code/rend2
+          echo CONSOLIDATED_PBR_V3_V42_STATIC_PASS
+
+      - name: Native compile consolidated renderer
+        run: |
+          set -Eeuo pipefail
+          make -C source-v3/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/PBR_V3_V42_NATIVE_BUILD.log 2>&1 || { tail -180 evidence/PBR_V3_V42_NATIVE_BUILD.log; exit 1; }
+
+      - name: Win64 compile consolidated renderer
+        run: |
+          set -Eeuo pipefail
+          make -C source-v3/SP -j2 release VERSION=1.51d-SP_DarkWolf-PBRV3-V42 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/PBR_V3_V42_WIN64_BUILD.log 2>&1 || { tail -220 evidence/PBR_V3_V42_WIN64_BUILD.log; exit 1; }
+
+          dll="$(find source-v3/SP/build -type f -name renderer_sp_rend2_x64.dll -print -quit)"
+          test -n "$dll"
+          cp "$dll" incoming/renderer_sp_rend2_x64.dll
+          file incoming/renderer_sp_rend2_x64.dll | grep -F PE32+
+          sha256sum incoming/renderer_sp_rend2_x64.dll | tee evidence/PBR_V3_V42_RENDERER_SHA256.txt
+
+      - name: Download exact #42217883095 base artifact
+        run: |
+          set -Eeuo pipefail
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/$BASE_ARTIFACT_ID/zip > incoming/base_prod.zip
+          test -s incoming/base_prod.zip
+
+      - name: Package one consolidated Win64 TEST release
+        run: |
+          set -Eeuo pipefail
+          python3 integration/pbr-v2/package_v42_test_release.py incoming/base_prod.zip incoming/renderer_sp_rend2_x64.dll dist | tee dist/PACKAGE_LOG.txt
+
+      - name: Final package verification
+        run: |
+          set -Eeuo pipefail
+          pkg="dist/DarkWolf_PBR3_BSP_Relight_V42_From_42217883095_Win64_TEST.zip"
+          test -s "$pkg"
+          unzip -t "$pkg" > evidence/PACKAGE_ZIP_TEST.txt
+          unzip -l "$pkg" | tee evidence/PACKAGE_CONTENTS.txt
+          grep -Fq 'DW_PBR3_BSP_RELIGHT_V42.cfg' evidence/PACKAGE_CONTENTS.txt
+          grep -Fq 'README_DARKWOLF_PBR3_BSP_RELIGHT_V42_TEST.txt' evidence/PACKAGE_CONTENTS.txt
+          echo PBR_V3_V42_CONSOLIDATED_RELEASE_PASS
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-PBR3-BSP-Relight-V42-From-42217883095-Win64-TEST
+          path: |
+            dist/DarkWolf_PBR3_BSP_Relight_V42_From_42217883095_Win64_TEST.zip
+            dist/DarkWolf_PBR3_BSP_Relight_V42_From_42217883095_Win64_TEST.zip.sha256
+            dist/PBR3_V42_RELEASE_PROOF.json
+            dist/PACKAGE_LOG.txt
+            evidence/PBR_V3_V42_PROOF.json
+            evidence/PBR_V3_V42_TESTS.json
+            evidence/PBR_V3_V42_CHANGED_FILES.txt
+            evidence/PBR_V3_V42_RENDERER_SHA256.txt
+            evidence/PACKAGE_ZIP_TEST.txt
+            evidence/PACKAGE_CONTENTS.txt
+          if-no-files-found: error
+          retention-days: 90
