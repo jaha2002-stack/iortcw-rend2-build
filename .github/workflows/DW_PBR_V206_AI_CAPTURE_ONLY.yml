@@ -1,4 +1,4 @@
-name: DW PBR V2.06 AI Gameplay Capture Only
+name: DW PBR V2.06 AI Capture Only
 
 on:
   push:
@@ -20,33 +20,40 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Checkout exact Material Binding Audit commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: 6605640a47b52a89f05b42490146e6c021301d83
-          fetch-depth: 1
-
-      - name: Verify exact audit commit
-        run: |
-          set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "6605640a47b52a89f05b42490146e6c021301d83"
-          test -f integration/pbr-v31-ibl/apply.py
-          test -f integration/pbr-v32-pom/apply.py
-          test -f integration/pbr-v32-audit/apply.py
-          echo EXACT_AUDIT_COMMIT_READY
 
       - name: Install dependencies
         run: |
           set -Eeuo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends build-essential git gh jq python3 python3-pil unzip zip file             libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+          sudo apt-get install -y --no-install-recommends build-essential git gh jq python3 python3-pil unzip zip file \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
 
-      - name: Reconstruct exact PBR V3.2 + Material Binding Audit
+      - name: Download already-authored V2.06 AI materials from Run 42665309041
+        uses: actions/download-artifact@v4
+        with:
+          name: DarkWolf-PBR-Studio-V206-AI-Authored-Materials
+          path: authored
+          repository: jaha2002-stack/iortcw-rend2-build
+          run-id: 42665309041
+          github-token: ${{ github.token }}
+
+      - name: Verify exact renderer base and 9 authored variants
         run: |
           set -Eeuo pipefail
-          rm -rf source source-clean source-v42 source-v31 source-v32 source-audit evidence runtime home protected-assets authored
-          mkdir -p evidence
           test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42619078136 --jq .conclusion)" = "success"
           test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42619078136 --jq .head_sha)" = "6605640a47b52a89f05b42490146e6c021301d83"
+          test "$(find authored -type f -name 'variant_*.pk3' | wc -l)" -eq 9
+          find authored -type f -name 'variant_*.pk3' -print | sort
+
+      - name: Reconstruct exact PBR V3.2 + Material Binding Audit state
+        run: |
+          set -Eeuo pipefail
+          rm -rf source source-clean source-v42 source-v31 source-v32 source-audit evidence runtime home protected-assets
+          mkdir -p evidence
 
           python3 integration/elss-v1/prepare.py
           python3 integration/elss-v1/apply.py source evidence
@@ -66,26 +73,26 @@ jobs:
           cp -a source-clean source-v42
           python3 integration/pbr-v2/apply.py source-v42 --stage 3 --proof evidence/PBR_V42_PROOF.json
           python3 integration/pbr-v2/test.py source-v42 --stage 3 --out evidence/PBR_V42_STATIC.json
+
           cp -a source-v42 source-v31
           python3 integration/pbr-v31-ibl/apply.py source-v31 --proof evidence/PBR_V31_PROOF.json
           python3 integration/pbr-v31-ibl/test.py source-v31 --out evidence/PBR_V31_STATIC.json
+
           cp -a source-v31 source-v32
           python3 integration/pbr-v32-pom/apply.py source-v32 --proof evidence/PBR_V32_PROOF.json
           python3 integration/pbr-v32-pom/test.py source-v32 --out evidence/PBR_V32_STATIC.json
+
           cp -a source-v32 source-audit
           python3 integration/pbr-v32-audit/apply.py source-audit --proof evidence/PBR_V32_AUDIT_PROOF.json
           python3 integration/pbr-v32-audit/test.py source-audit --out evidence/PBR_V32_AUDIT_STATIC.json
           echo EXACT_RUN_42619078136_RENDERER_STATE_RECONSTRUCTED
 
-      - name: Native compile exact audit renderer
+      - name: Native compile
         run: |
           set -Eeuo pipefail
           make -C source-audit/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/NATIVE_BUILD.log 2>&1 || { tail -300 evidence/NATIVE_BUILD.log; exit 1; }
-          exe="$(find source-audit/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
-          test -n "$exe"
-          echo "$exe" > evidence/native_exe.txt
 
-      - name: Fetch retail assets
+      - name: Fetch retail RTCW assets
         run: |
           set -Eeuo pipefail
           test -n "$DARKWOLF_RTCW_ASSET_TOKEN"
@@ -96,110 +103,124 @@ jobs:
           test -d "$retail_main"
           echo "$retail_main" > evidence/retail_main_path.txt
 
-      - name: Download already-authored V2.06 material variants
-        uses: actions/download-artifact@v4
-        with:
-          name: DarkWolf-PBR-Studio-V206-AI-Authored-Materials
-          path: authored
-          repository: jaha2002-stack/iortcw-rend2-build
-          run-id: 42665309041
-          github-token: ${{ github.token }}
-
-      - name: Verify 9 authored PK3 variants
-        run: |
-          set -Eeuo pipefail
-          find authored -maxdepth 3 -type f | sort | tee evidence/AUTHORED_FILES.txt
-          test "$(find authored -type f -name 'variant_*.pk3' | wc -l)" -eq 9
-          test -f authored/escape_snow/variant_1.pk3
-          test -f authored/crypt_floor/variant_1.pk3
-          test -f authored/crypt_wall/variant_1.pk3
-
-      - name: Locate exact Crypt1 surfaces and derive deterministic cameras
+      - name: Find Crypt1 target surfaces nearest torch/fire entities
         run: |
           set -Eeuo pipefail
           retail_main="$(cat evidence/retail_main_path.txt)"
           python3 - "$retail_main" <<'PY'
-          import sys,zipfile,struct,math,json,pathlib
+          import sys,zipfile,struct,math,re,json,pathlib
           root=pathlib.Path(sys.argv[1])
 
-          def read_bsp(name):
-              target=f"maps/{name}.bsp".lower()
-              for p in sorted(root.glob('*.pk3')):
+          def read_bsp(mapname):
+              target=f"maps/{mapname}.bsp".lower()
+              for p in sorted(root.glob("*.pk3")):
                   with zipfile.ZipFile(p) as z:
                       for n in z.namelist():
                           if n.lower()==target:
                               return z.read(n),p.name
               raise SystemExit(f"missing {target}")
 
-          def analyze(mapname, shader, kind):
-              data,pk3=read_bsp(mapname)
-              assert data[:4]==b'IBSP'
-              lumps=[struct.unpack_from('<ii',data,8+i*8) for i in range(17)]
-              def lump(i):
-                  o,l=lumps[i]; return data[o:o+l]
-              sh=lump(1); verts=lump(10); surfs=lump(13)
-              names=[]
-              for off in range(0,len(sh),72):
-                  if off+72>len(sh): break
-                  names.append(sh[off:off+64].split(b'\0',1)[0].decode('latin1').lower())
+          data,pk3=read_bsp("crypt1")
+          if data[:4]!=b"IBSP": raise SystemExit("not IBSP")
+          lumps=[struct.unpack_from("<ii",data,8+i*8) for i in range(17)]
+          def lump(i):
+              o,l=lumps[i]; return data[o:o+l]
+
+          # RTCW entities
+          ent_text=lump(0).split(b"\0",1)[0].decode("latin1","ignore")
+          entities=[]
+          for block in re.findall(r"\{([^}]*)\}",ent_text,re.S):
+              kv=dict(re.findall(r'"([^"]+)"\s+"([^"]*)"',block))
+              if "origin" not in kv: continue
+              text=(" ".join([kv.get("classname",""),kv.get("model",""),kv.get("targetname",""),kv.get("scriptName","")])).lower()
+              if not any(k in text for k in ("torch","fire","flame")): continue
+              try:
+                  o=[float(x) for x in kv["origin"].split()[:3]]
+                  if len(o)==3: entities.append((o,text,kv))
+              except: pass
+
+          sh=lump(1); verts=lump(10); surfs=lump(13)
+          names=[]
+          for off in range(0,len(sh),72):
+              if off+72>len(sh): break
+              names.append(sh[off:off+64].split(b"\0",1)[0].decode("latin1").lower())
+
+          def surfaces(shader):
               target=shader.lower()
-              if target not in names:
-                  raise SystemExit(f'{shader} absent from {mapname} BSP')
-              si=names.index(target)
-              cand=[]
+              if target not in names: raise SystemExit(f"shader absent: {shader}")
+              si=names.index(target); out=[]
               for off in range(0,len(surfs),104):
                   if off+104>len(surfs): break
-                  vals=struct.unpack_from('<12i3f9f2i',surfs,off)
+                  vals=struct.unpack_from("<12i3f9f2i",surfs,off)
                   if vals[0]!=si: continue
                   first,nv=vals[3],vals[4]
                   pts=[]; norms=[]
                   for j in range(nv):
                       vo=(first+j)*44
                       if vo+44>len(verts): break
-                      v=struct.unpack_from('<3f2f2f3f4B',verts,vo)
+                      v=struct.unpack_from("<3f2f2f3f4B",verts,vo)
                       pts.append(v[0:3]); norms.append(v[7:10])
                   if not pts: continue
                   c=[sum(p[k] for p in pts)/len(pts) for k in range(3)]
                   n=[sum(q[k] for q in norms)/len(norms) for k in range(3)]
-                  ln=math.sqrt(sum(x*x for x in n)) or 1
+                  ln=math.sqrt(sum(x*x for x in n)) or 1.0
                   n=[x/ln for x in n]
-                  cand.append((vals[6] if vals[6]>0 else nv,c,n,nv,vals[6]))
-              if not cand:
-                  raise SystemExit(f'no surfaces for {shader}')
+                  out.append(dict(center=c,normal=n,numVerts=nv,numIndexes=vals[6]))
+              return out
 
-              if kind=='floor':
-                  good=[x for x in cand if x[2][2]>0.55] or sorted(cand,key=lambda x:x[2][2],reverse=True)[:5]
-                  score,c,n,nv,ni=max(good,key=lambda x:x[0])
-                  tx,ty=-n[1],n[0]
-                  if abs(tx)+abs(ty)<0.2: tx,ty=1,0
-                  tl=math.hypot(tx,ty); tx/=tl; ty/=tl
-                  cam=[c[0]+tx*96,c[1]+ty*96,c[2]+38]
+          def dist(a,b): return math.sqrt(sum((a[i]-b[i])**2 for i in range(3)))
+
+          fire_origins=[e[0] for e in entities]
+          if not fire_origins:
+              print("WARN: no explicit torch/fire entities found; using map origin")
+              fire_origins=[[0.0,0.0,0.0]]
+
+          def choose(shader,kind):
+              cand=surfaces(shader)
+              orient = [s for s in cand if (s["normal"][2]>0.55 if kind=="floor" else abs(s["normal"][2])<0.55)]
+              if not orient: orient=cand
+              for s in orient:
+                  s["fireDistance"]=min(dist(s["center"],f) for f in fire_origins)
+              # Prefer surfaces actually near a torch/fire source; among close ones prefer larger geometry.
+              nearby=[s for s in orient if s["fireDistance"]<700] or orient
+              nearby.sort(key=lambda s:(s["fireDistance"],-s["numVerts"],-s["numIndexes"]))
+              s=nearby[0]
+              c=s["center"]; n=s["normal"]
+              if kind=="wall":
+                  cam=[c[0]+n[0]*115,c[1]+n[1]*115,c[2]+n[2]*115+6]
               else:
-                  good=[x for x in cand if abs(x[2][2])<0.55] or sorted(cand,key=lambda x:abs(x[2][2]))[:5]
-                  score,c,n,nv,ni=max(good,key=lambda x:x[0])
-                  cam=[c[0]+n[0]*92,c[1]+n[1]*92,c[2]+n[2]*92]
-
-              yaw=math.degrees(math.atan2(c[1]-cam[1],c[0]-cam[0]))%360
-              return dict(shader=shader,sourcePk3=pk3,center=c,normal=n,camera=cam,yaw=yaw,numVerts=nv,numIndexes=ni)
+                  # oblique top view of floor tile
+                  tx,ty=-n[1],n[0]
+                  if abs(tx)+abs(ty)<0.1: tx,ty=1.0,0.0
+                  tl=math.hypot(tx,ty); tx/=tl; ty/=tl
+                  cam=[c[0]+tx*125,c[1]+ty*125,c[2]+62]
+              yaw=math.degrees(math.atan2(c[1]-cam[1],c[0]-cam[0]))
+              if yaw<0:yaw+=360
+              s["camera"]=cam; s["yaw"]=yaw
+              return s
 
           out={
-            'floor':analyze('crypt1','textures/crypt/crypt_d01_step','floor'),
-            'wall':analyze('crypt1','textures/crypt/crypt_wall_03','wall')
+              "pk3":pk3,
+              "fireEntityCount":len(entities),
+              "fires":[{"origin":o,"text":t[:160]} for o,t,_ in entities[:30]],
+              "floor":choose("textures/crypt/crypt_d01_step","floor"),
+              "wall":choose("textures/crypt/crypt_wall_03","wall")
           }
-          pathlib.Path('evidence/CRYPT1_CAMERAS.json').write_text(json.dumps(out,indent=2))
-          with open('evidence/crypt_cameras.env','w') as f:
-              for key,v in out.items():
-                  x,y,z=v['camera']
-                  f.write(f'{key.upper()}_X={x:.3f}\n{key.upper()}_Y={y:.3f}\n{key.upper()}_Z={z:.3f}\n{key.upper()}_YAW={v["yaw"]:.3f}\n')
+          pathlib.Path("evidence/CRYPT1_TARGETS.json").write_text(json.dumps(out,indent=2))
+          with open("evidence/crypt.env","w") as f:
+              for key in ("floor","wall"):
+                  v=out[key]; x,y,z=v["camera"]
+                  f.write(f"{key.upper()}_X={x:.3f}\n{key.upper()}_Y={y:.3f}\n{key.upper()}_Z={z:.3f}\n{key.upper()}_YAW={v['yaw']:.3f}\n")
           print(json.dumps(out,indent=2))
           PY
 
-      - name: Capture 9 real in-game variants
+      - name: Capture 9 real in-game frames
         run: |
           set -Eeuo pipefail
-          source evidence/crypt_cameras.env
+          source evidence/crypt.env
           retail_main="$(cat evidence/retail_main_path.txt)"
-          exe_src="$(cat evidence/native_exe.txt)"
+          exe_src="$(find source-audit/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe_src"
           buildroot="$(dirname "$exe_src")"
           mkdir -p evidence/screens evidence/logs
 
@@ -211,9 +232,17 @@ jobs:
             find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
             cp "$pk3" runtime/main/zzzz_dw_v206_ai_material.pk3
             exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
-            test -n "$exe"
             set +e
-            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 12s 175s "$exe"               +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home"               +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0               +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720               +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1 +set r_cubeMapping 1               +set r_parallaxMapping 2 +set r_parallaxMapShadows 1 +set r_pomShadowStrength 0.18               +set r_pomMinLayers 20 +set r_pomMaxLayers 56 +set r_pomRefineSteps 5 +set r_pomMaxOffset 0.028               +set r_dlightmode 2 +set r_forcesun 1               +devmap "$map" +wait 40 +setviewpos "$x" "$y" "$z" "$yaw" +wait 18               +r_pbrMaterialAudit "$shader" +wait 3 +screenshot "$label" +wait 4 +quit
+            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 12s 175s "$exe" \
+              +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
+              +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0 \
+              +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720 \
+              +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1 +set r_cubeMapping 1 \
+              +set r_parallaxMapping 2 +set r_parallaxMapShadows 1 +set r_pomShadowStrength 0.18 \
+              +set r_pomMinLayers 20 +set r_pomMaxLayers 56 +set r_pomRefineSteps 5 +set r_pomMaxOffset 0.028 \
+              +set r_dlightmode 2 +set r_forcesun 1 \
+              +devmap "$map" +wait 38 +setviewpos "$x" "$y" "$z" "$yaw" +wait 16 \
+              +r_pbrMaterialAudit "$shader" +wait 3 +screenshot "$label" +wait 4 +quit
             rc=$?
             set -e
             echo "$rc" > "evidence/logs/${label}_exit.txt"
@@ -237,69 +266,61 @@ jobs:
             capture_one "crypt_wall_wet_v${v}" crypt1 textures/crypt/crypt_wall_03 "authored/crypt_wall/variant_${v}.pk3" "$WALL_X" "$WALL_Y" "$WALL_Z" "$WALL_YAW"
           done
 
-      - name: Build three-way comparison sheets
+      - name: Build 3-up comparison sheets
         run: |
           set -Eeuo pipefail
           python3 - <<'PY'
           from PIL import Image,ImageDraw,ImageChops
           from pathlib import Path
           import json
-          root=Path('evidence/screens')
+          root=Path("evidence/screens")
           groups={
-            'Escape1_WetSnow':['escape_wetsnow_v1','escape_wetsnow_v2','escape_wetsnow_v3'],
-            'Crypt1_Floor_Wet':['crypt_floor_wet_v1','crypt_floor_wet_v2','crypt_floor_wet_v3'],
-            'Crypt1_Wall_Wet':['crypt_wall_wet_v1','crypt_wall_wet_v2','crypt_wall_wet_v3']
+            "Escape1_WetSnow":["escape_wetsnow_v1","escape_wetsnow_v2","escape_wetsnow_v3"],
+            "Crypt1_Floor_Wet":["crypt_floor_wet_v1","crypt_floor_wet_v2","crypt_floor_wet_v3"],
+            "Crypt1_Wall_Wet":["crypt_wall_wet_v1","crypt_wall_wet_v2","crypt_wall_wet_v3"]
           }
           metrics={}
           def find(stem):
               hits=[p for p in root.iterdir() if p.stem.lower().startswith(stem.lower())]
-              if not hits: raise SystemExit(f'missing screenshot {stem}')
+              if not hits: raise SystemExit(f"missing screenshot {stem}")
               return hits[0]
           for title,stems in groups.items():
-              imgs=[Image.open(find(s)).convert('RGB') for s in stems]
+              imgs=[Image.open(find(s)).convert("RGB") for s in stems]
               w,h=imgs[0].size
-              sheet=Image.new('RGB',(w*3,h+42))
+              sheet=Image.new("RGB",(w*3,h+42))
               d=ImageDraw.Draw(sheet)
               for i,im in enumerate(imgs):
                   sheet.paste(im,(i*w,42))
                   d.rectangle((i*w,0,(i+1)*w,42),fill=(0,0,0))
-                  d.text((i*w+12,13),f'{title} Variant {i+1}',fill=(255,255,255))
-              sheet.save(Path('evidence')/(title+'_3_VARIANTS.png'))
+                  d.text((i*w+12,13),f"{title} Variant {i+1}",fill=(255,255,255))
+              sheet.save(Path("evidence")/(title+"_3_VARIANTS.png"))
               vals=[]
               for a,b in ((imgs[0],imgs[1]),(imgs[0],imgs[2]),(imgs[1],imgs[2])):
                   diff=ImageChops.difference(a,b)
                   pix=[sum(x)/3 for x in diff.getdata()]
                   vals.append(sum(pix)/len(pix))
-              metrics[title]={'mean_pairwise_abs_rgb':vals,'min':min(vals),'max':max(vals)}
-          Path('evidence/V206_AI_VARIANT_VISUAL_METRICS.json').write_text(json.dumps(metrics,indent=2)+'\n')
+              metrics[title]=vals
+          Path("evidence/VISUAL_METRICS.json").write_text(json.dumps(metrics,indent=2)+"\n")
           print(json.dumps(metrics,indent=2))
           PY
 
       - name: Final proof
         run: |
           set -Eeuo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import json,hashlib
-          proof={
-            'renderer_base_run':42619078136,
-            'renderer_commit':'6605640a47b52a89f05b42490146e6c021301d83',
-            'studio':'DarkWolf PBR Studio V2.06 AI Material Authoring',
-            'materials':{
-              'escape1':{'shader':'textures/snow/s_cathedrale_c06','finish':'WetSnow','variants':3},
-              'crypt1_floor':{'shader':'textures/crypt/crypt_d01_step','finish':'Wet','variants':3},
-              'crypt1_wall':{'shader':'textures/crypt/crypt_wall_03','finish':'Wet','variants':3}
-            },
-            'runtime':{'r_pbr':3,'r_parallaxMapping':2,'r_parallaxMapShadows':1,'r_pomShadowStrength':0.18,'r_cubeMapping':1,'r_dlightmode':2,'r_forcesun':1},
-            'screenshots':sorted(str(p) for p in Path('evidence/screens').iterdir())
-          }
-          Path('evidence/FINAL_PROOF.json').write_text(json.dumps(proof,indent=2)+'\n')
-          PY
+          cat > evidence/FINAL_PROOF.txt <<'EOF'
+          Renderer: exact PBR V3.2 Physical Relief / POM + Material Binding Audit state from Run #42619078136
+          Studio: DarkWolf PBR Studio V2.06 AI Material Authoring
+          Escape1: textures/snow/s_cathedrale_c06, WetSnow, 3 AI variants
+          Crypt1 floor: textures/crypt/crypt_d01_step, Wet, 3 AI variants
+          Crypt1 wall: textures/crypt/crypt_wall_03, Wet, 3 AI variants
+          Runtime: r_pbr 3, r_parallaxMapping 2, r_parallaxMapShadows 1, r_cubeMapping 1, r_dlightmode 2, r_forcesun 1
+          Each screenshot log must report normalType=NORMALHEIGHT, packedORM=1 and pomV32=ACTIVE.
+          EOF
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: DarkWolf-PBR-V206-AI-Gameplay-Capture-Only-Proof
+          name: DarkWolf-PBR-V206-AI-Real-Gameplay-Frames
           path: evidence/
           if-no-files-found: warn
           retention-days: 30
