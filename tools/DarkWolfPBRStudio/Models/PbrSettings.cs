@@ -4,6 +4,7 @@ public sealed class PbrSettings
 {
     public PbrGenerationMode GenerationMode { get; set; } = PbrGenerationMode.MacroReliefEnhanced;
     public MaterialKind MaterialKind { get; set; } = MaterialKind.GenericDielectric;
+    public SurfaceFinish SurfaceFinish { get; set; } = SurfaceFinish.Dry;
     public double NormalStrength { get; set; } = 14.0;
     public double HeightContrast { get; set; } = 0.72;
     public double FineWeight { get; set; } = 0.78;
