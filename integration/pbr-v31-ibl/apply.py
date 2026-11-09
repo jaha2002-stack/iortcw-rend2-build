@@ -934,7 +934,10 @@ static void RB_PbrV31BuildLinearSource(cubemap_t *cubemap)
     }
 
     // These mips are now generated from RGBA16F linear radiance, so the source
-    // LOD used by the GGX Monte-Carlo pass is energy-correct.
+    // LOD used by the GGX Monte-Carlo pass is energy-correct. Detach the working
+    // framebuffer first: the texture has just been an attachment and keeping it
+    // attached while generating its own mip chain is unnecessary driver risk.
+    FBO_Bind(NULL);
     qglGenerateTextureMipmapEXT(tr.pbrIblLinearSourceImage->texnum, GL_TEXTURE_CUBE_MAP);
 }
 
