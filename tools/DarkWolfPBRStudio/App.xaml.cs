@@ -12,13 +12,34 @@ public partial class App : Application
     private static string StartupLogPath => Path.Combine(DiagnosticsDir, "startup.log");
     private static string CrashLogPath => Path.Combine(DiagnosticsDir, "startup-crash.log");
 
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
+        if (e.Args.Any(x => x.Equals("--lab-author", StringComparison.OrdinalIgnoreCase)))
+        {
+            try
+            {
+                int rc = await V206LabRunner.RunAsync(e.Args);
+                Shutdown(rc);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex);
+                try
+                {
+                    Directory.CreateDirectory(DiagnosticsDir);
+                    File.WriteAllText(Path.Combine(DiagnosticsDir, "v206-lab-error.log"), ex.ToString(), Encoding.UTF8);
+                }
+                catch { }
+                Shutdown(-10);
+            }
+            return;
+        }
+
         Directory.CreateDirectory(DiagnosticsDir);
         SafeWrite(StartupLogPath,
-            $"[{DateTime.Now:O}] DarkWolf PBR Studio V2.04 starting\r\n" +
+            $"[{DateTime.Now:O}] DarkWolf PBR Studio V2.06 starting\r\n" +
             $"OS={Environment.OSVersion}\r\n" +
             $"64bitProcess={Environment.Is64BitProcess}\r\n" +
             $"BaseDirectory={AppContext.BaseDirectory}\r\n");
@@ -64,7 +85,7 @@ public partial class App : Application
         {
             MessageBox.Show(
                 text + "\r\nCrash log:\r\n" + CrashLogPath,
-                "DarkWolf PBR Studio V2.04 startup error",
+                "DarkWolf PBR Studio V2.06 startup error",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
