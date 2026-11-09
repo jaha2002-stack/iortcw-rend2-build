@@ -37,7 +37,9 @@ internal static class V206LabRunner
         ImageService.SavePng(source, input);
 
         MaterialAnalysis analysis = MaterialClassifier.Analyze(found.Asset.EntryPath, source);
-        MaterialKind kind = analysis.Kind;
+        MaterialKind kind = a.TryGetValue("material", out var materialText)
+            ? Enum.Parse<MaterialKind>(materialText, true)
+            : analysis.Kind;
         var profile = MaterialProfile.For(kind);
         string prompt = AiMaterialAuthoringPresets.BuildPrompt(profile, finish);
 
