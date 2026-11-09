@@ -16,7 +16,7 @@ checks['escape1_only']='Q_stricmp(tr.world->baseName, "escape1") != 0' in inc
 checks['summary']='EDRA_SUMMARY' in inc and 'sceneNative=%d' in inc and 'headroom=%d' in inc and 'budgetEvictions=%d' in inc
 checks['eviction']='EDRA_EVICT' not in inc and '"EVICT"' in inc
 checks['native_change']='EDRA_NATIVE_CHANGE' in inc and 'EDRA_NATIVE' in inc
-checks['guard_fixture_ids']='{ 740, 741, 742, 743, 744 }' in inc
+checks['guard_fixture_ids']='{ 740, 741, 742, 743, 744, 745 }' in inc
 checks['hook_after_uslrd']='R_StaticPromoteUSLRDDiagFrame();\n\tR_DarkWolfEscape1DlightResidencyAuditFrame(fd);' in scene
 checks['no_render_calls']=all(x not in inc for x in ('R_RenderView(', 'FBO_Blit(', 'RE_AddLightToScene(', 'R_AddDrawSurfCmd('))
 checks['no_profile_writes']=all(x not in inc for x in ('FS_WriteFile','R_StaticPromoteUserOverrideSet','R_StaticPromoteSyntheticAdd','R_ELSS_Set'))
