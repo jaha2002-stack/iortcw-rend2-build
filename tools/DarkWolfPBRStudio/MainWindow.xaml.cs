@@ -671,7 +671,20 @@ public partial class MainWindow : Window
 
     private void UpdateSliderLabels()
     {
-        if (AiStrengthText is null) return;
+        // WPF can fire ValueChanged while InitializeComponent is still constructing
+        // controls in XAML order. AiStrengthSlider appears before the PBR section, so
+        // the first event can arrive before NormalStrengthSlider and friends exist.
+        // Never touch later controls until the entire window has been initialized.
+        if (!IsInitialized ||
+            AiStrengthText is null || AiStrengthSlider is null ||
+            NormalStrengthText is null || NormalStrengthSlider is null ||
+            HeightContrastText is null || HeightContrastSlider is null ||
+            RoughnessText is null || RoughnessMinSlider is null || RoughnessMaxSlider is null ||
+            MetallicText is null || MetallicSlider is null ||
+            ParallaxDepthText is null || ParallaxDepthSlider is null ||
+            MacroReliefBoostText is null || MacroReliefBoostSlider is null)
+            return;
+
         AiStrengthText.Text = AiStrengthSlider.Value.ToString("0.00");
         NormalStrengthText.Text = NormalStrengthSlider.Value.ToString("0");
         HeightContrastText.Text = HeightContrastSlider.Value.ToString("0.00");
