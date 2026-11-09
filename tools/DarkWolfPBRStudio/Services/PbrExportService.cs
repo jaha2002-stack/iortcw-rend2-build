@@ -87,7 +87,7 @@ public static class PbrExportService
     qer_editorimage {asset.EntryPath}
     {{
         stage diffuseMap
-        map {asset.ShaderName}
+        map {asset.EntryPath}
         rgbGen identity
     }}
 {normalStage}
