@@ -16,7 +16,15 @@ assert text.count(include_anchor)>=1
 if '#include "tr_escape1_dlight_residency_fix.inc"' not in text:
     text=text.replace(include_anchor,'#include "tr_escape1_dlight_residency_fix.inc"\n\n'+include_anchor,1)
 
-old='''	if (allAcceptedDelivery)
+decl='int i, tier, priority, retainedPass;'
+assert text.count(decl)>=1
+text=text.replace(decl,'int i, tier, priority, retainedPass, coherence, effectiveStaticBudget;',1)
+
+old='''	// DARKWOLF_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1
+	// If all-accepted delivery fits the actual front-end headroom, PVS/tier never turns a lamp off.
+	// When the accepted set exceeds headroom, deterministic priority + previous ownership decides
+	// which fixtures remain delivered; visibility still does not alter base Direct energy.
+	if (allAcceptedDelivery)
 	{
 		for (priority = 0; priority <= 6 && selectedCount < s_uslrdStaticBudget; ++priority)
 		{
@@ -45,8 +53,13 @@ old='''	if (allAcceptedDelivery)
 	{
 		// Parent A/B path: current physical relevance is the outer criterion.
 '''
-new='''	if (allAcceptedDelivery &&
-		!R_DarkWolfEscape1OverflowRelevantSelection(eligiblePromoted, s_uslrdStaticBudget))
+new='''	// DARKWOLF_USLRD_ALWAYS_ON_DIRECT_SHADOW_CAPTURE_FIX_V1
+	// If all-accepted delivery fits the actual front-end headroom, PVS/tier never turns a lamp off.
+	// Escape1 V1.1 additionally reserves the proven native high-water occupancy so transient
+	// 8<->9 native changes cannot repeatedly resize the promoted ownership set.
+	effectiveStaticBudget = R_DarkWolfEscape1StableStaticBudget(eligiblePromoted, s_uslrdStaticBudget);
+	if (allAcceptedDelivery &&
+		!R_DarkWolfEscape1StableSelectionActive(eligiblePromoted, s_uslrdStaticBudget))
 	{
 		for (priority = 0; priority <= 6 && selectedCount < s_uslrdStaticBudget; ++priority)
 		{
@@ -73,15 +86,14 @@ new='''	if (allAcceptedDelivery &&
 	}
 	else if (allAcceptedDelivery)
 	{
-		// DARKWOLF_ESCAPE1_DLIGHT_RESIDENCY_FIX_V1:
-		// Overflow only. FORCE ON remains absolute; all other accepted fixtures are
-		// ordered by current physical relevance before their static priority.
-		// This keeps a visible room lamp from losing its slot to a LATENT lamp when
-		// native DLight count changes. No camera distance participates.
+		// DARKWOLF_ESCAPE1_DLIGHT_RESIDENCY_FIX_V1_1:
+		// Stable, map-space ownership under overflow. FORCE ON remains absolute.
+		// For every ordinary StaticPromote priority, dense coherent fixture groups are
+		// retained before isolated peers. No camera distance or Direct energy mutation.
 		priority = 0;
-		for (retainedPass = 0; retainedPass < 2 && selectedCount < s_uslrdStaticBudget; ++retainedPass)
+		for (retainedPass = 0; retainedPass < 2 && selectedCount < effectiveStaticBudget; ++retainedPass)
 		{
-			for (i = 0; i < s_staticPromotePersistentCount && selectedCount < s_uslrdStaticBudget; ++i)
+			for (i = 0; i < s_staticPromotePersistentCount && selectedCount < effectiveStaticBudget; ++i)
 			{
 				staticPromotePersistentLight_t *light = &s_staticPromotePersistentLights[i];
 				if (selectedFlags[i] || !light->unifiedClassAccepted || light->unifiedNativeRuntimePresent)
@@ -98,21 +110,20 @@ new='''	if (allAcceptedDelivery &&
 				selectedCount++;
 			}
 		}
-		for (tier = DWSP_TIER_SURFACE_VISIBLE; tier <= DWSP_TIER_LATENT &&
-			selectedCount < s_uslrdStaticBudget; ++tier)
+		for (priority = 1; priority <= 6 && selectedCount < effectiveStaticBudget; ++priority)
 		{
-			for (priority = 1; priority <= 6 && selectedCount < s_uslrdStaticBudget; ++priority)
+			for (coherence = 31; coherence >= 0 && selectedCount < effectiveStaticBudget; --coherence)
 			{
-				for (retainedPass = 0; retainedPass < 2 && selectedCount < s_uslrdStaticBudget; ++retainedPass)
+				for (retainedPass = 0; retainedPass < 2 && selectedCount < effectiveStaticBudget; ++retainedPass)
 				{
-					for (i = 0; i < s_staticPromotePersistentCount && selectedCount < s_uslrdStaticBudget; ++i)
+					for (i = 0; i < s_staticPromotePersistentCount && selectedCount < effectiveStaticBudget; ++i)
 					{
 						staticPromotePersistentLight_t *light = &s_staticPromotePersistentLights[i];
 						if (selectedFlags[i] || !light->unifiedClassAccepted || light->unifiedNativeRuntimePresent)
 							continue;
-						if (light->unifiedVisibilityTier != tier)
-							continue;
 						if (R_StaticPromoteUSLRDPriority(light) != priority)
+							continue;
+						if (R_DarkWolfEscape1FixtureCoherenceScore(light) != coherence)
 							continue;
 						if ((retainedPass == 0) != (light->unifiedWasResident ? 1 : 0))
 							continue;
@@ -140,11 +151,11 @@ needle='''	if (classifierRejectedOut) *classifierRejectedOut = classifierRejecte
 '''
 repl='''	if (classifierRejectedOut) *classifierRejectedOut = classifierRejected;
 	R_DarkWolfEscape1ResidencyFixDiag(eligiblePromoted, s_uslrdStaticBudget,
-		selectedCount, R_DarkWolfEscape1OverflowRelevantSelection(eligiblePromoted, s_uslrdStaticBudget));
+		effectiveStaticBudget, selectedCount,
+		R_DarkWolfEscape1StableSelectionActive(eligiblePromoted, s_uslrdStaticBudget));
 	return selectedCount;
 }
 '''
-# Apply to the unified function only: choose the occurrence immediately before wrapper by replacing last matching occurrence before wrapper.
 pos=text.find('static int R_StaticPromoteSelectPersistentInfluence(const refdef_t *fd,')
 assert pos>0
 prefix=text[:pos]; suffix=text[pos:]
@@ -156,16 +167,18 @@ text=prefix+suffix
 scene.write_text(text)
 shutil.copy2(inc_src,inc_dst)
 proof={
- 'version':'ESCAPE1_DLIGHT_RESIDENCY_FIX_V1',
+ 'version':'ESCAPE1_DLIGHT_RESIDENCY_FIX_V1_1',
  'base_run':42217883095,
  'inherits':'ELECTRIC_PHYSICAL_OWNER_V1_SHADOW_LOCALVOL',
  'map_scope':'escape1',
- 'activation':'only when accepted promoted > actual static budget',
- 'policy':'FORCE_ON first; then visibility tier; then StaticPromote priority; then previous residency',
+ 'native_reserve':9,
+ 'activation':'only when accepted promoted exceeds stable reserve budget',
+ 'policy':'FORCE_ON; then StaticPromote priority; then 260u map-space coherence; then previous residency',
  'direct_radius_color_intensity_mutated':False,
+ 'camera_distance_used':False,
  'max_dlights_changed':False,
  'other_maps_changed':False,
- 'legacy_no_overflow_path_preserved':True,
+ 'legacy_path_preserved_when_not_active':True,
  'scene_sha256':hashlib.sha256(scene.read_bytes()).hexdigest(),
  'inc_sha256':hashlib.sha256(inc_dst.read_bytes()).hexdigest()
 }
