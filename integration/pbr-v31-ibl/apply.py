@@ -99,7 +99,8 @@ void main()
 {
     float face = floor(u_Color.x + 0.5);
     float roughness = clamp(u_Color.y, 0.0, 1.0);
-    float sourceResolution = max(u_Color.z, 1.0);
+    float sourceResolution = max(abs(u_Color.z), 1.0);
+    float sourceIsLinear = u_Color.z < 0.0 ? 1.0 : 0.0;
     int sampleCount = int(clamp(u_Color.w, 1.0, float(DW_MAX_PREFILTER_SAMPLES)) + 0.5);
 
     vec3 N = DW_FaceDirection(face, var_Tex1);
@@ -108,12 +109,15 @@ void main()
     if (roughness < 0.0005)
     {
         vec3 c = textureCubeLod(u_CubeMap, N, 0.0).rgb;
-        gl_FragColor = vec4(DW_SRGBToLinear(c), 1.0);
+        c = mix(DW_SRGBToLinear(c), c, sourceIsLinear);
+        gl_FragColor = vec4(c, 1.0);
         return;
     }
 
     vec3 prefiltered = vec3(0.0);
     float totalWeight = 0.0;
+    float saTexel = 4.0 * DW_PI / (6.0 * sourceResolution * sourceResolution);
+    float sourceMaxMip = max(floor(log2(sourceResolution)), 0.0);
 
     for (int i = 0; i < DW_MAX_PREFILTER_SAMPLES; ++i)
     {
@@ -126,13 +130,16 @@ void main()
         float NoL = max(dot(N, L), 0.0);
         if (NoL > 0.0)
         {
-            // Always sample the raw environment at LOD0. Its legacy mip chain is
-            // generated in the texture's encoded/sRGB value space, so using those
-            // mips would bias radiance before DW_SRGBToLinear(). Deterministic
-            // 256-sample GGX integration from level 0 keeps the convolution itself
-            // in linear radiance space and avoids hidden gamma-space averaging.
-            vec3 c = textureCubeLod(u_CubeMap, L, 0.0).rgb;
-            prefiltered += DW_SRGBToLinear(c) * NoL;
+            float NoH = max(dot(N, H), 0.0);
+            float HoV = max(dot(H, V), 0.0);
+            float D = DW_DistributionGGX(NoH, roughness);
+            float pdf = max(D * NoH / max(4.0 * HoV, 1e-6), 1e-6);
+            float saSample = 1.0 / (float(sampleCount) * pdf + 1e-6);
+            float sourceLod = clamp(0.5 * log2(saSample / saTexel), 0.0, sourceMaxMip);
+
+            vec3 c = textureCubeLod(u_CubeMap, L, sourceLod).rgb;
+            c = mix(DW_SRGBToLinear(c), c, sourceIsLinear);
+            prefiltered += c * NoL;
             totalWeight += NoL;
         }
     }
@@ -305,6 +312,7 @@ old='''	image_t                 *renderCubeImage;
 '''
 new='''	image_t                 *renderCubeImage;
 	image_t                 *pbrBrdfLutImage; // PBR V3.1 full split-sum GGX DFG integration LUT
+	image_t                 *pbrIblLinearSourceImage; // shared RGBA16F source cube with linear mip chain
 	qboolean                pbrBrdfLutReady;
 	
 	image_t					*textureDepthImage;
@@ -436,10 +444,24 @@ new='''		if (r_cubeMapping->integer)
 		// depends on stale renderer-state allocation order.
 		if (glRefConfig.textureFloat && glConfig.numTextureUnits >= 8)
 		{
+			imgFlags_t linearCubeFlags = IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE |
+				IMGFLAG_MIPMAP | IMGFLAG_NOLIGHTSCALE | IMGFLAG_CUBEMAP;
+
 			tr.pbrBrdfLutImage = R_CreateImage("*pbrBrdfLut", NULL, 256, 256,
 				IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
 			qglTextureParameterfEXT(tr.pbrBrdfLutImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 			qglTextureParameterfEXT(tr.pbrBrdfLutImage->texnum, GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+			// One temporary source cube is reused for every probe. We first copy the
+			// raw probe to RGBA16F in linear space, generate its mip chain there, and
+			// then importance-sample those linear mips into the persistent GGX result.
+			tr.pbrIblLinearSourceImage = R_CreateImage("*pbrIblLinearSource", NULL,
+				r_cubemapSize->integer, r_cubemapSize->integer,
+				IMGTYPE_COLORALPHA, linearCubeFlags, GL_RGBA16F_ARB);
+			qglTextureParameterfEXT(tr.pbrIblLinearSourceImage->texnum, GL_TEXTURE_CUBE_MAP,
+				GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+			qglTextureParameterfEXT(tr.pbrIblLinearSourceImage->texnum, GL_TEXTURE_CUBE_MAP,
+				GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		}
 '''
 s=replace_once(s,old,new,"BRDF LUT image allocation")
@@ -732,6 +754,7 @@ new='''static qboolean R_PbrV31IblAvailable(void)
 		glRefConfig.textureFloat &&
 		glConfig.numTextureUnits >= 8 &&
 		tr.pbrBrdfLutImage &&
+		tr.pbrIblLinearSourceImage &&
 		tr.pbrIblFbo;
 }
 
@@ -887,6 +910,45 @@ static void RB_PbrV31BuildBrdfLut(void)
     tr.pbrBrdfLutReady = qtrue;
 }
 
+static void RB_PbrV31BuildLinearSource(cubemap_t *cubemap)
+{
+    int face;
+    int size = r_cubemapSize->integer;
+    float sourceResolution;
+
+    if (!cubemap || !cubemap->image || !tr.pbrIblLinearSourceImage)
+        return;
+
+    sourceResolution = (float)MAX(1, cubemap->image->uploadWidth);
+    GL_BindToTMU(cubemap->image, TB_CUBEMAP);
+
+    // Positive sourceResolution tells the shader that the raw source is encoded
+    // and must be converted to linear before writing the float source cube.
+    for (face = 0; face < 6; ++face)
+    {
+        vec4_t params;
+        FBO_AttachImageLevel(tr.pbrIblFbo, tr.pbrIblLinearSourceImage,
+            GL_COLOR_ATTACHMENT0, face, 0);
+        VectorSet4(params, (float)face, 0.0f, sourceResolution, 1.0f);
+        RB_PbrV31FullscreenPass(&tr.pbrPrefilterShader, size, size, params);
+    }
+
+    // These mips are now generated from RGBA16F linear radiance, so the source
+    // LOD used by the GGX Monte-Carlo pass is energy-correct.
+    qglGenerateTextureMipmapEXT(tr.pbrIblLinearSourceImage->texnum, GL_TEXTURE_CUBE_MAP);
+}
+
+static float RB_PbrV31SampleCountForMip(int mip)
+{
+    if (mip <= 0)
+        return 1.0f;
+    if (mip == 1)
+        return 64.0f;
+    if (mip == 2)
+        return 48.0f;
+    return 32.0f;
+}
+
 static void RB_PbrV31PrefilterCubemap(cubemap_t *cubemap)
 {
     int face, mip;
@@ -894,27 +956,29 @@ static void RB_PbrV31PrefilterCubemap(cubemap_t *cubemap)
     int maxMip = RB_PbrV31MaxRoughnessMip(size);
     float sourceResolution;
 
-    if (!cubemap || !cubemap->image || !cubemap->prefilteredImage)
+    if (!cubemap || !cubemap->image || !cubemap->prefilteredImage ||
+        !tr.pbrIblLinearSourceImage)
         return;
 
-    // Convolve directly from raw level 0. Legacy generated mips are intentionally
-    // not sampled here because they were averaged in encoded color space.
-    GL_BindToTMU(cubemap->image, TB_CUBEMAP);
+    RB_PbrV31BuildLinearSource(cubemap);
+    GL_BindToTMU(tr.pbrIblLinearSourceImage, TB_CUBEMAP);
 
-    sourceResolution = (float)MAX(1, cubemap->image->uploadWidth);
+    sourceResolution = (float)MAX(1, tr.pbrIblLinearSourceImage->uploadWidth);
 
     for (mip = 0; mip <= maxMip; ++mip)
     {
         int mipSize = MAX(1, size >> mip);
         float roughness = maxMip > 0 ? (float)mip / (float)maxMip : 0.0f;
-        float samples = (mip == 0) ? 1.0f : 256.0f;
+        float samples = RB_PbrV31SampleCountForMip(mip);
 
         for (face = 0; face < 6; ++face)
         {
             vec4_t params;
             FBO_AttachImageLevel(tr.pbrIblFbo, cubemap->prefilteredImage,
                 GL_COLOR_ATTACHMENT0, face, mip);
-            VectorSet4(params, (float)face, roughness, sourceResolution, samples);
+
+            // Negative sourceResolution marks this source as already-linear.
+            VectorSet4(params, (float)face, roughness, -sourceResolution, samples);
             RB_PbrV31FullscreenPass(&tr.pbrPrefilterShader, mipSize, mipSize, params);
         }
     }
@@ -935,8 +999,8 @@ static const void *RB_PbrIblBuild(const void *data)
         glConfig.numTextureUnits < 8 || !tr.pbrIblFbo)
         return (const void *)(cmd + 1);
 
-    tr.pbrBrdfLutReady = qfalse;
-    RB_PbrV31BuildBrdfLut();
+    if (!tr.pbrBrdfLutReady)
+        RB_PbrV31BuildBrdfLut();
 
     for (i = 0; i < tr.numCubemaps; ++i)
         RB_PbrV31PrefilterCubemap(&tr.cubemaps[i]);
@@ -946,7 +1010,7 @@ static const void *RB_PbrIblBuild(const void *data)
     GL_CheckErrors();
 
     ri.Printf(PRINT_ALL,
-        "DarkWolf PBR V3.1 IBL ready: probes=%d prefilterSamples=256 brdfLut=256x256 brdfSamples=512\n",
+        "DarkWolf PBR V3.1 IBL ready: probes=%d prefilterSamples=64/48/32 brdfLut=256x256 brdfSamples=512\n",
         tr.numCubemaps);
 
     return (const void *)(cmd + 1);
@@ -980,11 +1044,11 @@ proof={
     "feature":"PBR V3.1 true GGX split-sum IBL",
     "ggx_prefilter":{
         "destination":"separate RGBA16F cubemap",
-        "samples_per_nonzero_mip":256,
+        "samples_by_mip":"mip0=1, mip1=64, mip2=48, mip3+=32",
         "importance_sampling":"GGX",
-        "source_sampling":"raw cubemap LOD0 only; avoids gamma-space legacy mip averaging",
+        "source_sampling":"shared RGBA16F linear source cubemap with energy-correct mip chain + PDF solid-angle LOD",
         "roughness_mapping":"mip/maxRoughnessMip",
-        "source_color_space":"each source sample is converted from sRGB to linear before accumulation"
+        "source_color_space":"raw sRGB probe copied to linear float first; all convolution accumulation and source mip filtering are linear"
     },
     "brdf_lut":{
         "size":"256x256 RGBA16F",
