@@ -1,0 +1,90 @@
+name: DW Texture AI B2 V2.3 Clean Production Promotion
+
+on:
+  push:
+    branches: [release/texture-ai-b2-v23-clean-production]
+    paths:
+      - '.github/workflows/DW_TEXTURE_AI_B2_V23_CLEAN_PRODUCTION.yml'
+      - 'integration/texture-ai-b2-v23-production/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dw-texture-ai-b2-v23-clean-production-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Download exact user-tested B2 V2.3 artifact
+        run: |
+          set -Eeuo pipefail
+          mkdir -p source_artifact dist evidence
+          gh run download 42581487296 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name DW-Local-AI-Texture-Restoration-B2-V23-Win64-TEST \
+            --dir source_artifact
+          find source_artifact -maxdepth 2 -type f -print | sort | tee evidence/SOURCE_ARTIFACT_FILES.txt
+
+      - name: Promote exact tested binaries without recompilation
+        run: |
+          set -Eeuo pipefail
+          python3 integration/texture-ai-b2-v23-production/promote.py source_artifact dist \
+            | tee evidence/PROMOTION_PROOF.json
+
+      - name: Verify promotion invariants
+        run: |
+          set -Eeuo pipefail
+
+          if grep -E 'make[[:space:]]+-C|cmake|ninja|msbuild' \
+             .github/workflows/DW_TEXTURE_AI_B2_V23_CLEAN_PRODUCTION.yml; then
+            echo "ERROR: Clean Production promotion workflow must not compile."
+            exit 1
+          fi
+
+          python3 - <<'PY' | tee evidence/CLEAN_PRODUCTION_VERIFY.txt
+          from pathlib import Path
+          import hashlib, json, zipfile
+
+          def sha(b): return hashlib.sha256(b).hexdigest()
+
+          p=Path("dist/DarkWolf_Local_AI_Texture_Restoration_B2_V23_CLEAN_PRODUCTION_Win64.zip")
+          assert p.exists()
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              root="DarkWolf_Local_AI_Texture_Restoration_B2_V23_CLEAN_PRODUCTION_Win64/"
+              assert sha(z.read(root+"ioWolfSP.x64.exe")) == "d70ee80eaff64c1fe90fc62b2528e98c8052102d523437eb32596a81aa20dec9"
+              assert sha(z.read(root+"renderer_sp_rend2_x64.dll")) == "9ceb28910bb517e54ce45ac5165a081bd73ce7ed6a79b1496d71422529d4c927"
+              m=json.loads(z.read(root+"DW_TEXTURE_AI_B2_V23_PRODUCTION_MANIFEST.json"))
+              assert m["status"]=="CLEAN_PRODUCTION"
+              assert m["promotion_only"] is True
+              assert m["recompiled"] is False
+              assert m["source_run"]==42581487296
+              assert m["user_tested_pass"] is True
+              assert root+"DW_TEXTURE_AI_B2_V23_BUILD_STATUS.json" not in z.namelist()
+          print("PASS: exact user-tested binaries promoted to Clean Production without recompilation")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Local-AI-Texture-Restoration-B2-V23-CLEAN-PRODUCTION-Win64
+          path: |
+            dist/DarkWolf_Local_AI_Texture_Restoration_B2_V23_CLEAN_PRODUCTION_Win64.zip
+            dist/SHA256SUMS_DW_TEXTURE_AI_B2_V23_CLEAN_PRODUCTION.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Local-AI-Texture-Restoration-B2-V23-CLEAN-PRODUCTION-Proof
+          path: evidence/**
+          retention-days: 90
