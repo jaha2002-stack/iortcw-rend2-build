@@ -86,7 +86,7 @@ public static class PbrGenerator
                 out referenceHeightByte, out referenceAoByte, out referenceRoughByte);
 
             physicalHeightByte = BuildPhysicalReliefHeight(
-                referenceHeightByte, w, h, minDim,
+                referenceHeightByte, w, h, minDim, settings.MaterialKind,
                 Math.Clamp(settings.PhysicalReliefStrength * settings.HeightContrast, 0.35, 1.60));
 
             height = new double[count];
@@ -313,10 +313,113 @@ public static class PbrGenerator
     }
 
     private static byte[] BuildPhysicalReliefHeight(
+        byte[] referenceHeight, int w, int h, int minDim,
+        MaterialKind materialKind, double strength)
+    {
+        if (materialKind is MaterialKind.Stone or MaterialKind.SnowyStone or MaterialKind.Brick)
+            return BuildStonePhysicalReliefHeight(referenceHeight, w, h, minDim, materialKind, strength);
+
+        return BuildGenericPhysicalReliefHeight(referenceHeight, w, h, minDim, strength);
+    }
+
+    private static byte[] BuildStonePhysicalReliefHeight(
+        byte[] referenceHeight, int w, int h, int minDim,
+        MaterialKind materialKind, double strength)
+    {
+        int count = w * h;
+        var src = new double[count];
+        for (int i = 0; i < count; i++)
+            src[i] = referenceHeight[i] / 255.0;
+
+        // V2.05.2 Stone Height Reconstruction:
+        // 1) suppress micro-grooves before any displacement classification;
+        // 2) detect only coherent dark seams/mortar as recesses;
+        // 3) keep stone faces on broad plateaus with only very low-frequency shape.
+        //
+        // Fine surface grain remains exclusively in the Normal map.
+        double faceSigma = Math.Clamp(minDim / 150.0, 1.60, 4.50);
+        double neighborhoodSigma = Math.Clamp(minDim / 42.0, 3.50, 13.0);
+        double lightingSigma = Math.Clamp(minDim / 16.0, 7.0, 18.0);
+
+        var face = GaussianBlurWrap(src, w, h, faceSigma);
+        var neighborhood = GaussianBlurWrap(face, w, h, neighborhoodSigma);
+        var lighting = GaussianBlurWrap(face, w, h, lightingSigma);
+
+        // A dark narrow line relative to its local neighborhood is a seam candidate.
+        // Using a local maximum reference is intentionally asymmetric: bright stone
+        // scratches do not become raised displacement ridges.
+        int ridgeRadius = Math.Clamp((int)Math.Round(minDim / 80.0), 2, 8);
+        var localMax = LocalMaxFilterWrap(face, w, h, ridgeRadius);
+        var groove = new double[count];
+        for (int i = 0; i < count; i++)
+            groove[i] = Math.Max(0.0, localMax[i] - face[i]);
+
+        double g50 = Percentile(groove, 0.50);
+        double g88 = Percentile(groove, 0.88);
+        double g97 = Percentile(groove, 0.97);
+        double seamLow = Math.Max(0.012, g50 + 0.22 * Math.Max(g88 - g50, 0.0));
+        double seamHigh = Math.Max(seamLow + 0.014, g97);
+
+        var seamMask = new double[count];
+        for (int i = 0; i < count; i++)
+        {
+            double t = SmoothStep(seamLow, seamHigh, groove[i]);
+            seamMask[i] = t;
+        }
+
+        // Broad dark stains can look like geometry if we only threshold darkness.
+        // Suppress regions whose seam response fills a large neighborhood; true mortar
+        // and cracks remain thin/linear and survive this occupancy guard.
+        var seamOccupancy = GaussianBlurWrap(
+            seamMask, w, h, Math.Clamp(minDim / 95.0, 1.5, 5.0));
+        for (int i = 0; i < count; i++)
+        {
+            double broadPatch = SmoothStep(0.52, 0.82, seamOccupancy[i]);
+            seamMask[i] *= 1.0 - 0.82 * broadPatch;
+        }
+
+        // Bevel the seam edge for stable POM traversal instead of a binary trench.
+        seamMask = GaussianBlurWrap(seamMask, w, h, 0.85);
+
+        // Stone faces get only low-frequency block-to-block variation. This term is
+        // deliberately small so illumination painted into the diffuse cannot create
+        // the wavy/embossed failure seen in V2.05.1.
+        var macroResidual = new double[count];
+        for (int i = 0; i < count; i++)
+            macroResidual[i] = neighborhood[i] - lighting[i];
+
+        double mr10 = Percentile(macroResidual, 0.10);
+        double mr90 = Percentile(macroResidual, 0.90);
+        double mrCenter = 0.5 * (mr10 + mr90);
+        double mrSpan = Math.Max(mr90 - mr10, 0.035);
+
+        double seamDepth = materialKind == MaterialKind.Brick ? 0.31 : 0.27;
+        double faceVariation = materialKind == MaterialKind.Brick ? 0.050 : 0.042;
+        double plateau = materialKind == MaterialKind.SnowyStone ? 0.64 : 0.62;
+
+        var outHeight = new byte[count];
+        for (int i = 0; i < count; i++)
+        {
+            double macroShape = Math.Clamp((macroResidual[i] - mrCenter) / mrSpan, -1.0, 1.0);
+            double v = plateau
+                     + strength * faceVariation * macroShape
+                     - strength * seamDepth * Math.Clamp(seamMask[i], 0.0, 1.0);
+
+            // Keep a generous safe range for POM refinement and bilinear filtering.
+            v = Math.Clamp(v, 0.12, 0.86);
+            outHeight[i] = ToByte(v);
+        }
+
+        // Tiny final smoothing removes isolated one-pixel ledges but does not restore
+        // the suppressed surface-frequency grain.
+        return PillowGaussianBlur(outHeight, w, h, 0.55);
+    }
+
+    private static byte[] BuildGenericPhysicalReliefHeight(
         byte[] referenceHeight, int w, int h, int minDim, double strength)
     {
-        // Work only with broad structure. The first blur removes pinprick/JPEG
-        // variation; the second forms a local illumination/reference field.
+        // V2.05.1 generic PhysicalRelief path retained unchanged for non-masonry
+        // materials to avoid cross-material regressions.
         double detailSigma = Math.Clamp(minDim / 900.0, 1.15, 2.40);
         double macroSigma = Math.Clamp(minDim / 180.0, 4.0, 12.0);
 
@@ -328,38 +431,66 @@ public static class PbrGenerator
         for (int i = 0; i < count; i++)
             local[i] = (surface[i] - macro[i]) / 255.0;
 
-        // Robustly estimate structural contrast. Unlike the rejected V2.01
-        // percentile normalization, this is applied to a heavily smoothed
-        // low-frequency displacement field, not to a high-pass noise residual.
         double p10 = Percentile(local, 0.10);
         double p90 = Percentile(local, 0.90);
         double span = Math.Max(p90 - p10, 0.018);
         double center = 0.5 * (p10 + p90);
 
-        // Use a small block-to-block macro term without allowing broad lighting
-        // gradients to dominate the displacement.
         double macroMedian = Percentile(macro.Select(v => v / 255.0).ToArray(), 0.50);
         var outHeight = new byte[count];
 
         for (int i = 0; i < count; i++)
         {
             double structural = (local[i] - center) / span;
-
-            // Mortar/seams are allowed to recede slightly more than stone faces rise.
             structural *= structural < 0.0 ? 0.38 : 0.30;
 
             double macroShape = Math.Clamp((macro[i] / 255.0 - macroMedian) * 0.22, -0.07, 0.07);
             double v = 0.50 + strength * (structural + macroShape);
-
-            // Keep headroom at both ends so bilinear sampling/refinement cannot
-            // collapse into hard 0/1 plateaus that produce tearing.
             v = Math.Clamp(v, 0.08, 0.92);
             outHeight[i] = ToByte(v);
         }
 
-        // Final sub-pixel smoothing removes isolated one-pixel steps while
-        // retaining the expanded macro range needed by POM.
         return PillowGaussianBlur(outHeight, w, h, 0.65);
+    }
+
+    private static double[] LocalMaxFilterWrap(double[] src, int w, int h, int radius)
+    {
+        radius = Math.Clamp(radius, 1, 12);
+        var tmp = new double[src.Length];
+        var dst = new double[src.Length];
+
+        for (int y = 0; y < h; y++)
+        {
+            int row = y * w;
+            for (int x = 0; x < w; x++)
+            {
+                double m = double.NegativeInfinity;
+                for (int k = -radius; k <= radius; k++)
+                    m = Math.Max(m, src[row + Wrap(x + k, w)]);
+                tmp[row + x] = m;
+            }
+        }
+
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                double m = double.NegativeInfinity;
+                for (int k = -radius; k <= radius; k++)
+                    m = Math.Max(m, tmp[Wrap(y + k, h) * w + x]);
+                dst[y * w + x] = m;
+            }
+        }
+
+        return dst;
+    }
+
+    private static double SmoothStep(double edge0, double edge1, double x)
+    {
+        if (edge1 <= edge0)
+            return x >= edge1 ? 1.0 : 0.0;
+        double t = Math.Clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
     }
 
     private static void BuildReferenceFields(
