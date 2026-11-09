@@ -30,17 +30,27 @@ checks={
  "cvars_registered": all(x in init for x in (
      'r_pomMinLayers = ri.Cvar_Get', 'r_pomMaxLayers = ri.Cvar_Get',
      'r_pomRefineSteps = ri.Cvar_Get', 'r_pomMaxOffset = ri.Cvar_Get',
-     'r_pomDepthScale = ri.Cvar_Get', 'r_pomShadowStrength = ri.Cvar_Get')),
+     'r_pomDepthScale = ri.Cvar_Get', 'r_pomGrazingFadeStart = ri.Cvar_Get',
+     'r_pomGrazingFadeEnd = ri.Cvar_Get', 'r_pomShadowStrength = ri.Cvar_Get')),
  "cvars_declared": all(x in local for x in (
      "r_pomMinLayers","r_pomMaxLayers","r_pomRefineSteps",
-     "r_pomMaxOffset","r_pomDepthScale","r_pomShadowStrength")),
+     "r_pomMaxOffset","r_pomDepthScale","r_pomGrazingFadeStart",
+     "r_pomGrazingFadeEnd","r_pomShadowStrength")),
  "safe_compile_clamps": all(x in glsl for x in (
      "CLAMP(r_pomMinLayers->integer, 8, 48)",
      "CLAMP(r_pomMaxLayers->integer, 16, 64)",
      "CLAMP(r_pomRefineSteps->integer, 2, 8)",
-     "CLAMP(r_pomMaxOffset->value, 0.01f, 0.20f)",
+     "CLAMP(r_pomMaxOffset->value, 0.005f, 0.08f)",
      "CLAMP(r_pomDepthScale->value, 0.25f, 2.0f)",
+     "CLAMP(r_pomGrazingFadeStart->value, 0.05f, 0.55f)",
+     "CLAMP(r_pomGrazingFadeEnd->value, 0.30f, 0.90f)",
      "CLAMP(r_pomShadowStrength->value, 0.0f, 1.0f)")),
+ "grazing_fade_present": all(x in frag for x in (
+     "DW_POM_GRAZING_FADE_START","DW_POM_GRAZING_FADE_END",
+     "grazingFade","smooth")) if False else (
+     "DW_POM_GRAZING_FADE_START" in frag and "DW_POM_GRAZING_FADE_END" in frag and
+     "grazingFade = grazingFade * grazingFade" in frag
+ ),
 }
 
 # CPU reference of the POM crossing logic on a 1-D synthetic masonry profile.
@@ -56,12 +66,15 @@ def height(u):
 
 def depth(u): return 1.0-height(u)
 
-def pom(base_u, view_x, view_z, depth_scale=0.03, min_layers=20, max_layers=56, refine=5, max_offset=0.08):
+def pom(base_u, view_x, view_z, depth_scale=0.03, min_layers=20, max_layers=56, refine=5, max_offset=0.028,
+        fade_start=0.24, fade_end=0.62):
     vz=max(abs(view_z),0.12)
     nov=max(0,min(1,vz))
     layers=round(max_layers+(min_layers-max_layers)*nov)
     layers=max(min_layers,min(max_layers,layers))
-    total=max(-max_offset,min(max_offset,(-view_x/vz)*depth_scale))
+    ft=max(0,min(1,(vz-fade_start)/max(fade_end-fade_start,1e-6)))
+    fade=ft*ft*(3-2*ft)
+    total=max(-max_offset,min(max_offset,(-view_x/vz)*depth_scale*fade))
     du=total/layers
     dd=1.0/layers
     cu=base_u; pu=base_u; cd=0.0; pd=0.0; md=depth(cu)
@@ -88,7 +101,8 @@ u_graz,d_graz=pom(0.31,0.90,0.435)
 
 checks["numeric_front_nearly_stable"] = abs(u_front-0.31) < 0.004
 checks["numeric_grazing_displacement_increases"] = abs(u_graz-0.31) > abs(u_mid-0.31) > abs(u_front-0.31)
-checks["numeric_offset_respects_clamp"] = abs(u_graz-0.31) <= 0.080001
+checks["numeric_offset_respects_clamp"] = abs(u_graz-0.31) <= 0.028001
+checks["numeric_grazing_fade_limits_tearing"] = abs(u_graz-0.31) < 0.020
 checks["numeric_hit_depth_bounded"] = all(0.0 <= x <= 1.0 for x in (d_front,d_mid,d_graz))
 
 failed=[k for k,v in checks.items() if not v]
