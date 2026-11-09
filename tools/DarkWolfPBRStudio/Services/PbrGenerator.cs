@@ -393,7 +393,12 @@ public static class PbrGenerator
         double mrCenter = 0.5 * (mr10 + mr90);
         double mrSpan = Math.Max(mr90 - mr10, 0.035);
 
-        double seamDepth = materialKind == MaterialKind.Brick ? 0.31 : 0.27;
+        double seamDepth = materialKind switch
+        {
+            MaterialKind.Brick => 0.33,
+            MaterialKind.SnowyStone => 0.29,
+            _ => 0.30
+        };
         double faceVariation = materialKind == MaterialKind.Brick ? 0.050 : 0.042;
         double plateau = materialKind == MaterialKind.SnowyStone ? 0.64 : 0.62;
 
@@ -652,7 +657,13 @@ public static class PbrGenerator
 
         if (meanAngle < 3.0) warnings.Add("Normal is very flat.");
         if (p90Angle > 58.0) warnings.Add("Normal has unusually steep slopes.");
-        if (h95 - h05 < .18) warnings.Add("Height dynamic range is weak.");
+        double minUsefulHeightRange =
+            settings.GenerationMode == PbrGenerationMode.PhysicalReliefPOM &&
+            settings.MaterialKind is MaterialKind.Stone or MaterialKind.SnowyStone or MaterialKind.Brick
+                ? 0.12
+                : 0.18;
+        if (h95 - h05 < minUsefulHeightRange)
+            warnings.Add("Height dynamic range is weak.");
         if (meanRough < .12) warnings.Add("Material is extremely glossy.");
         if (meanRough > .96) warnings.Add("Material is almost fully rough.");
         if (settings.MaterialKind is not (MaterialKind.BareMetal or MaterialKind.RustedMetal) && meanMetal > .08)
