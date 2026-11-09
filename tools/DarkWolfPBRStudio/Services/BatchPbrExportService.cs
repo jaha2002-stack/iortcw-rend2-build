@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
 
 namespace DarkWolfPBRStudio.Services;
 
@@ -99,18 +100,33 @@ public static class BatchPbrExportService
         }
 
         string combined = string.Join(Environment.NewLine + Environment.NewLine, materialBlocks) + Environment.NewLine;
-        Write(zip, "scripts/dw_pbrstudio_v204_batch.mtr", Encoding.UTF8.GetBytes(combined));
+
+        // Unique deterministic basename prevents multiple exported PK3s from
+        // shadowing each other's script file in RTCW's scripts namespace.
+        string materialKey = string.Join("\n",
+            items.Select(x => x.Asset.ShaderName)
+                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+        string key = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(materialKey)))
+            .ToLowerInvariant()[..10];
+        string scriptBase = $"scripts/dw_pbrstudio_v205_{key}";
+        byte[] scriptBytes = Encoding.UTF8.GetBytes(combined);
+
+        // Rend2 lists *.shader files, then loads a same-basename *.mtr in preference.
+        // Both files are intentional and must stay paired.
+        Write(zip, scriptBase + ".shader", scriptBytes);
+        Write(zip, scriptBase + ".mtr", scriptBytes);
 
         var manifest = new
         {
-            generator = "DarkWolf PBR Studio V2.04 Batch Material Set",
-            target = "ioRTCW Rend2 DarkWolf r_pbr 3 / BSP Relight V4.2",
+            generator = "DarkWolf PBR Studio V2.05 Physical Relief Batch Material Set",
+            target = "ioRTCW Rend2 DarkWolf PBR V3.2 Physical Relief / POM",
             textureCount = items.Count,
-            combinedMtr = "scripts/dw_pbrstudio_v204_batch.mtr",
+            combinedShader = scriptBase + ".shader",
+            combinedMtr = scriptBase + ".mtr",
             generatedUtc = DateTime.UtcNow,
             items = manifestItems
         };
-        Write(zip, "darkwolf_pbrstudio/batch_manifest_v204.json",
+        Write(zip, "darkwolf_pbrstudio/batch_manifest_v205.json",
             JsonSerializer.SerializeToUtf8Bytes(manifest, new JsonSerializerOptions { WriteIndented = true }));
     }
 
