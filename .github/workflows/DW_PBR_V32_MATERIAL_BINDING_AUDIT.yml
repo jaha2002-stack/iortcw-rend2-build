@@ -1,9 +1,9 @@
-name: DW PBR V3.2 Material Binding Audit
+name: DW PBR V3.2 Audit + V2.06 Two Frame Proof
 
 on:
   push:
     branches:
-      - feature/pbr-v32-material-binding-audit
+      - feature/pbr-v32-audit-v206-twoframe-proof
     paths:
       - .github/workflows/DW_PBR_V32_MATERIAL_BINDING_AUDIT.yml
       - integration/pbr-v32-audit/**
@@ -235,6 +235,145 @@ jobs:
           grep -Fq 'textures/snow/s_cathedrale_c06_orm' evidence/PBR_V32_MATERIAL_AUDIT_QCONSOLE.log
           ! grep -Eiq "WARNING: expecting '\{'|Could not load .*shader|GLSL.*(compile|link).*error|GL_INVALID_(ENUM|VALUE|OPERATION|FRAMEBUFFER_OPERATION)|framebuffer.*incomplete" evidence/PBR_V32_MATERIAL_AUDIT_QCONSOLE.log
           echo PBR_V32_MATERIAL_BINDING_AUDIT_RUNTIME_PASS
+
+      - name: Download V2.06 authored materials and derive Crypt1 torch-wall camera
+        run: |
+          set -Eeuo pipefail
+          mkdir -p authored
+          gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/13697788448/zip > authored.zip
+          unzip -q authored.zip -d authored
+          ESC_PK3="$(find authored -type f -path '*escape_snow*' -name 'variant_1.pk3' -print -quit)"
+          CRYPT_PK3="$(find authored -type f -path '*crypt_wall*' -name 'variant_1.pk3' -print -quit)"
+          test -n "$ESC_PK3"
+          test -n "$CRYPT_PK3"
+          echo "ESC_PK3=$ESC_PK3" >> "$GITHUB_ENV"
+          echo "CRYPT_PK3=$CRYPT_PK3" >> "$GITHUB_ENV"
+
+          retail_main="$(cat evidence/retail_main_path.txt)"
+          python3 - "$retail_main" <<'PY'
+          import sys,zipfile,struct,math,re,pathlib,json
+          root=pathlib.Path(sys.argv[1])
+          bsp=None
+          for pk3 in sorted(root.glob("*.pk3")):
+              with zipfile.ZipFile(pk3) as z:
+                  for n in z.namelist():
+                      if n.lower()=="maps/crypt1.bsp":
+                          bsp=z.read(n); break
+              if bsp: break
+          assert bsp and bsp[:4]==b"IBSP"
+          lumps=[struct.unpack_from("<ii",bsp,8+i*8) for i in range(17)]
+          def L(i):
+              o,l=lumps[i]; return bsp[o:o+l]
+
+          ent=L(0).split(b"\0",1)[0].decode("latin1","ignore")
+          fires=[]
+          for block in re.findall(r"\{([^}]*)\}",ent,re.S):
+              kv=dict(re.findall(r'"([^"]+)"\s+"([^"]*)"',block))
+              txt=(" ".join((kv.get("classname",""),kv.get("model",""),kv.get("targetname",""),kv.get("scriptName","")))).lower()
+              if "origin" not in kv or not any(k in txt for k in ("torch","fire","flame")): continue
+              try:
+                  o=[float(x) for x in kv["origin"].split()[:3]]
+                  if len(o)==3:fires.append(o)
+              except: pass
+
+          sh=L(1); verts=L(10); surfs=L(13)
+          names=[]
+          for off in range(0,len(sh),72):
+              if off+72<=len(sh):
+                  names.append(sh[off:off+64].split(b"\0",1)[0].decode("latin1").lower())
+          target="textures/crypt/crypt_wall_03"
+          assert target in names
+          si=names.index(target)
+          cand=[]
+          for off in range(0,len(surfs),104):
+              if off+104>len(surfs): break
+              v=struct.unpack_from("<12i3f9f2i",surfs,off)
+              if v[0]!=si: continue
+              first,nv=v[3],v[4]
+              pts=[]; ns=[]
+              for j in range(nv):
+                  vo=(first+j)*44
+                  if vo+44>len(verts): break
+                  q=struct.unpack_from("<3f2f2f3f4B",verts,vo)
+                  pts.append(q[:3]); ns.append(q[7:10])
+              if not pts: continue
+              c=[sum(p[k] for p in pts)/len(pts) for k in range(3)]
+              n=[sum(q[k] for q in ns)/len(ns) for k in range(3)]
+              ln=math.sqrt(sum(x*x for x in n)) or 1.0
+              n=[x/ln for x in n]
+              if abs(n[2])>=0.65: continue
+              fd=min((math.sqrt(sum((c[k]-fo[k])**2 for k in range(3))) for fo in fires),default=999999)
+              cand.append((fd,-nv,c,n,nv))
+          assert cand
+          fd,_,c,n,nv=min(cand,key=lambda x:(x[0],x[1]))
+          cam=[c[0]+n[0]*105,c[1]+n[1]*105,c[2]+n[2]*105+8]
+          yaw=math.degrees(math.atan2(c[1]-cam[1],c[0]-cam[0]))
+          if yaw<0:yaw+=360
+          out={"fireDistance":fd,"center":c,"normal":n,"camera":cam,"yaw":yaw,"numVerts":nv,"fireCount":len(fires)}
+          pathlib.Path("evidence/CRYPT1_WALL_CAMERA.json").write_text(json.dumps(out,indent=2)+"\n")
+          with open("evidence/crypt_wall.env","w") as f:
+              f.write(f'CRYPT_X={cam[0]:.3f}\nCRYPT_Y={cam[1]:.3f}\nCRYPT_Z={cam[2]:.3f}\nCRYPT_YAW={yaw:.3f}\n')
+          print(json.dumps(out,indent=2))
+          PY
+
+      - name: Capture two real V2.06 AI gameplay frames
+        run: |
+          set -Eeuo pipefail
+          source evidence/crypt_wall.env
+          retail_main="$(cat evidence/retail_main_path.txt)"
+          exe_src="$(find source-audit/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe_src"
+          buildroot="$(dirname "$exe_src")"
+          mkdir -p evidence/v206_frames evidence/v206_logs
+
+          capture_one() {
+            label="$1"; map="$2"; shader="$3"; material="$4"; x="$5"; y="$6"; z="$7"; yaw="$8"
+            rm -rf "runtime_$label" "home_$label"
+            mkdir -p "runtime_$label/main" "home_$label"
+            cp -a "$buildroot/." "runtime_$label/"
+            find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} "runtime_$label/main/" \;
+            cp "$material" "runtime_$label/main/zzzz_dw_v206_ai_material.pk3"
+            exe="$(find "runtime_$label" -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+            set +e
+            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 12s 175s "$exe" \
+              +set fs_basepath "$PWD/runtime_$label" +set fs_homepath "$PWD/home_$label" \
+              +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0 \
+              +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720 \
+              +set r_pbr 3 +set r_cubeMapping 1 +set r_normalMapping 1 +set r_specularMapping 1 \
+              +set r_parallaxMapping 2 +set r_parallaxMapShadows 1 +set r_pomShadowStrength 0.18 \
+              +set r_pomMinLayers 20 +set r_pomMaxLayers 56 +set r_pomRefineSteps 5 +set r_pomMaxOffset 0.028 \
+              +set r_dlightmode 2 +set r_forcesun 1 \
+              +devmap "$map" +wait 42 +setviewpos "$x" "$y" "$z" "$yaw" +wait 15 \
+              +r_pbrMaterialAudit "$shader" +wait 3 +screenshot "$label" +wait 4 +quit
+            rc=$?
+            set -e
+            echo "$rc" > "evidence/v206_logs/${label}_exit.txt"
+            qlog="$(find "home_$label" -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+            test -n "$qlog"
+            cp "$qlog" "evidence/v206_logs/${label}.log"
+            grep -Fq 'normalType=NORMALHEIGHT heightAlpha=1' "evidence/v206_logs/${label}.log"
+            grep -Fq 'packedORM=1' "evidence/v206_logs/${label}.log"
+            grep -Fq 'pomV32=ACTIVE' "evidence/v206_logs/${label}.log"
+            find "home_$label" -type f \( -iname "${label}*.tga" -o -iname "${label}*.png" -o -iname "${label}*.jpg" \) -exec cp {} evidence/v206_frames/ \;
+            test -n "$(find evidence/v206_frames -maxdepth 1 -type f -iname "${label}*" -print -quit)"
+          }
+
+          capture_one escape_wetsnow_v1 escape1 textures/snow/s_cathedrale_c06 "$ESC_PK3" -2475.551 263.887 952 107.241
+          capture_one crypt_wall_wet_v1 crypt1 textures/crypt/crypt_wall_03 "$CRYPT_PK3" "$CRYPT_X" "$CRYPT_Y" "$CRYPT_Z" "$CRYPT_YAW"
+
+          sha256sum evidence/v206_frames/* | tee evidence/V206_TWO_FRAME_SHA256.txt
+          echo DARKWOLF_V206_TWO_REAL_GAMEPLAY_FRAMES_PASS
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-PBR-V206-Two-Real-Gameplay-Frames
+          path: |
+            evidence/v206_frames/
+            evidence/v206_logs/
+            evidence/CRYPT1_WALL_CAMERA.json
+            evidence/V206_TWO_FRAME_SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Win64 compile
         run: |
