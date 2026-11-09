@@ -8,7 +8,7 @@ init=(rend/"tr_init.c").read_text()
 local=(rend/"tr_local.h").read_text()
 world=(rend/"tr_world.c").read_text()
 v23=(rend/"tr_texture_ai_b2_v23.inc").read_text()
-files=(root.parent/"qcommon/files.c").read_text()
+files=(root/"qcommon/files.c").read_text()
 checks={}
 def ck(k,v):
     checks[k]=bool(v); assert v,k
