@@ -138,3 +138,18 @@ V2.04 keeps the validated V2.03 ReferenceHandGenerated and MacroReliefEnhanced m
 - Batch manifest records source shader, generated maps, validation, settings, and scripted-material provenance for every item.
 
 For a batch made from original retail BaseColor textures, the override PK3 contains the generated PBR maps and combined MTR without redundantly copying the source BaseColor images.
+
+
+## V2.05.1 Safe Material Export
+
+V2.05.1 fixes Rend2 material registration and scripted-material replacement semantics without changing the validated V2.05 PhysicalReliefPOM map generation.
+
+Rend2 discovers only `scripts/*.shader`. For each discovered basename it prefers a same-basename `.mtr`, and that `.mtr` replaces the complete `.shader` source for Rend2 parsing.
+
+Export rules:
+
+- **Implicit texture:** Studio owns one unique pair. The `.shader` is a real legacy fallback containing only ordinary diffuse/lightmap syntax. The same-basename `.mtr` contains diffuse + normal/normalParallax + ORM + lightmap.
+- **Existing scripted material:** Studio preserves the complete original discovery `.shader` file and exports a complete same-basename `.mtr` based on the effective original script. Only selected material blocks are upgraded. Unselected neighboring definitions, surfaceParm, cull and unrelated stages remain present.
+- Existing Normal/NormalParallax/Specular/ORM response stages are removed from the selected material before inserting the generated Normal + ORM response immediately after its primary diffuse stage and before the lightmap.
+- One PK3 may contain more than one script pair when selected materials originate from different original shader files. This is intentional and avoids ambiguous duplicate shader definitions in a new unrelated script namespace.
+- `*_nh.tga` remains RGB tangent-space Normal + A Height for Rend2 POM.
