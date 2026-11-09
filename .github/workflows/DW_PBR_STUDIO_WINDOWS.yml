@@ -47,6 +47,39 @@ jobs:
           $ErrorActionPreference = 'Stop'
           dotnet publish tools/DarkWolfPBRStudio/DarkWolfPBRStudio.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o "$PWD/out/DarkWolfPBRStudio"
 
+      - name: Windows 11-style GUI startup smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $diag = Join-Path $env:LOCALAPPDATA 'DarkWolfPBRStudio'
+          Remove-Item $diag -Recurse -Force -ErrorAction SilentlyContinue
+
+          $exe = "$PWD/out/DarkWolfPBRStudio/DarkWolfPBRStudio.exe"
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
+          $p.Refresh()
+
+          if ($p.HasExited) {
+            $crash = Join-Path $diag 'startup-crash.log'
+            if (Test-Path $crash) { Get-Content $crash | Write-Host }
+            throw "DarkWolfPBRStudio.exe exited during startup with code $($p.ExitCode)"
+          }
+
+          $startup = Join-Path $diag 'startup.log'
+          if (-not (Test-Path $startup)) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw 'startup.log was not created'
+          }
+
+          Get-Content $startup | Write-Host
+          if (-not (Select-String -Path $startup -Pattern 'MainWindow shown successfully' -Quiet)) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            throw 'MainWindow did not reach successful Show()'
+          }
+
+          Stop-Process -Id $p.Id -Force
+          Write-Host 'DARKWOLF_PBR_STUDIO_V204_GUI_STARTUP_PASS'
+
       - name: Reuse validated V1 AI runtime artifact
         uses: actions/download-artifact@v4
         with:
