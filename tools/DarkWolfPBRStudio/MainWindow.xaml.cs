@@ -136,10 +136,10 @@ public partial class MainWindow : Window
 
                 _hasMaterialDefinition = hasDef;
                 _currentMaterialDefinition = materialDef;
-                MaterialStatusText.Text = hasDef ? "Material: scripted → auto merge" : "Material: implicit → auto MTR";
+                MaterialStatusText.Text = hasDef ? "Material: scripted → full safe source pair" : "Material: implicit → safe fallback + PBR MTR";
                 CompatibilityHintText.Text = hasDef
-                    ? $"Existing scripted material: {materialDef!.SourcePk3} / {materialDef.ScriptPath}. V2.05 will preserve the block and merge Normal/ORM stages automatically."
-                    : "Implicit texture: V2.05 will automatically create the material block and connect BaseColor/Normal/ORM/lightmap.";
+                    ? $"Existing scripted material: {materialDef!.SourcePk3} / {materialDef.DiscoveryShaderPath}. V2.05.1 exports the complete original .shader plus a complete same-basename .mtr with only the selected material upgraded."
+                    : "Implicit texture: V2.05.1 creates a legacy-safe .shader fallback plus a same-basename PBR .mtr.";
 
                 SetAnalysis(analysis, applyRecommendedProfile: true);
                 Status($"{asset.EntryPath} — {bmp.PixelWidth}×{bmp.PixelHeight}; {MaterialProfile.For(analysis.Kind).DisplayName}.");
@@ -460,7 +460,7 @@ public partial class MainWindow : Window
         var d = new SaveFileDialog
         {
             Filter = "RTCW PK3 (*.pk3)|*.pk3",
-            FileName = $"zzz_dw_{stem}_pbr3_v205.pk3"
+            FileName = $"zzz_dw_{stem}_pbr3_v2051.pk3"
         };
         if (d.ShowDialog(this) != true) return;
 
@@ -479,11 +479,11 @@ public partial class MainWindow : Window
             };
 
             BatchPbrExportService.Export(d.FileName, new[] { item });
-            Status($"Exported V2.05 material set: {d.FileName}");
+            Status($"Exported V2.05.1 material set: {d.FileName}");
             MessageBox.Show(this,
-                "PBR Studio V2.05 PK3 created. Rend2 material registration is automatic.\n\n" +
+                "PBR Studio V2.05.1 PK3 created. Rend2 material registration is automatic.\n\n" +
                 $"{_asset.ShaderName}_n.tga\n{_asset.ShaderName}_orm.tga\n" +
-                "A unique same-basename .shader + .mtr pair was written into scripts/.",
+                "Safe material registration was written into scripts/. Implicit materials use a legacy fallback + PBR MTR pair; scripted materials keep their original discovery basename and complete source file.",
                 "Export complete", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
@@ -591,11 +591,11 @@ public partial class MainWindow : Window
         _hasMaterialDefinition = item.ExistingMaterial is not null;
 
         MaterialStatusText.Text = item.ExistingMaterial is null
-            ? "Material: implicit → auto MTR"
-            : "Material: scripted → auto merge";
+            ? "Material: implicit → safe fallback + PBR MTR"
+            : "Material: scripted → full safe source pair";
         CompatibilityHintText.Text = item.ExistingMaterial is null
-            ? "Batch export will create this material block automatically."
-            : $"Batch export will merge PBR stages into {item.ExistingMaterial.SourcePk3} / {item.ExistingMaterial.ScriptPath} without dropping original stages.";
+            ? "Batch export will create one owned legacy-fallback/PBR-MTR pair for implicit materials."
+            : $"Batch export will preserve the complete original {item.ExistingMaterial.DiscoveryShaderPath} and emit a complete same-basename .mtr with only this selected material upgraded.";
         Status($"Batch review: {item.EntryPath} — {item.Validation}");
     }
 
@@ -725,7 +725,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Status("Error.");
-            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2.05", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2.05.1", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
