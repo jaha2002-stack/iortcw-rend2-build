@@ -58,6 +58,16 @@ macroSettings.MacroReliefBoost = 0.75;
 var macroPbr = PbrGenerator.Generate(source, macroSettings);
 Console.WriteLine("MACRO REPORT: " + macroPbr.Report.Summary);
 
+var physicalSettings = PbrSettings.FromProfile(MaterialProfile.For(analysis.Kind));
+physicalSettings.GenerationMode = PbrGenerationMode.PhysicalReliefPOM;
+physicalSettings.NormalStrength = 20;
+physicalSettings.HeightContrast = 1.0;
+physicalSettings.MacroReliefBoost = 0.75;
+physicalSettings.ParallaxEnabled = true;
+physicalSettings.ParallaxDepth = 0.030;
+var physicalPbr = PbrGenerator.Generate(source, physicalSettings);
+Console.WriteLine("PHYSICAL RELIEF REPORT: " + physicalPbr.Report.Summary);
+
 Require(pbr.Height.PixelWidth == 128 && pbr.Height.PixelHeight == 128, "Height dimensions preserved");
 Require(pbr.Normal.PixelWidth == 128 && pbr.Orm.PixelHeight == 128, "Normal/ORM dimensions preserved");
 Require(pbr.Report.MeanNormalAngleDeg > 3.0, "Normal contains real relief");
@@ -75,6 +85,27 @@ var refHeightBytes = ImageService.ToBgra(pbr.Height, out _, out _);
 var macroHeightBytes = ImageService.ToBgra(macroPbr.Height, out _, out _);
 Require(refHeightBytes.SequenceEqual(macroHeightBytes),
     "macro mode keeps exact hand-reference height field (no new pits/holes)");
+
+var macroNormalBytes = ImageService.ToBgra(macroPbr.Normal, out _, out _);
+var physicalNormalBytes = ImageService.ToBgra(physicalPbr.Normal, out _, out _);
+var macroOrmBytes = ImageService.ToBgra(macroPbr.Orm, out _, out _);
+var physicalOrmBytes = ImageService.ToBgra(physicalPbr.Orm, out _, out _);
+Require(macroNormalBytes.SequenceEqual(physicalNormalBytes),
+    "PhysicalReliefPOM preserves validated V2.03 MacroRelief Normal exactly");
+Require(macroOrmBytes.SequenceEqual(physicalOrmBytes),
+    "PhysicalReliefPOM preserves validated V2.03 ORM exactly");
+
+var physicalHeightBytes = ImageService.ToBgra(physicalPbr.Height, out _, out _);
+var physicalHeightSamples = new List<byte>();
+for (int i = 0; i < physicalHeightBytes.Length; i += 4)
+    physicalHeightSamples.Add(physicalHeightBytes[i]);
+physicalHeightSamples.Sort();
+byte phP05 = physicalHeightSamples[(int)(physicalHeightSamples.Count * 0.05)];
+byte phP95 = physicalHeightSamples[(int)(physicalHeightSamples.Count * 0.95)];
+Require(phP95 - phP05 >= 100,
+    "PhysicalReliefPOM expands robust P05-P95 Height range for visible POM");
+Require(physicalHeightSamples[0] >= 12 && physicalHeightSamples[^1] <= 243,
+    "PhysicalReliefPOM keeps safety headroom away from hard 0/255 plateaus");
 
 var nh = ImageService.ToBgra(pbr.NormalHeight, out var nw, out var nhh);
 byte minAlpha = 255, maxAlpha = 0;
@@ -146,8 +177,13 @@ try
     Require(TgaBpp("textures/snow/s_cathedrale_c06_nh.tga") == 32,
         "_nh remains 32-bit because alpha carries Height");
 
-    var mtrEntry = zip.Entries.Single(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v203_", StringComparison.OrdinalIgnoreCase));
-    using var sr = new StreamReader(mtrEntry.Open());
+    var singleShader = zip.Entries.Single(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v205_", StringComparison.OrdinalIgnoreCase) &&
+                                               e.FullName.EndsWith(".shader", StringComparison.OrdinalIgnoreCase));
+    var singleMtr = zip.Entries.Single(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v205_", StringComparison.OrdinalIgnoreCase) &&
+                                            e.FullName.EndsWith(".mtr", StringComparison.OrdinalIgnoreCase));
+    Require(Path.GetFileNameWithoutExtension(singleShader.FullName) == Path.GetFileNameWithoutExtension(singleMtr.FullName),
+        "single export writes same-basename .shader + .mtr registration pair");
+    using var sr = new StreamReader(singleMtr.Open());
     string mtr = sr.ReadToEnd();
     Require(mtr.Contains("stage normalParallaxMap"), "explicit MTR uses normalParallaxMap");
     Require(mtr.Contains("parallaxDepth"), "explicit MTR writes parallaxDepth");
@@ -187,8 +223,8 @@ try
             Asset = asset,
             BaseColor = source,
             Analysis = analysis,
-            Settings = macroSettings,
-            Result = macroPbr,
+            Settings = physicalSettings,
+            Result = physicalPbr,
             ExistingMaterial = null,
             IncludeBaseColor = false
         },
@@ -209,16 +245,23 @@ try
 
     using var batchZip = ZipFile.OpenRead(batchPk3);
     var batchNames = batchZip.Entries.Select(e => e.FullName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-    Require(batchNames.Contains("scripts/dw_pbrstudio_v204_batch.mtr"), "batch export writes exactly one combined V2.04 MTR");
+    var batchShaderEntries = batchZip.Entries.Where(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v205_", StringComparison.OrdinalIgnoreCase) &&
+                                                                  e.FullName.EndsWith(".shader", StringComparison.OrdinalIgnoreCase)).ToList();
+    var batchMtrEntries = batchZip.Entries.Where(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v205_", StringComparison.OrdinalIgnoreCase) &&
+                                                               e.FullName.EndsWith(".mtr", StringComparison.OrdinalIgnoreCase)).ToList();
+    Require(batchShaderEntries.Count == 1 && batchMtrEntries.Count == 1,
+        "batch export writes one combined same-basename .shader + .mtr pair");
+    Require(Path.GetFileNameWithoutExtension(batchShaderEntries[0].FullName) == Path.GetFileNameWithoutExtension(batchMtrEntries[0].FullName),
+        "batch shader/mtr registration pair shares exact basename");
     Require(batchNames.Contains("textures/snow/s_cathedrale_c06_n.tga"), "batch contains first Normal");
     Require(batchNames.Contains("textures/snow/s_cathedrale_c06_orm.tga"), "batch contains first ORM");
     Require(batchNames.Contains("textures/stone/floor_a_n.tga"), "batch contains second Normal");
     Require(batchNames.Contains("textures/stone/floor_a_orm.tga"), "batch contains second ORM");
-    Require(batchNames.Count(x => x.StartsWith("scripts/", StringComparison.OrdinalIgnoreCase)) == 1,
-        "batch contains one script file for the entire material set");
-    Require(batchNames.Contains("darkwolf_pbrstudio/batch_manifest_v204.json"), "batch contains one inspectable manifest");
+    Require(batchNames.Count(x => x.StartsWith("scripts/", StringComparison.OrdinalIgnoreCase)) == 2,
+        "batch contains exactly one shader+mtr pair for the entire material set");
+    Require(batchNames.Contains("darkwolf_pbrstudio/batch_manifest_v205.json"), "batch contains one inspectable V2.05 manifest");
 
-    var batchMtrEntry = batchZip.Entries.Single(e => e.FullName.Equals("scripts/dw_pbrstudio_v204_batch.mtr", StringComparison.OrdinalIgnoreCase));
+    var batchMtrEntry = batchMtrEntries[0];
     using var batchSr = new StreamReader(batchMtrEntry.Open());
     string batchMtr = batchSr.ReadToEnd();
     Require(batchMtr.Contains("textures/snow/s_cathedrale_c06"), "combined MTR contains implicit material block");
@@ -236,4 +279,4 @@ finally
     try { Directory.Delete(temp, true); } catch { }
 }
 
-Console.WriteLine("DARKWOLF_PBR_STUDIO_V204_SELFTEST_PASS");
+Console.WriteLine("DARKWOLF_PBR_STUDIO_V205_SELFTEST_PASS");
