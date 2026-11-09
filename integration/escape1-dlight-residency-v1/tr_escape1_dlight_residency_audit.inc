@@ -9,8 +9,8 @@ static int s_edraLastNativeCount = -1;
 static int s_edraLastHeadroom = -1;
 static int s_edraLastBudget = -1;
 static int s_edraLastEvictions = -1;
-static int s_edraGuardLastResident[5] = { -1, -1, -1, -1, -1 };
-static int s_edraGuardIds[5] = { 740, 741, 742, 743, 744 };
+static int s_edraGuardLastResident[6] = { -1, -1, -1, -1, -1, -1 };
+static int s_edraGuardIds[6] = { 740, 741, 742, 743, 744, 745 };
 
 static void R_EDRA_EnsureCvars(void)
 {
@@ -136,7 +136,7 @@ static void R_DarkWolfEscape1DlightResidencyAuditFrame(const refdef_t *fd)
         s_edraLastEvictions = s_uslrdBudgetEvictions;
     }
 
-    for (i = 0; i < 5; ++i)
+    for (i = 0; i < 6; ++i)
     {
         int fi = R_EDRA_FindFixtureIndex(s_edraGuardIds[i]);
         if (fi >= 0)
