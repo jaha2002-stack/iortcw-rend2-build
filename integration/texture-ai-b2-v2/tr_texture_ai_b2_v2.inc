@@ -624,7 +624,7 @@ void R_DWTextureSaveV2_f(void)
               "DWTR AI B2 V2: SAVED %s variant=%s. It will override %s after restart.\n",
               pk3Name, cand->label, internal);
     ri.Printf(PRINT_ALL,
-              "DWTR AI B2 V2: save path uses physical ZIP writer; no FS_FOpenFileWrite(.pk3).\n");
+              "DWTR AI B2 V2: save path uses physical ZIP writer; engine PK3 write guard is not used.\n");
 #else
     ri.Printf(PRINT_WARNING, "DWTR AI B2 V2: Win64 save backend only.\n");
 #endif
