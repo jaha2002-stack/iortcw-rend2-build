@@ -1,6 +1,7 @@
 using DarkWolfPBRStudio.Models;
 using System.IO.Compression;
 using System.Text.Json;
+using System.Text;
 using System.Windows.Media.Imaging;
 
 namespace DarkWolfPBRStudio.Services;
@@ -105,13 +106,19 @@ public static class PbrExportService
                     System.Text.Encoding.UTF8.GetBytes(asset.ShaderName)))
                 .ToLowerInvariant()[..10];
 
-            Write(zip, $"scripts/dw_pbrstudio_v203_{key}.mtr", System.Text.Encoding.UTF8.GetBytes(mtr));
+            // Rend2 enumerates *.shader names first and then prefers a same-basename
+            // *.mtr when present. Export both members with identical material blocks:
+            // .shader registers the file name, .mtr is the preferred modern definition.
+            string scriptBase = $"scripts/dw_pbrstudio_v205_{key}";
+            byte[] scriptBytes = Encoding.UTF8.GetBytes(mtr);
+            Write(zip, scriptBase + ".shader", scriptBytes);
+            Write(zip, scriptBase + ".mtr", scriptBytes);
         }
 
         var manifest = new
         {
-            generator = "DarkWolf PBR Studio V2.03",
-            target = "ioRTCW Rend2 DarkWolf r_pbr 3 / BSP Relight V4.2",
+            generator = "DarkWolf PBR Studio V2.05",
+            target = "ioRTCW Rend2 DarkWolf PBR V3.2 Physical Relief / POM",
             source = asset.EntryPath,
             shader = asset.ShaderName,
             variant = variantName,
