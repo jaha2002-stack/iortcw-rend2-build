@@ -1,0 +1,231 @@
+name: DW PBR V2.06 Two Frame Proof
+
+on:
+  push:
+    branches:
+      - feature/darkwolf-pbr-studio-v206-ai-material-authoring
+    paths:
+      - .github/workflows/DW_PBR_V206_TWO_FRAME_PROOF.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  two-frame-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 6605640a47b52a89f05b42490146e6c021301d83
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential git gh jq python3 python3-pil unzip zip file \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+
+      - name: Verify exact audit source and authored materials
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "6605640a47b52a89f05b42490146e6c021301d83"
+          test -f integration/pbr-v31-ibl/apply.py
+          test -f integration/pbr-v32-pom/apply.py
+          test -f integration/pbr-v32-audit/apply.py
+          mkdir -p authored evidence
+          gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/13697788448/zip > authored.zip
+          unzip -q authored.zip -d authored
+          echo "AUTHORED CONTENTS:"
+          find authored -maxdepth 4 -type f | sort | head -200
+          ESC_PK3="$(find authored -type f -path '*escape_snow*' -name 'variant_1.pk3' -print -quit)"
+          CRYPT_PK3="$(find authored -type f -path '*crypt_wall*' -name 'variant_1.pk3' -print -quit)"
+          test -n "$ESC_PK3"
+          test -n "$CRYPT_PK3"
+          echo "ESC_PK3=$ESC_PK3" >> "$GITHUB_ENV"
+          echo "CRYPT_PK3=$CRYPT_PK3" >> "$GITHUB_ENV"
+
+      - name: Reconstruct exact Run 42619078136 renderer source
+        run: |
+          set -Eeuo pipefail
+          rm -rf source source-clean source-v42 source-v31 source-v32 source-audit
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+
+          cp -a source source-clean
+          cp -a source-clean source-v42
+          python3 integration/pbr-v2/apply.py source-v42 --stage 3 --proof evidence/PBR_V42_PROOF.json
+          python3 integration/pbr-v2/test.py source-v42 --stage 3 --out evidence/PBR_V42_STATIC.json
+          cp -a source-v42 source-v31
+          python3 integration/pbr-v31-ibl/apply.py source-v31 --proof evidence/PBR_V31_PROOF.json
+          python3 integration/pbr-v31-ibl/test.py source-v31 --out evidence/PBR_V31_STATIC.json
+          cp -a source-v31 source-v32
+          python3 integration/pbr-v32-pom/apply.py source-v32 --proof evidence/PBR_V32_PROOF.json
+          python3 integration/pbr-v32-pom/test.py source-v32 --out evidence/PBR_V32_STATIC.json
+          cp -a source-v32 source-audit
+          python3 integration/pbr-v32-audit/apply.py source-audit --proof evidence/PBR_V32_AUDIT_PROOF.json
+          python3 integration/pbr-v32-audit/test.py source-audit --out evidence/PBR_V32_AUDIT_STATIC.json
+          echo EXACT_RUN_42619078136_SOURCE_PASS
+
+      - name: Native compile
+        run: |
+          set -Eeuo pipefail
+          make -C source-audit/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/NATIVE_BUILD.log 2>&1 || { tail -280 evidence/NATIVE_BUILD.log; exit 1; }
+
+      - name: Fetch retail assets
+        run: |
+          set -Eeuo pipefail
+          test -n "$DARKWOLF_RTCW_ASSET_TOKEN"
+          save="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$save"
+          test -d "$retail_main"
+          echo "RETAIL_MAIN=$retail_main" >> "$GITHUB_ENV"
+
+      - name: Derive Crypt1 wall camera from BSP
+        run: |
+          set -Eeuo pipefail
+          python3 - "$RETAIL_MAIN" <<'PY'
+          import sys,zipfile,struct,math,pathlib,json
+          root=pathlib.Path(sys.argv[1])
+          bsp=None
+          for p in sorted(root.glob("*.pk3")):
+              with zipfile.ZipFile(p) as z:
+                  for n in z.namelist():
+                      if n.lower()=="maps/crypt1.bsp":
+                          bsp=z.read(n); break
+              if bsp: break
+          assert bsp and bsp[:4]==b"IBSP"
+          lumps=[struct.unpack_from("<ii",bsp,8+i*8) for i in range(17)]
+          def L(i):
+              o,l=lumps[i]; return bsp[o:o+l]
+          sh=L(1); verts=L(10); surfs=L(13)
+          names=[]
+          for off in range(0,len(sh),72):
+              if off+72<=len(sh):
+                  names.append(sh[off:off+64].split(b"\0",1)[0].decode("latin1").lower())
+          target="textures/crypt/crypt_wall_03"
+          assert target in names, target
+          si=names.index(target)
+          cand=[]
+          for off in range(0,len(surfs),104):
+              if off+104>len(surfs): break
+              v=struct.unpack_from("<12i3f9f2i",surfs,off)
+              if v[0]!=si: continue
+              first,nv=v[3],v[4]
+              pts=[]; ns=[]
+              for j in range(nv):
+                  vo=(first+j)*44
+                  if vo+44>len(verts): break
+                  q=struct.unpack_from("<3f2f2f3f4B",verts,vo)
+                  pts.append(q[:3]); ns.append(q[7:10])
+              if not pts: continue
+              c=[sum(p[k] for p in pts)/len(pts) for k in range(3)]
+              n=[sum(x[k] for x in ns)/len(ns) for k in range(3)]
+              ln=math.sqrt(sum(x*x for x in n)) or 1
+              n=[x/ln for x in n]
+              if abs(n[2])<0.65:
+                  cand.append((nv,c,n))
+          assert cand
+          nv,c,n=max(cand,key=lambda t:t[0])
+          cam=[c[0]+n[0]*105,c[1]+n[1]*105,c[2]+n[2]*105+8]
+          yaw=math.degrees(math.atan2(c[1]-cam[1],c[0]-cam[0]))
+          if yaw<0:yaw+=360
+          out={"center":c,"normal":n,"camera":cam,"yaw":yaw,"numVerts":nv}
+          pathlib.Path("evidence/CRYPT_WALL_CAMERA.json").write_text(json.dumps(out,indent=2))
+          with open("evidence/crypt.env","w") as f:
+              f.write(f'CRYPT_X={cam[0]:.3f}\nCRYPT_Y={cam[1]:.3f}\nCRYPT_Z={cam[2]:.3f}\nCRYPT_YAW={yaw:.3f}\n')
+          print(json.dumps(out,indent=2))
+          PY
+
+      - name: Capture Escape1 WetSnow V1 and Crypt1 Wet Wall V1
+        run: |
+          set -Eeuo pipefail
+          source evidence/crypt.env
+          exe_src="$(find source-audit/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe_src"
+          buildroot="$(dirname "$exe_src")"
+          mkdir -p evidence/screens evidence/logs
+
+          capture() {
+            label="$1"; map="$2"; shader="$3"; material_pk3="$4"; x="$5"; y="$6"; z="$7"; yaw="$8"
+            rm -rf runtime home
+            mkdir -p runtime/main home
+            cp -a "$buildroot/." runtime/
+            find "$RETAIL_MAIN" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+            cp "$material_pk3" runtime/main/zzzz_dw_v206_ai_material.pk3
+            exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+            set +e
+            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 150s "$exe" \
+              +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
+              +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0 \
+              +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720 \
+              +set r_pbr 3 +set r_normalMapping 1 +set r_specularMapping 1 +set r_cubeMapping 1 \
+              +set r_parallaxMapping 2 +set r_parallaxMapShadows 1 +set r_pomShadowStrength 0.18 \
+              +set r_pomMinLayers 20 +set r_pomMaxLayers 56 +set r_pomRefineSteps 5 +set r_pomMaxOffset 0.028 \
+              +set r_dlightmode 2 +set r_forcesun 1 \
+              +devmap "$map" +wait 34 +setviewpos "$x" "$y" "$z" "$yaw" +wait 14 \
+              +r_pbrMaterialAudit "$shader" +wait 2 +screenshot "$label" +wait 3 +quit
+            rc=$?
+            set -e
+            echo "$rc" > "evidence/logs/${label}_exit.txt"
+            qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+            test -n "$qlog"
+            cp "$qlog" "evidence/logs/${label}.log"
+            find home -type f \( -iname "${label}*.tga" -o -iname "${label}*.png" -o -iname "${label}*.jpg" \) -exec cp {} evidence/screens/ \;
+            test -n "$(find evidence/screens -maxdepth 1 -type f -iname "${label}*" -print -quit)"
+          }
+
+          capture escape_wetsnow_v1 escape1 textures/snow/s_cathedrale_c06 "$ESC_PK3" -2475.551 263.887 952 107.241
+          capture crypt_wall_wet_v1 crypt1 textures/crypt/crypt_wall_03 "$CRYPT_PK3" "$CRYPT_X" "$CRYPT_Y" "$CRYPT_Z" "$CRYPT_YAW"
+
+      - name: Convert screenshots to PNG and make proof sheet
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from PIL import Image,ImageDraw
+          from pathlib import Path
+          root=Path("evidence/screens")
+          outs=[]
+          for stem,title in [("escape_wetsnow_v1","Escape1 WetSnow V1"),("crypt_wall_wet_v1","Crypt1 Wet Wall V1")]:
+              hits=[p for p in root.iterdir() if p.stem.lower().startswith(stem)]
+              assert hits,(stem,list(root.iterdir()))
+              im=Image.open(hits[0]).convert("RGB")
+              out=Path("evidence")/(stem+".png")
+              im.save(out)
+              outs.append((title,im))
+          w=max(i.width for _,i in outs); h=max(i.height for _,i in outs)
+          sheet=Image.new("RGB",(w*2,h+40))
+          d=ImageDraw.Draw(sheet)
+          for idx,(title,im) in enumerate(outs):
+              sheet.paste(im,(idx*w,40))
+              d.rectangle((idx*w,0,(idx+1)*w,40),fill=(0,0,0))
+              d.text((idx*w+12,12),title,fill=(255,255,255))
+          sheet.save("evidence/TWO_REAL_GAMEPLAY_FRAMES.png")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DarkWolf-PBR-V206-Two-Real-Gameplay-Frames
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
