@@ -1,0 +1,62 @@
+name: DW Clean Production Electric Owner V1 + Escape1 Physical Owner V1.2 PROMOTION
+
+on:
+  push:
+    branches: [release/clean-production-escape1-owner-v12-promote-42575742812]
+    paths:
+      - '.github/workflows/DW_CLEAN_PRODUCTION_ESCAPE1_OWNER_V12_PROMOTION.yml'
+      - 'integration/escape1-physical-dlight-owner-v12/promote_clean.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  promote-clean-production:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Download exact visually approved Win64 TEST artifact
+        run: |
+          set -Eeuo pipefail
+          mkdir -p promotion-src dist
+          gh api repos/jaha2002-stack/iortcw-rend2-build/actions/artifacts/13654928628/zip > promotion-src/v12_test_artifact.zip
+          sha256sum promotion-src/v12_test_artifact.zip
+
+      - name: Promote byte-identical renderer to Clean Production
+        run: |
+          set -Eeuo pipefail
+          python3 integration/escape1-physical-dlight-owner-v12/promote_clean.py promotion-src/v12_test_artifact.zip dist | tee dist/PROMOTION.log
+          python3 - <<'PY'
+          import json, pathlib, zipfile, hashlib
+          p=json.loads(pathlib.Path('dist/PROMOTION_PROOF.json').read_text())
+          assert p['renderer_byte_identical'] is True
+          assert p['new_renderer_compile'] is False
+          assert p['renderer_sha256']=='3898cbd5b9cee55fe185333a00156d6877c7347b876c8f494516e3a2b2ced4d4'
+          z=next(pathlib.Path('dist').glob('DarkWolf_Clean_Production_*.zip'))
+          with zipfile.ZipFile(z) as q:
+              assert q.testzip() is None
+              names=q.namelist()
+              assert not any('AUDIT_TEST' in n or 'ON_TEST' in n or 'OFF_TEST' in n for n in names)
+              dll=[n for n in names if n.endswith('/renderer_sp_rend2_x64.dll')]
+              assert len(dll)==1
+              data=q.read(dll[0])
+              assert hashlib.sha256(data).hexdigest()==p['renderer_sha256']
+          print('CLEAN_PRODUCTION_PROMOTION_VERIFIED')
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Clean-Production-ElectricOwnerV1-Escape1PhysicalOwnerV12-Win64
+          path: |
+            dist/DarkWolf_Clean_Production_ElectricOwnerV1_Escape1PhysicalOwnerV12_From_42217883095_Win64.zip
+            dist/SHA256SUMS.txt
+            dist/PROMOTION_PROOF.json
+            dist/PROMOTION.log
+          if-no-files-found: error
+          retention-days: 90
