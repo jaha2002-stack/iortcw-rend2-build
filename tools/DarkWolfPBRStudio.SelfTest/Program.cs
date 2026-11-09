@@ -11,6 +11,84 @@ static void Require(bool ok, string message)
     Console.WriteLine("PASS: " + message);
 }
 
+static BitmapSource MakeWavyStone(int w, int h)
+{
+    var baseStone = ImageService.ToBgra(MakeTileableStone(w, h), out _, out _);
+    var px = (byte[])baseStone.Clone();
+
+    for (int y = 0; y < h; y++)
+    {
+        for (int x = 0; x < w; x++)
+        {
+            int p = (y * w + x) * 4;
+            double wave = 18.0 * Math.Sin(2.0 * Math.PI * y / 5.0)
+                        + 9.0 * Math.Sin(2.0 * Math.PI * (x + y) / 7.0);
+            for (int c = 0; c < 3; c++)
+                px[p + c] = (byte)Math.Clamp((int)Math.Round(px[p + c] + wave), 0, 255);
+        }
+    }
+
+    var bmp = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, px, w * 4);
+    bmp.Freeze();
+    return bmp;
+}
+
+static double HighFrequencyEnergy(BitmapSource image)
+{
+    var px = ImageService.ToBgra(image, out int w, out int h);
+    double sum = 0.0;
+    int n = 0;
+
+    for (int y = 1; y < h - 1; y++)
+    {
+        for (int x = 1; x < w - 1; x++)
+        {
+            int p = (y * w + x) * 4;
+            double c0 = px[p] / 255.0;
+            double local = (
+                px[((y - 1) * w + x) * 4] +
+                px[((y + 1) * w + x) * 4] +
+                px[(y * w + x - 1) * 4] +
+                px[(y * w + x + 1) * 4]) / (4.0 * 255.0);
+            double d = c0 - local;
+            sum += d * d;
+            n++;
+        }
+    }
+
+    return n == 0 ? 0.0 : Math.Sqrt(sum / n);
+}
+
+static (double Seam, double Face) KnownStoneHeights(BitmapSource height)
+{
+    var px = ImageService.ToBgra(height, out int w, out int h);
+    double seam = 0.0, face = 0.0;
+    int ns = 0, nf = 0;
+
+    for (int y = 0; y < h; y++)
+    {
+        for (int x = 0; x < w; x++)
+        {
+            double sx = Math.Abs(Math.Sin(2.0 * Math.PI * x / 32.0));
+            double sy = Math.Abs(Math.Sin(2.0 * Math.PI * y / 24.0));
+            double v = px[(y * w + x) * 4] / 255.0;
+
+            if (Math.Min(sx, sy) < 0.10)
+            {
+                seam += v;
+                ns++;
+            }
+            else if (sx > 0.75 && sy > 0.75)
+            {
+                face += v;
+                nf++;
+            }
+        }
+    }
+
+    return (ns == 0 ? 0 : seam / ns, nf == 0 ? 0 : face / nf);
+}
+
 static BitmapSource MakeTileableStone(int w, int h)
 {
     var px = new byte[w * h * 4];
@@ -95,6 +173,48 @@ Require(macroNormalBytes.SequenceEqual(physicalNormalBytes),
 Require(macroOrmBytes.SequenceEqual(physicalOrmBytes),
     "PhysicalReliefPOM preserves validated V2.03 ORM exactly");
 
+// V2.05.2 regression: the rejected game result showed many small wave ridges in
+// Height/POM. Feed an intentionally wavy stone diffuse and verify that the new
+// stone reconstruction moves those frequencies out of Height while preserving
+// a meaningful mortar-to-face depth separation.
+var wavySource = MakeWavyStone(128, 128);
+var wavySettings = PbrSettings.FromProfile(MaterialProfile.For(MaterialKind.Stone));
+wavySettings.GenerationMode = PbrGenerationMode.PhysicalReliefPOM;
+wavySettings.NormalStrength = 20;
+wavySettings.HeightContrast = 1.0;
+wavySettings.MacroReliefBoost = 0.75;
+wavySettings.ParallaxEnabled = true;
+wavySettings.ParallaxDepth = 0.012;
+var wavyPhysical = PbrGenerator.Generate(wavySource, wavySettings);
+
+var wavyReferenceSettings = PbrSettings.FromProfile(MaterialProfile.For(MaterialKind.Stone));
+wavyReferenceSettings.GenerationMode = PbrGenerationMode.ReferenceHandGenerated;
+wavyReferenceSettings.NormalStrength = 20;
+wavyReferenceSettings.HeightContrast = 1.0;
+var wavyReference = PbrGenerator.Generate(wavySource, wavyReferenceSettings);
+
+double refHf = HighFrequencyEnergy(wavyReference.Height);
+double physicalHf = HighFrequencyEnergy(wavyPhysical.Height);
+Console.WriteLine($"STONE WAVE HF: reference={refHf:0.000000} reconstructed={physicalHf:0.000000}");
+Require(physicalHf < refHf * 0.58,
+    "V2.05.2 stone Height strongly suppresses high-frequency wave embossing");
+
+var knownDepth = KnownStoneHeights(wavyPhysical.Height);
+Console.WriteLine($"STONE DEPTH: seam={knownDepth.Seam:0.000} face={knownDepth.Face:0.000}");
+Require(knownDepth.Face - knownDepth.Seam > 0.055,
+    "V2.05.2 stone Height keeps coherent mortar seams below stone faces");
+
+var wavyMacroSettings = PbrSettings.FromProfile(MaterialProfile.For(MaterialKind.Stone));
+wavyMacroSettings.GenerationMode = PbrGenerationMode.MacroReliefEnhanced;
+wavyMacroSettings.NormalStrength = 20;
+wavyMacroSettings.HeightContrast = 1.0;
+wavyMacroSettings.MacroReliefBoost = 0.75;
+var wavyMacro = PbrGenerator.Generate(wavySource, wavyMacroSettings);
+var wavyMacroNormal = ImageService.ToBgra(wavyMacro.Normal, out _, out _);
+var wavyPhysicalNormal = ImageService.ToBgra(wavyPhysical.Normal, out _, out _);
+Require(wavyMacroNormal.SequenceEqual(wavyPhysicalNormal),
+    "V2.05.2 keeps the accepted MacroRelief Normal unchanged while rebuilding Height");
+
 var physicalHeightBytes = ImageService.ToBgra(physicalPbr.Height, out _, out _);
 var physicalHeightSamples = new List<byte>();
 for (int i = 0; i < physicalHeightBytes.Length; i += 4)
@@ -102,10 +222,10 @@ for (int i = 0; i < physicalHeightBytes.Length; i += 4)
 physicalHeightSamples.Sort();
 byte phP05 = physicalHeightSamples[(int)(physicalHeightSamples.Count * 0.05)];
 byte phP95 = physicalHeightSamples[(int)(physicalHeightSamples.Count * 0.95)];
-Require(phP95 - phP05 >= 100,
-    "PhysicalReliefPOM expands robust P05-P95 Height range for visible POM");
-Require(physicalHeightSamples[0] >= 12 && physicalHeightSamples[^1] <= 243,
-    "PhysicalReliefPOM keeps safety headroom away from hard 0/255 plateaus");
+Require(phP95 - phP05 >= 28,
+    "PhysicalReliefPOM keeps a useful but non-aggressive robust Height range");
+Require(physicalHeightSamples[0] >= 24 && physicalHeightSamples[^1] <= 230,
+    "PhysicalReliefPOM keeps broad safety headroom away from hard 0/255 plateaus");
 
 var nh = ImageService.ToBgra(pbr.NormalHeight, out var nw, out var nhh);
 byte minAlpha = 255, maxAlpha = 0;
@@ -340,4 +460,4 @@ finally
     try { Directory.Delete(temp, true); } catch { }
 }
 
-Console.WriteLine("DARKWOLF_PBR_STUDIO_V2051_SELFTEST_PASS");
+Console.WriteLine("DARKWOLF_PBR_STUDIO_V2052_SELFTEST_PASS");
