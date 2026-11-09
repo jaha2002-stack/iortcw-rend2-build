@@ -50,7 +50,7 @@ entries['Main/DW_ESCAPE1_DLIGHT_RESIDENCY_V1_AUDIT_TEST.cfg']=(
 'seta r_dwEscape1DlightResidencyAuditIntervalMs "100"\r\n'
 ).encode('ascii')
 
-readme='''DarkWolf Escape1 Stable DLight Residency V1 - Win64 TEST
+readme='''DarkWolf Escape1 Stable DLight Residency V1.1 - Win64 TEST
 Base: Clean Production Run #42217883095 + Electric Physical Owner V1.
 
 Problem proven by runtime audit
@@ -60,16 +60,17 @@ Escape1 has 30 accepted promoted fixtures while native DLight count moves betwee
 The former ordering can repeatedly evict/re-add a boundary lamp as native DLight
 count changes.
 
-What this V1 changes
---------------------
-Only on Escape1, and only when accepted promoted lights exceed actual headroom:
-1. FORCE ON fixtures remain absolute.
-2. Remaining fixtures are ordered by physical visibility tier:
-   SURFACE_VISIBLE -> SPHERE_PVS_CONNECTED -> PHYSICAL_FIXTURE_FALLBACK
-   -> GRACE_HELD -> LATENT.
-3. Existing StaticPromote priority and previous-resident preference are preserved
-   inside each tier.
-4. The algorithm still fills exactly the same available DLight budget.
+What this V1.1 changes
+----------------------
+Only on Escape1, and only when the accepted promoted set exceeds the stable budget:
+1. Reserve 9 DLight slots for the proven native high-water occupancy (audit: 6..9).
+   Promoted ownership therefore stays at 23 instead of oscillating 23..26.
+2. FORCE ON fixtures remain absolute.
+3. Ordinary fixtures keep existing StaticPromote priority. Inside the same priority,
+   a map-space 260-unit coherence score keeps dense lamp groups together before
+   isolated peers. Camera distance is never used.
+4. The actual MAX_DLIGHTS limit remains 32. If native occupancy ever exceeds the
+   reserve, actual hard headroom still wins safely.
 
 Explicitly NOT changed
 ----------------------
@@ -77,8 +78,12 @@ Explicitly NOT changed
 - Direct light color, radius, brightness and source intensity are untouched.
 - No StaticPromote user profile or learned file is changed.
 - IFLC, ELSS, FireVol, point-shadow budget and LocalVol quality are unchanged.
-- When there is no DLight overflow the old production selection path is used.
+- When accepted promoted lights fit inside the reserved budget, the old production
+  selection path is used.
 - Other maps use the old production path.
+- The fix may intentionally leave 1-3 DLight slots unused when native occupancy is
+  below 9; this is the reserve that prevents transient native lights from evicting
+  promoted room lamps and can slightly reduce GPU work.
 
 Commands
 --------
@@ -90,11 +95,11 @@ This is a TEST release, not Clean Production.
 '''
 entries['README_ESCAPE1_DLIGHT_RESIDENCY_V1_TEST.txt']=readme.replace('\n','\r\n').encode('utf-8-sig')
 status={
- 'status':'TEST_CANDIDATE','version':'ESCAPE1_DLIGHT_RESIDENCY_V1',
+ 'status':'TEST_CANDIDATE','version':'ESCAPE1_DLIGHT_RESIDENCY_V1_1',
  'base_run':BASE_RUN,'base_commit':BASE_COMMIT,'build_run':os.environ.get('GITHUB_RUN_ID'),'commit':os.environ.get('GITHUB_SHA'),
  'renderer_sha256':sha(dll),'base_renderer_sha256':sha(base_dll),
- 'map_scope':'escape1','overflow_only':True,'direct_energy_mutated':False,'max_dlights_changed':False,
- 'selection_identity_changed_under_overflow':True,'other_maps_changed':False,
+ 'map_scope':'escape1','overflow_only':True,'native_reserve':9,'stable_promoted_budget':23,'direct_energy_mutated':False,'max_dlights_changed':False,
+ 'selection_identity_changed_under_overflow':True,'camera_distance_used':False,'coherence_radius':260.0,'other_maps_changed':False,
  'inherits_electric_physical_owner_v1':True
 }
 entries['ESCAPE1_DLIGHT_RESIDENCY_V1_TEST_STATUS.json']=(json.dumps(status,indent=2)+'\n').encode()
