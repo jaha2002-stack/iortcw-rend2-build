@@ -11,12 +11,12 @@ new='Com_sprintf(pk3Name, sizeof(pk3Name), "zzz_dwtr_%08x.pk3", hash);'
 assert before.count(old)==1, before.count(old)
 after=before.replace(old,new,1)
 old2='ri.Printf(PRINT_ALL,\n              "DWTR AI B2 V2: SAVED %s variant=%s. It will override %s after restart.\\n",\n              pk3Name, cand->label, internal);'
-new2='ri.Printf(PRINT_ALL,\n              "DWTR AI B2 V2.1: SAVED %s variant=%s. It will override %s after restart.\\n",\n              pk3Name, cand->label, internal);\\n    ri.Printf(PRINT_ALL, "DWTR AI B2 V2.1: physical PK3=%s\\n", pk3Physical);'
+new2='ri.Printf(PRINT_ALL,\n              "DWTR AI B2 V2.1: SAVED %s variant=%s. It will override %s after restart.\\n",\n              pk3Name, cand->label, internal);\n    ri.Printf(PRINT_ALL, "DWTR AI B2 V2.1: physical PK3=%s\\n", pk3Physical);'
 assert before.count(old2)==1, before.count(old2)
 after=after.replace(old2,new2,1)
 marker='/* DARKWOLF_TEXTURE_AI_B2_V21_PK3_AUTOLOAD_FIX */'
 assert marker not in after
-after += "\\n"+marker+"\\n"
+after += "\n"+marker+"\n"
 p.write_text(after)
 
 proof={
