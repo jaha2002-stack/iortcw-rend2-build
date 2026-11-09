@@ -897,8 +897,8 @@ static void RB_PbrV31PrefilterCubemap(cubemap_t *cubemap)
     if (!cubemap || !cubemap->image || !cubemap->prefilteredImage)
         return;
 
-    // Source ordinary mip chain is used only to anti-alias the Monte-Carlo integral.
-    qglGenerateTextureMipmapEXT(cubemap->image->texnum, GL_TEXTURE_CUBE_MAP);
+    // Convolve directly from raw level 0. Legacy generated mips are intentionally
+    // not sampled here because they were averaged in encoded color space.
     GL_BindToTMU(cubemap->image, TB_CUBEMAP);
 
     sourceResolution = (float)MAX(1, cubemap->image->uploadWidth);
