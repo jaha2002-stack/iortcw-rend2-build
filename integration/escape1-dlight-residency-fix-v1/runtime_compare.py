@@ -103,15 +103,25 @@ def main(retail,out):
     on=run_case(retail,out/'on',True)
     report={'map':MAP,'off':off,'on':on}
     faults=[]
-    for k in ('sceneNative','headroom','staticBudget','budgetEvictions','submittedPromoted','accepted','resident'):
-        if off[k]!=on[k]: faults.append('budget/count range changed: '+k)
+    # Native workload and actual hard headroom must be identical between A/B.
+    for k in ('sceneNative','headroom','staticBudget','accepted'):
+        if off[k]!=on[k]: faults.append('native/actual budget range changed: '+k)
+    # V1.1 intentionally reserves nine native slots, therefore promoted ownership
+    # must stay fixed at 23 while actual headroom continues to move 23..26.
+    for k in ('submittedPromoted','resident'):
+        if not on[k] or on[k]['min']!=23 or on[k]['max']!=23:
+            faults.append('stable promoted budget not fixed at 23: '+k+'='+str(on[k]))
+    if not on['budgetEvictions'] or on['budgetEvictions']['min']!=7 or on['budgetEvictions']['max']!=7:
+        faults.append('expected seven stable budget evictions, got '+str(on['budgetEvictions']))
     for f in ('741','742','743','744'):
         if on['guard'].get(f,{}).get('changes',999)>off['guard'].get(f,{}).get('changes',999):
             faults.append('stable guard fixture worsened '+f)
     c0=off['guard'].get('740',{}).get('changes',999)
     c1=on['guard'].get('740',{}).get('changes',999)
     if c1>=c0: faults.append(f'fixture740 churn not reduced: {c0}->{c1}')
-    if c1>2: faults.append(f'fixture740 still unstable: {c1}')
+    if c1!=0: faults.append(f'fixture740 not fully stable: {c1}')
+    if on['guard'].get('740',{}).get('everEvicted',1)!=0:
+        faults.append('fixture740 still budget-evicted in V1.1')
     report['fixture740_changes_off']=c0
     report['fixture740_changes_on']=c1
     report['faults']=faults
