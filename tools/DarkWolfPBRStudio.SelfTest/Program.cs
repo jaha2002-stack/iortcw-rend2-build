@@ -142,7 +142,7 @@ physicalSettings.NormalStrength = 20;
 physicalSettings.HeightContrast = 1.0;
 physicalSettings.MacroReliefBoost = 0.75;
 physicalSettings.ParallaxEnabled = true;
-physicalSettings.ParallaxDepth = 0.030;
+physicalSettings.ParallaxDepth = 0.010;
 var physicalPbr = PbrGenerator.Generate(source, physicalSettings);
 Console.WriteLine("PHYSICAL RELIEF REPORT: " + physicalPbr.Report.Summary);
 
@@ -172,6 +172,51 @@ Require(macroNormalBytes.SequenceEqual(physicalNormalBytes),
     "PhysicalReliefPOM preserves validated V2.03 MacroRelief Normal exactly");
 Require(macroOrmBytes.SequenceEqual(physicalOrmBytes),
     "PhysicalReliefPOM preserves validated V2.03 ORM exactly");
+
+// V2.06 invariant: Dry stays byte-identical to V2.05.2 while authored finishes
+// change only the physical response maps, never metallic classification or Height/POM.
+var dryV206 = PbrSettings.FromProfile(MaterialProfile.For(MaterialKind.Stone));
+dryV206.GenerationMode = PbrGenerationMode.PhysicalReliefPOM;
+dryV206.ParallaxEnabled = true;
+dryV206.ParallaxDepth = 0.010;
+dryV206.SurfaceFinish = SurfaceFinish.Dry;
+var dryV206Pbr = PbrGenerator.Generate(source, dryV206);
+
+var wetV206 = PbrSettings.FromProfile(MaterialProfile.For(MaterialKind.Stone));
+wetV206.GenerationMode = PbrGenerationMode.PhysicalReliefPOM;
+wetV206.ParallaxEnabled = true;
+wetV206.ParallaxDepth = 0.010;
+wetV206.SurfaceFinish = SurfaceFinish.Wet;
+var wetV206Pbr = PbrGenerator.Generate(source, wetV206);
+
+var snowV206 = PbrSettings.FromProfile(MaterialProfile.For(MaterialKind.Stone));
+snowV206.GenerationMode = PbrGenerationMode.PhysicalReliefPOM;
+snowV206.ParallaxEnabled = true;
+snowV206.ParallaxDepth = 0.010;
+snowV206.SurfaceFinish = SurfaceFinish.Snowy;
+var snowV206Pbr = PbrGenerator.Generate(source, snowV206);
+
+Require(dryV206Pbr.Report.MeanMetallic < 0.02 &&
+        wetV206Pbr.Report.MeanMetallic < 0.02 &&
+        snowV206Pbr.Report.MeanMetallic < 0.02,
+    "Dry/Wet/Snowy stone remain dielectric");
+Require(wetV206Pbr.Report.MeanRoughness < dryV206Pbr.Report.MeanRoughness - 0.03,
+    "Wet finish lowers roughness enough for visible GGX highlights");
+Require(snowV206Pbr.Report.MeanRoughness > dryV206Pbr.Report.MeanRoughness,
+    "Snow finish remains rougher than dry stone");
+Require(ImageService.ToBgra(dryV206Pbr.Height, out _, out _)
+        .SequenceEqual(ImageService.ToBgra(wetV206Pbr.Height, out _, out _)),
+    "Wet finish does not alter validated POM Height");
+Require(ImageService.ToBgra(dryV206Pbr.Normal, out _, out _)
+        .SequenceEqual(ImageService.ToBgra(wetV206Pbr.Normal, out _, out _)),
+    "Wet finish does not alter validated tangent-space Normal");
+
+string wetPrompt = AiMaterialAuthoringPresets.BuildPrompt(
+    MaterialProfile.For(MaterialKind.Stone), SurfaceFinish.Wet);
+Require(wetPrompt.Contains("no baked specular highlights", StringComparison.OrdinalIgnoreCase),
+    "AI authoring prompt forbids painted highlights");
+Require(wetPrompt.Contains("preserve exact original UV layout", StringComparison.OrdinalIgnoreCase),
+    "AI authoring prompt preserves RTCW UV composition");
 
 // V2.05.2 regression: the rejected game result showed many small wave ridges in
 // Height/POM. Feed an intentionally wavy stone diffuse and verify that the new
@@ -460,4 +505,4 @@ finally
     try { Directory.Delete(temp, true); } catch { }
 }
 
-Console.WriteLine("DARKWOLF_PBR_STUDIO_V2052_SELFTEST_PASS");
+Console.WriteLine("DARKWOLF_PBR_STUDIO_V206_SELFTEST_PASS");
