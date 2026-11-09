@@ -445,7 +445,8 @@ static void DWTRV23_DeleteLegacyPaks(const char *home, const char *game)
     }
 }
 
-static qboolean DWTRV23_WriteCumulativePK3(const char *packPhysical,
+static qboolean DWTRV23_WriteCumulativePK3(const char *sourcePhysical,
+                                           const char *targetPhysical,
                                            const char *home,
                                            const char *game,
                                            const char *texturePath,
@@ -478,7 +479,7 @@ static qboolean DWTRV23_WriteCumulativePK3(const char *packPhysical,
     Com_Memset(central, 0,
                sizeof(dwtrV23Central_t) * DWTRV23_MAX_ENTRIES);
 
-    Com_sprintf(tmpPath, sizeof(tmpPath), "%s.tmp", packPhysical);
+    Com_sprintf(tmpPath, sizeof(tmpPath), "%s.tmp", targetPhysical);
     out = CreateFileA(tmpPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
                       FILE_ATTRIBUTE_NORMAL, NULL);
     if (out == INVALID_HANDLE_VALUE) {
@@ -490,7 +491,8 @@ static qboolean DWTRV23_WriteCumulativePK3(const char *packPhysical,
 
     /* Existing cumulative pack has first priority. The texture/manifest being
      * saved now are intentionally omitted and re-added at the end. */
-    if (!DWTRV23_CopyArchiveEntries(packPhysical, out,
+    if (sourcePhysical && sourcePhysical[0] &&
+        !DWTRV23_CopyArchiveEntries(sourcePhysical, out,
                                     texturePath, manifestPath,
                                     central, &count, &offset, &copied)) {
         goto done;
@@ -537,7 +539,7 @@ static qboolean DWTRV23_WriteCumulativePK3(const char *packPhysical,
     CloseHandle(out);
     out = INVALID_HANDLE_VALUE;
 
-    if (!MoveFileExA(tmpPath, packPhysical,
+    if (!MoveFileExA(tmpPath, targetPhysical,
                      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         ri.Printf(PRINT_WARNING,
                   "DWTR AI B2 V2.3: cumulative PK3 atomic replace failed winerr=%lu.\n",
@@ -574,7 +576,10 @@ void R_DWTextureSaveV23_f(void)
 {
 #ifdef _WIN32
     char internal[MAX_QPATH];
-    char packPhysical[MAX_OSPATH * 2];
+    char finalPhysical[MAX_OSPATH * 2];
+    char pendingPhysical[MAX_OSPATH * 2];
+    char sourcePhysical[MAX_OSPATH * 2];
+    char targetPhysical[MAX_OSPATH * 2];
     char manifestQ[MAX_QPATH];
     char manifestInternal[MAX_QPATH];
     char manifest[1600];
@@ -587,6 +592,9 @@ void R_DWTextureSaveV23_f(void)
     const dwtrV2Candidate_t *cand;
     int finalEntries = 0;
     int migratedPaks = 0;
+    qboolean finalExists;
+    qboolean pendingExists;
+    qboolean usingPending = qfalse;
 
     if (!s_dwtr.selected || s_dwtrv2.count <= 0 || !s_dwtr.original) {
         ri.Printf(PRINT_WARNING,
@@ -660,10 +668,32 @@ void R_DWTextureSaveV23_f(void)
     home = DWTRAI_CvarString("fs_homepath");
     if (!home[0]) home = DWTRAI_CvarString("fs_basepath");
     game = DWTRAI_GameDir();
-    DWTRAI_PhysicalPath(packPhysical, sizeof(packPhysical),
+    DWTRAI_PhysicalPath(finalPhysical, sizeof(finalPhysical),
                         home, game, DWTRV23_PACK_NAME);
+    Com_sprintf(pendingPhysical, sizeof(pendingPhysical),
+                "%s.pending", finalPhysical);
 
-    if (!DWTRV23_WriteCumulativePK3(packPhysical,
+    finalExists = DWTRAI_IsFile(finalPhysical);
+    pendingExists = DWTRAI_IsFile(pendingPhysical);
+
+    /* ioRTCW keeps loaded PK3 handles open. Never try to replace a pack that
+     * may already be mounted. If a final cumulative pack exists, rebuild into
+     * one non-PK3 pending file. Repeated saves in the same session update that
+     * same pending archive. FS startup promotes it before scanning PK3 files. */
+    if (pendingExists) {
+        Q_strncpyz(sourcePhysical, pendingPhysical, sizeof(sourcePhysical));
+        Q_strncpyz(targetPhysical, pendingPhysical, sizeof(targetPhysical));
+        usingPending = qtrue;
+    } else if (finalExists) {
+        Q_strncpyz(sourcePhysical, finalPhysical, sizeof(sourcePhysical));
+        Q_strncpyz(targetPhysical, pendingPhysical, sizeof(targetPhysical));
+        usingPending = qtrue;
+    } else {
+        sourcePhysical[0] = '\0';
+        Q_strncpyz(targetPhysical, finalPhysical, sizeof(targetPhysical));
+    }
+
+    if (!DWTRV23_WriteCumulativePK3(sourcePhysical, targetPhysical,
                                     home, game,
                                     internal, encoded, encodedLen,
                                     manifestInternal,
@@ -685,9 +715,16 @@ void R_DWTextureSaveV23_f(void)
               internal, cand->label, DWTRV23_PACK_NAME);
     ri.Printf(PRINT_ALL,
               "DWTR AI B2 V2.3: cumulative PK3=%s entries=%d migratedLegacyPaks=%d.\n",
-              packPhysical, finalEntries, migratedPaks);
+              targetPhysical, finalEntries, migratedPaks);
+    if (usingPending) {
+        ri.Printf(PRINT_ALL,
+                  "DWTR AI B2 V2.3: main cumulative PK3 is currently mounted; update staged safely and will be promoted on next startup.\n");
+    } else {
+        ri.Printf(PRINT_ALL,
+                  "DWTR AI B2 V2.3: first cumulative PK3 created; restart loads all saved replacements.\n");
+    }
     ri.Printf(PRINT_ALL,
-              "DWTR AI B2 V2.3: future accepted textures will update this same PK3; restart loads all saved replacements.\n");
+              "DWTR AI B2 V2.3: future accepted textures use this same cumulative pack; no per-texture PK3 files are created.\n");
 #else
     ri.Printf(PRINT_WARNING,
               "DWTR AI B2 V2.3: Win64 cumulative save backend only.\n");
