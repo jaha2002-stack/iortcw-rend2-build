@@ -285,9 +285,9 @@ public static class PbrGenerator
                 // but shape roughness/AO so PBR V3.2 GGX has physically meaningful wet/snow/moss response.
                 // These masks are deliberately broad and restrained; they do not alter Height/POM geometry.
                 double hPhys = height[i];
-                double darkMask = SmoothStep(0.72, 0.30, lumSrgb[i]);
+                double darkMask = 1.0 - SmoothStep(0.30, 0.72, lumSrgb[i]);
                 double brightMask = SmoothStep(0.58, 0.88, lumSrgb[i]);
-                double recessMask = SmoothStep(0.58, 0.28, hPhys);
+                double recessMask = 1.0 - SmoothStep(0.28, 0.58, hPhys);
 
                 switch (settings.SurfaceFinish)
                 {
