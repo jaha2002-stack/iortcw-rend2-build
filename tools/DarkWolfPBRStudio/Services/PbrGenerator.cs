@@ -362,18 +362,6 @@ public static class PbrGenerator
         return PillowGaussianBlur(outHeight, w, h, 0.65);
     }
 
-    private static double Percentile(double[] values, double p)
-    {
-        if (values.Length == 0) return 0.0;
-        var copy = (double[])values.Clone();
-        Array.Sort(copy);
-        double pos = Math.Clamp(p, 0.0, 1.0) * (copy.Length - 1);
-        int lo = (int)Math.Floor(pos);
-        int hi = Math.Min(lo + 1, copy.Length - 1);
-        double t = pos - lo;
-        return copy[lo] * (1.0 - t) + copy[hi] * t;
-    }
-
     private static void BuildReferenceFields(
         byte[] gray, int w, int h, int minDim,
         out double[] fine, out double[] mid, out double[] coarse, out double[] height,
