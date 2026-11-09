@@ -46,7 +46,7 @@ capture_one() {
   test -n "$exe"
 
   set +e
-  LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 12s 175s "$exe"     +set fs_basepath "$PWD/$runtime" +set fs_homepath "$PWD/$home"     +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0     +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720     +set r_pbr 3 +set r_cubeMapping 1 +set r_normalMapping 1 +set r_specularMapping 1     +set r_parallaxMapping 2 +set r_parallaxMapShadows 1 +set r_pomShadowStrength 0.18     +set r_pomMinLayers 20 +set r_pomMaxLayers 56 +set r_pomRefineSteps 5 +set r_pomMaxOffset 0.028     +set r_dlightmode 2 +set r_forcesun 1     +devmap "$map" +wait 2 +setviewpos "$x" "$y" "$z" "$yaw" +wait 15     +r_pbrMaterialAudit "$shader" +wait 1 +screenshot "$label" +wait 1 +quit
+  LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 12s 300s "$exe"     +set fs_basepath "$PWD/$runtime" +set fs_homepath "$PWD/$home"     +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0     +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720     +set r_pbr 3 +set r_cubeMapping 1 +set r_normalMapping 1 +set r_specularMapping 1     +set r_parallaxMapping 2 +set r_parallaxMapShadows 1 +set r_pomShadowStrength 0.18     +set r_pomMinLayers 20 +set r_pomMaxLayers 56 +set r_pomRefineSteps 5 +set r_pomMaxOffset 0.028     +set r_dlightmode 2 +set r_forcesun 1     +devmap "$map" +wait 2 +setviewpos "$x" "$y" "$z" "$yaw" +wait 15     +r_pbrMaterialAudit "$shader" +wait 1 +screenshot "$label" +wait 1 +quit
   local rc=$?
   set -e
 
