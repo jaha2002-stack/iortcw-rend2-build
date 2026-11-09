@@ -331,8 +331,11 @@ public static class PbrGenerator
                 }
 
                 orm[p] = ToByte(metallic);
-                orm[p + 1] = referenceRoughByte is null ? ToByte(rough) : referenceRoughByte[i];
-                orm[p + 2] = referenceAoByte is null ? ToByte(ao) : referenceAoByte[i];
+                bool preserveReferenceOrm = settings.SurfaceFinish == SurfaceFinish.Dry;
+                orm[p + 1] = preserveReferenceOrm && referenceRoughByte is not null
+                    ? referenceRoughByte[i] : ToByte(rough);
+                orm[p + 2] = preserveReferenceOrm && referenceAoByte is not null
+                    ? referenceAoByte[i] : ToByte(ao);
                 orm[p + 3] = 255;
 
                 normalAngles[i] = Math.Acos(Math.Clamp(nz, -1.0, 1.0)) * 180.0 / Math.PI;
