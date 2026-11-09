@@ -109,8 +109,10 @@ new='''				if ((i & LIGHTDEF_USE_PARALLAXMAP) && !(i & LIGHTDEF_ENTITY_VERTEX_AN
 							Q_strcat(extradefines, 1024, va("#define DW_POM_MIN_LAYERS %d\\n", CLAMP(r_pomMinLayers->integer, 8, 48)));
 							Q_strcat(extradefines, 1024, va("#define DW_POM_MAX_LAYERS %d\\n", CLAMP(r_pomMaxLayers->integer, 16, 64)));
 							Q_strcat(extradefines, 1024, va("#define DW_POM_REFINE_STEPS %d\\n", CLAMP(r_pomRefineSteps->integer, 2, 8)));
-							Q_strcat(extradefines, 1024, va("#define DW_POM_MAX_OFFSET %f\\n", CLAMP(r_pomMaxOffset->value, 0.01f, 0.20f)));
+							Q_strcat(extradefines, 1024, va("#define DW_POM_MAX_OFFSET %f\\n", CLAMP(r_pomMaxOffset->value, 0.005f, 0.08f)));
 							Q_strcat(extradefines, 1024, va("#define DW_POM_DEPTH_SCALE %f\\n", CLAMP(r_pomDepthScale->value, 0.25f, 2.0f)));
+							Q_strcat(extradefines, 1024, va("#define DW_POM_GRAZING_FADE_START %f\\n", CLAMP(r_pomGrazingFadeStart->value, 0.05f, 0.55f)));
+							Q_strcat(extradefines, 1024, va("#define DW_POM_GRAZING_FADE_END %f\\n", CLAMP(r_pomGrazingFadeEnd->value, 0.30f, 0.90f)));
 							Q_strcat(extradefines, 1024, va("#define DW_POM_SHADOW_STRENGTH %f\\n", CLAMP(r_pomShadowStrength->value, 0.0f, 1.0f)));
 						}
 					}
