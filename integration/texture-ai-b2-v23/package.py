@@ -18,6 +18,17 @@ with zipfile.ZipFile(base) as z:
         if n.endswith("/"): continue
         entries[n.split("/",1)[1]]=z.read(n)
 
+# FireVol production packagers historically replace renderer artifacts but do
+# not need to replace the main ioWolfSP executable. V2.3 changes qcommon/files.c,
+# so explicitly inject the freshly compiled EXE and renderer from this run.
+build=Path("source/SP/build/release-mingw32-x86_64")
+built_exe=build/"ioWolfSP.x64.exe"
+built_rend2=build/"renderer_sp_rend2_x64.dll"
+assert built_exe.exists(),built_exe
+assert built_rend2.exists(),built_rend2
+entries["ioWolfSP.x64.exe"]=built_exe.read_bytes()
+entries["renderer_sp_rend2_x64.dll"]=built_rend2.read_bytes()
+
 dll=entries["renderer_sp_rend2_x64.dll"]
 for marker in (
     b"DWTR AI B2 V2.3",b"zzzzzz_DW_TextureRestoration.pk3",
