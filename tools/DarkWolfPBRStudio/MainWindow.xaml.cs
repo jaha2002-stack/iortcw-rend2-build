@@ -44,6 +44,10 @@ public partial class MainWindow : Window
         MaterialProfileCombo.SelectedItem = MaterialKind.Auto;
         GenerationModeCombo.ItemsSource = Enum.GetValues<PbrGenerationMode>();
         GenerationModeCombo.SelectedItem = PbrGenerationMode.MacroReliefEnhanced;
+        AiAuthoringModeCombo.ItemsSource = Enum.GetValues<AiAuthoringMode>();
+        AiAuthoringModeCombo.SelectedItem = AiAuthoringMode.OriginalRestore4x;
+        SurfaceFinishCombo.ItemsSource = Enum.GetValues<SurfaceFinish>();
+        SurfaceFinishCombo.SelectedItem = SurfaceFinish.Dry;
         ApplyGenerationModePreset(PbrGenerationMode.MacroReliefEnhanced);
 
         SdCliPathBox.Text = !string.IsNullOrWhiteSpace(_settings.StableDiffusionCliPath)
@@ -169,7 +173,18 @@ public partial class MainWindow : Window
     }
 
     private string BuildPrompt(MaterialProfile profile)
-        => $"{profile.PromptHint}, preserve original UV layout, exact composition and color identity, seamless game texture, physically plausible PBR source";
+    {
+        SurfaceFinish finish = SurfaceFinishCombo?.SelectedItem is SurfaceFinish sf ? sf : SurfaceFinish.Dry;
+        return AiMaterialAuthoringPresets.BuildPrompt(profile, finish);
+    }
+
+    private MaterialKind CurrentMaterialKind()
+    {
+        MaterialKind selected = MaterialProfileCombo.SelectedItem is MaterialKind k ? k : MaterialKind.Auto;
+        return selected == MaterialKind.Auto
+            ? (_analysis?.Kind ?? MaterialKind.GenericDielectric)
+            : selected;
+    }
 
     private async void AnalyzeMaterialButton_Click(object sender, RoutedEventArgs e)
     {
@@ -219,9 +234,9 @@ public partial class MainWindow : Window
                     HeightContrastSlider.Value = 1.00;
                     MacroReliefBoostSlider.Value = 0.75;
                     ParallaxCheck.IsChecked = true;
-                    if (ParallaxDepthSlider.Value < 0.018)
-                        ParallaxDepthSlider.Value = 0.030;
-                    GenerationModeHintText.Text = "Physical Relief / POM: preserves the accepted V2.03 macro Normal/ORM, but generates a separate wide-range low-frequency Height field for deep mortar and stone relief. Designed for PBR V3.2 POM.";
+                    if (ParallaxDepthSlider.Value > 0.014 || ParallaxDepthSlider.Value < 0.006)
+                        ParallaxDepthSlider.Value = 0.010;
+                    GenerationModeHintText.Text = "Physical Relief / POM: V2.05.2 Stone Height Reconstruction with PBR V3.2-safe depth. Recommended masonry start: parallaxDepth 0.008–0.010.";
                     break;
 
                 default:
@@ -273,6 +288,78 @@ public partial class MainWindow : Window
         {
             _applyingProfile = false;
         }
+    }
+
+    private void AiAuthoringModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsInitialized || AiAuthoringModeCombo.SelectedItem is not AiAuthoringMode mode) return;
+        AiAuthoringHintText.Text = mode == AiAuthoringMode.OriginalRestore4x
+            ? "Original Restore 4x: preserve RTCW composition and identity, then derive deterministic V3.2 maps."
+            : "Artistic Rebuild: local img2img creates new high-quality BaseColor candidates while preserving UV layout and RTCW style.";
+    }
+
+    private void SurfaceFinishCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsInitialized || SurfaceFinishCombo.SelectedItem is not SurfaceFinish finish) return;
+        if (_analysis is not null)
+            PromptBox.Text = AiMaterialAuthoringPresets.BuildPrompt(MaterialProfile.For(CurrentMaterialKind()), finish);
+        ResetPbrPreview();
+        Status($"Surface finish: {finish}. Metallic classification is preserved; wet/snow/moss response is authored through roughness/AO.");
+    }
+
+    private async void GenerateAiMaterialButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_current is null) { MessageBox.Show(this, "Select a texture first."); return; }
+
+        AiAuthoringMode mode = AiAuthoringModeCombo.SelectedItem is AiAuthoringMode m
+            ? m : AiAuthoringMode.OriginalRestore4x;
+        SurfaceFinish finish = SurfaceFinishCombo.SelectedItem is SurfaceFinish sf
+            ? sf : SurfaceFinish.Dry;
+
+        if (mode == AiAuthoringMode.OriginalRestore4x)
+        {
+            RestoreButton_Click(sender, e);
+            return;
+        }
+
+        if (!EnsureStableDiffusionPaths()) return;
+
+        string input = Path.Combine(_sessionDir, $"v206_ai_source_{Guid.NewGuid():N}.png");
+        ImageService.SavePng(_current, input);
+        string prompt = AiMaterialAuthoringPresets.BuildPrompt(
+            MaterialProfile.For(CurrentMaterialKind()), finish, PromptBox.Text);
+
+        await BusyAsync($"AI Material Authoring — {finish} — 3 candidates…", async ct =>
+        {
+            for (int n = 1; n <= 3; n++)
+            {
+                long seed = Random.Shared.NextInt64(1, int.MaxValue);
+                string output = Path.Combine(_sessionDir, $"v206_{finish}_{seed}.png");
+                await _sd.Img2ImgAsync(
+                    SdCliPathBox.Text.Trim(), SdModelPathBox.Text.Trim(), input, output,
+                    prompt, Math.Clamp(AiStrengthSlider.Value, 0.18, 0.48), seed,
+                    SdExtraArgsBox.Text.Trim(), ct);
+
+                int candidate = n;
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    var item = new VariantItem
+                    {
+                        Name = $"{finish} AI #{candidate}",
+                        FilePath = output,
+                        Kind = "V2.06 AI Material",
+                        Seed = seed,
+                        Prompt = prompt
+                    };
+                    _variants.Add(item);
+                    VariantList.SelectedItem = item;
+                    VariantList.ScrollIntoView(item);
+                });
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+                Status($"V2.06 generated 3 {finish} BaseColor candidates. Select one, then Generate PBR V3.2 Material."));
+        });
     }
 
     private async void RestoreButton_Click(object sender, RoutedEventArgs e)
@@ -658,6 +745,7 @@ public partial class MainWindow : Window
         var settings = PbrSettings.FromProfile(MaterialProfile.For(actual));
         settings.GenerationMode = GenerationModeCombo.SelectedItem is PbrGenerationMode gm
             ? gm : PbrGenerationMode.MacroReliefEnhanced;
+        settings.SurfaceFinish = SurfaceFinishCombo.SelectedItem is SurfaceFinish sf ? sf : SurfaceFinish.Dry;
         settings.MacroReliefBoost = MacroReliefBoostSlider.Value;
         settings.NormalStrength = NormalStrengthSlider.Value;
         settings.HeightContrast = HeightContrastSlider.Value;
@@ -725,7 +813,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Status("Error.");
-            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2.05.2", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2.06", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -741,6 +829,9 @@ public partial class MainWindow : Window
         OpenPk3Button.IsEnabled = enabled;
         RestoreButton.IsEnabled = enabled;
         AiNextButton.IsEnabled = enabled;
+        GenerateAiMaterialButton.IsEnabled = enabled;
+        AiAuthoringModeCombo.IsEnabled = enabled;
+        SurfaceFinishCombo.IsEnabled = enabled;
         TextureList.IsEnabled = enabled;
         BatchList.IsEnabled = enabled;
         VariantList.IsEnabled = enabled;
