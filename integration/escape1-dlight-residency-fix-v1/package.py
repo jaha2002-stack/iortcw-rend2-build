@@ -31,6 +31,7 @@ entries['Main/DW_ESCAPE1_DLIGHT_RESIDENCY_V1_ON_TEST.cfg']=(
 '// Escape1 Stable DLight Residency V1 ON\r\n'
 'seta r_dwElectricPhysicalOwner "1"\r\n'
 'seta r_dwEscape1StableDlightResidency "1"\r\n'
+'seta r_dwEscape1DlightNativeReserve "9"\r\n'
 'seta r_dwEscape1StableDlightResidencyDiag "0"\r\n'
 'seta r_dwEscape1DlightResidencyAudit "0"\r\n'
 ).encode('ascii')
@@ -38,6 +39,7 @@ entries['Main/DW_ESCAPE1_DLIGHT_RESIDENCY_V1_OFF_TEST.cfg']=(
 '// A/B baseline: restore previous all-accepted overflow ordering\r\n'
 'seta r_dwElectricPhysicalOwner "1"\r\n'
 'seta r_dwEscape1StableDlightResidency "0"\r\n'
+'seta r_dwEscape1DlightNativeReserve "9"\r\n'
 'seta r_dwEscape1StableDlightResidencyDiag "0"\r\n'
 'seta r_dwEscape1DlightResidencyAudit "0"\r\n'
 ).encode('ascii')
@@ -45,6 +47,7 @@ entries['Main/DW_ESCAPE1_DLIGHT_RESIDENCY_V1_AUDIT_TEST.cfg']=(
 '// Escape1 residency V1 + detailed slot telemetry\r\n'
 'seta r_dwElectricPhysicalOwner "1"\r\n'
 'seta r_dwEscape1StableDlightResidency "1"\r\n'
+'seta r_dwEscape1DlightNativeReserve "9"\r\n'
 'seta r_dwEscape1StableDlightResidencyDiag "1"\r\n'
 'seta r_dwEscape1DlightResidencyAudit "1"\r\n'
 'seta r_dwEscape1DlightResidencyAuditIntervalMs "100"\r\n'
