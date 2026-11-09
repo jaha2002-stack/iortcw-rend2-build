@@ -16,6 +16,6 @@ public sealed class BatchMaterialItem
     public string DisplayName => Asset.DisplayName;
     public string EntryPath => Asset.EntryPath;
     public string MaterialKind => Analysis.Kind.ToString();
-    public string MaterialMode => ExistingMaterial is null ? "Implicit → auto MTR" : "Scripted → merged MTR";
+    public string MaterialMode => ExistingMaterial is null ? "Implicit → safe fallback + PBR MTR" : "Scripted → full source pair";
     public string Validation => Result.Report.Summary;
 }
