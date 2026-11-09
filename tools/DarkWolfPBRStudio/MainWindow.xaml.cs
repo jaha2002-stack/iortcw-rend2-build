@@ -138,8 +138,8 @@ public partial class MainWindow : Window
                 _currentMaterialDefinition = materialDef;
                 MaterialStatusText.Text = hasDef ? "Material: scripted → auto merge" : "Material: implicit → auto MTR";
                 CompatibilityHintText.Text = hasDef
-                    ? $"Existing scripted material: {materialDef!.SourcePk3} / {materialDef.ScriptPath}. V2.04 will preserve the block and merge Normal/ORM stages automatically."
-                    : "Implicit texture: V2.04 will automatically create the material block and connect BaseColor/Normal/ORM/lightmap.";
+                    ? $"Existing scripted material: {materialDef!.SourcePk3} / {materialDef.ScriptPath}. V2.05 will preserve the block and merge Normal/ORM stages automatically."
+                    : "Implicit texture: V2.05 will automatically create the material block and connect BaseColor/Normal/ORM/lightmap.";
 
                 SetAnalysis(analysis, applyRecommendedProfile: true);
                 Status($"{asset.EntryPath} — {bmp.PixelWidth}×{bmp.PixelHeight}; {MaterialProfile.For(analysis.Kind).DisplayName}.");
@@ -214,6 +214,16 @@ public partial class MainWindow : Window
                     GenerationModeHintText.Text = "Enhanced Macro Relief: keeps the First Hand-Generated height/ORM unchanged and strengthens only broad coherent stone-boundary normals. It cannot create new interior pits from dark JPEG specks.";
                     break;
 
+                case PbrGenerationMode.PhysicalReliefPOM:
+                    NormalStrengthSlider.Value = 20;
+                    HeightContrastSlider.Value = 1.00;
+                    MacroReliefBoostSlider.Value = 0.75;
+                    ParallaxCheck.IsChecked = true;
+                    if (ParallaxDepthSlider.Value < 0.018)
+                        ParallaxDepthSlider.Value = 0.030;
+                    GenerationModeHintText.Text = "Physical Relief / POM: preserves the accepted V2.03 macro Normal/ORM, but generates a separate wide-range low-frequency Height field for deep mortar and stone relief. Designed for PBR V3.2 POM.";
+                    break;
+
                 default:
                     NormalStrengthSlider.Value = 20;
                     HeightContrastSlider.Value = 1.00;
@@ -238,6 +248,8 @@ public partial class MainWindow : Window
             : selected;
 
         ApplyProfile(MaterialProfile.For(actual), keepComboSelection: true);
+        if (GenerationModeCombo.SelectedItem is PbrGenerationMode.PhysicalReliefPOM)
+            ApplyGenerationModePreset(PbrGenerationMode.PhysicalReliefPOM);
         ResetPbrPreview();
         Status($"PBR profile: {MaterialProfile.For(actual).DisplayName}.");
     }
@@ -448,7 +460,7 @@ public partial class MainWindow : Window
         var d = new SaveFileDialog
         {
             Filter = "RTCW PK3 (*.pk3)|*.pk3",
-            FileName = $"zzz_dw_{stem}_pbr3_v204.pk3"
+            FileName = $"zzz_dw_{stem}_pbr3_v205.pk3"
         };
         if (d.ShowDialog(this) != true) return;
 
@@ -467,11 +479,11 @@ public partial class MainWindow : Window
             };
 
             BatchPbrExportService.Export(d.FileName, new[] { item });
-            Status($"Exported V2.04 material set: {d.FileName}");
+            Status($"Exported V2.05 material set: {d.FileName}");
             MessageBox.Show(this,
-                "PBR Studio V2.04 PK3 created. MTR handling was automatic.\n\n" +
+                "PBR Studio V2.05 PK3 created. Rend2 material registration is automatic.\n\n" +
                 $"{_asset.ShaderName}_n.tga\n{_asset.ShaderName}_orm.tga\n" +
-                "scripts/dw_pbrstudio_v204_batch.mtr",
+                "A unique same-basename .shader + .mtr pair was written into scripts/.",
                 "Export complete", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
@@ -614,7 +626,7 @@ public partial class MainWindow : Window
         var d = new SaveFileDialog
         {
             Filter = "RTCW PK3 (*.pk3)|*.pk3",
-            FileName = $"zzz_dw_pbrstudio_v204_batch_{_batchMaterials.Count}.pk3"
+            FileName = $"zzz_dw_pbrstudio_v205_batch_{_batchMaterials.Count}.pk3"
         };
         if (d.ShowDialog(this) != true) return;
 
@@ -626,7 +638,7 @@ public partial class MainWindow : Window
                 $"Exported {_batchMaterials.Count} materials into ONE PK3.\n\n" +
                 "All generated Normal/ORM maps are included.\n" +
                 "Parallax maps are included only for items generated with Parallax enabled.\n" +
-                "One combined MTR: scripts/dw_pbrstudio_v204_batch.mtr\n" +
+                "One unique combined .shader + .mtr pair was written for the whole batch.\n" +
                 "Scripted materials were merged; implicit materials received automatic definitions.",
                 "Batch export complete", MessageBoxButton.OK, MessageBoxImage.Information);
         }
@@ -713,7 +725,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Status("Error.");
-            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2.04", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2.05", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
