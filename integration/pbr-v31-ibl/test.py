@@ -55,6 +55,8 @@ checks={
     "lut_512_samples": "DW_MAX_BRDF_SAMPLES 512" in brdf and "512.0f" in backend,
     "prefilter_sample_cap": "DW_MAX_PREFILTER_SAMPLES 256" in pref,
     "adaptive_prefilter_samples": all(x in backend for x in ("64.0f","48.0f","32.0f","RB_PbrV31SampleCountForMip")),
+    "safe_linear_mipmap_generation": "FBO_Bind(NULL);" in backend and "qglGenerateTextureMipmapEXT(tr.pbrIblLinearSourceImage" in backend,
+    "prefilter_max_level_clamped": "GL_TEXTURE_MAX_LEVEL" in backend and "(GLfloat)maxMip" in backend,
     "split_sum_runtime": "specular.rgb * dwBrdf.x + vec3(dwBrdf.y)" in frag,
     "linear_prefilter_runtime": "V3.1 prefiltered cubemap is RGBA16F and already stores linear radiance" in frag,
     "roughness_to_convolved_mip": "ROUGHNESS_MIPS * roughness" in frag,
