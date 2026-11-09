@@ -177,12 +177,21 @@ try
     Require(TgaBpp("textures/snow/s_cathedrale_c06_nh.tga") == 32,
         "_nh remains 32-bit because alpha carries Height");
 
-    var singleShader = zip.Entries.Single(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v205_", StringComparison.OrdinalIgnoreCase) &&
+    var singleShader = zip.Entries.Single(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v2051_", StringComparison.OrdinalIgnoreCase) &&
                                                e.FullName.EndsWith(".shader", StringComparison.OrdinalIgnoreCase));
-    var singleMtr = zip.Entries.Single(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v205_", StringComparison.OrdinalIgnoreCase) &&
+    var singleMtr = zip.Entries.Single(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v2051_", StringComparison.OrdinalIgnoreCase) &&
                                             e.FullName.EndsWith(".mtr", StringComparison.OrdinalIgnoreCase));
     Require(Path.GetFileNameWithoutExtension(singleShader.FullName) == Path.GetFileNameWithoutExtension(singleMtr.FullName),
         "single export writes same-basename .shader + .mtr registration pair");
+    using var shaderSr = new StreamReader(singleShader.Open());
+    string fallbackShader = shaderSr.ReadToEnd();
+    Require(!fallbackShader.Contains("stage ormMap", StringComparison.OrdinalIgnoreCase),
+        "single-export fallback .shader stays legacy-safe and contains no ormMap extension");
+    Require(!fallbackShader.Contains("normalParallaxMap", StringComparison.OrdinalIgnoreCase),
+        "single-export fallback .shader stays legacy-safe and contains no normalParallaxMap extension");
+    Require(fallbackShader.Contains("map textures/snow/s_cathedrale_c06.jpg"),
+        "single-export fallback .shader still renders the original diffuse texture");
+
     using var sr = new StreamReader(singleMtr.Open());
     string mtr = sr.ReadToEnd();
     Require(mtr.Contains("map textures/snow/s_cathedrale_c06.jpg"), "explicit material diffuse stage references the image filename, not the shader token");
@@ -198,11 +207,7 @@ try
         ShaderName = "textures/stone/floor_a",
         Size = 0
     };
-    var scripted = new MaterialDefinitionInfo(
-        asset2.ShaderName,
-        "pak_custom.pk3",
-        "scripts/custom.shader",
-        @"textures/stone/floor_a
+    string scriptedFallback = @"textures/stone/floor_a
 {
     qer_editorimage textures/stone/floor_a.jpg
     surfaceParm slick
@@ -212,10 +217,40 @@ try
         rgbGen identity
     }
     {
+        map $lightmap
+        blendFunc GL_DST_COLOR GL_ZERO
+    }
+    {
         map textures/effects/glow
         blendFunc add
     }
-}");
+}
+
+textures/stone/untouched_neighbor
+{
+    qer_editorimage textures/stone/untouched_neighbor.jpg
+    {
+        map textures/stone/untouched_neighbor.jpg
+        rgbGen identity
+    }
+    {
+        map $lightmap
+        blendFunc GL_DST_COLOR GL_ZERO
+    }
+}";
+    string scriptedBlock = Pk3Service.ExtractExactMaterialBlock(scriptedFallback, asset2.ShaderName)
+        ?? throw new Exception("SELFTEST FAIL: scripted block fixture extraction");
+
+    var scripted = new MaterialDefinitionInfo(
+        asset2.ShaderName,
+        "pak_custom.pk3",
+        "scripts/custom.shader",
+        scriptedBlock)
+    {
+        DiscoveryShaderPath = "scripts/custom.shader",
+        FallbackShaderText = scriptedFallback,
+        EffectiveScriptText = scriptedFallback
+    };
 
     var batchItems = new[]
     {
@@ -246,39 +281,63 @@ try
 
     using var batchZip = ZipFile.OpenRead(batchPk3);
     var batchNames = batchZip.Entries.Select(e => e.FullName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-    var batchShaderEntries = batchZip.Entries.Where(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v205_", StringComparison.OrdinalIgnoreCase) &&
-                                                                  e.FullName.EndsWith(".shader", StringComparison.OrdinalIgnoreCase)).ToList();
-    var batchMtrEntries = batchZip.Entries.Where(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v205_", StringComparison.OrdinalIgnoreCase) &&
-                                                               e.FullName.EndsWith(".mtr", StringComparison.OrdinalIgnoreCase)).ToList();
-    Require(batchShaderEntries.Count == 1 && batchMtrEntries.Count == 1,
-        "batch export writes one combined same-basename .shader + .mtr pair");
-    Require(Path.GetFileNameWithoutExtension(batchShaderEntries[0].FullName) == Path.GetFileNameWithoutExtension(batchMtrEntries[0].FullName),
-        "batch shader/mtr registration pair shares exact basename");
+    var implicitShaderEntries = batchZip.Entries.Where(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v2051_", StringComparison.OrdinalIgnoreCase) &&
+                                                                      e.FullName.EndsWith(".shader", StringComparison.OrdinalIgnoreCase)).ToList();
+    var implicitMtrEntries = batchZip.Entries.Where(e => e.FullName.StartsWith("scripts/dw_pbrstudio_v2051_", StringComparison.OrdinalIgnoreCase) &&
+                                                                   e.FullName.EndsWith(".mtr", StringComparison.OrdinalIgnoreCase)).ToList();
+    Require(implicitShaderEntries.Count == 1 && implicitMtrEntries.Count == 1,
+        "implicit batch materials share one owned same-basename fallback/PBR pair");
+    Require(Path.GetFileNameWithoutExtension(implicitShaderEntries[0].FullName) == Path.GetFileNameWithoutExtension(implicitMtrEntries[0].FullName),
+        "implicit batch shader/mtr registration pair shares exact basename");
+    Require(batchNames.Contains("scripts/custom.shader") && batchNames.Contains("scripts/custom.mtr"),
+        "scripted material exports under its original discovery basename");
     Require(batchNames.Contains("textures/snow/s_cathedrale_c06_n.tga"), "batch contains first Normal");
     Require(batchNames.Contains("textures/snow/s_cathedrale_c06_orm.tga"), "batch contains first ORM");
     Require(batchNames.Contains("textures/stone/floor_a_n.tga"), "batch contains second Normal");
     Require(batchNames.Contains("textures/stone/floor_a_orm.tga"), "batch contains second ORM");
-    Require(batchNames.Count(x => x.StartsWith("scripts/", StringComparison.OrdinalIgnoreCase)) == 2,
-        "batch contains exactly one shader+mtr pair for the entire material set");
-    Require(batchNames.Contains("darkwolf_pbrstudio/batch_manifest_v205.json"), "batch contains one inspectable V2.05 manifest");
+    Require(batchNames.Count(x => x.StartsWith("scripts/", StringComparison.OrdinalIgnoreCase)) == 4,
+        "mixed batch contains one implicit pair plus one complete scripted-source pair");
+    Require(batchNames.Contains("darkwolf_pbrstudio/batch_manifest_v2051.json"),
+        "batch contains one inspectable V2.05.1 safe-export manifest");
 
-    var batchMtrEntry = batchMtrEntries[0];
-    using var batchSr = new StreamReader(batchMtrEntry.Open());
-    string batchMtr = batchSr.ReadToEnd();
-    Require(batchMtr.Contains("textures/snow/s_cathedrale_c06"), "combined MTR contains implicit material block");
-    Require(batchMtr.Contains("map textures/snow/s_cathedrale_c06.jpg"), "batch implicit diffuse stage references image filename");
-    Require(batchMtr.Contains("textures/stone/floor_a"), "combined MTR contains scripted material block");
-    Require(batchMtr.Contains("surfaceParm slick"), "scripted merge preserves surfaceParm");
-    Require(batchMtr.Contains("cull none"), "scripted merge preserves cull state");
-    Require(batchMtr.Contains("textures/effects/glow"), "scripted merge preserves unrelated original stages");
-    Require(batchMtr.Contains("textures/stone/floor_a_n"), "scripted merge inserts generated Normal");
-    Require(batchMtr.Contains("textures/stone/floor_a_orm"), "scripted merge inserts generated ORM");
-    Require(batchMtr.Split("stage ormMap", StringSplitOptions.None).Length - 1 == 2,
-        "combined MTR has one ORM stage per material");
+    using var implicitShaderSr = new StreamReader(implicitShaderEntries[0].Open());
+    string implicitFallback = implicitShaderSr.ReadToEnd();
+    using var implicitMtrSr = new StreamReader(implicitMtrEntries[0].Open());
+    string implicitMtr = implicitMtrSr.ReadToEnd();
+    Require(!implicitFallback.Contains("stage ormMap", StringComparison.OrdinalIgnoreCase),
+        "implicit batch fallback .shader has no Rend2 PBR-only stage");
+    Require(implicitMtr.Contains("stage normalParallaxMap") && implicitMtr.Contains("stage ormMap"),
+        "implicit batch .mtr contains the complete PBR/POM response");
+
+    var scriptedShaderEntry = batchZip.Entries.Single(e => e.FullName.Equals("scripts/custom.shader", StringComparison.OrdinalIgnoreCase));
+    var scriptedMtrEntry = batchZip.Entries.Single(e => e.FullName.Equals("scripts/custom.mtr", StringComparison.OrdinalIgnoreCase));
+    using var scriptedShaderSr = new StreamReader(scriptedShaderEntry.Open());
+    string exportedFallback = scriptedShaderSr.ReadToEnd();
+    using var scriptedMtrSr = new StreamReader(scriptedMtrEntry.Open());
+    string exportedMtr = scriptedMtrSr.ReadToEnd();
+
+    Require(exportedFallback == scriptedFallback,
+        "scripted fallback .shader is byte-for-text identical to the complete original shader source");
+    Require(exportedMtr.Contains("textures/stone/untouched_neighbor"),
+        "scripted .mtr preserves unrelated neighbor material definitions from the original source file");
+    Require(exportedMtr.Contains("surfaceParm slick"), "scripted merge preserves surfaceParm");
+    Require(exportedMtr.Contains("cull none"), "scripted merge preserves cull state");
+    Require(exportedMtr.Contains("textures/effects/glow"), "scripted merge preserves unrelated original stages");
+    Require(exportedMtr.Contains("textures/stone/floor_a_n"), "scripted merge inserts generated Normal");
+    Require(exportedMtr.Contains("textures/stone/floor_a_orm"), "scripted merge inserts generated ORM");
+
+    string upgradedBlock = Pk3Service.ExtractExactMaterialBlock(exportedMtr, "textures/stone/floor_a")
+        ?? throw new Exception("SELFTEST FAIL: upgraded scripted block missing");
+    int diffuseIndex = upgradedBlock.IndexOf("map textures/stone/floor_a", StringComparison.OrdinalIgnoreCase);
+    int normalIndex = upgradedBlock.IndexOf("stage normalMap", StringComparison.OrdinalIgnoreCase);
+    int ormIndex = upgradedBlock.IndexOf("stage ormMap", StringComparison.OrdinalIgnoreCase);
+    int lightmapIndex = upgradedBlock.IndexOf("map $lightmap", StringComparison.OrdinalIgnoreCase);
+    Require(diffuseIndex >= 0 && normalIndex > diffuseIndex && ormIndex > normalIndex && lightmapIndex > ormIndex,
+        "scripted PBR stages are placed canonically after primary diffuse and before lightmap");
 }
 finally
 {
     try { Directory.Delete(temp, true); } catch { }
 }
 
-Console.WriteLine("DARKWOLF_PBR_STUDIO_V205_SELFTEST_PASS");
+Console.WriteLine("DARKWOLF_PBR_STUDIO_V2051_SELFTEST_PASS");
