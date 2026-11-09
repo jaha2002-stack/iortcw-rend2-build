@@ -39,13 +39,15 @@ cfg=[
 'seta r_specularMapping "1"',
 'seta r_cubeMapping "1"',
 'seta r_parallaxMapping "2"',
-'seta r_parallaxMapShadows "1"',
+'seta r_parallaxMapShadows "0"',
 'seta r_pomMinLayers "20"',
 'seta r_pomMaxLayers "56"',
 'seta r_pomRefineSteps "5"',
-'seta r_pomMaxOffset "0.080"',
+'seta r_pomMaxOffset "0.028"',
 'seta r_pomDepthScale "1.0"',
-'seta r_pomShadowStrength "0.65"',
+'seta r_pomGrazingFadeStart "0.24"',
+'seta r_pomGrazingFadeEnd "0.62"',
+'seta r_pomShadowStrength "0.45"',
 'vid_restart',
 ]
 entries[root+"Main/DW_PBR32_PHYSICAL_RELIEF_POM.cfg"]=(NL.join(cfg)+NL).encode("ascii")
@@ -97,7 +99,8 @@ proof={
  "new_renderer_sha256":H(new),
  "package_sha256":H(target.read_bytes()),
  "feature":"PBR V3.2 Physical Relief / adaptive POM",
- "defaults":{"minLayers":20,"maxLayers":56,"refine":5,"maxOffset":0.08,"depthScale":1.0,"shadowStrength":0.65},
+ "defaults":{"minLayers":20,"maxLayers":56,"refine":5,"maxOffset":0.028,"depthScale":1.0,
+             "grazingFadeStart":0.24,"grazingFadeEnd":0.62,"parallaxShadows":0,"shadowStrength":0.45},
  "activation":"r_pbr 3 + r_parallaxMapping 2 + parallax-capable material"
 }
 (outdir/"PBR_V32_RELEASE_PROOF.json").write_text(json.dumps(proof,indent=2)+NL)
