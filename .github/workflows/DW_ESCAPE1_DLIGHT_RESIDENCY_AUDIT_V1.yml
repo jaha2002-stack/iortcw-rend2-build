@@ -1,0 +1,80 @@
+name: DW Escape1 DLight Residency Audit V1
+
+on:
+  push:
+    branches: [diag/escape1-dlight-residency-audit-v1-from-epo-v1]
+    paths:
+      - '.github/workflows/DW_ESCAPE1_DLIGHT_RESIDENCY_AUDIT_V1.yml'
+      - 'integration/escape1-dlight-residency-v1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dw-escape1-dlight-residency-audit-v1-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  escape1-residency-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      GH_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Restore exact Run 42217883095 lineage plus accepted EPO V1
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libopenal-dev libcurl4-openssl-dev xvfb xauth libgl1-mesa-dev libegl1-mesa-dev python3-pil python3-numpy
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/electric-owner-audit-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/run_tests.py source evidence
+          python3 integration/escape1-dlight-residency-v1/apply.py source evidence
+          python3 integration/escape1-dlight-residency-v1/run_tests.py source evidence
+          python3 testlab/scripts/rc4_requested_views.py instrument source
+
+      - name: Build Linux x64 TestLab renderer
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release PLATFORM=linux ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/BUILD_EDRA.log 2>&1 || { tail -320 evidence/BUILD_EDRA.log; exit 1; }
+
+      - name: Restore protected RTCW assets
+        env:
+          GH_TOKEN: '${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}'
+        run: |
+          set -Eeuo pipefail
+          retail="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          test -d "$retail"
+          printf '%s\n' "$retail" > .retail
+
+      - name: Run Escape1 guard-room residency audit
+        run: |
+          set -Eeuo pipefail
+          python3 integration/escape1-dlight-residency-v1/runtime_escape1_residency.py "$(cat .retail)" evidence/escape1-residency | tee evidence/EDRA_RUNTIME.log
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Escape1-DLight-Residency-Audit-V1
+          path: |
+            evidence/escape1-residency/**
+            evidence/EDRA_RUNTIME.log
+            evidence/EDRA_V1_STATIC_SAFETY.json
+            evidence/EDRA_V1_APPLY_PROOF.json
+            evidence/BUILD_EDRA.log
+          retention-days: 60
