@@ -82,6 +82,20 @@ public static class PbrExportService
         normalScale 1 1
     }}";
 
+            string fallbackShader = $@"{asset.ShaderName}
+{{
+    qer_editorimage {asset.EntryPath}
+    {{
+        map {asset.EntryPath}
+        rgbGen identity
+    }}
+    {{
+        map $lightmap
+        blendFunc GL_DST_COLOR GL_ZERO
+    }}
+}}
+";
+
             string mtr = $@"{asset.ShaderName}
 {{
     qer_editorimage {asset.EntryPath}
@@ -106,18 +120,16 @@ public static class PbrExportService
                     System.Text.Encoding.UTF8.GetBytes(asset.ShaderName)))
                 .ToLowerInvariant()[..10];
 
-            // Rend2 enumerates *.shader names first and then prefers a same-basename
-            // *.mtr when present. Export both members with identical material blocks:
-            // .shader registers the file name, .mtr is the preferred modern definition.
-            string scriptBase = $"scripts/dw_pbrstudio_v205_{key}";
-            byte[] scriptBytes = Encoding.UTF8.GetBytes(mtr);
-            Write(zip, scriptBase + ".shader", scriptBytes);
-            Write(zip, scriptBase + ".mtr", scriptBytes);
+            // Rend2 discovers the .shader basename and then prefers .mtr.
+            // The .shader is intentionally legacy-safe; the .mtr contains PBR extensions.
+            string scriptBase = $"scripts/dw_pbrstudio_v2051_{key}";
+            Write(zip, scriptBase + ".shader", Encoding.UTF8.GetBytes(fallbackShader));
+            Write(zip, scriptBase + ".mtr", Encoding.UTF8.GetBytes(mtr));
         }
 
         var manifest = new
         {
-            generator = "DarkWolf PBR Studio V2.05",
+            generator = "DarkWolf PBR Studio V2.05.1 Safe Material Export",
             target = "ioRTCW Rend2 DarkWolf PBR V3.2 Physical Relief / POM",
             source = asset.EntryPath,
             shader = asset.ShaderName,
@@ -146,6 +158,7 @@ public static class PbrExportService
             pbr = settings,
             validation = pbr.Report,
             explicitMtr = writeExplicitMtr,
+            materialDiscovery = writeExplicitMtr ? "same-basename legacy .shader + PBR .mtr" : null,
             generatedUtc = DateTime.UtcNow
         };
 
