@@ -171,3 +171,32 @@ The V2.05.2 masonry path therefore:
 - leaves non-masonry PhysicalReliefPOM generation unchanged.
 
 The self-test includes a deliberately wavy stone fixture and requires the reconstructed Height to suppress high-frequency embossing while retaining measurable mortar depth below stone faces.
+
+
+## V2.06 AI Material Authoring
+
+V2.06 keeps the validated V2.05.2 Stone Height Reconstruction and V2.05.1 Safe Material Export, then adds renderer-aware AI authoring for the exact PBR V3.2 contract.
+
+Authoring modes:
+- **Original Restore 4×** — Real-ESRGAN restoration while preserving the original RTCW composition.
+- **Artistic Rebuild** — local stable-diffusion.cpp img2img generation of new BaseColor candidates that preserve the UV layout and RTCW visual identity.
+
+Surface finishes:
+- **Dry**
+- **Wet**
+- **Snowy**
+- **WetSnow**
+- **Mossy**
+
+The AI stage authors/restores **BaseColor only**. Normal, Height, NormalHeight and ORM remain deterministic Studio outputs so they stay compatible with Rend2 PBR V3.2.
+
+PBR V3.2 compatibility rules:
+- `*_n.tga` and `*_orm.tga` remain 24-bit RGB.
+- `*_nh.tga` remains 32-bit RGBA with RGB=Normal and A=Height.
+- `ormMap` remains R=AO, G=Roughness, B=Metallic.
+- Wet stone remains dielectric (Metallic=0); wetness is represented mainly by lower roughness.
+- Snow remains dielectric and relatively rough.
+- Finish authoring does not modify the validated POM Height geometry.
+- PhysicalReliefPOM defaults to a safer masonry `parallaxDepth` near **0.010** instead of forcing 0.030.
+
+Artistic prompts explicitly forbid baked directional shadows and painted specular highlights. This is important because real highlights must come from Rend2's GGX direct lighting / IBL, not from the BaseColor image.
