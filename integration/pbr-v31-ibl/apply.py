@@ -990,6 +990,8 @@ static void RB_PbrV31PrefilterCubemap(cubemap_t *cubemap)
         GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     qglTextureParameterfEXT(cubemap->prefilteredImage->texnum, GL_TEXTURE_CUBE_MAP,
         GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    qglTextureParameterfEXT(cubemap->prefilteredImage->texnum, GL_TEXTURE_CUBE_MAP,
+        GL_TEXTURE_MAX_LEVEL, (GLfloat)maxMip);
 }
 
 static const void *RB_PbrIblBuild(const void *data)
