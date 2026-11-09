@@ -40,7 +40,7 @@ static void R_EDRA_PrintNativeDlights(void)
             j - r_firstSceneDlight, j, dl->origin[0], dl->origin[1], dl->origin[2],
             dl->radius, dl->color[0], dl->color[1], dl->color[2],
             dl->nativeAuthoredDlight ? 1 : 0, dl->staticPromoteFixtureId,
-            dl->forceDlight ? 1 : 0, dl->noDlightShadow ? 1 : 0,
+            dl->forced ? 1 : 0, dl->noDlightShadow ? 1 : 0,
             dl->localVolumetricLamp ? 1 : 0, dl->iflcActive ? 1 : 0);
     }
 }
