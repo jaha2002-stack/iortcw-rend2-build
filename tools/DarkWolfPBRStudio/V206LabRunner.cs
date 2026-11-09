@@ -26,7 +26,8 @@ internal static class V206LabRunner
         long[] seeds = (a.TryGetValue("seeds", out var seedText) ? seedText : "260601,260602,260603")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(long.Parse).Take(3).ToArray();
-        if (seeds.Length != 3) throw new ArgumentException("--seeds must contain exactly 3 values.");
+        if (seeds.Length < 1 || seeds.Length > 3)
+            throw new ArgumentException("--seeds must contain 1 to 3 values.");
 
         Directory.CreateDirectory(outDir);
         var found = FindTexture(pk3Dir, shader);
