@@ -119,7 +119,7 @@ public sealed class Pk3Service
         return candidates.LastOrDefault();
     }
 
-    internal static string? ExtractExactMaterialBlock(string text, string shaderName)
+    public static string? ExtractExactMaterialBlock(string text, string shaderName)
     {
         var match = Regex.Match(
             text,
