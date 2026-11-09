@@ -1,0 +1,134 @@
+name: DW Local AI Texture Restoration B2 V2.3
+on:
+  push:
+    branches: [test/texture-ai-b2-v23-single-cumulative-pk3]
+    paths:
+      - '.github/workflows/DW_TEXTURE_AI_B2_V23.yml'
+      - 'integration/texture-ai-b2-v23/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: dw-texture-ai-b2-v23-\${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  win64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      GH_TOKEN: '\${{ github.token }}'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Restore exact Clean Production 2026-11-06 lineage
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 libsdl2-dev libopenal-dev libcurl4-openssl-dev unzip
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+
+      - name: Apply B1 through B2 V2.2 lineage
+        run: |
+          set -Eeuo pipefail
+          python3 integration/texture-restoration-v1/apply.py source evidence
+          python3 integration/texture-restoration-v1/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v1/apply.py source evidence
+          python3 integration/texture-ai-b2-v1/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v2/apply.py source evidence
+          python3 integration/texture-ai-b2-v2/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v21/apply.py source evidence
+          python3 integration/texture-ai-b2-v21/run_tests.py source/SP/code/rend2 evidence source
+          python3 integration/texture-ai-b2-v22/apply.py source evidence
+          python3 integration/texture-ai-b2-v22/run_tests.py source/SP/code/rend2 evidence
+
+      - name: Apply B2 V2.3 single cumulative PK3 persistence
+        run: |
+          set -Eeuo pipefail
+          python3 integration/texture-ai-b2-v23/apply.py source evidence | tee evidence/DW_TEXTURE_AI_B2_V23_APPLY.log
+          python3 integration/texture-ai-b2-v23/run_tests.py source/SP/code evidence | tee evidence/DW_TEXTURE_AI_B2_V23_TESTS.log
+
+      - name: Reuse verified Real-ESRGAN backend from successful B2 V2
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/b2v2_artifact third_party/realesrgan_win/backend
+          gh run download 42574596120 --repo "$GITHUB_REPOSITORY" --name DW-Local-AI-Texture-Restoration-B2-V2-Win64-TEST --dir evidence/b2v2_artifact
+          BASEZIP="$(find evidence/b2v2_artifact -name 'DarkWolf_Local_AI_Texture_Restoration_B2_V2_From_42198541106_Win64_TEST.zip' -print -quit)"
+          test -n "$BASEZIP"
+          mkdir -p evidence/b2v2_release
+          unzip -q "$BASEZIP" -d evidence/b2v2_release
+          DWAI="$(find evidence/b2v2_release -type d -path '*/Main/dw_ai' -print -quit)"
+          test -n "$DWAI"
+          cp -a "$DWAI"/. third_party/realesrgan_win/backend/
+          test "$(find third_party/realesrgan_win -name realesrgan-ncnn-vulkan.exe | wc -l)" -eq 1
+          test "$(find third_party/realesrgan_win -name realesrgan-x4plus.param | wc -l)" -eq 1
+          test "$(find third_party/realesrgan_win -name realesrgan-x4plus.bin | wc -l)" -eq 1
+
+      - name: Build Win64 B2 V2.3 candidate
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release VERSION=1.51d-SP_DarkWolf-Local-AI-Texture-B2-V2.3 PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres > evidence/BUILD.log 2>&1 || { tail -500 evidence/BUILD.log; exit 1; }
+
+      - name: Package inherited Clean Production plus B2 V2.3
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist
+          python3 integration/firevol-continuity-v4/package.py source evidence dist
+          python3 integration/firevol-chateau-v5/package.py dist
+          python3 integration/firevol-chateau-v6/package.py dist
+          python3 integration/firevol-clean-production/package.py dist
+          python3 integration/texture-ai-b2-v23/package.py | tee evidence/PACKAGE_DW_TEXTURE_AI_B2_V23.log
+
+      - name: Verify B2 V2.3 archive
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee evidence/DW_TEXTURE_AI_B2_V23_ARTIFACT_VERIFY.log
+          from pathlib import Path
+          import json,zipfile
+          p=Path("dist/DarkWolf_Local_AI_Texture_Restoration_B2_V23_From_42198541106_Win64_TEST.zip")
+          assert p.exists() and p.stat().st_size > 20_000_000
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              dll=[n for n in names if n.endswith("/renderer_sp_rend2_x64.dll")]
+              assert len(dll)==1
+              d=z.read(dll[0])
+              for m in (b"DWTR AI B2 V2.3",b"zzzzzz_DW_TextureRestoration.pk3",
+                        b"PICK source=BRUSH",b"PICK source=WORLD",
+                        b"dw_tex_next",b"dw_tex_prev",b"FAITHFUL",b"BALANCED",b"STRONG"):
+                  assert m in d,m
+              exes=[n for n in names if n.lower().endswith(".exe")]
+              assert any(b"DWTR B2 V2.3:" in z.read(n) for n in exes)
+              status=[n for n in names if n.endswith("/DW_TEXTURE_AI_B2_V23_BUILD_STATUS.json")]
+              assert len(status)==1
+              j=json.loads(z.read(status[0]))
+              assert j["cumulative_pack"]=="zzzzzz_DW_TextureRestoration.pk3"
+              assert j["startup_promotion"]=="qcommon promotes pending before PK3 scan"
+          print("PASS DW Local AI Texture Restoration B2 V2.3 archive")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Local-AI-Texture-Restoration-B2-V23-Win64-TEST
+          path: |
+            dist/DarkWolf_Local_AI_Texture_Restoration_B2_V23_From_42198541106_Win64_TEST.zip
+            dist/SHA256SUMS_DW_TEXTURE_AI_B2_V23.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Local-AI-Texture-Restoration-B2-V23-Build-Proof
+          path: evidence/**
+          retention-days: 90
