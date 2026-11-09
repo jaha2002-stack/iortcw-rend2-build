@@ -1,0 +1,278 @@
+name: DW PBR V3.2 Material Binding Audit
+
+on:
+  push:
+    branches:
+      - feature/pbr-v32-material-binding-audit
+    paths:
+      - .github/workflows/DW_PBR_V32_MATERIAL_BINDING_AUDIT.yml
+      - integration/pbr-v32-audit/**
+      - integration/pbr-v32-pom/**
+      - integration/pbr-v31-ibl/**
+      - integration/pbr-v2/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 140
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+      BASE_V32_ARTIFACT_ID: "13671788314"
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential git gh jq python3 unzip zip file \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 \
+            xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+          python3 -m py_compile integration/pbr-v2/apply.py integration/pbr-v2/test.py
+          python3 -m py_compile integration/pbr-v31-ibl/apply.py integration/pbr-v31-ibl/test.py
+          python3 -m py_compile integration/pbr-v32-pom/apply.py integration/pbr-v32-pom/test.py
+          python3 -m py_compile integration/pbr-v32-audit/apply.py integration/pbr-v32-audit/test.py integration/pbr-v32-audit/package_test_release.py
+
+      - name: Reconstruct exact PBR V3.2 source state
+        run: |
+          set -Eeuo pipefail
+          rm -rf source source-clean source-v42 source-v31 source-v32 source-audit evidence runtime home protected-assets incoming dist
+          mkdir -p evidence
+
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42614562240 --jq .conclusion)" = "success"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42614562240 --jq .head_sha)" = "8ba5c4a647584f8cf97c8c11f38188e9c8b2f767"
+
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+
+          cp -a source source-clean
+          cp -a source-clean source-v42
+          python3 integration/pbr-v2/apply.py source-v42 --stage 3 --proof evidence/PBR_V42_PROOF.json
+          python3 integration/pbr-v2/test.py source-v42 --stage 3 --out evidence/PBR_V42_STATIC.json
+
+          cp -a source-v42 source-v31
+          python3 integration/pbr-v31-ibl/apply.py source-v31 --proof evidence/PBR_V31_PROOF.json
+          python3 integration/pbr-v31-ibl/test.py source-v31 --out evidence/PBR_V31_STATIC.json
+
+          cp -a source-v31 source-v32
+          python3 integration/pbr-v32-pom/apply.py source-v32 --proof evidence/PBR_V32_PROOF.json
+          python3 integration/pbr-v32-pom/test.py source-v32 --out evidence/PBR_V32_STATIC.json
+          echo EXACT_PBR_V32_STATE_RECONSTRUCTED
+
+      - name: Apply and validate Material Binding Audit
+        run: |
+          set -Eeuo pipefail
+          cp -a source-v32 source-audit
+          python3 integration/pbr-v32-audit/apply.py source-audit --proof evidence/PBR_V32_AUDIT_PROOF.json
+          python3 integration/pbr-v32-audit/test.py source-audit --out evidence/PBR_V32_AUDIT_STATIC.json
+          git -C source-audit diff --check
+
+          python3 - <<'PY' | tee evidence/PBR_V32_AUDIT_CHANGED_FILES.txt
+          from pathlib import Path
+          a=Path("source-v32/SP"); b=Path("source-audit/SP")
+          rels={p.relative_to(a) for p in a.rglob("*") if p.is_file()}
+          rels|={p.relative_to(b) for p in b.rglob("*") if p.is_file()}
+          for rel in sorted(rels,key=lambda p:p.as_posix()):
+              pa=a/rel; pb=b/rel
+              if not pa.exists() or not pb.exists() or pa.read_bytes()!=pb.read_bytes():
+                  print("SP/"+rel.as_posix())
+          PY
+
+          cat > evidence/PBR_V32_AUDIT_ALLOWED_FILES.txt <<'EOF'
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          SP/code/rend2/tr_shader.c
+          EOF
+          sort -o evidence/PBR_V32_AUDIT_ALLOWED_FILES.txt evidence/PBR_V32_AUDIT_ALLOWED_FILES.txt
+          diff -u evidence/PBR_V32_AUDIT_ALLOWED_FILES.txt evidence/PBR_V32_AUDIT_CHANGED_FILES.txt
+          echo PBR_V32_MATERIAL_AUDIT_SCOPE_PASS
+
+      - name: Native compile
+        run: |
+          set -Eeuo pipefail
+          make -C source-audit/SP -j2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/PBR_V32_AUDIT_NATIVE_BUILD.log 2>&1 || { tail -280 evidence/PBR_V32_AUDIT_NATIVE_BUILD.log; exit 1; }
+
+      - name: Fetch retail assets and create safe shader+mtr audit fixture
+        run: |
+          set -Eeuo pipefail
+          test -n "$DARKWOLF_RTCW_ASSET_TOKEN"
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          test -d "$retail_main"
+          echo "$retail_main" > evidence/retail_main_path.txt
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,math
+          out=Path("evidence/material_binding_audit_fixture.pk3")
+          w=h=128
+
+          def nh():
+              hdr=bytearray(18); hdr[2]=2
+              hdr[12]=w&255; hdr[13]=(w>>8)&255
+              hdr[14]=h&255; hdr[15]=(h>>8)&255
+              hdr[16]=32; hdr[17]=0x28
+              data=bytearray()
+              for y in range(h):
+                  for x in range(w):
+                      seam=min(x%32,31-(x%32),y%24,23-(y%24))
+                      height=40 if seam<3 else 220
+                      data.extend((255,128,128,height))
+              return bytes(hdr)+bytes(data)
+
+          def orm():
+              hdr=bytearray(18); hdr[2]=2
+              hdr[12]=w&255; hdr[13]=(w>>8)&255
+              hdr[14]=h&255; hdr[15]=(h>>8)&255
+              hdr[16]=24; hdr[17]=0x20
+              return bytes(hdr)+bytes((0,190,240))*w*h
+
+          fallback='''textures/snow/s_cathedrale_c06
+          {
+              qer_editorimage textures/snow/s_cathedrale_c06.jpg
+              {
+                  map textures/snow/s_cathedrale_c06.jpg
+                  rgbGen identity
+              }
+              {
+                  map $lightmap
+                  blendFunc GL_DST_COLOR GL_ZERO
+              }
+          }
+          '''
+
+          pbr='''textures/snow/s_cathedrale_c06
+          {
+              qer_editorimage textures/snow/s_cathedrale_c06.jpg
+              {
+                  stage diffuseMap
+                  map textures/snow/s_cathedrale_c06.jpg
+                  rgbGen identity
+              }
+              {
+                  stage normalParallaxMap
+                  map textures/snow/s_cathedrale_c06_nh
+                  normalScale 1 1
+                  parallaxDepth 0.030
+              }
+              {
+                  stage ormMap
+                  map textures/snow/s_cathedrale_c06_orm
+              }
+              {
+                  map $lightmap
+                  blendFunc GL_DST_COLOR GL_ZERO
+              }
+          }
+          '''
+
+          assert "normalParallaxMap" not in fallback and "ormMap" not in fallback
+          with zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED) as z:
+              z.writestr("textures/snow/s_cathedrale_c06_nh.tga",nh())
+              z.writestr("textures/snow/s_cathedrale_c06_orm.tga",orm())
+              z.writestr("scripts/dw_pbr_audit_ci.shader",fallback)
+              z.writestr("scripts/dw_pbr_audit_ci.mtr",pbr)
+          print(out)
+          PY
+
+      - name: Runtime Material Binding Audit
+        run: |
+          set -Eeuo pipefail
+          exe="$(find source-audit/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe"
+          buildroot="$(dirname "$exe")"
+          retail_main="$(cat evidence/retail_main_path.txt)"
+          mkdir -p runtime/main home
+          cp -a "$buildroot/." runtime/
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+          cp evidence/material_binding_audit_fixture.pk3 runtime/main/zzz_dw_pbr_audit_ci.pk3
+
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 150s "$PWD/runtime/$(basename "$exe")" \
+            +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
+            +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0 \
+            +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
+            +set r_pbr 3 +set r_cubeMapping 0 +set r_normalMapping 1 +set r_specularMapping 1 \
+            +set r_parallaxMapping 2 +set r_parallaxMapShadows 0 \
+            +devmap escape1 +wait 30 \
+            +r_pbrMaterialAudit textures/snow/s_cathedrale_c06 +wait 3 +quit
+          rc=$?
+          set -e
+          echo "$rc" > evidence/PBR_V32_AUDIT_RUNTIME_EXIT.txt
+
+          qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+          test -n "$qlog"
+          cp "$qlog" evidence/PBR_V32_MATERIAL_AUDIT_QCONSOLE.log
+
+          grep -Fq '[DW_PBR_AUDIT] shader=textures/snow/s_cathedrale_c06 status=FOUND' evidence/PBR_V32_MATERIAL_AUDIT_QCONSOLE.log
+          grep -Fq 'normalType=NORMALHEIGHT heightAlpha=1' evidence/PBR_V32_MATERIAL_AUDIT_QCONSOLE.log
+          grep -Fq 'packedORM=1' evidence/PBR_V32_MATERIAL_AUDIT_QCONSOLE.log
+          grep -Fq 'parallax=1' evidence/PBR_V32_MATERIAL_AUDIT_QCONSOLE.log
+          grep -Fq 'parallaxDepth=0.030000' evidence/PBR_V32_MATERIAL_AUDIT_QCONSOLE.log
+          grep -Fq 'pomV32=ACTIVE' evidence/PBR_V32_MATERIAL_AUDIT_QCONSOLE.log
+          grep -Fq 'textures/snow/s_cathedrale_c06_nh' evidence/PBR_V32_MATERIAL_AUDIT_QCONSOLE.log
+          grep -Fq 'textures/snow/s_cathedrale_c06_orm' evidence/PBR_V32_MATERIAL_AUDIT_QCONSOLE.log
+          ! grep -Eiq "WARNING: expecting '\{'|Could not load .*shader|GLSL.*(compile|link).*error|GL_INVALID_(ENUM|VALUE|OPERATION|FRAMEBUFFER_OPERATION)|framebuffer.*incomplete" evidence/PBR_V32_MATERIAL_AUDIT_QCONSOLE.log
+          echo PBR_V32_MATERIAL_BINDING_AUDIT_RUNTIME_PASS
+
+      - name: Win64 compile
+        run: |
+          set -Eeuo pipefail
+          make -C source-audit/SP -j2 release VERSION=1.51d-SP_DarkWolf-PBRV32-AUDIT PLATFORM=mingw32 ARCH=x86_64 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix WINDRES=x86_64-w64-mingw32-windres \
+            > evidence/PBR_V32_AUDIT_WIN64_BUILD.log 2>&1 || { tail -280 evidence/PBR_V32_AUDIT_WIN64_BUILD.log; exit 1; }
+          dll="$(find source-audit/SP/build -type f -name renderer_sp_rend2_x64.dll -print -quit)"
+          test -n "$dll"
+          mkdir -p build-binaries
+          cp "$dll" build-binaries/renderer_sp_rend2_x64.dll
+          file build-binaries/renderer_sp_rend2_x64.dll | grep -F PE32+
+          sha256sum build-binaries/renderer_sp_rend2_x64.dll | tee evidence/PBR_V32_AUDIT_RENDERER_SHA256.txt
+
+      - name: Package Win64 TEST directly from V3.2 artifact
+        run: |
+          set -Eeuo pipefail
+          mkdir -p incoming dist
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/$BASE_V32_ARTIFACT_ID/zip > incoming/v32_outer.zip
+          test -s incoming/v32_outer.zip
+          python3 integration/pbr-v32-audit/package_test_release.py incoming/v32_outer.zip build-binaries/renderer_sp_rend2_x64.dll dist | tee dist/PACKAGE_LOG.txt
+          pkg="dist/DarkWolf_PBR32_Physical_Relief_POM_Material_Audit_From_42614562240_Win64_TEST.zip"
+          unzip -t "$pkg" > evidence/PBR_V32_AUDIT_PACKAGE_ZIP_TEST.txt
+          unzip -l "$pkg" > evidence/PBR_V32_AUDIT_PACKAGE_CONTENTS.txt
+          grep -Fq 'README_DARKWOLF_PBR32_MATERIAL_BINDING_AUDIT.txt' evidence/PBR_V32_AUDIT_PACKAGE_CONTENTS.txt
+          echo PBR_V32_MATERIAL_AUDIT_PACKAGE_PASS
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DarkWolf-PBR-V32-Material-Binding-Audit-From-42614562240-Win64-TEST
+          path: |
+            dist/DarkWolf_PBR32_Physical_Relief_POM_Material_Audit_From_42614562240_Win64_TEST.zip
+            dist/DarkWolf_PBR32_Physical_Relief_POM_Material_Audit_From_42614562240_Win64_TEST.zip.sha256
+            dist/PBR_V32_MATERIAL_AUDIT_RELEASE_PROOF.json
+            dist/PACKAGE_LOG.txt
+            evidence/
+            build-binaries/
+          if-no-files-found: warn
+          retention-days: 60
