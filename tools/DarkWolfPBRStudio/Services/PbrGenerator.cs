@@ -49,6 +49,7 @@ public static class PbrGenerator
         double[] macroNormalSource;
         double[] aoBlur;
         byte[]? referenceHeightByte = null;
+        byte[]? physicalHeightByte = null;
         byte[]? referenceAoByte = null;
         byte[]? referenceRoughByte = null;
 
@@ -69,6 +70,35 @@ public static class PbrGenerator
                 out fine, out mid, out coarse, out height,
                 out referenceHeightByte, out referenceAoByte, out referenceRoughByte);
             normalHeightSource = height;
+            byte[] macro8 = PillowGaussianBlur(referenceHeightByte, w, h, 2.8);
+            macroNormalSource = new double[count];
+            for (int i = 0; i < count; i++) macroNormalSource[i] = macro8[i] / 255.0;
+            aoBlur = mid;
+        }
+        else if (settings.GenerationMode == PbrGenerationMode.PhysicalReliefPOM)
+        {
+            // Start from the validated V2.03 hand-reference material, but build a
+            // dedicated displacement field for POM. Normal/ORM stay on the proven
+            // macro-relief path; only Height alpha receives the wider, low-frequency
+            // physical range. This avoids turning small dark JPEG specks into craters.
+            BuildReferenceFields(gray601Byte, w, h, minDim,
+                out fine, out mid, out coarse, out height,
+                out referenceHeightByte, out referenceAoByte, out referenceRoughByte);
+
+            physicalHeightByte = BuildPhysicalReliefHeight(
+                referenceHeightByte, w, h, minDim,
+                Math.Clamp(settings.PhysicalReliefStrength * settings.HeightContrast, 0.35, 1.60));
+
+            height = new double[count];
+            for (int i = 0; i < count; i++)
+                height[i] = physicalHeightByte[i] / 255.0;
+
+            // Preserve the accepted V2.03 macro normal instead of deriving a noisy
+            // normal map from the more aggressive POM displacement field.
+            normalHeightSource = new double[count];
+            for (int i = 0; i < count; i++)
+                normalHeightSource[i] = referenceHeightByte[i] / 255.0;
+
             byte[] macro8 = PillowGaussianBlur(referenceHeightByte, w, h, 2.8);
             macroNormalSource = new double[count];
             for (int i = 0; i < count; i++) macroNormalSource[i] = macro8[i] / 255.0;
@@ -117,7 +147,9 @@ public static class PbrGenerator
         var roughValues = new double[count];
         var metallicValues = new double[count];
 
-        bool handGeometry = settings.GenerationMode is PbrGenerationMode.ReferenceHandGenerated or PbrGenerationMode.MacroReliefEnhanced;
+        bool handGeometry = settings.GenerationMode is PbrGenerationMode.ReferenceHandGenerated
+            or PbrGenerationMode.MacroReliefEnhanced
+            or PbrGenerationMode.PhysicalReliefPOM;
         for (int y = 0; y < h; y++)
         {
             int ym = handGeometry ? Math.Max(0, y - 1) : Wrap(y - 1, h);
@@ -152,7 +184,7 @@ public static class PbrGenerator
                         - H(xm, ym) - 2 * H(x, ym) - H(xp, ym)) / 8.0;
                 }
 
-                if (settings.GenerationMode == PbrGenerationMode.MacroReliefEnhanced)
+                if (settings.GenerationMode is PbrGenerationMode.MacroReliefEnhanced or PbrGenerationMode.PhysicalReliefPOM)
                 {
                     double C(int xx, int yy) => macroNormalSource[yy * w + xx];
                     double cgx = (C(xp, ym) + 2 * C(xp, y) + C(xp, yp)
@@ -208,7 +240,9 @@ public static class PbrGenerator
                 byte bx = ToByte(nx * 0.5 + 0.5);
                 byte by = ToByte(ny * 0.5 + 0.5);
                 byte bz = ToByte(nz * 0.5 + 0.5);
-                byte bh = referenceHeightByte is null ? ToByte(height[i]) : referenceHeightByte[i];
+                byte bh = physicalHeightByte is not null
+                    ? physicalHeightByte[i]
+                    : (referenceHeightByte is null ? ToByte(height[i]) : referenceHeightByte[i]);
 
                 normal[p] = bz;
                 normal[p + 1] = by;
@@ -227,7 +261,9 @@ public static class PbrGenerator
                 double rough;
                 double structureEnergy = Math.Clamp(Math.Abs(fine[i] - coarse[i]) * 5.0, 0.0, 1.0);
 
-                if (settings.GenerationMode is PbrGenerationMode.ReferenceHandGenerated or PbrGenerationMode.MacroReliefEnhanced)
+                if (settings.GenerationMode is PbrGenerationMode.ReferenceHandGenerated
+                    or PbrGenerationMode.MacroReliefEnhanced
+                    or PbrGenerationMode.PhysicalReliefPOM)
                 {
                     ao = referenceAoByte![i] / 255.0;
                     rough = referenceRoughByte![i] / 255.0;
@@ -274,6 +310,68 @@ public static class PbrGenerator
             ImageService.FromBgra(normalHeight, w, h),
             ImageService.FromBgra(orm, w, h),
             report);
+    }
+
+    private static byte[] BuildPhysicalReliefHeight(
+        byte[] referenceHeight, int w, int h, int minDim, double strength)
+    {
+        // Work only with broad structure. The first blur removes pinprick/JPEG
+        // variation; the second forms a local illumination/reference field.
+        double detailSigma = Math.Clamp(minDim / 900.0, 1.15, 2.40);
+        double macroSigma = Math.Clamp(minDim / 180.0, 4.0, 12.0);
+
+        byte[] surface = PillowGaussianBlur(referenceHeight, w, h, detailSigma);
+        byte[] macro = PillowGaussianBlur(referenceHeight, w, h, macroSigma);
+
+        int count = w * h;
+        var local = new double[count];
+        for (int i = 0; i < count; i++)
+            local[i] = (surface[i] - macro[i]) / 255.0;
+
+        // Robustly estimate structural contrast. Unlike the rejected V2.01
+        // percentile normalization, this is applied to a heavily smoothed
+        // low-frequency displacement field, not to a high-pass noise residual.
+        double p10 = Percentile(local, 0.10);
+        double p90 = Percentile(local, 0.90);
+        double span = Math.Max(p90 - p10, 0.018);
+        double center = 0.5 * (p10 + p90);
+
+        // Use a small block-to-block macro term without allowing broad lighting
+        // gradients to dominate the displacement.
+        double macroMedian = Percentile(macro.Select(v => v / 255.0).ToArray(), 0.50);
+        var outHeight = new byte[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            double structural = (local[i] - center) / span;
+
+            // Mortar/seams are allowed to recede slightly more than stone faces rise.
+            structural *= structural < 0.0 ? 0.38 : 0.30;
+
+            double macroShape = Math.Clamp((macro[i] / 255.0 - macroMedian) * 0.22, -0.07, 0.07);
+            double v = 0.50 + strength * (structural + macroShape);
+
+            // Keep headroom at both ends so bilinear sampling/refinement cannot
+            // collapse into hard 0/1 plateaus that produce tearing.
+            v = Math.Clamp(v, 0.08, 0.92);
+            outHeight[i] = ToByte(v);
+        }
+
+        // Final sub-pixel smoothing removes isolated one-pixel steps while
+        // retaining the expanded macro range needed by POM.
+        return PillowGaussianBlur(outHeight, w, h, 0.65);
+    }
+
+    private static double Percentile(double[] values, double p)
+    {
+        if (values.Length == 0) return 0.0;
+        var copy = (double[])values.Clone();
+        Array.Sort(copy);
+        double pos = Math.Clamp(p, 0.0, 1.0) * (copy.Length - 1);
+        int lo = (int)Math.Floor(pos);
+        int hi = Math.Min(lo + 1, copy.Length - 1);
+        double t = pos - lo;
+        return copy[lo] * (1.0 - t) + copy[hi] * t;
     }
 
     private static void BuildReferenceFields(
