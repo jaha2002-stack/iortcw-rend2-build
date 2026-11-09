@@ -37,6 +37,8 @@ extern  cvar_t  *r_pomMaxLayers;
 extern  cvar_t  *r_pomRefineSteps;
 extern  cvar_t  *r_pomMaxOffset;
 extern  cvar_t  *r_pomDepthScale;
+extern  cvar_t  *r_pomGrazingFadeStart;
+extern  cvar_t  *r_pomGrazingFadeEnd;
 extern  cvar_t  *r_pomShadowStrength;
 ''',"POM cvar externs")
 p.write_text(s); changed.append("SP/code/rend2/tr_local.h")
@@ -55,6 +57,8 @@ cvar_t  *r_pomMaxLayers;
 cvar_t  *r_pomRefineSteps;
 cvar_t  *r_pomMaxOffset;
 cvar_t  *r_pomDepthScale;
+cvar_t  *r_pomGrazingFadeStart;
+cvar_t  *r_pomGrazingFadeEnd;
 cvar_t  *r_pomShadowStrength;
 ''',"POM cvar globals")
 
@@ -69,9 +73,11 @@ s=one(s,
 	r_pomMinLayers = ri.Cvar_Get( "r_pomMinLayers", "20", CVAR_ARCHIVE | CVAR_LATCH );
 	r_pomMaxLayers = ri.Cvar_Get( "r_pomMaxLayers", "56", CVAR_ARCHIVE | CVAR_LATCH );
 	r_pomRefineSteps = ri.Cvar_Get( "r_pomRefineSteps", "5", CVAR_ARCHIVE | CVAR_LATCH );
-	r_pomMaxOffset = ri.Cvar_Get( "r_pomMaxOffset", "0.080", CVAR_ARCHIVE | CVAR_LATCH );
+	r_pomMaxOffset = ri.Cvar_Get( "r_pomMaxOffset", "0.028", CVAR_ARCHIVE | CVAR_LATCH );
 	r_pomDepthScale = ri.Cvar_Get( "r_pomDepthScale", "1.0", CVAR_ARCHIVE | CVAR_LATCH );
-	r_pomShadowStrength = ri.Cvar_Get( "r_pomShadowStrength", "0.65", CVAR_ARCHIVE | CVAR_LATCH );
+	r_pomGrazingFadeStart = ri.Cvar_Get( "r_pomGrazingFadeStart", "0.24", CVAR_ARCHIVE | CVAR_LATCH );
+	r_pomGrazingFadeEnd = ri.Cvar_Get( "r_pomGrazingFadeEnd", "0.62", CVAR_ARCHIVE | CVAR_LATCH );
+	r_pomShadowStrength = ri.Cvar_Get( "r_pomShadowStrength", "0.45", CVAR_ARCHIVE | CVAR_LATCH );
 ''',"POM cvar registration")
 p.write_text(s); changed.append("SP/code/rend2/tr_init.c")
 
@@ -148,7 +154,15 @@ vec2 DW_ParallaxOcclusionMap(vec2 baseUv, vec3 viewTS, sampler2D normalMap, out 
 	int layerCount = int(clamp(layerCountF, float(DW_POM_MIN_LAYERS), float(DW_POM_MAX_LAYERS)) + 0.5);
 
 	float materialDepth = max(u_NormalScale.a * DW_POM_DEPTH_SCALE, 0.0001);
-	vec2 totalOffset = DW_ClampPomVector((-viewTS.xy / vz) * materialDepth);
+
+	// BSP surfaces have no true silhouette displacement. Fade POM at extreme
+	// grazing angles so independent surface UV charts cannot tear apart at
+	// corners/brush boundaries. Mid/front angles retain the full authored depth.
+	float fadeDenom = max(DW_POM_GRAZING_FADE_END - DW_POM_GRAZING_FADE_START, 0.001);
+	float grazingFade = clamp((vz - DW_POM_GRAZING_FADE_START) / fadeDenom, 0.0, 1.0);
+	grazingFade = grazingFade * grazingFade * (3.0 - 2.0 * grazingFade);
+
+	vec2 totalOffset = DW_ClampPomVector((-viewTS.xy / vz) * materialDepth * grazingFade);
 	vec2 deltaUv = totalOffset / float(layerCount);
 	float deltaDepth = 1.0 / float(layerCount);
 
@@ -330,9 +344,9 @@ proof={
  "algorithm":{
    "adaptive_layers":"20..56 by view angle (cvar controlled, hard cap 64)",
    "refinement":"5 binary steps default + final secant interpolation",
-   "uv_safety":"max displacement clamp 0.080 default",
+   "uv_safety":"max displacement clamp 0.028 default + smooth grazing-angle fade 0.24..0.62",
    "depth":"per-material u_NormalScale.a from parallaxDepth, global multiplier 1.0",
-   "self_shadow":"optional r_parallaxMapShadows, 8..20 heightfield ray steps"
+   "self_shadow":"optional r_parallaxMapShadows, 8..20 heightfield ray steps; default shadow strength 0.45"
  },
  "legacy":"r_parallaxMapping 1 and r_pbr<3 keep previous path",
  "changed_files":changed
