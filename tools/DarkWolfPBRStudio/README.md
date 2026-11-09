@@ -153,3 +153,21 @@ Export rules:
 - Existing Normal/NormalParallax/Specular/ORM response stages are removed from the selected material before inserting the generated Normal + ORM response immediately after its primary diffuse stage and before the lightmap.
 - One PK3 may contain more than one script pair when selected materials originate from different original shader files. This is intentional and avoids ambiguous duplicate shader definitions in a new unrelated script namespace.
 - `*_nh.tga` remains RGB tangent-space Normal + A Height for Rend2 POM.
+
+
+## V2.05.2 Stone Height Reconstruction
+
+V2.05.2 keeps the V2.05.1 Safe Material Export rules and the accepted V2.03 Normal/ORM response. It changes only `PhysicalReliefPOM` Height reconstruction for `Stone`, `SnowyStone`, and `Brick`.
+
+The rejected V2.05.1 game test exposed a specific failure mode: high-frequency grooves from the diffuse texture were being interpreted as displacement and produced visible wavy/accordion-like POM.
+
+The V2.05.2 masonry path therefore:
+- suppresses micro-frequency texture detail before Height classification;
+- detects coherent dark mortar/cracks as seam recesses;
+- suppresses broad dark stains with a neighborhood-occupancy guard;
+- keeps stone faces on low-frequency plateaus with only restrained block-to-block variation;
+- keeps micro-surface grain exclusively in the tangent-space Normal map;
+- preserves V2.05.1 Safe Material Export and `*_nh` RGB Normal + A Height packing;
+- leaves non-masonry PhysicalReliefPOM generation unchanged.
+
+The self-test includes a deliberately wavy stone fixture and requires the reconstructed Height to suppress high-frequency embossing while retaining measurable mortar depth below stone faces.
