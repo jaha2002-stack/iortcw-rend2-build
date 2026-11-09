@@ -185,6 +185,7 @@ try
         "single export writes same-basename .shader + .mtr registration pair");
     using var sr = new StreamReader(singleMtr.Open());
     string mtr = sr.ReadToEnd();
+    Require(mtr.Contains("map textures/snow/s_cathedrale_c06.jpg"), "explicit material diffuse stage references the image filename, not the shader token");
     Require(mtr.Contains("stage normalParallaxMap"), "explicit MTR uses normalParallaxMap");
     Require(mtr.Contains("parallaxDepth"), "explicit MTR writes parallaxDepth");
     Require(mtr.Contains("stage ormMap"), "explicit MTR uses ormMap");
@@ -265,6 +266,7 @@ try
     using var batchSr = new StreamReader(batchMtrEntry.Open());
     string batchMtr = batchSr.ReadToEnd();
     Require(batchMtr.Contains("textures/snow/s_cathedrale_c06"), "combined MTR contains implicit material block");
+    Require(batchMtr.Contains("map textures/snow/s_cathedrale_c06.jpg"), "batch implicit diffuse stage references image filename");
     Require(batchMtr.Contains("textures/stone/floor_a"), "combined MTR contains scripted material block");
     Require(batchMtr.Contains("surfaceParm slick"), "scripted merge preserves surfaceParm");
     Require(batchMtr.Contains("cull none"), "scripted merge preserves cull state");
