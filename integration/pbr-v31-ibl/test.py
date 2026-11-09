@@ -44,11 +44,11 @@ checks={
     "backend_command": "RC_PBR_IBL_BUILD" in local and "RB_PbrIblBuild" in backend and "R_AddPbrIblBuildCmd" in cmds,
     "build_before_first_view": "R_PreparePbrV31Cubemaps();" in bsp and "R_IssuePendingRenderCommands();" in bsp,
     "source_destination_no_feedback": "cubemap->image, TB_CUBEMAP" in backend and "cubemap->prefilteredImage" in backend,
-    "source_mip_anti_aliasing": "saSample" in pref and "saTexel" in pref and "sourceLod" in pref,
+    "linear_source_sampling": "textureCubeLod(u_CubeMap, L, 0.0)" in pref and "gamma-space averaging" in pref,
     "ggx_importance_sampling": "DW_ImportanceSampleGGX" in pref and "DW_DistributionGGX" in pref,
     "prefilter_linearizes_source": "DW_SRGBToLinear(c)" in pref,
     "lut_full_integration": all(x in brdf for x in (
-        "DW_IntegrateBRDF","DW_GeometrySmith","GVis","A +=","B +="
+        "DW_IntegrateBRDF","DW_VisibilitySmithGGXCorrelated","GVis","A +=","B +="
     )),
     "lut_512_samples": "DW_MAX_BRDF_SAMPLES 512" in brdf and "512.0f" in backend,
     "prefilter_256_samples": "DW_MAX_PREFILTER_SAMPLES 256" in pref and "256.0f" in backend,
@@ -88,9 +88,11 @@ def importance(xi, N, rough):
     t=norm(cross(up,N)); b=cross(N,t)
     return norm(tuple(t[k]*ht[0]+b[k]*ht[1]+N[k]*ht[2] for k in range(3)))
 
-def geom_schlick(nv, rough):
-    k=(rough*rough)*0.5
-    return nv/max(nv*(1-k)+k,1e-6)
+def vis_correlated(nv, nl, rough):
+    a=max(rough*rough,0.0025); a2=a*a
+    gv=nl*math.sqrt(max(nv*nv*(1-a2)+a2,1e-7))
+    gl=nv*math.sqrt(max(nl*nl*(1-a2)+a2,1e-7))
+    return 0.5/max(gv+gl,1e-7)
 
 def integrate(nv, rough, samples=512):
     V=(math.sqrt(max(1-nv*nv,0)),0,nv); N=(0,0,1)
@@ -101,10 +103,10 @@ def integrate(nv, rough, samples=512):
         L=norm(tuple(2*vh*H[k]-V[k] for k in range(3)))
         nl=max(L[2],0); nh=max(H[2],0); vh=max(vh,0)
         if nl>0:
-            G=geom_schlick(nv,rough)*geom_schlick(nl,rough)
-            gv=(G*vh)/max(nh*nv,1e-6)
+            vis=vis_correlated(nv,nl,rough)
+            gvis=(4.0*vis*nl*vh)/max(nh,1e-6)
             fc=(1-vh)**5
-            A+=(1-fc)*gv; B+=fc*gv
+            A+=(1-fc)*gvis; B+=fc*gvis
     return A/samples,B/samples
 
 a1,b1=integrate(0.9,0.1)
@@ -112,6 +114,7 @@ a2,b2=integrate(0.5,0.8)
 checks["numeric_lut_bounded"] = all(math.isfinite(x) and 0.0 <= x <= 1.2 for x in (a1,b1,a2,b2))
 checks["smooth_surface_high_A"] = a1 > 0.75
 checks["rough_surface_finite_response"] = a2 > 0.2 and b2 >= 0.0
+checks["lut_matches_direct_correlated_smith_model"] = "DW_VisibilitySmithGGXCorrelated" in brdf and "4.0 * Vis * NoL * VoH" in brdf
 
 failed=[k for k,v in checks.items() if not v]
 if failed:
