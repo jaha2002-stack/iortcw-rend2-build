@@ -114,8 +114,6 @@ void main()
 
     vec3 prefiltered = vec3(0.0);
     float totalWeight = 0.0;
-    float saTexel = 4.0 * DW_PI / (6.0 * sourceResolution * sourceResolution);
-    float sourceMaxMip = max(floor(log2(sourceResolution)), 0.0);
 
     for (int i = 0; i < DW_MAX_PREFILTER_SAMPLES; ++i)
     {
@@ -128,14 +126,12 @@ void main()
         float NoL = max(dot(N, L), 0.0);
         if (NoL > 0.0)
         {
-            float NoH = max(dot(N, H), 0.0);
-            float HoV = max(dot(H, V), 0.0);
-            float D = DW_DistributionGGX(NoH, roughness);
-            float pdf = max(D * NoH / max(4.0 * HoV, 1e-6), 1e-6);
-            float saSample = 1.0 / (float(sampleCount) * pdf + 1e-6);
-            float sourceLod = clamp(0.5 * log2(saSample / saTexel), 0.0, sourceMaxMip);
-
-            vec3 c = textureCubeLod(u_CubeMap, L, sourceLod).rgb;
+            // Always sample the raw environment at LOD0. Its legacy mip chain is
+            // generated in the texture's encoded/sRGB value space, so using those
+            // mips would bias radiance before DW_SRGBToLinear(). Deterministic
+            // 256-sample GGX integration from level 0 keeps the convolution itself
+            // in linear radiance space and avoids hidden gamma-space averaging.
+            vec3 c = textureCubeLod(u_CubeMap, L, 0.0).rgb;
             prefiltered += DW_SRGBToLinear(c) * NoL;
             totalWeight += NoL;
         }
@@ -174,17 +170,16 @@ vec3 DW_ImportanceSampleGGX(vec2 Xi, vec3 N, float roughness)
     return normalize(tangent * Ht.x + bitangent * Ht.y + N * Ht.z);
 }
 
-float DW_GeometrySchlickGGX(float NoV, float roughness)
+float DW_VisibilitySmithGGXCorrelated(float NoV, float NoL, float roughness)
 {
-    float a = roughness;
-    float k = (a * a) * 0.5;
-    return NoV / max(NoV * (1.0 - k) + k, 1e-6);
-}
-
-float DW_GeometrySmith(float NoV, float NoL, float roughness)
-{
-    return DW_GeometrySchlickGGX(NoV, roughness) *
-           DW_GeometrySchlickGGX(NoL, roughness);
+    // Match the correlated Smith visibility used by the runtime direct-light GGX
+    // path. The LUT therefore integrates the same microfacet model instead of a
+    // Schlick geometry approximation.
+    float a = max(roughness * roughness, 0.0025);
+    float a2 = a * a;
+    float gv = NoL * sqrt(max(NoV * NoV * (1.0 - a2) + a2, 1e-7));
+    float gl = NoV * sqrt(max(NoL * NoL * (1.0 - a2) + a2, 1e-7));
+    return 0.5 / max(gv + gl, 1e-7);
 }
 
 vec2 DW_IntegrateBRDF(float NoV, float roughness, int sampleCount)
@@ -208,8 +203,10 @@ vec2 DW_IntegrateBRDF(float NoV, float roughness, int sampleCount)
 
         if (NoL > 0.0)
         {
-            float G = DW_GeometrySmith(NoV, NoL, roughness);
-            float GVis = (G * VoH) / max(NoH * NoV, 1e-6);
+            float Vis = DW_VisibilitySmithGGXCorrelated(NoV, NoL, roughness);
+            // With GGX half-vector importance sampling:
+            // f_s * NoL / pdf = F * (4 * Vis * NoL * VoH / NoH).
+            float GVis = (4.0 * Vis * NoL * VoH) / max(NoH, 1e-6);
             float Fc = pow(1.0 - VoH, 5.0);
             A += (1.0 - Fc) * GVis;
             B += Fc * GVis;
@@ -985,14 +982,14 @@ proof={
         "destination":"separate RGBA16F cubemap",
         "samples_per_nonzero_mip":256,
         "importance_sampling":"GGX",
-        "source_mip_selection":"solid-angle PDF LOD",
+        "source_sampling":"raw cubemap LOD0 only; avoids gamma-space legacy mip averaging",
         "roughness_mapping":"mip/maxRoughnessMip",
-        "source_color_space":"sRGB converted to linear during convolution"
+        "source_color_space":"each source sample is converted from sRGB to linear before accumulation"
     },
     "brdf_lut":{
         "size":"256x256 RGBA16F",
         "samples":512,
-        "integration":"split-sum GGX DFG",
+        "integration":"split-sum GGX DFG with correlated Smith visibility matching direct GGX",
         "axes":"NdotV x perceptual roughness"
     },
     "fallback":"existing analytical PBR V3 IBL when FBO/float/8-TMU requirements are unavailable",
