@@ -3,14 +3,8 @@ set -Eeuo pipefail
 
 SOURCE_AUDIT="${1:-source-audit}"
 EVIDENCE="${2:-evidence}"
-ARTIFACT_ID="13697788448"
-
-mkdir -p "$EVIDENCE/v206_frames" "$EVIDENCE/v206_logs" authored_v206
-rm -f authored_v206.zip
-
-gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > authored_v206.zip
-test -s authored_v206.zip
-unzip -q authored_v206.zip -d authored_v206
+mkdir -p "$EVIDENCE/v206_frames" "$EVIDENCE/v206_logs"
+test -d authored_v206
 
 ESC_PK3="$(find authored_v206 -type f -path '*escape_snow*' -name 'variant_1.pk3' -print -quit)"
 CRYPT_PK3="$(find authored_v206 -type f -path '*crypt_wall*' -name 'variant_1.pk3' -print -quit)"
@@ -50,7 +44,7 @@ capture_one() {
   test -n "$exe"
 
   set +e
-  LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 12s 175s "$exe"     +set fs_basepath "$PWD/$runtime" +set fs_homepath "$PWD/$home"     +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0     +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720     +set r_pbr 3 +set r_cubeMapping 1 +set r_normalMapping 1 +set r_specularMapping 1     +set r_parallaxMapping 2 +set r_parallaxMapShadows 1 +set r_pomShadowStrength 0.18     +set r_pomMinLayers 20 +set r_pomMaxLayers 56 +set r_pomRefineSteps 5 +set r_pomMaxOffset 0.028     +set r_dlightmode 2 +set r_forcesun 1     +devmap "$map" +wait 42 +setviewpos "$x" "$y" "$z" "$yaw" +wait 15     +r_pbrMaterialAudit "$shader" +wait 3 +screenshot "$label" +wait 4 +quit
+  LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 12s 175s "$exe"     +set fs_basepath "$PWD/$runtime" +set fs_homepath "$PWD/$home"     +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0     +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720     +set r_pbr 3 +set r_cubeMapping 1 +set r_normalMapping 1 +set r_specularMapping 1     +set r_parallaxMapping 2 +set r_parallaxMapShadows 1 +set r_pomShadowStrength 0.18     +set r_pomMinLayers 20 +set r_pomMaxLayers 56 +set r_pomRefineSteps 5 +set r_pomMaxOffset 0.028     +set r_dlightmode 2 +set r_forcesun 1     +devmap "$map" +wait 28 +setviewpos "$x" "$y" "$z" "$yaw" +wait 15     +r_pbrMaterialAudit "$shader" +wait 3 +screenshot "$label" +wait 4 +quit
   local rc=$?
   set -e
 
