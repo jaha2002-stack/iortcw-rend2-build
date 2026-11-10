@@ -1,0 +1,234 @@
+name: DW Unified Clean Production Completeness Audit
+
+on:
+  push:
+    branches:
+      - release/unified-clean-production-pbr32-owner-v12-texture-b2v23
+    paths:
+      - .github/workflows/DW_UNIFIED_COMPLETENESS_AUDIT.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  completeness-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OWNER_SHA: "60ea59d9cce705333dad49a937ba85c71735aa2d"
+      TEXTURE_SHA: "aa60e4d0c68260b6752920cddd8011b718c7dbba"
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Install audit dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends git gh jq python3 unzip
+
+      - name: Import exact accepted Owner and Texture integrations
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags --depth=1 origin "$OWNER_SHA"
+          git checkout "$OWNER_SHA" -- \
+            integration/electric-owner-audit-v1 \
+            integration/electric-physical-owner-v1 \
+            integration/escape1-dlight-residency-v1 \
+            integration/escape1-physical-dlight-owner-v12
+
+          git fetch --no-tags --depth=1 origin "$TEXTURE_SHA"
+          git checkout "$TEXTURE_SHA" -- \
+            integration/texture-restoration-v1 \
+            integration/texture-ai-b2-v1 \
+            integration/texture-ai-b2-v2 \
+            integration/texture-ai-b2-v21 \
+            integration/texture-ai-b2-v22 \
+            integration/texture-ai-b2-v23
+
+      - name: Reconstruct fully unified source
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence
+          mkdir -p evidence
+
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+
+          python3 integration/electric-owner-audit-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/apply.py source evidence
+          python3 integration/escape1-dlight-residency-v1/apply.py source evidence
+          python3 integration/escape1-physical-dlight-owner-v12/apply.py source evidence
+
+          python3 integration/texture-restoration-v1/apply.py source evidence
+          python3 integration/texture-ai-b2-v1/apply.py source evidence
+          python3 integration/texture-ai-b2-v2/apply.py source evidence
+          python3 integration/texture-ai-b2-v21/apply.py source evidence
+          python3 integration/texture-ai-b2-v22/apply.py source evidence
+          python3 integration/texture-ai-b2-v23/apply.py source evidence
+
+          python3 integration/pbr-v2/apply.py source --stage 3 --proof evidence/PBR_V42_PROOF.json
+          python3 integration/pbr-v31-ibl/apply.py source --proof evidence/PBR_V31_PROOF.json
+          python3 integration/pbr-v32-pom/apply.py source --proof evidence/PBR_V32_PROOF.json
+          python3 integration/pbr-v32-audit/apply.py source --proof evidence/PBR_V32_AUDIT_PROOF.json
+
+          echo FULLY_UNIFIED_SOURCE_RECONSTRUCTED
+
+      - name: Re-run every accepted component regression AFTER full merge
+        run: |
+          set -Eeuo pipefail
+
+          # Owner line after Texture + PBR have already been applied.
+          python3 integration/electric-physical-owner-v1/run_tests.py source evidence
+          python3 integration/escape1-dlight-residency-v1/run_tests.py source evidence
+          python3 integration/escape1-physical-dlight-owner-v12/run_tests.py source evidence
+
+          # Entire Texture lineage after Owner + PBR have already been applied.
+          python3 integration/texture-restoration-v1/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v1/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v2/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v21/run_tests.py source/SP/code/rend2 evidence source
+          python3 integration/texture-ai-b2-v22/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v23/run_tests.py source/SP/code evidence
+
+          # Entire PBR stack on the same final source.
+          python3 integration/pbr-v2/test.py source --stage 3 --out evidence/PBR_V42_STATIC_POSTMERGE.json
+          python3 integration/pbr-v31-ibl/test.py source --out evidence/PBR_V31_STATIC_POSTMERGE.json
+          python3 integration/pbr-v32-pom/test.py source --out evidence/PBR_V32_STATIC_POSTMERGE.json
+          python3 integration/pbr-v32-audit/test.py source --out evidence/PBR_V32_AUDIT_STATIC_POSTMERGE.json
+
+          python3 integration/unified-clean-production-v1/run_tests.py source evidence
+          ! grep -R -Fq 'DARKWOLF_ESCAPE1_DLIGHT_RESIDENCY_FIX_V1_1' source/SP/code
+          echo ALL_COMPONENT_POSTMERGE_REGRESSIONS_PASS
+
+      - name: Download three Clean Production artifacts and final unified artifact
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/13664398112/zip > artifacts/owner_clean_outer.zip
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/13659639998/zip > artifacts/texture_clean_outer.zip
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/13728021437/zip > artifacts/unified_outer.zip
+          unzip -t artifacts/owner_clean_outer.zip >/dev/null
+          unzip -t artifacts/texture_clean_outer.zip >/dev/null
+          unzip -t artifacts/unified_outer.zip >/dev/null
+
+      - name: Byte-level packaging completeness audit
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import io,zipfile,hashlib,json
+
+          H=lambda b:hashlib.sha256(b).hexdigest()
+
+          def get_inner(outer_path,suffix):
+              with zipfile.ZipFile(outer_path) as z:
+                  hits=[n for n in z.namelist() if n.endswith(suffix)]
+                  assert len(hits)==1,(outer_path,hits)
+                  return z.read(hits[0])
+
+          def entries(inner):
+              with zipfile.ZipFile(io.BytesIO(inner)) as z:
+                  assert z.testzip() is None
+                  roots={n.split("/",1)[0] for n in z.namelist() if "/" in n}
+                  assert len(roots)==1,roots
+                  root=next(iter(roots))+"/"
+                  return {n[len(root):]:z.read(n) for n in z.namelist() if not n.endswith("/") and n.startswith(root)}
+
+          owner=entries(get_inner(Path("artifacts/owner_clean_outer.zip"),
+              "DarkWolf_Clean_Production_ElectricOwnerV1_Escape1PhysicalOwnerV12_From_42217883095_Win64.zip"))
+          texture=entries(get_inner(Path("artifacts/texture_clean_outer.zip"),
+              "DarkWolf_Local_AI_Texture_Restoration_B2_V23_CLEAN_PRODUCTION_Win64.zip"))
+          unified=entries(get_inner(Path("artifacts/unified_outer.zip"),
+              "DarkWolf_Rend2_Unified_Clean_Production_PBR32_OwnerV12_TextureB2V23_Win64.zip"))
+
+          # Every owner/base runtime payload is retained byte-identically except the two intentionally rebuilt binaries
+          # and stale component-specific metadata replaced by unified metadata.
+          owner_exempt={
+              "ioWolfSP.x64.exe","renderer_sp_rend2_x64.dll",
+              "SHA256SUMS.txt","CLEAN_PRODUCTION_ELECTRIC_OWNER_V1_ESCAPE1_V12_STATUS.json"
+          }
+          missing_owner=[]
+          changed_owner=[]
+          for k,v in owner.items():
+              if k in owner_exempt: continue
+              if k not in unified: missing_owner.append(k); continue
+              if unified[k]!=v: changed_owner.append(k)
+          assert not missing_owner,missing_owner
+          assert not changed_owner,changed_owner
+
+          # Exact AI runtime payload from accepted Texture B2 V2.3 Clean Production.
+          ai={k:v for k,v in texture.items() if k.startswith("Main/dw_ai/")}
+          assert ai
+          for k,v in ai.items():
+              assert k in unified,k
+              assert unified[k]==v,(k,H(unified[k]),H(v))
+
+          # Final binaries must contain all three feature families.
+          dll=unified["renderer_sp_rend2_x64.dll"]
+          exe=unified["ioWolfSP.x64.exe"]
+          dll_markers=[
+              b"r_dwElectricPhysicalOwner",
+              b"r_dwElectricPhysicalOwnerDiag",
+              b"r_dwEscape1PhysicalDlightOwnerResidency",
+              b"r_dwEscape1PhysicalDlightOwnerDiag",
+              b"dw_tex_save",b"dw_tex_next",b"dw_tex_prev",
+              b"zzzzzz_DW_TextureRestoration.pk3",
+              b"r_pbrMaterialAudit",b"r_pomMinLayers",b"r_pomMaxLayers",
+              b"r_pomRefineSteps",b"r_pomDepthScale"
+          ]
+          for m in dll_markers: assert m in dll,m
+          for m in (b"DWTR B2 V2.3:",b"zzzzzz_DW_TextureRestoration.pk3"):
+              assert m in exe,m
+
+          # Production package policy.
+          names=set(unified)
+          assert "Main/DW_UNIFIED_CLEAN_PRODUCTION.cfg" in names
+          assert "Main/DW_PBR32_PHYSICAL_RELIEF_POM.cfg" in names
+          assert "DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json" in names
+          assert not any(k.upper().endswith("_TEST.CFG") or "AUDIT_TEST.CFG" in k.upper() for k in names)
+          manifest=json.loads(unified["DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json"])
+          assert manifest["components"]["electric_owner_escape1_residency"]["v11_withdrawn"] is True
+          assert manifest["components"]["electric_owner_escape1_residency"]["max_dlights_changed"] is False
+          assert manifest["components"]["electric_owner_escape1_residency"]["direct_dlight_energy_changed"] is False
+          assert manifest["components"]["texture_ai"]["single_cumulative_pk3"]=="zzzzzz_DW_TextureRestoration.pk3"
+          assert manifest["components"]["pbr"]["material_binding_audit"] is True
+
+          report={
+              "owner_runtime_payload_files_checked":len(owner)-len(owner_exempt),
+              "owner_missing":missing_owner,
+              "owner_changed":changed_owner,
+              "texture_ai_runtime_files_checked":len(ai),
+              "unified_file_count":len(unified),
+              "exe_sha256":H(exe),
+              "renderer_sha256":H(dll),
+              "result":"PASS"
+          }
+          Path("evidence/UNIFIED_BYTE_COMPLETENESS.json").write_text(json.dumps(report,indent=2)+"\n")
+          print(json.dumps(report,indent=2))
+          print("UNIFIED_BYTE_COMPLETENESS_PASS")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Unified-Clean-Production-Completeness-Audit
+          path: evidence/**
+          if-no-files-found: warn
+          retention-days: 90
