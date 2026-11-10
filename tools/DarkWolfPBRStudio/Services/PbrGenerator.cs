@@ -208,6 +208,35 @@ public static class PbrGenerator
                     gy *= gain;
                 }
 
+                // V2.06.1 Physical Relief Coupled Normal:
+                // PhysicalReliefPOM must describe the same surface in _nh.RGB and _nh.A.
+                // Keep the proven reference/macro normal as microdetail, then add the
+                // structural gradient from the actual physical Height field used by POM.
+                // This makes recessed mortar/cracks visibly slope into the same trenches
+                // that the alpha channel exposes to the renderer.
+                if (settings.GenerationMode == PbrGenerationMode.PhysicalReliefPOM &&
+                    physicalHeightByte is not null)
+                {
+                    int PH(int xx, int yy) => physicalHeightByte[yy * w + xx];
+                    int pgxNum = PH(xp, ym) + 2 * PH(xp, y) + PH(xp, yp)
+                               - PH(xm, ym) - 2 * PH(xm, y) - PH(xm, yp);
+                    int pgyNum = PH(xm, yp) + 2 * PH(x, yp) + PH(xp, yp)
+                               - PH(xm, ym) - 2 * PH(x, ym) - PH(xp, ym);
+                    double pgx = pgxNum / (8.0 * 255.0);
+                    double pgy = pgyNum / (8.0 * 255.0);
+                    double pmag = Math.Sqrt(pgx * pgx + pgy * pgy);
+
+                    // Ignore tiny residual height noise on stone faces, but couple
+                    // coherent bevel/seam gradients strongly enough to read from
+                    // near-normal camera angles where UV parallax alone is subtle.
+                    double structuralMask = SmoothStep(0.0010, 0.0300, pmag);
+                    double coupling = Math.Clamp(settings.PhysicalNormalCoupling, 0.0, 2.0);
+                    double coupledGain = coupling * (0.30 + 0.70 * structuralMask);
+
+                    gx += pgx * coupledGain;
+                    gy += pgy * coupledGain;
+                }
+
                 if (settings.GenerationMode != PbrGenerationMode.ReferenceHandGenerated)
                 {
                     const double gradientNoiseFloor = 0.00038;
