@@ -1,0 +1,192 @@
+name: Crypt1 Exact Shadow Source Causal V2
+on:
+  push:
+    branches: [rend2-crypt1-shadow-causal-20261024]
+    paths:
+      - '.github/workflows/CRYPT1_SHADOW_SOURCE_CAUSAL_V2.yml'
+      - 'testlab/scripts/crypt1_shadow_causal_fast_capture.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  source-ablation:
+    name: Real Crypt1 compare V05 baseline vs September mask, CSM cadence, dlight-world, fidelity, MSAA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install game screenshot prerequisites
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/root-cause
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev libcurl4-openssl-dev xvfb xauth python3-pil python3-numpy python3-yaml unzip gh git make
+          python3 -m py_compile testlab/scripts/crypt1_shadow_causal_fast_capture.py
+      - name: Reconstruct SHA-pinned exact October FourWeek plus LUT V05 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash integration/lut-v05/ci_lut_v05_candidate.sh > evidence/root-cause/identity-and-win64-build.log 2>&1 || { tail -100 evidence/root-cause/identity-and-win64-build.log; exit 1; }
+          grep -Fq LUT_V05_THREE_FILE_ISOLATION_PASS evidence/root-cause/identity-and-win64-build.log
+          grep -Fq LUT_V05_DIAGNOSTIC_COMPILE_PASS evidence/root-cause/identity-and-win64-build.log
+          echo CANONICAL_V05_SOURCE_OK
+      - name: Read verified September original shadowmask shader for controlled source swap
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p sep-download sep-release
+          gh run download 35361762179 --repo "$GITHUB_REPOSITORY" --name iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1 --dir sep-download
+          echo '9b24185302c468b47b9c0125a31eb9b1edd9518e7cbd0084a80710c52d395a4b  sep-download/iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1.zip' | sha256sum -c -
+          unzip -q sep-download/iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1.zip -d sep-release
+          patchfile="$GITHUB_WORKSPACE/sep-release/iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1/docs/darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch"
+          echo "7041376f9dccc1be3a2172ef5834c73bb270cc76d768ad1ad115b0567c1077a0  $patchfile" | sha256sum -c -
+          git clone -q https://github.com/iortcw/iortcw.git september
+          git -C september checkout -q --detach 438e7d413b5f7277187c35b032eb0ef9093ae778
+          git -C september apply --check --binary "$patchfile"
+          git -C september apply --binary "$patchfile"
+          test -s september/SP/code/rend2/glsl/shadowmask_fp.glsl
+          echo EXACT_SEPT_SHADOWMASK_READY
+      - name: Retrieve protected original retail Crypt1 without uploading game assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}" || { echo MISSING_LICENSED_RETAIL_ASSETS; exit 1; }
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > evidence/root-cause/retail-location.log
+          tail -1 evidence/root-cause/retail-location.log > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+      - name: Instrument only game and cgame camera proof and compile unchanged V05 Linux renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 testlab/scripts/crypt1_shadow_causal_fast_capture.py instrument source | tee evidence/root-cause/camera-instrumentation.log
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          p=Path('source/SP/code/rend2')
+          d={name:hashlib.sha256((p/name).read_bytes()).hexdigest() for name in ('tr_scene.c','tr_shade.c','tr_image.c','glsl/shadowmask_fp.glsl','glsl/lightall_fp.glsl','glsl/dwfinal_fp.glsl')}
+          Path('evidence/root-cause/OCT24_BASELINE_SOURCE_HASHES.json').write_text(json.dumps(d,indent=2))
+          PY
+          make -C source/SP -j2 release VERSION=1.51d-SP-DW-Crypt1CausalV2 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/root-cause/baseline-native-build.log 2>&1 || { tail -100 evidence/root-cause/baseline-native-build.log; exit 1; }
+          find source/SP/build/release-linux-x86_64 -maxdepth 1 -iname '*rend2*.so' -type f | grep -q .
+          echo BASELINE_LINUX_SOURCE_AND_RENDERER_PASS
+      - name: Capture unmodified V05 baseline, same actual Crypt1 camera
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/crypt1_shadow_causal_fast_capture.py capture source "$(cat .retail_main)" evidence/root-cause/baseline | tee evidence/root-cause/baseline-driver.log
+      - name: Isolate new October CSM cascade selection shader vs exact September shader
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cp -a source source-septmask
+          cmp -s source/SP/code/rend2/glsl/shadowmask_fp.glsl september/SP/code/rend2/glsl/shadowmask_fp.glsl && { echo ALREADY_IDENTICAL; exit 1; }
+          cp september/SP/code/rend2/glsl/shadowmask_fp.glsl source-septmask/SP/code/rend2/glsl/shadowmask_fp.glsl
+          make -C source-septmask/SP -j2 release VERSION=1.51d-SP-DW-Crypt1SeptMask BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/root-cause/septmask-native-build.log 2>&1 || { tail -100 evidence/root-cause/septmask-native-build.log; exit 1; }
+          python3 -u testlab/scripts/crypt1_shadow_causal_fast_capture.py capture source-septmask "$(cat .retail_main)" evidence/root-cause/septmask | tee evidence/root-cause/septmask-driver.log
+      - name: Isolate new October CSM staggered reuse by forcing full per-frame updates
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cp -a source source-realtimecsm
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('source-realtimecsm/SP/code/rend2/tr_scene.c');s=p.read_text()
+          begin=s.index('static qboolean R_ForceSunVisibleShouldUpdateCascade(int cascade)')
+          end=s.index('void RE_RenderScene(',begin)
+          original=s[begin:end]
+          assert 'tr.frameCount & 1' in original and 'tr.frameCount & 3' in original
+          s=s[:begin]+'static qboolean R_ForceSunVisibleShouldUpdateCascade(int cascade)\n{\n\treturn qtrue; // diagnostic: do not reuse middle/far cascade\n}\n\n'+s[end:]
+          old='if (sunChanged || !tr.volumetricSunCsmValid[3])'
+          assert s.count(old)==1
+          s=s.replace(old,'if (sunChanged || !tr.volumetricSunCsmValid[3] || qtrue)',1)
+          p.write_text(s)
+          print('REALTIME_CSM_CAUSAL_SOURCE_DELTA_PASS')
+          PY
+          make -C source-realtimecsm/SP -j2 release VERSION=1.51d-SP-DW-Crypt1RealtimeCSM BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/root-cause/realtimecsm-native-build.log 2>&1 || { tail -100 evidence/root-cause/realtimecsm-native-build.log; exit 1; }
+          python3 -u testlab/scripts/crypt1_shadow_causal_fast_capture.py capture source-realtimecsm "$(cat .retail_main)" evidence/root-cause/realtimecsm | tee evidence/root-cause/realtimecsm-driver.log
+      - name: Isolate architectural world-occlusion visibility separately from r_dlightShadowStrength
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cp -a source source-no-world-occlusion
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('source-no-world-occlusion/SP/code/rend2/glsl/lightall_fp.glsl')
+          s=p.read_text()
+          old='attenuation *= DlightWorldVisibility(var_DlightShadowPosition);'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,'/* diagnostic-only: world-occlusion bypass */ attenuation *= 1.0;',1))
+          print('WORLD_OCCLUSION_DIAGNOSTIC_SOURCE_DELTA_PASS')
+          PY
+          make -C source-no-world-occlusion/SP -j2 release VERSION=1.51d-SP-DW-Crypt1WorldIsolate BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/root-cause/world-occlusion-native-build.log 2>&1 || { tail -100 evidence/root-cause/world-occlusion-native-build.log; exit 1; }
+          python3 -u testlab/scripts/crypt1_shadow_causal_fast_capture.py capture source-no-world-occlusion "$(cat .retail_main)" evidence/root-cause/world-occlusion-off | tee evidence/root-cause/world-occlusion-off-driver.log
+      - name: Isolate texture and material fidelity at fresh renderer start, without touching code
+        shell: bash
+        env:
+          DW_FIDELITY_OFF: "1"
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/crypt1_shadow_causal_fast_capture.py capture source "$(cat .retail_main)" evidence/root-cause/fidelity-off | tee evidence/root-cause/fidelity-off-driver.log
+      - name: Isolate MSAA 4x vs 0 at fresh renderer start, without touching code
+        shell: bash
+        env:
+          DW_MSAA_OFF: "1"
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/crypt1_shadow_causal_fast_capture.py capture source "$(cat .retail_main)" evidence/root-cause/msaa-off | tee evidence/root-cause/msaa-off-driver.log
+      - name: Quantify image differences and package identical-camera A-B proof
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageDraw,ImageEnhance
+          import json,numpy as np
+          root=Path('evidence/root-cause')
+          variants=('baseline','septmask','realtimecsm','world-occlusion-off','fidelity-off','msaa-off')
+          views=('grate_near48_pitch28','grate_near72_pitch42')
+          checks=[]
+          for view in views:
+              for mode in ('baseline','lightmap_only'):
+                  fn=f'crypt1_{view}_{mode}.png'
+                  orig=np.asarray(Image.open(root/'baseline'/fn).convert('RGB'),dtype=np.float32)
+                  panels=[]
+                  for v in variants:
+                      im=Image.open(root/v/fn).convert('RGB')
+                      a=np.asarray(im,dtype=np.float32)
+                      assert a.shape==orig.shape==(720,1280,3)
+                      roi=(slice(int(720*.34),int(720*.93)),slice(int(1280*.10),int(1280*.90)))
+                      change=np.abs(a[roi]-orig[roi])
+                      checks.append({'view':view,'mode':mode,'variant':v,'roi_mean_abs_rgb':round(float(change.mean()),5),
+                         'roi_changed_pct':round(float(np.mean(np.any(change>4,axis=2))*100),3),
+                         'roi_luminance_mean':round(float(np.mean(a[roi]*[.2126,.7152,.0722])),3)})
+                      crop=im.crop((int(1280*.16),int(720*.32),int(1280*.84),int(720*.91)))
+                      crop.thumbnail((520,260))
+                      panels.append((v,crop))
+                  w,h=520,295
+                  sheet=Image.new('RGB',(w*3,h*2),(18,18,18))
+                  d=ImageDraw.Draw(sheet)
+                  for i,(v,img) in enumerate(panels):
+                      x,y=(i%3)*w,(i//3)*h
+                      d.text((x+8,y+9),view+' / '+mode+' / '+v,fill='white')
+                      sheet.paste(img,(x,y+28))
+                  sheet.save(root/(view+'_'+mode+'_SOURCE_AB_COMPARE.png'))
+          (root/'SOURCE_CAUSAL_RESULT.json').write_text(json.dumps({'kind':'descriptive only, NOT proof of shadow quality','renderer':'Mesa llvmpipe, no RTX','data':checks},indent=2))
+          print('CRYPT1_SHADOW_CAUSAL_V2_IMAGE_PROOF_PASS',len(checks))
+          for c in checks:
+              if c['mode']=='baseline': print('SOURCE_CAUSAL',c)
+          PY
+          sha256sum source/SP/code/rend2/glsl/shadowmask_fp.glsl source-septmask/SP/code/rend2/glsl/shadowmask_fp.glsl source/SP/code/rend2/tr_scene.c source-realtimecsm/SP/code/rend2/tr_scene.c source/SP/code/rend2/glsl/lightall_fp.glsl source-no-world-occlusion/SP/code/rend2/glsl/lightall_fp.glsl > evidence/root-cause/SOURCE_CAUSAL_HASHES.txt
+      - name: Upload derived evidence only, no protected retail BSP or pak files
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Crypt1-Shadow-Source-Causal-V2-Actual-Images
+          path: evidence/root-cause/
+          retention-days: 90

@@ -1,0 +1,138 @@
+name: DarkWolf v4.4.6 Optimized Clean Production
+on:
+  workflow_dispatch:
+  push:
+    branches: [rend2-v4-4-6-clean-optimization]
+    paths: ['integration/optimized-v4-4-6/**', '.github/workflows/DARKWOLF_REND2_V4_4_6_OPTIMIZED_CLEAN_PRODUCTION.yml']
+permissions:
+  contents: read
+concurrency:
+  group: darkwolf-v446-clean-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build-verify-rc4:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      KIT: integration/optimized-v4-4-6
+      FULL: integration/optimized-v4-4-6/complete
+      RC3: integration/optimized-v4-4-6/rc3
+      RC4: integration/optimized-v4-4-6/rc4
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify pinned kits and toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence
+          python3 "$RC3/bootstrap.py"
+          python3 "$RC4/bootstrap.py"
+          python3 -m py_compile "$RC4"/*.py
+          bash -n "$RC4/build.sh"
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends gcc-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 g++-mingw-w64-x86-64-posix=13.2.0-6ubuntu1+26.1 binutils-mingw-w64-x86-64=2.41.90.20240122-1ubuntu1+11.4 clang python3-pil python3-numpy xvfb xauth libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev
+      - name: Restore exact cumulative RC3 source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 "$RC3/pipeline.py" prepare 2>&1 | tee evidence/parent-reconstruction.log
+          python3 "$KIT/rc2/test_rc2.py" rc1-source rc2-source evidence/retained-rc2-tests 2>&1 | tee evidence/retained-rc2.log
+          python3 -u "$FULL/pipeline.py" tests 2>&1 | tee evidence/retained-complete.log
+          python3 "$RC3/pipeline.py" apply 2>&1 | tee evidence/rc3-reconstruction.log
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = '921a3d2a339d3a670c098a777c4c7896d987efe8'
+          python3 -u "$RC3/test_rc3.py" complete-source source evidence/retained-rc3-tests 2>&1 | tee evidence/retained-rc3.log
+      - name: Apply bounded RC4 source changes and lock all retained files
+        shell: bash
+        run: python3 "$RC4/pipeline.py" apply
+      - name: Whole first-party audit and changed-unit checks
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u "$RC4/audit.py" rc3-source evidence/rc3-audit 2>&1 | tee evidence/rc3-audit-progress.log
+          python3 -u "$RC4/audit.py" source evidence/rc4-audit tr_backend.c tr_flares.c tr_image.c tr_image_dds.c tr_fbo.c 2>&1 | tee evidence/rc4-audit-progress.log
+      - name: Actual-source sanitizer and production-flags regression tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u "$RC4/test_rc4.py" rc3-source source evidence/rc4-tests 2>&1 | tee evidence/rc4-tests.log
+      - name: Build RC3 control Windows x64 SP
+        shell: bash
+        run: bash "$RC4/build.sh" rc3-source evidence/rc3-build
+      - name: Build clean RC4 Windows x64 SP
+        shell: bash
+        run: bash "$RC4/build.sh" source evidence/rc4-build
+      - name: Verify pristine PE components and unchanged quality assets
+        shell: bash
+        run: python3 "$RC4/pipeline.py" stage
+      - name: Protected retail assets for tests only
+        id: retail
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo 'MESA_SMOKE_NOT_RUN: no protected retail token' > evidence/runtime-status.txt
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+          else
+            bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > protected-assets-path.log
+            tail -1 protected-assets-path.log > .retail_main
+            test -d "$(cat .retail_main)"
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Fresh paired six-map Mesa smoke including verified SWF dock
+        if: steps.retail.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for pair in 'rc3-source rc3' 'source rc4'; do
+            read -r original variant <<< "$pair"
+            target="linux-$variant"
+            git clone -q --shared "$original" "$target"
+            python3 testlab/scripts/apply_testlab_instrumentation.py "$target"
+            python3 "$KIT/instrument_runtime.py" "$target"
+            git -C "$target" diff > "evidence/$variant-testlab-only.patch"
+            make -C "$target/SP" -j2 release VERSION=1.51d-SP_DarkWolf-v4.4.6-Clean-RC4 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 2>&1 | tee "evidence/$variant-linux-build.log"
+            python3 -u "$RC4/run_smoke.py" "$target" "$(cat .retail_main)" "evidence/$variant-runtime" 2>&1 | tee "evidence/$variant-smoke-progress.log"
+          done
+      - name: Real game queue and renderer restart regression
+        if: steps.retail.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u "$RC4/runtime_lifecycle.py" "$(cat .retail_main)" evidence/lifecycle 2>&1 | tee evidence/lifecycle-progress.log
+      - name: Final gates and clean RC4 packaging
+        shell: bash
+        run: python3 "$RC4/pipeline.py" finish
+      - name: Publish one clean RC4 game package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-v446-Clean-Production-RC4-Win64-SP
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            dist/BUILD_PROVENANCE.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+      - name: Actual acceptance summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Clean Production RC4'
+            echo "Builder: $GITHUB_SHA"
+            echo "Run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo 'Six reviewed groups over exact RC3. No quality reductions or GLSL formula changes.'
+            echo 'Windows runtime, gaming-GPU FPS and full temporal visual acceptance: NOT_RUN.'
+            if test -f evidence/rc4-acceptance.json; then cat evidence/rc4-acceptance.json; fi
+            if test -f evidence/runtime-status.txt; then cat evidence/runtime-status.txt; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve all actual evidence including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf-v446-RC4-validation-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30

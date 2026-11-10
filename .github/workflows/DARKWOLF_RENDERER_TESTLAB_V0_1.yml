@@ -1,0 +1,494 @@
+name: DarkWolfRTCW Renderer TestLab v0.1
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ testlab-v0.1 ]
+    paths:
+      - '.github/workflows/DARKWOLF_RENDERER_TESTLAB_V0_1.yml'
+      - 'testlab/**'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-renderer-testlab-v0-1
+  cancel-in-progress: true
+
+jobs:
+  testlab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      BASE_RUN_ID: "36132076583"
+      BASE_HEAD_SHA: c2550b0a3e8e2ad49cc561d34c5c121d5768af8c
+      BASE_ARTIFACT_ID: "10862130986"
+      BASE_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Final-Native-Settings-Win64
+      BASE_ARTIFACT_DIGEST: sha256:776cd253a2ffb7fef5f47fcc4e7b63780d06ca868f576a735a673f1fff9be945
+      BASE_INNER_SHA256: 35b223998125c3dad60599df54c66a954d8cdd0cb5a52d0097e8149d644e0370
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      CUMULATIVE_NAME: darkwolf-rend2-cumulative-ignitable-props-rc-v0-6.patch
+      CUMULATIVE_SHA256: 2c1da09485d489bca253eef8c7626d7417d5493fee493c2d83ffb7c6b7048d0c
+      UI_DELTA_NAME: darkwolf-settings-ui-v3-native-source-delta.patch
+      UI_DELTA_SHA256: 1bff105e21e78fcc5463e2f6082d31e09e9cc12e2ec27c5090cf58758ed0c783
+      PRODUCTION_RENDERER_SHA256: 92b1db33486ea2dd7d04ccda8f3030692578a13569440f100b677b63b7a6e6d2
+      SHADER_DONOR_RUN_ID: "35503262322"
+      SHADER_DONOR_HEAD_SHA: 80fde84b6e91febd5ab5a8c10e37ed0d6dd01476
+      SHADER_DONOR_ARTIFACT_ID: "10603017159"
+      SHADER_DONOR_ARTIFACT_NAME: iortcw-rend2-escape1-table-shadow-rc-v0-2-residency-full-sp-windows-x64-1
+      SHADER_DONOR_ARTIFACT_DIGEST: sha256:51ef9cb590b5e9c2ae96d8305eb4e63bae005b993acdca48af7b6ff51e0d0409
+      SHADER_DONOR_INNER_SHA256: efe9a4f3b33e5dd4b621ed3fa0d87abe677c85d09ca29088a380d813b5c082bb
+      SHADER_DONOR_PATCH: darkwolf-rend2-cumulative-dlight-fx-shadow-eligibility-loper-complete-electrical-pc-v0-3-sp.patch
+      SHADER_DONOR_PATCH_SHA256: cb8379d56e57ec83be75251756ecea781dc9d2c6d66620e17fb56538ba157d97
+      EVIDENCE_NAME: DarkWolfRTCW-Renderer-TestLab-v0.1-Evidence
+      TEST_BUILD_NAME: DarkWolfRTCW-Renderer-TestLab-v0.1-Linux-x64
+      ASSET_REPO: jaha2002-stack/DarkWolfRTCW-TestAssets
+      ASSET_RELEASE_TAG: rtcw-retail-v1
+      ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install TestLab dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl gh git jq python3 python3-yaml unzip zip file \
+            xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev
+          python3 -m py_compile testlab/scripts/*.py
+
+      - name: Verify workflow and scenario schema
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json, pathlib, yaml
+          wf=pathlib.Path('.github/workflows/DARKWOLF_RENDERER_TESTLAB_V0_1.yml')
+          d=yaml.safe_load(wf.read_text())
+          assert d['name']=='DarkWolfRTCW Renderer TestLab v0.1'
+          base=json.loads(pathlib.Path('testlab/baseline/current.json').read_text())
+          sc=json.loads(pathlib.Path('testlab/scenarios/escape1_staticpromote.json').read_text())
+          assert base['runtime_contract']['r_staticPromoteMaxLights']==32
+          assert base['runtime_contract']['r_dlightShadowMaxLights']==3
+          assert sc['assertions']['max_shadow_slot_exclusive']==3
+          assert {x['fixture'] for x in sc['fixtures']}=={918,782}
+          print('TestLab schema PASS')
+          PY
+
+      - name: Verify and download exact production baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}")"
+          test "$(jq -r .head_sha <<<"$run_json")" = "$BASE_HEAD_SHA"
+          test "$(jq -r .conclusion <<<"$run_json")" = success
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${BASE_RUN_ID}/artifacts?per_page=100" --jq ".artifacts[] | select(.id == ${BASE_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          IFS=$'\t' read -r n expired digest <<<"$row"
+          test "$n" = "$BASE_ARTIFACT_NAME"
+          test "$expired" = false
+          test "$digest" = "$BASE_ARTIFACT_DIGEST"
+          mkdir -p base-artifact base-release evidence
+          gh run download "$BASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$BASE_ARTIFACT_NAME" --dir base-artifact
+          outer="base-artifact/$BASE_ARTIFACT_NAME.zip"
+          test -s "$outer"
+          test "$(sha256sum "$outer" | awk '{print $1}')" = "$BASE_INNER_SHA256"
+          unzip -q "$outer" -d base-release
+          base="$(find base-release -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$base"
+          echo "$base" > .base
+          test "$(sha256sum "$base/docs/$CUMULATIVE_NAME"|awk '{print $1}')" = "$CUMULATIVE_SHA256"
+          test "$(sha256sum "$base/docs/$UI_DELTA_NAME"|awk '{print $1}')" = "$UI_DELTA_SHA256"
+          test "$(sha256sum "$base/renderer_sp_rend2_x64.dll"|awk '{print $1}')" = "$PRODUCTION_RENDERER_SHA256"
+          cp testlab/baseline/current.json evidence/baseline.json
+          echo "Production baseline provenance PASS"
+
+      - name: Reconstruct exact current source postimage
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          base="$(cat .base)"
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          cp "$base/docs/$CUMULATIVE_NAME" cumulative.patch
+          cp "$base/docs/$UI_DELTA_NAME" ui.patch
+          git -C source apply --check --binary --whitespace=nowarn ../cumulative.patch
+          git -C source apply --binary --whitespace=nowarn ../cumulative.patch
+          git -C source apply --check --binary --whitespace=nowarn ../ui.patch
+          git -C source apply --binary --whitespace=nowarn ../ui.patch
+          grep -Fq 'r_staticPromoteMaxLights = ri.Cvar_Get( "r_staticPromoteMaxLights", "32"' source/SP/code/rend2/tr_init.c
+          grep -Fq 'r_dlightShadowMaxLights = ri.Cvar_Get( "r_dlightShadowMaxLights", "3"' source/SP/code/rend2/tr_init.c
+          grep -Fq 'persistentShadowBudget = r_dlightShadowMaxLights->integer' source/SP/code/rend2/tr_main.c
+          grep -Fq 'STATIC_PROMOTE_PRODUCTION_MAX_ACTIVE 32' source/SP/code/rend2/tr_scene.c
+          grep -Fq 'r_staticPromoteRootCauseDiag = &s_darkwolfProductionDiagOffCvar;' source/SP/code/rend2/tr_init.c
+          bash testlab/scripts/restore_shader_sources.sh source evidence
+          # Snapshot the exact reconstructed tree without creating an extra commit.
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, shutil
+          root=Path('source/SP/code')
+          rows=[]
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              rows.append(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.as_posix()}")
+          Path('.production_manifest').write_text('\n'.join(rows)+'\n')
+          for rel in ['SP/code/game/g_cmds.c','SP/code/cgame/cg_info.c','SP/code/cgame/cg_servercmds.c','SP/code/rend2/tr_init.c','SP/code/rend2/tr_main.c','SP/code/rend2/tr_scene.c']:
+              src=Path('source')/rel; dst=Path('production-snapshot')/rel
+              dst.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(src,dst)
+          print('production manifest files=',len(rows))
+          PY
+          echo "Exact current source reconstruction PASS"
+
+      - name: Apply isolated TestLab instrumentation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 testlab/scripts/apply_testlab_instrumentation.py source
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          root=Path('source/SP/code')
+          rows=[]
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              rows.append(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.as_posix()}")
+          Path('.instrumented_manifest').write_text('\n'.join(rows)+'\n')
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          def load(p):
+              out={}
+              for line in Path(p).read_text().splitlines():
+                  h,name=line.split('  ',1)
+                  out[name]=h
+              return out
+          a,b=load('.production_manifest'),load('.instrumented_manifest')
+          changed=sorted(k for k in set(a)|set(b) if a.get(k)!=b.get(k))
+          expected=sorted([
+              'source/SP/code/game/g_cmds.c',
+              'source/SP/code/cgame/cg_info.c',
+              'source/SP/code/cgame/cg_servercmds.c',
+              'source/SP/code/rend2/tr_init.c',
+              'source/SP/code/rend2/tr_main.c',
+              'source/SP/code/rend2/tr_scene.c',
+          ])
+          assert changed==expected, f'unexpected TestLab changed paths: {changed}'
+          print('TestLab changed-path allowlist PASS:', changed)
+          PY
+          grep -Fq 'DARKWOLF_TESTLAB_V0_1' source/SP/code/game/g_cmds.c
+          grep -Fq 'Cmd_DWTestEntityDump_f' source/SP/code/game/g_cmds.c
+          grep -Fq 'TESTLAB_BRIEFING_BYPASS' source/SP/code/cgame/cg_info.c
+          grep -Fq 'TESTLAB_GAMEPLAY_START' source/SP/code/cgame/cg_servercmds.c
+          grep -Fq 'TESTLAB_STARTCAM_SUPPRESSED' source/SP/code/cgame/cg_servercmds.c
+          grep -Fq 'DARKWOLF_TESTLAB_V0_1' source/SP/code/rend2/tr_init.c
+          grep -Fq 'TESTLAB_FIXTURE_ORIGIN' source/SP/code/rend2/tr_scene.c
+          {
+            diff -u production-snapshot/SP/code/game/g_cmds.c source/SP/code/game/g_cmds.c || true
+            diff -u production-snapshot/SP/code/cgame/cg_info.c source/SP/code/cgame/cg_info.c || true
+            diff -u production-snapshot/SP/code/cgame/cg_servercmds.c source/SP/code/cgame/cg_servercmds.c || true
+            diff -u production-snapshot/SP/code/rend2/tr_init.c source/SP/code/rend2/tr_init.c || true
+            diff -u production-snapshot/SP/code/rend2/tr_main.c source/SP/code/rend2/tr_main.c || true
+            diff -u production-snapshot/SP/code/rend2/tr_scene.c source/SP/code/rend2/tr_scene.c || true
+          } > evidence/testlab-instrumentation.patch
+          test -s evidence/testlab-instrumentation.patch
+          echo "TestLab instrumentation allowlist PASS"
+
+      - name: Build native Linux x64 SP + Rend2 TestLab
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1
+          exe="$(find source/SP/build -type f -iname 'iowolfsp.*' -perm -111 -print -quit)"
+          if [ -z "$exe" ]; then
+            echo "ERROR: native iowolfsp executable not found after successful make" >&2
+            find source/SP/build -maxdepth 3 -type f -print | LC_ALL=C sort >&2
+            exit 1
+          fi
+          test -x "$exe"
+          buildroot="$(dirname "$exe")"
+          test "$buildroot" != "."
+          test "$buildroot" != "$PWD"
+          echo "$exe" > .native_exe
+          echo "$buildroot" > .native_root
+          find "$buildroot" -maxdepth 2 -type f -print | LC_ALL=C sort > evidence/native-build-files.txt
+          file "$exe" | tee evidence/native-executable.txt
+          echo "Native TestLab compile PASS"
+
+      - name: Prepare protected retail assets
+        id: assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ env.ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${ASSET_TOKEN:-}" ]; then
+            echo 'BLOCKED_MISSING_RETAIL_ASSET_TOKEN' > evidence/runtime-status.txt
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Private RTCW asset token is not configured; runtime map tests correctly gated."
+            exit 0
+          fi
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh "$ASSET_REPO" "$ASSET_RELEASE_TAG" protected-assets | tail -1)"
+          test -n "$retail_main"
+          test -d "$retail_main"
+          printf '%s\n' "$retail_main" > .retail_main
+          cp protected-assets/release-assets.txt evidence/retail-release-assets.txt
+          cp protected-assets/pk3-files.txt evidence/retail-pk3-files.txt
+          cp protected-assets/release/rtcw-assets.sha256 evidence/retail-assets.sha256
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          echo "Private release multipart retail asset gate PASS"
+
+      - name: Assemble native runtime
+        if: steps.assets.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf runtime home
+          mkdir -p runtime/main home evidence/screenshots
+          buildroot="$(cat .native_root)"
+          cp -a "$buildroot/." runtime/
+          retail="$(cat .retail_main)"
+          find "$retail" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+          test -s runtime/main/pak0.pk3 || test -s runtime/main/PAK0.PK3
+          echo "Runtime assembly PASS"
+
+      - name: Runtime pass 1 - discover fixture origins
+        if: steps.assets.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          exe_rel="$(python3 - <<'PY'
+          from pathlib import Path
+          root=Path('runtime')
+          c=[p for p in root.iterdir() if p.is_file() and p.name.lower().startswith('iowolfsp')]
+          print(c[0] if c else '')
+          PY
+          )"
+          test -n "$exe_rel"
+          chmod +x "$exe_rel"
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 90s "$exe_rel" \
+            +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
+            +set com_introplayed 1 +set logfile 2 +set r_fullscreen 0 +set dw_testAutomation 1 \
+            +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
+            +set r_staticPromoteMaxLights 32 +set r_dlightShadowMaxLights 3 \
+            +set r_staticPromoteUnifiedDiag 1 +set r_staticPromoteRootCauseDiag 1 \
+            +set r_staticPromoteRootCauseFocus 918 +set r_staticPromoteRootCauseSampleMs 100 \
+            +set r_staticPromote 1 +set r_staticPromoteAutoMapLights 1 +set r_dlightMode 2 \
+            +set r_staticPromotePhysicalGroupDiag 1 +spdevmap escape1 +wait 300 +r_staticPromoteWideInspect +wait 30 +dw_testEntityDump 384 192 520 600 +wait 150 +quit
+          rc=$?
+          set -e
+          echo "$rc" > evidence/probe-exit-code.txt
+          qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+          test -n "$qlog" || { find home -maxdepth 4 -type f -print; exit 1; }
+          cp "$qlog" evidence/probe-qconsole.log
+          grep 'TESTLAB_FRAME_STATE ' evidence/probe-qconsole.log > evidence/probe-frame-state.txt || true
+          grep 'TESTLAB_ENTITY ' evidence/probe-qconsole.log > evidence/escape1-doctor-entities.txt || true
+          grep -Fq 'TESTLAB_ENTITY_DUMP_BEGIN' evidence/probe-qconsole.log
+          grep -Fq 'TESTLAB_ENTITY_DUMP_END' evidence/probe-qconsole.log
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          src=Path('evidence/escape1-doctor-entities.txt')
+          rows=[]
+          kv_re=re.compile(r'(\w+)=([^\s]+)')
+          keywords=('table','desk','furniture','chair','cabinet','office','props_','gamemodel')
+          for line in src.read_text(errors='replace').splitlines():
+              kv=dict(kv_re.findall(line))
+              if not kv:
+                  continue
+              hay=' '.join(kv.get(k,'') for k in ('class','model','model2','target')).lower()
+              try:
+                  origin=[float(x) for x in kv.get('origin','0,0,0').split(',')]
+                  dist2=float(kv.get('dist2','0'))
+              except Exception:
+                  continue
+              score=0
+              if 'table' in hay: score+=100
+              if 'desk' in hay: score+=90
+              if 'furniture' in hay: score+=50
+              if 'props_' in hay: score+=25
+              if 'gamemodel' in hay: score+=10
+              if 'chair' in hay: score+=5
+              if any(k in hay for k in keywords):
+                  rows.append({
+                      'entity':int(kv.get('entity','-1')),
+                      'class':kv.get('class'),
+                      'model':kv.get('model'),
+                      'model2':kv.get('model2'),
+                      'target':kv.get('target'),
+                      'origin':origin,
+                      'dist2':dist2,
+                      'score':score
+                  })
+          rows.sort(key=lambda r:(-r['score'],r['dist2'],r['entity']))
+          out={'schema':1,'fixture':918,'center':[384.0,192.0,520.0],'radius':600.0,
+               'candidate_count':len(rows),'candidates':rows}
+          Path('evidence/escape1-table-candidates.json').write_text(json.dumps(out,indent=2)+'\n')
+          print('Table calibration candidates:',len(rows))
+          for r in rows[:20]:
+              print(r)
+          PY
+          if ! grep -Fq 'TESTLAB_FRAME_STATE stage=READY map=escape1' evidence/probe-qconsole.log; then
+            echo "ERROR: StaticPromote render-frame never reached READY; see probe-frame-state.txt" >&2
+            cat evidence/probe-frame-state.txt >&2 || true
+            exit 1
+          fi
+          grep -Fq 'TESTLAB_FIXTURE_ORIGIN map=escape1 fixture=918' evidence/probe-qconsole.log
+          for batch in 0 1 2 3; do
+            python3 testlab/scripts/make_ring_cfg.py \
+              evidence/probe-qconsole.log \
+              testlab/scenarios/escape1_staticpromote.json \
+              "runtime/main/testlab_ring_${batch}.cfg" \
+              --batch-index "$batch" --batch-count 4
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          all_indices=[]
+          for batch in range(4):
+              cfg=Path(f'runtime/main/testlab_ring_{batch}.cfg').read_text()
+              indices=[int(x) for x in re.findall(r'^screenshot testlab_918_(\d{3})$',cfg,re.M)]
+              assert indices==list(range(batch*32,(batch+1)*32)), (batch,indices)
+              all_indices.extend(indices)
+          assert all_indices==list(range(128))
+          print('Ring config generation PASS: 4 batches x 32, indices 0..127')
+          PY
+          echo "Runtime discovery PASS"
+
+      - name: Runtime pass 2 - deterministic ring capture
+        if: steps.assets.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          exe="$(find runtime -maxdepth 1 -type f -iname 'iowolfsp*' -print -quit)"
+          test -n "$exe"
+          rm -rf evidence/screenshots evidence/ring-batches
+          mkdir -p evidence/screenshots evidence/ring-batches
+          : > evidence/ring-qconsole.log
+
+          for batch in 0 1 2 3; do
+            rm -f home/main/qconsole.log home/main/rtcwconsole.log
+            find home -type f -path '*/screenshots/testlab_*.tga' -delete || true
+            set +e
+            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 15s 420s "$exe" \
+              +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
+              +set com_introplayed 1 +set logfile 2 +set r_fullscreen 0 +set dw_testAutomation 1 \
+              +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
+              +spdevmap escape1 +wait 300 +exec "testlab_ring_${batch}.cfg"
+            rc=$?
+            set -e
+            echo "$rc" > "evidence/ring-batches/batch_${batch}-exit-code.txt"
+            qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+            test -n "$qlog"
+            cp "$qlog" "evidence/ring-batches/batch_${batch}-qconsole.log"
+            find home -type f -path '*/screenshots/testlab_*.tga' -printf '%f\n' | LC_ALL=C sort > "evidence/ring-batches/batch_${batch}-screenshots.txt"
+            find home -type f -path '*/screenshots/testlab_*.tga' -exec cp -a {} evidence/screenshots/ \;
+            {
+              echo "TESTLAB_RING_BATCH_LOG_BEGIN batch=$batch"
+              cat "evidence/ring-batches/batch_${batch}-qconsole.log"
+              echo "TESTLAB_RING_BATCH_LOG_END batch=$batch"
+            } >> evidence/ring-qconsole.log
+            if [ "$rc" -ne 0 ]; then
+              echo "ERROR: ring batch $batch exited with code $rc" >&2
+              exit 1
+            fi
+            grep -Fq "TESTLAB_RING_BATCH_COMPLETE batch=$batch count=32 first=$((batch * 32)) last=$((batch * 32 + 31))" "evidence/ring-batches/batch_${batch}-qconsole.log"
+            test "$(wc -l < "evidence/ring-batches/batch_${batch}-screenshots.txt")" -eq 32
+          done
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root=Path('evidence')
+          expected=[f'testlab_918_{i:03d}.tga' for i in range(128)]
+          actual=sorted(p.name for p in (root/'screenshots').glob('testlab_918_*.tga'))
+          assert actual==expected, f'screenshot set mismatch: got {len(actual)} expected 128'
+          merged=(root/'ring-qconsole.log').read_text(errors='replace')
+          for marker in ('BEGIN','READY','DONE'):
+              values=[int(x) for x in re.findall(rf'TESTLAB_CAPTURE_{marker} index=(\d+)',merged)]
+              assert values==list(range(128)), f'{marker} indices mismatch: count={len(values)}'
+          for batch in range(4):
+              manifest=(root/'ring-batches'/f'batch_{batch}-screenshots.txt').read_text().splitlines()
+              assert manifest==expected[batch*32:(batch+1)*32], f'batch {batch} screenshot manifest mismatch'
+          print('TESTLAB_RING_BATCH_VERIFY PASS captures=128 unique=128 indices=0..127')
+          PY
+
+          printf '%s\n' 'TESTLAB_RING_COMPLETE captures=128 batches=4' >> evidence/ring-qconsole.log
+          echo 0 > evidence/ring-exit-code.txt
+          echo 128 > evidence/ring-capture-count.txt
+          python3 testlab/scripts/analyze_runtime.py evidence/ring-qconsole.log testlab/scenarios/escape1_staticpromote.json evidence/runtime-analysis.json
+          echo 'PASS' > evidence/runtime-status.txt
+          echo "Runtime ring PASS"
+
+      - name: Runtime pass 3 - historical table shadow A/B
+        if: steps.assets.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/run_table_ab.sh runtime evidence
+
+      - name: Record gated runtime status
+        if: steps.assets.outputs.available != 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          reg=json.loads(Path('testlab/scenarios/regression_registry.json').read_text())
+          out={'schema':1,'runtime_status':'BLOCKED_MISSING_RETAIL_ASSETS','false_pass_prevented':True,'registry':reg}
+          Path('evidence/runtime-analysis.json').write_text(json.dumps(out,indent=2)+'\n')
+          PY
+
+      - name: Package TestLab native binary and evidence
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p out
+          if [ -f .native_root ]; then
+            root="$(cat .native_root)"
+            mkdir -p "out/$TEST_BUILD_NAME"
+            cp -a "$root/." "out/$TEST_BUILD_NAME/"
+            cp -a testlab "out/$TEST_BUILD_NAME/testlab"
+            (cd out && zip -q -X -r "$TEST_BUILD_NAME.zip" "$TEST_BUILD_NAME")
+            sha256sum "out/$TEST_BUILD_NAME.zip" > "out/$TEST_BUILD_NAME.zip.sha256"
+          fi
+          cp -a testlab/scenarios evidence/
+          cp -a testlab/README.md evidence/TESTLAB_README.md
+          (cd evidence && find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+          (cd evidence && zip -q -X -r "../out/$EVIDENCE_NAME.zip" .)
+          sha256sum "out/$EVIDENCE_NAME.zip" > "out/$EVIDENCE_NAME.zip.sha256"
+
+      - name: Upload TestLab evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.EVIDENCE_NAME }}
+          path: |
+            out/${{ env.EVIDENCE_NAME }}.zip
+            out/${{ env.EVIDENCE_NAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+      - name: Upload native TestLab build
+        if: always() && hashFiles('out/DarkWolfRTCW-Renderer-TestLab-v0.1-Linux-x64.zip') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.TEST_BUILD_NAME }}
+          path: |
+            out/${{ env.TEST_BUILD_NAME }}.zip
+            out/${{ env.TEST_BUILD_NAME }}.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90

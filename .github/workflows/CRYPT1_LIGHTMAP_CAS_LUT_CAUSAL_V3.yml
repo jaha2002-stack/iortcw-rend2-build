@@ -1,0 +1,105 @@
+name: Crypt1 Lightmap CAS LUT Causal V3
+on:
+  push:
+    branches: [rend2-crypt1-shadow-causal-20261024]
+    paths:
+      - '.github/workflows/CRYPT1_LIGHTMAP_CAS_LUT_CAUSAL_V3.yml'
+      - 'testlab/scripts/crypt1_lightmap_cas_lut_isolation.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  actual-lightmap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native Mesa/OpenGL and screenshot dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/crypt1-lightmap
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev libcurl4-openssl-dev xvfb xauth python3-pil python3-numpy python3-yaml
+          python3 -m py_compile testlab/scripts/crypt1_lightmap_cas_lut_isolation.py
+      - name: Reconstruct immutable October FourWeek and approved V05 from all historical source patches
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash integration/lut-v05/ci_lut_v05_candidate.sh > evidence/crypt1-lightmap/source-reconstruction.log 2>&1 || { tail -100 evidence/crypt1-lightmap/source-reconstruction.log; exit 1; }
+          grep -Fq LUT_V05_THREE_FILE_ISOLATION_PASS evidence/crypt1-lightmap/source-reconstruction.log
+          grep -Fq LUT_V05_DIAGNOSTIC_COMPILE_PASS evidence/crypt1-lightmap/source-reconstruction.log
+      - name: Instrument game and compile exact Oct V05 native SP and renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 testlab/scripts/crypt1_lightmap_cas_lut_isolation.py instrument source
+          make -C source/SP -j2 release VERSION=1.51d-SP-DW-Crypt1LightmapAB BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/crypt1-lightmap/native-build.log 2>&1 || { tail -110 evidence/crypt1-lightmap/native-build.log; exit 1; }
+          find source/SP/build/release-linux-x86_64 -maxdepth 1 -type f -iname '*rend2*.so' | grep -q .
+      - name: Fetch protected original Crypt1 BSP
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}" || exit 1
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > evidence/crypt1-lightmap/private-location.log
+          tail -1 evidence/crypt1-lightmap/private-location.log > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+      - name: Real game 2 x 8 matched no-CAS no-LUT and lightmap variants
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/crypt1_lightmap_cas_lut_isolation.py capture source "$(cat .retail_main)" evidence/crypt1-lightmap 2>&1 | tee evidence/crypt1-lightmap/driver.log
+          test -s evidence/crypt1-lightmap/crypt1_grate_near48_pitch28_lightmap_no_cas_lut.png
+          test -s evidence/crypt1-lightmap/crypt1_grate_near72_pitch42_lightmap_no_cas_lut.png
+          test -s evidence/crypt1-lightmap/crypt1_grate_near48_pitch28_baseline.png
+          test -s evidence/crypt1-lightmap/CRYPT1_GRATE_CLOSEUP_PIXEL_DIFF.json
+      - name: Quantify precision lightmap pixel and edge changes without confusing them with quality
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageDraw
+          import numpy as np,json
+          root=Path('evidence/crypt1-lightmap')
+          views=('grate_near48_pitch28','grate_near72_pitch42')
+          lms=('lightmap_only','lightmap_no_cas','lightmap_no_lut','lightmap_no_cas_lut')
+          cases=[]
+          for view in views:
+              png=lambda mode: root/f'crypt1_{view}_{mode}.png'
+              original=np.asarray(Image.open(png('lightmap_only')).convert('RGB'),dtype=np.int16)
+              for mode in lms:
+                  im=Image.open(png(mode)).convert('RGB')
+                  a=np.asarray(im,dtype=np.int16)
+                  diff=np.abs(a-original)
+                  roi=(slice(225,600),slice(270,1040))
+                  rr=a[roi]
+                  dd=diff[roi]
+                  # The ROI is floor + grate, descriptive only; cannot measure 'good' AA from scalar.
+                  cases.append(dict(view=view,mode=mode,
+                      changed_gt4_pct=round(float(np.any(dd>4,axis=2).mean())*100,4),
+                      mean_abs_delta=round(float(dd.mean()),5),
+                      roi_brightness=round(float(rr.mean()),3),
+                      horizontal_diff_energy=round(float(np.abs(np.diff(rr.mean(axis=2),axis=0)).mean()),4)))
+              sheet=Image.new('RGB',(1280*2,720*2),(16,16,16))
+              for i,mode in enumerate(lms):
+                  im=Image.open(png(mode)).convert('RGB')
+                  sheet.paste(im,((i%2)*1280,(i//2)*720))
+                  ImageDraw.Draw(sheet).text(((i%2)*1280+20,(i//2)*720+20),mode,fill='white')
+              sheet.save(root/(view+'_CAS_LUT_LIGHTMAP_2x2.png'))
+          (root/'CRYPT1_LIGHTMAP_CAS_LUT_V3_FACTS.json').write_text(json.dumps({'warning':'descriptive statistics, NOT proof of shadow quality','cases':cases},indent=2))
+          print('CRYPT1_LIGHTMAP_CAS_LUT_CAUSAL_V3_PASS',len(cases))
+          for x in cases:print('LIGHTMAP_AB',x)
+          PY
+      - name: Upload only screenshots and inspection evidence, no private game assets
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Crypt1-Lightmap-CAS-LUT-Isolation-V3-Images
+          path: evidence/crypt1-lightmap/
+          retention-days: 90

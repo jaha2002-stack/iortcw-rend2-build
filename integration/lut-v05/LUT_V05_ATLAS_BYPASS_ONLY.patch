@@ -1,0 +1,120 @@
+--- a/SP/code/rend2/tr_backend.c
++++ b/SP/code/rend2/tr_backend.c
+@@ -9201,11 +9201,12 @@
+ 		!(r_toneMap->integer || r_forceToneMap->integer))
+ 		return;
+ 	lutIndex = r_dwLutMode ? Com_Clamp(0, 2, r_dwLutMode->integer) : 0;
+-	if (!tr.dwColorLutImages[lutIndex])
+-		lut = 0.0f;
++	// DARKWOLF_LUT_V05_PROCEDURAL_GRADE_GPU_ATLAS_BYPASS:
++	// Use analytic color grading until the GPU atlas/sampler path is diagnosed.
++	// Neutral mode 0 remains exact identity; all other effects are untouched.
+ 	if (lut <= 0.0f && cas <= 0.0f)
+ 		return;
+-	VectorSet4(parms, cas, lut, 0.0f, 0.0f);
++	VectorSet4(parms, cas, lut, (float)lutIndex, 0.0f);
+ 	VectorSet4(bounds,
+ 		(srcBox[0] + 0.5f) / (float)srcFbo->width,
+ 		(srcBox[1] + 0.5f) / (float)srcFbo->height,
+@@ -9213,8 +9214,7 @@
+ 		(srcBox[1] + srcBox[3] - 0.5f) / (float)srcFbo->height);
+ 	GLSL_BindProgram(&tr.dwFinalPolishShader);
+ 	GLSL_SetUniformVec4(&tr.dwFinalPolishShader, UNIFORM_VIEWINFO, bounds);
+-	// When CAS runs alone, bind a valid harmless sampler rather than relying on stale GL bindings.
+-	GL_BindToTMU(lut > 0.0f ? tr.dwColorLutImages[lutIndex] : tr.whiteImage, TB_LEVELSMAP);
++	// No TB_LEVELSMAP binds: the V05 shader samples only u_TextureMap.
+ 	FBO_Blit(srcFbo, srcBox, NULL, tr.screenScratchFbo, srcBox,
+ 		&tr.dwFinalPolishShader, parms, 0);
+ 	FBO_FastBlit(tr.screenScratchFbo, srcBox, srcFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+--- a/SP/code/rend2/tr_glsl.c
++++ b/SP/code/rend2/tr_glsl.c
+@@ -451,7 +451,10 @@
+ 		Com_sprintf(filename, sizeof(filename), "glsl/%s_fp.glsl", name);
+ 	}
+ 
+-	if ( r_externalGLSL->integer ) {
++	// DARKWOLF_LUT_V05_PROCEDURAL_GRADE_GPU_ATLAS_BYPASS:
++	// Ensure the fixed built-in dwfinal shader cannot be replaced by stale PK3 GLSL.
++	// All other renderer shaders keep their historical externalGLSL policy.
++	if ( r_externalGLSL->integer && Q_stricmp(name, "dwfinal") ) {
+ 		size = ri.FS_ReadFile(filename, (void **)&buffer);
+ 	} else {
+ 		size = 0;
+@@ -1446,6 +1449,9 @@
+ 			GLSL_SetUniformInt(&tr.dwFinalPolishShader, UNIFORM_TEXTUREMAP, TB_COLORMAP);
+ 			GLSL_SetUniformInt(&tr.dwFinalPolishShader, UNIFORM_LEVELSMAP, TB_LEVELSMAP);
+ 			GLSL_FinishGPUShader(&tr.dwFinalPolishShader);
++			// Runtime proof that this exact diagnostic DLL and built-in shader are loaded.
++			ri.Printf(PRINT_ALL, "DARKWOLF_LUT_V05_PROCEDURAL_ACTIVE atlasSampling=0 builtinDwfinal=1 mode=%d strength=%.2f\n",
++				r_dwLutMode ? r_dwLutMode->integer : -1, r_dwLutStrength ? r_dwLutStrength->value : -1.0f);
+ 			numEtcShaders++;
+ 		}
+ 	}
+--- a/SP/code/rend2/glsl/dwfinal_fp.glsl
++++ b/SP/code/rend2/glsl/dwfinal_fp.glsl
+@@ -1,10 +1,9 @@
+ // DARKWOLF_CAS_A2C_LUT_V01: optional adaptive sharpen and LUT in one draw.
+ // Not a verbatim AMD FidelityFX CAS reference implementation.
+ uniform sampler2D u_TextureMap;
+-uniform sampler2D u_LevelsMap; // manually trilinearly sampled 16^3 LUT atlas
+ uniform vec2 u_InvTexRes;
+ uniform vec4 u_ViewInfo; // normalized viewport bounds, half-texel inset
+-uniform vec4 u_Color;    // x = sharpen [0..0.75]; y = LUT mix [0..1]
++uniform vec4 u_Color;    // x = CAS strength; y = LUT mix; z = LUT mode 0/1/2
+ varying vec2 var_Tex1;
+ 
+ vec3 DW_CAS(vec2 uv, vec3 center)
+@@ -40,19 +39,43 @@
+                              min(mx + vec3(allowance), vec3(1.0)));
+ }
+ 
+-vec3 DW_AtlasSlice(vec3 rgb, float sliceIndex)
+-{
+-    float x = (sliceIndex * 16.0 + rgb.r * 15.0 + 0.5) / 256.0;
+-    float y = (rgb.g * 15.0 + 0.5) / 16.0;
+-    return texture2D(u_LevelsMap, vec2(x, y)).rgb;
+-}
+-
++// DARKWOLF_LUT_V05_PROCEDURAL_GRADE_GPU_ATLAS_BYPASS:
++// Reproduce the subtle V04 luma-preserving look using pure GLSL, without
++// any packed 16^3 atlas lookup or GPU texture-unit dependency.
++// This is a diagnostic color-grading backend; the original LUT feature remains
++// available in version control for a separately proven atlas repair.
+ vec3 DW_Lut(vec3 rgb)
+ {
+     vec3 v = clamp(rgb, 0.0, 1.0);
+-    float z = v.b * 15.0;
+-    float z0 = floor(z);
+-    return mix(DW_AtlasSlice(v, z0), DW_AtlasSlice(v, min(z0 + 1.0, 15.0)), fract(z));
++    // Mode 0 is an exact identity grade, even with r_dwLutStrength > 0.
++    if (u_Color.z < 0.5)
++        return v;
++
++    vec3 lum = vec3(0.2126, 0.7152, 0.0722);
++    float originalY = dot(v, lum);
++    float shadow = clamp((0.70 - originalY) * 2.0, 0.0, 1.0);
++    float highlight = 1.0 - shadow;
++    vec3 graded = v;
++    if (u_Color.z < 1.5)
++    {
++        // Mode 1: restrained amber highlights and cool shadows.
++        graded.r *= 1.0 + 0.055 * highlight - 0.012 * shadow;
++        graded.g *= 1.0 + 0.008 * shadow;
++        graded.b *= 1.0 + 0.045 * shadow - 0.045 * highlight;
++    }
++    else
++    {
++        // Mode 2: modest cool industrial color grade.
++        graded.r *= 1.0 - 0.038 * shadow + 0.010 * highlight;
++        graded.g *= 1.0 + 0.006 * shadow;
++        graded.b *= 1.0 + 0.052 * shadow - 0.016 * highlight;
++    }
++    float adjustedY = dot(graded, lum);
++    if (originalY > 0.000001 && adjustedY > 0.000001)
++        graded *= originalY / adjustedY;
++    // Black stays black. Per-channel changes cannot generate red chroma
++    // where no red existed, and cannot crush a lit surface into black.
++    return clamp(graded, v * 0.90, min(v * 1.10, vec3(1.0)));
+ }
+ 
+ void main()

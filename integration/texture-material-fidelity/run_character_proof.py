@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+"""Targeted stage-3 proof with a real animated RTCW player mesh and two animation frames.
+
+Only test-harness client camera distance changes; the renderer stays byte-for-byte
+identical to the four-profile RC4+CSM+texture-fidelity candidate.
+No protected game asset bytes are exported.
+"""
+from pathlib import Path
+from PIL import Image, ImageChops, ImageDraw, ImageStat
+import json
+import struct
+import re
+import sys
+import zipfile
+
+import run_stage_ab as ab
+
+BASE_INSTRUMENT = ab.photo.instrument
+MODEL_SELECTION = None
+OUT = None
+
+
+def instrument_close_model(root):
+    BASE_INSTRUMENT(root)
+    path = root / "SP/code/cgame/cg_view.c"
+    txt = path.read_text()
+    original = "VectorMA( cg.refdef.vieworg, 100, cg.refdef.viewaxis[0], cg.testModelEntity.origin );"
+    changed = r'''
+    // Test-only authored RTCW material proof; cvar set by isolated runner.
+    {
+        char skinPath[MAX_QPATH];
+        trap_Cvar_VariableStringBuffer("dw_proofSkin", skinPath, sizeof(skinPath));
+        cg.testModelEntity.customSkin = trap_R_RegisterSkin(skinPath);
+        CG_Printf("PROOF_CHARACTER_SKIN requested=%s handle=%d\n",
+                  skinPath, cg.testModelEntity.customSkin);
+        if (!cg.testModelEntity.customSkin) {
+            cg.testModelEntity.hModel = 0;
+            return;
+        }
+    }
+    VectorMA( cg.refdef.vieworg, 120, cg.refdef.viewaxis[0], cg.testModelEntity.origin );
+    // Keep complete standing character (with feet origin) in central viewport.
+    cg.testModelEntity.origin[2] -= 32;
+    '''
+    if txt.count(original) != 1:
+        raise RuntimeError("Fail closed: unexpected RTCW testmodel camera anchor")
+    txt = txt.replace(original, changed)
+    # Base RTCW testmodel is an MD3 helper. Unlike CG_Player, it never fills
+    # torsoAxis/torsoFrame/torsoBacklerp for skeletal MDS characters, causing
+    # the upper body bones to collapse. Correct ONLY the testing CGame rig.
+    axis_old = "\tAnglesToAxis( angles, cg.testModelEntity.axis );"
+    axis_new = r'''
+    AnglesToAxis( angles, cg.testModelEntity.axis );
+    AxisClear(cg.testModelEntity.torsoAxis);
+    cg.testModelEntity.torsoFrame = cg.testModelEntity.frame;
+    cg.testModelEntity.oldTorsoFrame = cg.testModelEntity.oldframe;
+    cg.testModelEntity.torsoBacklerp = cg.testModelEntity.backlerp;
+    CG_Printf("PROOF_CHARACTER_RIG torso_axis_identity=1 torso_frame=%d old_torso_frame=%d\n",
+              cg.testModelEntity.torsoFrame, cg.testModelEntity.oldTorsoFrame);
+    '''
+    if txt.count(axis_old) != 1:
+        raise RuntimeError("Fail closed: testmodel torso-axis insertion anchor changed")
+    txt = txt.replace(axis_old, axis_new)
+    next_old = "\tcg.testModelEntity.frame++;\n\tCG_Printf( \"frame %i\\n\", cg.testModelEntity.frame );"
+    next_new = r'''
+    cg.testModelEntity.frame++;
+    cg.testModelEntity.oldframe = cg.testModelEntity.frame;
+    cg.testModelEntity.torsoFrame = cg.testModelEntity.frame;
+    cg.testModelEntity.oldTorsoFrame = cg.testModelEntity.frame;
+    cg.testModelEntity.torsoBacklerp = 0;
+    CG_Printf("PROOF_CHARACTER_RIG_NEXT frame=%d torso_frame=%d\n",
+              cg.testModelEntity.frame, cg.testModelEntity.torsoFrame);
+    '''
+    if txt.count(next_old) != 1:
+        raise RuntimeError("Fail closed: testmodel nextframe insertion anchor changed")
+    txt = txt.replace(next_old, next_new)
+    add_model_old = "\ttrap_R_AddRefEntityToScene( &cg.testModelEntity );"
+    add_model_new = r'''
+    trap_R_AddRefEntityToScene(&cg.testModelEntity);
+    {
+        static qboolean attempted = qfalse, printedTag = qfalse;
+        static qhandle_t headModel = 0, headSkin = 0;
+        char modelName[MAX_QPATH], skinName[MAX_QPATH];
+        if (!attempted) {
+            attempted = qtrue;
+            trap_Cvar_VariableStringBuffer("dw_proofHeadModel", modelName, sizeof(modelName));
+            trap_Cvar_VariableStringBuffer("dw_proofHeadSkin", skinName, sizeof(skinName));
+            headModel = trap_R_RegisterModel(modelName);
+            headSkin = trap_R_RegisterSkin(skinName);
+            CG_Printf("PROOF_CHARACTER_HEAD model=%s model_handle=%d skin=%s skin_handle=%d\n",
+                      modelName, headModel, skinName, headSkin);
+        }
+        if (headModel && headSkin) {
+            refEntity_t head;
+            orientation_t tag;
+            memset(&head, 0, sizeof(head));
+            head.hModel = headModel;
+            head.customSkin = headSkin;
+            AxisClear(head.axis);
+            if (trap_R_LerpTag(&tag, &cg.testModelEntity, "tag_head", 0) >= 0) {
+                CG_PositionRotatedEntityOnTag(&head, &cg.testModelEntity, "tag_head");
+                trap_R_AddRefEntityToScene(&head);
+                if (!printedTag) {
+                    CG_Printf("PROOF_CHARACTER_HEAD_TAG_FOUND tag_head=1\n");
+                    printedTag = qtrue;
+                }
+            } else if (!printedTag) {
+                CG_Printf("PROOF_CHARACTER_HEAD_TAG_MISSING tag_head=0\n");
+                printedTag = qtrue;
+            }
+        }
+    }
+    '''
+    if txt.count(add_model_old) != 1:
+        raise RuntimeError("Fail closed: testmodel head attachment anchor missing")
+    txt=txt.replace(add_model_old, add_model_new)
+    path.write_text(txt)
+    print("PROOF_CHARACTER_CLOSEUP: test-only model distance 120 units, z=-32; required skin; renderer unchanged", flush=True)
+
+
+def animated_player_mesh(retail):
+    """Select a real full-body skeletal MDS player, with its authored skin."""
+    global MODEL_SELECTION
+    if MODEL_SELECTION:
+        return MODEL_SELECTION["path"]
+    paths = {}
+    for pk3 in sorted(retail.glob("*.pk3")):
+        with zipfile.ZipFile(pk3) as z:
+            for info in z.infolist():
+                lower = info.filename.lower()
+                if lower.startswith("models/players/") and not info.is_dir():
+                    # Later PK3s override names in the native VFS.
+                    paths[lower] = (pk3, info.filename, info.file_size)
+    candidates = []
+    for low, (pk3, original, size) in paths.items():
+        if not low.endswith("/body.mds") or size < 40000:
+            continue
+        with zipfile.ZipFile(pk3) as z, z.open(original) as handle:
+            header = handle.read(84)
+        if len(header) != 84 or header[:4] != b"MDSW":
+            continue
+        version = struct.unpack_from("<i", header, 4)[0]
+        frames = struct.unpack_from("<i", header, 80)[0]
+        if version != 4 or not 1 < frames < 10000:
+            continue
+        folder = low.rsplit("/", 1)[0]
+        skins = [(p, paths[p][2]) for p in paths if p.startswith(folder + "/body_")
+                 and p.endswith(".skin") and paths[p][2] > 10]
+        if not skins:
+            continue
+        heads = [p for p in paths if p in (folder+"/head.md3", folder+"/head.mdc")]
+        head_skins = [(p, paths[p][2]) for p in paths if p.startswith(folder+"/head_")
+                      and p.endswith(".skin") and paths[p][2]>10]
+        if not heads or not head_skins:
+            continue
+        heads.sort(key=lambda p: (not p.endswith(".md3"), p))
+        head_skins.sort(key=lambda pair: ("default" not in pair[0], -pair[1], pair[0]))
+        skins.sort(key=lambda pair: ("default" not in pair[0],
+                                    "original" not in pair[0], -pair[1], pair[0]))
+        name = folder.rsplit("/", 1)[-1]
+        priority = ["infantryss", "officerss", "blackguard", "eliteguard",
+                    "soldier", "mechanic", "murphy", "partisan", "higgs", "jack"]
+        rank = next((i for i,v in enumerate(priority) if v in name), len(priority))
+        candidates.append({"path": original, "frames": frames, "bytes": size,
+                           "skin": paths[skins[0][0]][1], "skin_bytes":skins[0][1],
+                           "body_mesh": True, "format":"mds",
+                           "skin_variants":len(skins), "human_character_rank":rank,
+                           "head_model":paths[heads[0]][1],
+                           "head_skin":paths[head_skins[0][0]][1]})
+    candidates.sort(key=lambda x:(x["human_character_rank"],
+                                   -min(x["bytes"],2000000),x["path"].lower()))
+    info = {"selected": candidates[0] if candidates else None,
+            "full_body_mds_with_skin_count":len(candidates),
+            "candidate_models": candidates[:35],
+            "selection_method":"validated MDSW v4 body.mds + body_*.skin from retail PK3 filenames; nonmatching models excluded",
+            "protected_assets_embedded":False}
+    (OUT/"MODEL_DISCOVERY.json").write_text(json.dumps(info,indent=2)+"\n")
+    if not candidates:
+        raise RuntimeError("No skinned full-body animated MDS candidate in RTCW retail; see MODEL_DISCOVERY.json")
+    MODEL_SELECTION=candidates[0]
+    print("PROOF_CHARACTER_SELECTED", MODEL_SELECTION,flush=True)
+    return MODEL_SELECTION["path"]
+
+
+BASE_PREPARE_RUNTIME = ab.prepare_runtime
+
+
+def prepare_runtime_with_skin(build, retail, out):
+    runtime, main = BASE_PREPARE_RUNTIME(build, retail, out)
+    assert MODEL_SELECTION and MODEL_SELECTION["skin"].endswith(".skin")
+    cfg = main/"PRODUCTION_HIGH_QUALITY.cfg"
+    with cfg.open("a") as handle:
+        handle.write("\nset dw_proofSkin " + MODEL_SELECTION["skin"])
+        handle.write("\nset dw_proofHeadModel " + MODEL_SELECTION["head_model"])
+        handle.write("\nset dw_proofHeadSkin " + MODEL_SELECTION["head_skin"] + "\n")
+    return runtime, main
+
+
+def analyze_character(out):
+    modes = tuple(ab.PROFILE)
+    assert modes == ("BASE", "STAGE1", "STAGE2", "STAGE3")
+    original = json.loads((out / "AB_REPORT.json").read_text())
+    assert len(original["pairs"]) == 2
+    assert MODEL_SELECTION and MODEL_SELECTION["frames"] > 1
+    modelpath = MODEL_SELECTION["path"]
+    canvas = Image.new("RGB", (480 * len(modes), 60 + 440 * 2), (16, 16, 16))
+    draw = ImageDraw.Draw(canvas)
+    checks = []
+    for mi, mode in enumerate(modes):
+        meta = json.loads((out / f"assault_{mode}-result.json").read_text())
+        assert meta["exit"] == 0 and meta["ready"] and meta["complete"]
+        assert meta["character_model_path"] == modelpath
+        paths = [out / meta["character_images"][f"frame{frame}"] for frame in (0, 1)]
+        assert all(path.exists() for path in paths)
+        log=(out/f"assault_{mode}-console-0.log").read_text(errors="replace")
+        proof=re.search(r"PROOF_CHARACTER_SKIN requested=([^ ]+) handle=(\d+)",log)
+        h=re.search(r"PROOF_CHARACTER_HEAD model=(\S+) model_handle=(\d+) skin=(\S+) skin_handle=(\d+)",log)
+        if not h or h.group(1).lower()!=MODEL_SELECTION["head_model"].lower() or h.group(3).lower()!=MODEL_SELECTION["head_skin"].lower() or int(h.group(2))<=0 or int(h.group(4))<=0:
+            raise RuntimeError(f"{mode}: original player head or head skin failed to register")
+        if "PROOF_CHARACTER_HEAD_TAG_FOUND tag_head=1" not in log:
+            raise RuntimeError(f"{mode}: tag_head attachment missing")
+        if "PROOF_CHARACTER_RIG torso_axis_identity=1" not in log or "PROOF_CHARACTER_RIG_NEXT frame=1 torso_frame=1" not in log:
+            raise RuntimeError(f"{mode}: missing MDS skeletal torso rig proof in test CGame")
+        if not proof or proof.group(1).lower()!=MODEL_SELECTION["skin"].lower() or int(proof.group(2))<=0:
+            raise RuntimeError(f"{mode}: original RTCW skin not registered: {MODEL_SELECTION['skin']}")
+        images = [Image.open(p).convert("RGB") for p in paths]
+        assert images[0].size == images[1].size == (1280, 720)
+        subject = (290, 120, 1000, 690)
+        a, b = [im.crop(subject) for im in images]
+        d = ImageChops.difference(a, b)
+        count = sum(1 for pixel in d.getdata() if max(pixel) >= 12)
+        checks.append({"mode": mode, "model": modelpath, "animation_frame_delta_pixels_ge_12": count,
+                       "within_subject_roi":list(subject),
+                       "mean_animation_rgb_delta":round(sum(ImageStat.Stat(d).mean)/3,4)})
+        for fi, im in enumerate((a, b)):
+            im.thumbnail((480, 395))
+            x = mi * 480; y = fi * 440
+            draw.text((x+9, y+8), f"{mode}: {Path(modelpath).name}, frame {fi}", fill="white")
+            canvas.paste(im, (x, y+38))
+    canvas.save(out / "DARKWOLF_CHARACTER_MODEL_4STAGES.png")
+    original["character_proof"] = {
+        "asset_path": modelpath, "source_frame_count":MODEL_SELECTION["frames"],
+        "test_model_distance_units":120, "test_model_origin_z_adjust":-32,
+        "skin_path":MODEL_SELECTION["skin"], "skin_registration_verified":True,
+        "head_model":MODEL_SELECTION["head_model"], "head_skin":MODEL_SELECTION["head_skin"],
+        "head_registration_verified":True, "head_tag_attachment_verified":True,
+        "full_body_mds":True, "renderer_source_changes_for_closeup":False,
+        "model_frame_checks": checks,
+        "acceptance":"PENDING_USER_REVIEW_AND_REAL_GPU_FPS"
+    }
+    (out / "AB_REPORT.json").write_text(json.dumps(original, indent=2) + "\n")
+    (out / "CHARACTER_PROOF_REPORT.json").write_text(
+        json.dumps(original["character_proof"], indent=2) + "\n")
+    print(json.dumps(original["character_proof"], indent=2), flush=True)
+    # At least one frame change is necessary to call this an animation test.
+    if not any(q["animation_frame_delta_pixels_ge_12"] > 100 for q in checks):
+        raise RuntimeError("Animation frames captured but do not visibly differ; reject proof")
+    assert (out / "DARKWOLF_CHARACTER_MODEL_4STAGES.png").is_file()
+
+
+def main():
+    global OUT
+    if len(sys.argv) != 4:
+        raise SystemExit("Usage: run_character_proof.py source retail_main evidence/real-game-character")
+    OUT = Path(sys.argv[3]).resolve()
+    OUT.mkdir(parents=True, exist_ok=True)
+    ab.MAPS = ("assault",)
+    ab.photo.instrument = instrument_close_model
+    ab.discover_character_model = animated_player_mesh
+    ab.prepare_runtime = prepare_runtime_with_skin
+    animated_player_mesh(Path(sys.argv[2]).resolve())
+    ab.main()
+    analyze_character(OUT)
+
+
+if __name__ == "__main__":
+    main()

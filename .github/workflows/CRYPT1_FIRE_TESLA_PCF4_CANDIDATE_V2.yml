@@ -1,0 +1,94 @@
+name: Crypt1 Fire Tesla World Occlusion PCF4 Source V2
+on:
+  push:
+    branches: [rend2-crypt1-shadow-causal-20261024]
+    paths: ['.github/workflows/CRYPT1_FIRE_TESLA_PCF4_CANDIDATE_V2.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  pcf4-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup historical source and real Crypt1 test environment
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/pcf4
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev libcurl4-openssl-dev xvfb xauth python3-pil python3-numpy python3-yaml
+          python3 integration/optimized-v4-4-6/rc3/bootstrap.py
+          python3 integration/optimized-v4-4-6/rc4/bootstrap.py
+          python3 integration/rc4-light-containment/bootstrap.py
+      - name: Restore original exact pre-Fire and Fire/Tesla builds
+        run: |
+          set -Eeuo pipefail
+          python3 integration/optimized-v4-4-6/rc3/pipeline.py prepare > evidence/pcf4/rc3-prepare.log 2>&1
+          python3 integration/optimized-v4-4-6/rc3/pipeline.py apply > evidence/pcf4/rc3-apply.log 2>&1
+          python3 integration/optimized-v4-4-6/rc4/pipeline.py apply > evidence/pcf4/rc4-apply.log 2>&1
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = 74049eab929ec9271459634e143dda9fd7d700c1
+          python3 integration/rc4-light-containment/bootstrap.py source > evidence/pcf4/containment.log 2>&1
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = 3bd8085e2169af3cd40686bbcaa986c92c49cca4
+          python3 testlab/scripts/rc4_v2_production.py source integration/rc4-light-containment > evidence/pcf4/bounded-source.log 2>&1
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = c652eaed9cbcf1df4eb7d7d5187b9bea63dce60b
+          cp -a source original
+          cp -a source pcf4
+          python3 integration/crypt1-world-occlusion-pcf4/apply.py pcf4 --manifest evidence/pcf4/pcf4-source-manifest.json
+          git -C pcf4 diff --check
+          git -C pcf4 diff -- SP/code/rend2/glsl/dlight_fp.glsl SP/code/rend2/glsl/lightall_fp.glsl > evidence/pcf4/PCF4_TWO_SHADER_ONLY.patch
+          test "$(git -C pcf4 diff --name-only | wc -l)" = 2
+      - name: Retrieve original licensed Crypt1 BSP
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > evidence/pcf4/asset-location.log
+          tail -1 evidence/pcf4/asset-location.log > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+      - name: Same-camera native game captures before and after PCF4
+        run: |
+          set -Eeuo pipefail
+          for variant in original pcf4; do
+            python3 testlab/scripts/crypt1_chronological_release_bisect.py instrument "$variant"
+            make -C "$variant/SP" -j2 release VERSION=1.51d-SP-DW-World-PCF4 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > "evidence/pcf4/${variant}-build.log" 2>&1 || { tail -90 "evidence/pcf4/${variant}-build.log"; exit 1; }
+            python3 -u testlab/scripts/crypt1_chronological_release_bisect.py capture "$variant" "$(cat .retail_main)" "evidence/pcf4/$variant" > "evidence/pcf4/${variant}-capture.log" 2>&1 || { tail -100 "evidence/pcf4/${variant}-capture.log"; exit 1; }
+          done
+      - name: Quantify local shadow changes and guarantee unchanged baked lightmap
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageDraw,ImageEnhance
+          import numpy as np,json
+          root=Path('evidence/pcf4');checks=[]
+          for view in ('grate_near48_pitch28','grate_near72_pitch42'):
+              for mode in ('shadow_parity','ssgi_on','baked_lightmap'):
+                  fn=f'crypt1_{view}_{mode}.png'
+                  a=Image.open(root/'original'/fn).convert('RGB')
+                  b=Image.open(root/'pcf4'/fn).convert('RGB')
+                  aa=np.array(a,dtype=np.int16);bb=np.array(b,dtype=np.int16)
+                  delta=np.abs(aa-bb)
+                  checks.append(dict(view=view,mode=mode,mean_delta=float(delta.mean()),changed_gt4_pct=float(np.any(delta>4,axis=2).mean()*100)))
+                  if mode=='baked_lightmap': assert np.array_equal(aa,bb),'pure lightmaps should be unchanged'
+                  if mode=='shadow_parity':
+                      crop=(220,200,1100,700)
+                      sheet=Image.new('RGB',(880*3,500+38),(15,15,15));draw=ImageDraw.Draw(sheet)
+                      for i,(title,im) in enumerate((('Original',a),('World PCF4',b),('Amplified difference',Image.fromarray(np.uint8(np.clip(delta*8,0,255)))))):
+                          im=im.crop(crop)
+                          if i<2: im=ImageEnhance.Brightness(im).enhance(1.8)
+                          sheet.paste(im,(880*i,38));draw.text((880*i+10,10),view+' / '+title,fill='white')
+                      sheet.save(root/(view+'_PCF4_VISUAL_AB.png'))
+          (root/'PCF4_CRYPT1_RESULTS.json').write_text(json.dumps(checks,indent=2))
+          for x in checks:print('CRYPT1_PCF4_AB',x)
+          print('CRYPT1_WORLD_OCCLUSION_PCF4_REALGAME_PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Crypt1-World-Occlusion-PCF4-Real-Game-Candidate
+          path: evidence/pcf4/
+          retention-days: 90
