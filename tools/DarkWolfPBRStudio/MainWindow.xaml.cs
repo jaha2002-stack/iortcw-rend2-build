@@ -219,6 +219,7 @@ public partial class MainWindow : Window
                     NormalStrengthSlider.Value = 20;
                     HeightContrastSlider.Value = 1.00;
                     MacroReliefBoostSlider.Value = 0.00;
+                    PhysicalNormalCouplingSlider.Value = 0.00;
                     GenerationModeHintText.Text = "Exact First Hand-Generated reference: 74% fine + 26% coarse absolute luminance, original successful ORM response, no artificial groove/pit detector.";
                     break;
 
@@ -226,6 +227,7 @@ public partial class MainWindow : Window
                     NormalStrengthSlider.Value = 20;
                     HeightContrastSlider.Value = 1.00;
                     MacroReliefBoostSlider.Value = 0.75;
+                    PhysicalNormalCouplingSlider.Value = 0.00;
                     GenerationModeHintText.Text = "Enhanced Macro Relief: keeps the First Hand-Generated height/ORM unchanged and strengthens only broad coherent stone-boundary normals. It cannot create new interior pits from dark JPEG specks.";
                     break;
 
@@ -233,16 +235,18 @@ public partial class MainWindow : Window
                     NormalStrengthSlider.Value = 20;
                     HeightContrastSlider.Value = 1.00;
                     MacroReliefBoostSlider.Value = 0.75;
+                    PhysicalNormalCouplingSlider.Value = 1.25;
                     ParallaxCheck.IsChecked = true;
                     if (ParallaxDepthSlider.Value > 0.014 || ParallaxDepthSlider.Value < 0.006)
                         ParallaxDepthSlider.Value = 0.010;
-                    GenerationModeHintText.Text = "Physical Relief / POM: V2.05.2 Stone Height Reconstruction with PBR V3.2-safe depth. Recommended masonry start: parallaxDepth 0.008–0.010.";
+                    GenerationModeHintText.Text = "Physical Relief / POM V2.06.1: Physical Height is coupled into Normal RGB so mortar trenches and bevels are visible even near front-facing views. Recommended masonry coupling 1.25, parallaxDepth 0.008–0.012.";
                     break;
 
                 default:
                     NormalStrengthSlider.Value = 20;
                     HeightContrastSlider.Value = 1.00;
                     MacroReliefBoostSlider.Value = 0.42;
+                    PhysicalNormalCouplingSlider.Value = 0.00;
                     GenerationModeHintText.Text = "V2.02 compatibility mode.";
                     break;
             }
@@ -747,6 +751,7 @@ public partial class MainWindow : Window
             ? gm : PbrGenerationMode.MacroReliefEnhanced;
         settings.SurfaceFinish = SurfaceFinishCombo.SelectedItem is SurfaceFinish sf ? sf : SurfaceFinish.Dry;
         settings.MacroReliefBoost = MacroReliefBoostSlider.Value;
+        settings.PhysicalNormalCoupling = PhysicalNormalCouplingSlider.Value;
         settings.NormalStrength = NormalStrengthSlider.Value;
         settings.HeightContrast = HeightContrastSlider.Value;
         settings.RoughnessMin = Math.Min(RoughnessMinSlider.Value, RoughnessMaxSlider.Value);
@@ -782,7 +787,8 @@ public partial class MainWindow : Window
             RoughnessText is null || RoughnessMinSlider is null || RoughnessMaxSlider is null ||
             MetallicText is null || MetallicSlider is null ||
             ParallaxDepthText is null || ParallaxDepthSlider is null ||
-            MacroReliefBoostText is null || MacroReliefBoostSlider is null)
+            MacroReliefBoostText is null || MacroReliefBoostSlider is null ||
+            PhysicalNormalCouplingText is null || PhysicalNormalCouplingSlider is null)
             return;
 
         AiStrengthText.Text = AiStrengthSlider.Value.ToString("0.00");
@@ -792,6 +798,7 @@ public partial class MainWindow : Window
         MetallicText.Text = MetallicSlider.Value.ToString("0.00");
         ParallaxDepthText.Text = ParallaxDepthSlider.Value.ToString("0.000");
         MacroReliefBoostText.Text = MacroReliefBoostSlider.Value.ToString("0.00");
+        PhysicalNormalCouplingText.Text = PhysicalNormalCouplingSlider.Value.ToString("0.00");
     }
 
     private async Task BusyAsync(string message, Func<CancellationToken, Task> work)
@@ -813,7 +820,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Status("Error.");
-            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2.06", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, ex.ToString(), "DarkWolf PBR Studio V2.06.1", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -838,6 +845,7 @@ public partial class MainWindow : Window
         MaterialProfileCombo.IsEnabled = enabled;
         GenerationModeCombo.IsEnabled = enabled;
         MacroReliefBoostSlider.IsEnabled = enabled;
+        PhysicalNormalCouplingSlider.IsEnabled = enabled;
     }
 
     private void SaveSettings()
