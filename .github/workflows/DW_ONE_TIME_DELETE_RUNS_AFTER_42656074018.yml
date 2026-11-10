@@ -1,0 +1,67 @@
+name: DW One-Time Delete Runs After 42656074018
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/DW_ONE_TIME_DELETE_RUNS_AFTER_42656074018.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Delete workflow runs created after preserved Run 42656074018
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CUTOFF: "2026-11-09T16:34:03Z"
+          KEEP_RUN: "42656074018"
+        run: |
+          set -Eeuo pipefail
+          rm -f /tmp/runs_to_delete.txt
+          touch /tmp/runs_to_delete.txt
+
+          page=1
+          while true; do
+            json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100&page=${page}")"
+            count="$(jq '.workflow_runs | length' <<<"$json")"
+            jq -r --arg cutoff "$CUTOFF" --arg keep "$KEEP_RUN" --arg self "$GITHUB_RUN_ID" '
+              .workflow_runs[]
+              | select(.created_at > $cutoff)
+              | select((.id|tostring) != $keep)
+              | select((.id|tostring) != $self)
+              | .id
+            ' <<<"$json" >> /tmp/runs_to_delete.txt
+
+            oldest="$(jq -r '.workflow_runs[-1].created_at // empty' <<<"$json")"
+            if [ "$count" -lt 100 ] || { [ -n "$oldest" ] && [[ "$oldest" < "$CUTOFF" || "$oldest" == "$CUTOFF" ]]; }; then
+              break
+            fi
+            page=$((page+1))
+          done
+
+          sort -u /tmp/runs_to_delete.txt -o /tmp/runs_to_delete.txt
+          echo "Runs to delete:"
+          cat /tmp/runs_to_delete.txt
+
+          while IFS= read -r id; do
+            [ -z "$id" ] && continue
+            echo "Deleting run $id"
+            gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/runs/$id"
+          done < /tmp/runs_to_delete.txt
+
+          echo "PRESERVED_RUN=$KEEP_RUN"
+          echo "CLEANUP_SELF=$GITHUB_RUN_ID"
+
+      - name: Attempt to delete this one-time cleanup run too
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/runs/$GITHUB_RUN_ID"
+          exit 0
