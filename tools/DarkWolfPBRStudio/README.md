@@ -1,3 +1,15 @@
+# DarkWolf PBR Studio V2.06.1 — Physical Relief Coupled Normal
+
+V2.06.1 keeps the V2.06 AI Material Authoring pipeline and fixes the PhysicalReliefPOM normal/height mismatch:
+
+- `_nh.RGB` remains tangent-space Normal.
+- `_nh.A` remains the Physical Height field consumed by Rend2 POM.
+- Physical Height structural gradients are now coupled into Normal RGB, so recessed mortar, cracks, bevels and stone edges are visible even near front-facing views where UV parallax displacement is subtle.
+- The validated V2.06 micro/macro normal detail is retained and combined with the physical structural gradient.
+- New UI control: **Physical height to normal coupling**, range `0.00..2.00`, masonry default `1.25`.
+- Coupling changes Normal only; the authored Physical Height/POM field remains unchanged.
+- Export contract remains: ordinary `_n.tga` and `_orm.tga` are 24-bit; `_nh.tga` is 32-bit because alpha carries Height.
+
 # DarkWolf PBR Studio V2.04
 
 Windows authoring tool for ioRTCW Rend2 DarkWolf **r_pbr 3** materials.
