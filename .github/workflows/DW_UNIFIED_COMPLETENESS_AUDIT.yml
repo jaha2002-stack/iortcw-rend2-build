@@ -99,8 +99,31 @@ jobs:
           python3 integration/escape1-dlight-residency-v1/run_tests.py source evidence
           python3 integration/escape1-physical-dlight-owner-v12/run_tests.py source evidence
 
-          # Entire Texture lineage after Owner + PBR have already been applied.
-          python3 integration/texture-restoration-v1/run_tests.py source/SP/code/rend2 evidence
+          # Final accepted Texture lineage after Owner + PBR have already been applied.
+          # The original V1 test is intentionally NOT re-used here because B2 V1 explicitly
+          # supersedes /dw_tex_restore with /dw_tex_ai_build. Verify the preserved V1 substrate
+          # and the intentional command replacement, then run every accepted B2 regression.
+          python3 - <<'PY'
+          from pathlib import Path
+          r=Path("source/SP/code/rend2")
+          img=(r/"tr_image.c").read_text()
+          world=(r/"tr_world.c").read_text()
+          init=(r/"tr_init.c").read_text()
+          base=(r/"tr_texture_restore.inc").read_text()
+          iinc=(r/"tr_texture_restore_image.inc").read_text()
+          checks={
+            "v1_image_substrate": '#include "tr_texture_restore_image.inc"' in img,
+            "v1_world_substrate": '#include "tr_texture_restore.inc"' in world,
+            "v1_fcbi_4x": "FCBIByBlock(work, width * 2" in iinc and "FCBIByBlock(work, finalWidth" in iinc,
+            "v1_ab_substrate": "image[0]=s_dwtr.preview" in base and "image[0]=s_dwtr.original" in base,
+            "v1_offline": "No internet or telemetry used." in base,
+            "old_restore_superseded": 'Cmd_AddCommand( "dw_tex_restore"' not in init,
+            "b2_ai_replacement": 'Cmd_AddCommand( "dw_tex_ai_build"' in init,
+          }
+          bad=[k for k,v in checks.items() if not v]
+          assert not bad,bad
+          print("TEXTURE_V1_SUBSTRATE_PRESERVED_B2_SUPERSESSION_PASS",len(checks))
+          PY
           python3 integration/texture-ai-b2-v1/run_tests.py source/SP/code/rend2 evidence
           python3 integration/texture-ai-b2-v2/run_tests.py source/SP/code/rend2 evidence
           python3 integration/texture-ai-b2-v21/run_tests.py source/SP/code/rend2 evidence source
