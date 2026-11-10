@@ -22,6 +22,7 @@ public sealed class PbrSettings
     public double ParallaxDepth { get; set; } = 0.01;
     public double MacroReliefBoost { get; set; } = 0.75;
     public double PhysicalReliefStrength { get; set; } = 1.0;
+    public double PhysicalNormalCoupling { get; set; } = 1.25;
 
     public static PbrSettings FromProfile(MaterialProfile profile) => new()
     {
