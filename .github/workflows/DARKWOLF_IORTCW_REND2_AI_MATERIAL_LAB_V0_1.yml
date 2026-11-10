@@ -1,0 +1,370 @@
+name: DarkWolf ioRTCW Rend2 AI Material Lab v0.1
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/DARKWOLF_IORTCW_REND2_AI_MATERIAL_LAB_V0_1.yml
+      - integration/ai-material-lab-v0.1/**
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-ai-material-lab-v0-1
+  cancel-in-progress: true
+
+jobs:
+  build-windows-x64-sp:
+    name: AI Material Lab v0.1 over exact Final Native v4.3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      UPSTREAM_REPO: https://github.com/iortcw/iortcw.git
+      UPSTREAM_SHA: 438e7d413b5f7277187c35b032eb0ef9093ae778
+      HISTORICAL_BUILD_COMMIT: 100c42b8d95b543cdfd911c26d2cfb82026fd751
+      HISTORICAL_PRODUCT_VERSION: 1.51d-SP_GIT_438e7d41-2024-05-26
+      HISTORICAL_SOURCE_DATE_EPOCH: "1790060198"
+
+      FINAL_RUN_ID: "36314079722"
+      FINAL_RUN_HEAD_SHA: 7d1ca3c6dad745354990a217cba0d800051de3df
+      FINAL_ARTIFACT_ID: "10929902365"
+      FINAL_ARTIFACT_NAME: DarkWolf-ioRTCW-Rend2-Final-Native-v4.3-Deterministic-Profiles-Win64
+      FINAL_ARTIFACT_DIGEST: sha256:cb0367d50f98a569462f48dd507da2c790b767c6257435243d966abc0987dc4f
+      FINAL_INNER_SHA256: aaee64478a2d9550daa2e0b89515d6560473c1688bfd10e34839b2c858a63a00
+
+      ACCEPTED_RENDERER_SHA256: 92b1db33486ea2dd7d04ccda8f3030692578a13569440f100b677b63b7a6e6d2
+      ACCEPTED_EXE_SHA256: d5fad5fa49d6dca642b3509900785cb4078d233480a387189c8a94bf4c9c561d
+      ACCEPTED_UI_SHA256: 6db3ba898876b78b925ea34c63479c1772ad3fa2f2ae045dfa7365b68ec39f53
+      ACCEPTED_CGAME_SHA256: 6ba2282983156b44a02c53a817c4884c21078a64c34152743fe305af6a7fc11a
+      ACCEPTED_QAGAME_SHA256: 04f91be7a666245441415758e68d2a194d1585fb6ff5672750a20702f908f74c
+
+      HIST_BASE_PATCH_SHA256: 1b766221df31b483877cee2378e3696c7a992abc9cd61628e945b16c145bebe2
+      TASK8_TRANSFER_SHA256: fdad48f3a5271b9981f8a72de6f17e2a325590444e4f47097d41712078c165a1
+      UNIFIED_DELTA_SHA256: 23f859e06c984b5d66af3cc1fb5d4163fec1223f98b7d8de86b2e0fe9ce38e8e
+
+      PATCHER: integration/ai-material-lab-v0.1/apply_darkwolf_ai_material_lab_v0_1.py
+      DELTA_NAME: darkwolf-ai-material-lab-v0-1-over-unified-production-v1.patch
+      RELEASE_BASENAME: DarkWolf-ioRTCW-Rend2-AI-Material-Lab-v0.1-Win64
+
+    steps:
+      - name: Checkout Material Lab branch with history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install canonical MinGW and validation tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             binutils-mingw-w64-x86-64 build-essential ca-certificates             g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64 gh git make             mingw-w64 python3 unzip zip jq file
+
+      - name: Verify exact Final Native v4.3 provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          run_json="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${FINAL_RUN_ID}")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$FINAL_RUN_HEAD_SHA"
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success
+          row="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${FINAL_RUN_ID}/artifacts?per_page=100"             --jq ".artifacts[] | select(.id == ${FINAL_ARTIFACT_ID}) | [.name,.expired,.digest] | @tsv")"
+          test -n "$row"
+          IFS=$'\t' read -r name expired digest <<<"$row"
+          test "$name" = "$FINAL_ARTIFACT_NAME"
+          test "$expired" = false
+          test "$digest" = "$FINAL_ARTIFACT_DIGEST"
+          echo "Exact Final Native v4.3 provenance PASS"
+
+      - name: Download and verify exact Final Native v4.3 package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf final-artifact final-release
+          mkdir -p final-artifact final-release
+          gh run download "$FINAL_RUN_ID" --repo "$GITHUB_REPOSITORY"             --name "$FINAL_ARTIFACT_NAME" --dir final-artifact
+          z="final-artifact/${FINAL_ARTIFACT_NAME}.zip"
+          sidecar="${z}.sha256"
+          test -s "$z" && test -s "$sidecar"
+          test "$(sha256sum "$z" | awk '{print $1}')" = "$FINAL_INNER_SHA256"
+          test "$(awk '{print $1}' "$sidecar")" = "$FINAL_INNER_SHA256"
+          unzip -tq "$z"
+          unzip -q "$z" -d final-release
+          mapfile -t roots < <(find final-release -mindepth 1 -maxdepth 1 -type d -print | LC_ALL=C sort)
+          test "${#roots[@]}" -eq 1
+          final_root="${roots[0]}"
+          printf '%s\n' "$final_root" > .final_root
+          (cd "$final_root" && sha256sum -c docs/SHA256SUMS.txt)
+          test "$(sha256sum "$final_root/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$ACCEPTED_RENDERER_SHA256"
+          test "$(sha256sum "$final_root/ioWolfSP.x64.exe" | awk '{print $1}')" = "$ACCEPTED_EXE_SHA256"
+          test "$(sha256sum "$final_root/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$ACCEPTED_UI_SHA256"
+          test "$(sha256sum "$final_root/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$ACCEPTED_CGAME_SHA256"
+          test "$(sha256sum "$final_root/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$ACCEPTED_QAGAME_SHA256"
+          echo "Exact final package PASS"
+
+      - name: Restore authenticated historical Unified Production build inputs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch -q origin "$HISTORICAL_BUILD_COMMIT"
+          git cat-file -e "${HISTORICAL_BUILD_COMMIT}^{commit}"
+          rm -rf historical-input
+          mkdir -p historical-input/integration/base historical-input/integration/transfer historical-input/integration/release
+          git show "${HISTORICAL_BUILD_COMMIT}:integration/base/darkwolf-rend2-cumulative-escape1-table-shadow-rc-v0-2-persistent-physical-set-residency-sp.patch"             > historical-input/integration/base/base.patch
+          test "$(sha256sum historical-input/integration/base/base.patch | awk '{print $1}')" = "$HIST_BASE_PATCH_SHA256"
+
+          mapfile -t chunks < <(git ls-tree -r --name-only "$HISTORICAL_BUILD_COMMIT" integration/transfer             | grep '^integration/transfer/task8-critical-transfer\.b64\.' | LC_ALL=C sort)
+          test "${#chunks[@]}" -gt 0
+          : > /tmp/TASK8_CRITICAL_TRANSFER.b64
+          for rel in "${chunks[@]}"; do
+            git show "${HISTORICAL_BUILD_COMMIT}:${rel}" >> /tmp/TASK8_CRITICAL_TRANSFER.b64
+          done
+          base64 -d /tmp/TASK8_CRITICAL_TRANSFER.b64 > /tmp/TASK8_CRITICAL_TRANSFER.tar.gz
+          test "$(sha256sum /tmp/TASK8_CRITICAL_TRANSFER.tar.gz | awk '{print $1}')" = "$TASK8_TRANSFER_SHA256"
+          rm -rf /tmp/task8-transfer
+          mkdir -p /tmp/task8-transfer
+          tar -xzf /tmp/TASK8_CRITICAL_TRANSFER.tar.gz -C /tmp/task8-transfer
+          cp /tmp/task8-transfer/integration/release/darkwolf-unified-production-v1-integration-delta.patch             historical-input/integration/release/unified.delta.patch
+          test "$(sha256sum historical-input/integration/release/unified.delta.patch | awk '{print $1}')" = "$UNIFIED_DELTA_SHA256"
+          echo "Historical source inputs PASS"
+
+      - name: Reconstruct exact accepted renderer source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf source
+          git clone -q "$UPSTREAM_REPO" source
+          git -C source checkout -q --detach "$UPSTREAM_SHA"
+          git -C source apply --check --binary --whitespace=nowarn ../historical-input/integration/base/base.patch
+          git -C source apply --binary --whitespace=nowarn ../historical-input/integration/base/base.patch
+          git -C source apply --check --binary --whitespace=nowarn ../historical-input/integration/release/unified.delta.patch
+          git -C source apply --binary --whitespace=nowarn ../historical-input/integration/release/unified.delta.patch
+          git -C source add -A
+          git -C source -c user.name='DarkWolf CI' -c user.email='darkwolf-ci@example.invalid'             commit -q -m 'Exact reconstructed Unified Production V1 source'
+          git -C source rev-parse HEAD > .materiallab_base_commit
+          echo "Source reconstruction PASS"
+
+      - name: Prove reconstructed renderer runtime image matches accepted base
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          final_root="$(cat .final_root)"
+          manifest="$final_root/docs/FINAL_SOURCE_SHA256.txt"
+          test -s "$manifest"
+          while read -r expected rel; do
+            rel="${rel#* }"
+            rel="${rel# }"
+            test -f "source/$rel" || { echo "ERROR: source manifest path missing: $rel" >&2; exit 1; }
+            actual="$(sha256sum "source/$rel" | awk '{print $1}')"
+            test "$actual" = "$expected" || {
+              echo "ERROR: reconstructed source drift: $rel expected=$expected actual=$actual" >&2
+              exit 1
+            }
+          done < "$manifest"
+          echo "Historical source postimage manifest PASS"
+
+          (
+            cd source/SP
+            SOURCE_DATE_EPOCH="$HISTORICAL_SOURCE_DATE_EPOCH" ./cross-make-mingw64.sh -j1 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 VERSION="$HISTORICAL_PRODUCT_VERSION"
+          )
+
+          rebuilt="source/SP/build/release-mingw32-x86_64/renderer_sp_rend2_x64.dll"
+          accepted="$final_root/renderer_sp_rend2_x64.dll"
+          test -s "$rebuilt" && test -s "$accepted"
+          file "$rebuilt" | grep -Eiq 'PE32\\+|x86-64'
+          raw_rebuilt="$(sha256sum "$rebuilt" | awk '{print $1}')"
+          raw_accepted="$(sha256sum "$accepted" | awk '{print $1}')"
+          test "$raw_accepted" = "$ACCEPTED_RENDERER_SHA256"
+
+          python3 - "$accepted" "$rebuilt" <<'PY_PE_GATE'
+          from pathlib import Path
+          import hashlib, struct, sys
+
+          def pe_sections(path):
+              data = Path(path).read_bytes()
+              if data[:2] != b'MZ':
+                  raise SystemExit(f'ERROR: not MZ: {path}')
+              pe = struct.unpack_from('<I', data, 0x3c)[0]
+              if data[pe:pe+4] != b'PE\0\0':
+                  raise SystemExit(f'ERROR: not PE: {path}')
+              machine, nsec, timestamp, ptrsym, numsym, optsize, chars = struct.unpack_from('<HHIIIHH', data, pe+4)
+              if machine != 0x8664:
+                  raise SystemExit(f'ERROR: not PE32+ x86-64: {path} machine=0x{machine:x}')
+              opt = pe + 24
+              magic = struct.unpack_from('<H', data, opt)[0]
+              if magic != 0x20b:
+                  raise SystemExit(f'ERROR: optional header is not PE32+: {path}')
+              sec0 = opt + optsize
+              sections = []
+              for i in range(nsec):
+                  off = sec0 + i * 40
+                  name = data[off:off+8].split(b'\0',1)[0].decode('ascii','replace')
+                  vsize, vaddr, rawsize, rawptr = struct.unpack_from('<IIII', data, off+8)
+                  characteristics = struct.unpack_from('<I', data, off+36)[0]
+                  blob = data[rawptr:rawptr+rawsize]
+                  sections.append((name, vsize, vaddr, rawsize, characteristics,
+                                   hashlib.sha256(blob).hexdigest(), blob))
+              return data, pe, timestamp, sections
+
+          a, ape, ats, asec = pe_sections(sys.argv[1])
+          b, bpe, bts, bsec = pe_sections(sys.argv[2])
+          if len(asec) != len(bsec):
+              raise SystemExit(f'ERROR: PE section count drift {len(asec)} != {len(bsec)}')
+
+          print(f'Accepted PE timestamp={ats}; rebuilt PE timestamp={bts}')
+          for ax, bx in zip(asec, bsec):
+              if ax[:6] != bx[:6]:
+                  print('ACCEPTED', ax[:6])
+                  print('REBUILT ', bx[:6])
+                  raise SystemExit(f'ERROR: PE runtime section drift in {ax[0]}')
+              print(f'PE_SECTION_PASS {ax[0]} size={ax[3]} sha256={ax[5]}')
+
+          if len(a) != len(b):
+              raise SystemExit(f'ERROR: PE file size drift {len(a)} != {len(b)}')
+          diff = [i for i,(x,y) in enumerate(zip(a,b)) if x != y]
+          print(f'PE_HEADER_METADATA_DIFF_BYTES={len(diff)}')
+          if diff:
+              print(f'PE_DIFF_RANGE=0x{diff[0]:x}..0x{diff[-1]:x}')
+          PY_PE_GATE
+
+          printf '%s\n' "$raw_rebuilt" > .reconstructed_renderer_raw_sha
+          echo "Renderer provenance gate PASS: accepted_raw=$raw_accepted rebuilt_raw=$raw_rebuilt runtime_sections=identical"
+
+
+      - name: Apply AI Material Lab v0.1
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 "$PATCHER" source
+          git -C source diff --check
+          mapfile -t changed < <(git -C source diff --name-only HEAD | LC_ALL=C sort)
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 2
+          test "${changed[0]}" = "SP/code/rend2/tr_init.c"
+          test "${changed[1]}" = "SP/code/rend2/tr_main.c"
+          grep -Fq 'DARKWOLF_AI_MATERIAL_LAB_V0_1' source/SP/code/rend2/tr_main.c
+          grep -Fq 'materiallab_pick' source/SP/code/rend2/tr_main.c
+          grep -Fq 'R_MaterialLabRegister' source/SP/code/rend2/tr_init.c
+
+      - name: Generate and replay Material Lab delta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p release-docs
+          base_commit="$(cat .materiallab_base_commit)"
+          git -C source diff --binary "$base_commit" -- SP/code/rend2/tr_init.c SP/code/rend2/tr_main.c             > "release-docs/$DELTA_NAME"
+          test -s "release-docs/$DELTA_NAME"
+
+          rm -rf replay
+          git -C source worktree add -q --detach ../replay "$base_commit"
+          git -C replay apply --check --binary --whitespace=nowarn "../release-docs/$DELTA_NAME"
+          git -C replay apply --binary --whitespace=nowarn "../release-docs/$DELTA_NAME"
+          cmp source/SP/code/rend2/tr_init.c replay/SP/code/rend2/tr_init.c
+          cmp source/SP/code/rend2/tr_main.c replay/SP/code/rend2/tr_main.c
+          echo "Material Lab delta replay PASS"
+
+      - name: Build AI Material Lab renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf source/SP/build
+          (
+            cd source/SP
+            SOURCE_DATE_EPOCH="$HISTORICAL_SOURCE_DATE_EPOCH" ./cross-make-mingw64.sh -j1 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 VERSION="$HISTORICAL_PRODUCT_VERSION"
+          )
+          build="source/SP/build/release-mingw32-x86_64"
+          test -s "$build/renderer_sp_rend2_x64.dll"
+          new_sha="$(sha256sum "$build/renderer_sp_rend2_x64.dll" | awk '{print $1}')"
+          test "$new_sha" != "$ACCEPTED_RENDERER_SHA256"
+          printf '%s\n' "$new_sha" > .materiallab_renderer_sha
+          echo "Material Lab renderer build PASS: $new_sha"
+
+      - name: Package over exact Final Native v4.3 with frozen non-renderer payload
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          final_root="$(cat .final_root)"
+          build="source/SP/build/release-mingw32-x86_64"
+          rm -rf dist
+          mkdir -p "dist/$RELEASE_BASENAME" dist/upload
+          stage="dist/$RELEASE_BASENAME"
+          cp -a "$final_root/." "$stage/"
+
+          cp "$build/renderer_sp_rend2_x64.dll" "$stage/renderer_sp_rend2_x64.dll"
+          cp "$PATCHER" "$stage/docs/apply_darkwolf_ai_material_lab_v0_1.py"
+          cp integration/ai-material-lab-v0.1/DARKWOLF_AI_MATERIAL_LAB_IMPLEMENTATION.md             "$stage/docs/DARKWOLF_AI_MATERIAL_LAB_IMPLEMENTATION.md"
+          cp "release-docs/$DELTA_NAME" "$stage/docs/$DELTA_NAME"
+
+          cat > "$stage/docs/README_AI_MATERIAL_LAB_V0_1_RU.txt" <<'EOF_README'
+          DarkWolf AI Material Lab v0.1
+
+          БАЗОВЫЙ ТЕСТ
+          1. Запустить карту.
+          2. В консоли: /r_materialLab 1
+          3. Навести прицел на стену/пол/предмет.
+          4. /materiallab_pick
+          5. /materiallab_status
+          6. Менять, например:
+             /r_materialLabRoughness 0.30
+             /r_materialLabSpecular 0.20
+             /r_materialLabNormalScale 1.50
+             /r_materialLabParallaxScale 1.20
+
+          СОХРАНЕНИЕ
+          /materiallab_save
+          Профиль: materiallab/<map>.materials
+          По умолчанию r_materialLabAutoload=1.
+
+          ОТКАТ
+          /materiallab_reset
+          /materiallab_reset_all confirm
+          /r_materialLab 0
+
+          ВАЖНО
+          v0.1 является renderer-native фундаментом: точный выбор материала,
+          live override и сохранение. AI texture generation и финальная UI-панель
+          добавляются следующими стадиями поверх этого проверенного backend.
+          EOF_README
+
+          # Frozen payload from exact run 36314079722 must remain byte-identical.
+          test "$(sha256sum "$stage/ioWolfSP.x64.exe" | awk '{print $1}')" = "$ACCEPTED_EXE_SHA256"
+          test "$(sha256sum "$stage/Main/ui_sp_x64.dll" | awk '{print $1}')" = "$ACCEPTED_UI_SHA256"
+          test "$(sha256sum "$stage/Main/cgame_sp_x64.dll" | awk '{print $1}')" = "$ACCEPTED_CGAME_SHA256"
+          test "$(sha256sum "$stage/Main/qagame_sp_x64.dll" | awk '{print $1}')" = "$ACCEPTED_QAGAME_SHA256"
+          cmp "$stage/renderer_sp_opengl1_x64.dll" "$final_root/renderer_sp_opengl1_x64.dll"
+          test "$(sha256sum "$stage/renderer_sp_rend2_x64.dll" | awk '{print $1}')" = "$(cat .materiallab_renderer_sha)"
+
+          rm -f "$stage/docs/SHA256SUMS.txt"
+          (cd "$stage" && find . -type f ! -path './docs/SHA256SUMS.txt' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > docs/SHA256SUMS.txt)
+          (cd dist && zip -q -r -9 "upload/$RELEASE_BASENAME.zip" "$RELEASE_BASENAME")
+          sha256sum "dist/upload/$RELEASE_BASENAME.zip" > "dist/upload/$RELEASE_BASENAME.zip.sha256"
+
+          echo "base_run_id=$FINAL_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+          echo "base_artifact_id=$FINAL_ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
+          echo "accepted_renderer_sha256=$ACCEPTED_RENDERER_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo "materiallab_renderer_sha256=$(cat .materiallab_renderer_sha)" >> "$GITHUB_STEP_SUMMARY"
+          echo "delta_sha256=$(sha256sum "release-docs/$DELTA_NAME" | awk '{print $1}')" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload AI Material Lab v0.1 artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkWolf-ioRTCW-Rend2-AI-Material-Lab-v0.1-Win64
+          path: dist/upload/
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Record artifact identifiers
+        shell: bash
+        run: |
+          echo "workflow_run_id=${GITHUB_RUN_ID}" >> "$GITHUB_STEP_SUMMARY"
+          echo "artifact_id=${{ steps.upload.outputs.artifact-id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "artifact_digest=${{ steps.upload.outputs.artifact-digest }}" >> "$GITHUB_STEP_SUMMARY"
