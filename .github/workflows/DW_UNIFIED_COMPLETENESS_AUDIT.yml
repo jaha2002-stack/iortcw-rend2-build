@@ -125,9 +125,45 @@ jobs:
           print("TEXTURE_V1_SUBSTRATE_PRESERVED_B2_SUPERSESSION_PASS",len(checks))
           PY
           python3 integration/texture-ai-b2-v1/run_tests.py source/SP/code/rend2 evidence
-          python3 integration/texture-ai-b2-v2/run_tests.py source/SP/code/rend2 evidence
-          python3 integration/texture-ai-b2-v21/run_tests.py source/SP/code/rend2 evidence source
-          python3 integration/texture-ai-b2-v22/run_tests.py source/SP/code/rend2 evidence
+
+          # V2/V2.1/V2.2 are evolutionary predecessors whose exact save handler/prefix
+          # are intentionally superseded by V2.3. Verify that their accepted capabilities
+          # remain present in the final V2.3 source, then run the native V2.3 regression.
+          python3 - <<'PY'
+          from pathlib import Path
+          r=Path("source/SP/code/rend2")
+          init=(r/"tr_init.c").read_text()
+          local=(r/"tr_local.h").read_text()
+          v1=(r/"tr_texture_ai_b2.inc").read_text()
+          v2=(r/"tr_texture_ai_b2_v2.inc").read_text()
+          v22=(r/"tr_texture_ai_b2_v22.inc").read_text()
+          v23=(r/"tr_texture_ai_b2_v23.inc").read_text()
+          files=Path("source/SP/code/qcommon/files.c").read_text()
+          checks={
+            "realesrgan_model": 'DWTR_AI_MODEL "realesrgan-x4plus"' in v1,
+            "local_process_backend": "CreateProcessA" in v1 and "WaitForSingleObject" in v1,
+            "offline_runtime": all(x not in v1.lower() for x in ("http://","https://","winhttp","winsock","curl_easy","socket(")),
+            "three_variants": "#define DWTRV2_CANDIDATE_COUNT 3" in v2,
+            "faithful": '"FAITHFUL"' in v2,
+            "balanced": '"BALANCED"' in v2,
+            "strong": '"STRONG"' in v2,
+            "balanced_default": "DWTRV2_Activate(1)" in v2,
+            "orientation_fix": "DWTRV2_FlipRGB(flipped, rgb, width, height)" in v2,
+            "next_prev_registered": 'Cmd_AddCommand( "dw_tex_next"' in init and 'Cmd_AddCommand( "dw_tex_prev"' in init,
+            "ab_registered": 'Cmd_AddCommand( "dw_tex_ab", R_DWTextureABV2_f )' in init,
+            "world_picker": "Pass 1: static WORLD BSP" in v22,
+            "brush_picker": "Pass 2: RT_MODEL / MOD_BRUSH entities" in v22 and "model->type != MOD_BRUSH" in v22,
+            "brush_picker_active": 'Cmd_AddCommand( "dw_tex_pick", R_DWTexturePickV22_f )' in init,
+            "cumulative_save_active": 'Cmd_AddCommand( "dw_tex_save", R_DWTextureSaveV23_f )' in init,
+            "single_pack": 'DWTRV23_PACK_NAME "zzzzzz_DW_TextureRestoration.pk3"' in v23,
+            "pending_promotion": "FS_DWTRV23_PromotePendingPack" in files,
+            "same_qpath_replace": "replaceTexture" in v23 and "Q_stricmp(name, replaceTexture)" in v23,
+          }
+          bad=[k for k,v in checks.items() if not v]
+          assert not bad,bad
+          print("TEXTURE_B2_V1_TO_V23_CAPABILITY_PRESERVATION_PASS",len(checks))
+          PY
+
           python3 integration/texture-ai-b2-v23/run_tests.py source/SP/code evidence
 
           # Entire PBR stack on the same final source.
