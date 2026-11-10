@@ -141,6 +141,7 @@ physicalSettings.GenerationMode = PbrGenerationMode.PhysicalReliefPOM;
 physicalSettings.NormalStrength = 20;
 physicalSettings.HeightContrast = 1.0;
 physicalSettings.MacroReliefBoost = 0.75;
+physicalSettings.PhysicalNormalCoupling = 1.25;
 physicalSettings.ParallaxEnabled = true;
 physicalSettings.ParallaxDepth = 0.010;
 var physicalPbr = PbrGenerator.Generate(source, physicalSettings);
@@ -168,10 +169,28 @@ var macroNormalBytes = ImageService.ToBgra(macroPbr.Normal, out _, out _);
 var physicalNormalBytes = ImageService.ToBgra(physicalPbr.Normal, out _, out _);
 var macroOrmBytes = ImageService.ToBgra(macroPbr.Orm, out _, out _);
 var physicalOrmBytes = ImageService.ToBgra(physicalPbr.Orm, out _, out _);
-Require(macroNormalBytes.SequenceEqual(physicalNormalBytes),
-    "PhysicalReliefPOM preserves validated V2.03 MacroRelief Normal exactly");
+Require(!macroNormalBytes.SequenceEqual(physicalNormalBytes),
+    "V2.06.1 PhysicalReliefPOM couples the physical Height field into Normal RGB");
 Require(macroOrmBytes.SequenceEqual(physicalOrmBytes),
     "PhysicalReliefPOM preserves validated V2.03 ORM exactly");
+
+// Coupling must affect only tangent-space Normal. Height/POM geometry itself remains
+// byte-identical so the control cannot silently reshape the displacement field.
+var uncoupledSettings = PbrSettings.FromProfile(MaterialProfile.For(analysis.Kind));
+uncoupledSettings.GenerationMode = PbrGenerationMode.PhysicalReliefPOM;
+uncoupledSettings.NormalStrength = 20;
+uncoupledSettings.HeightContrast = 1.0;
+uncoupledSettings.MacroReliefBoost = 0.75;
+uncoupledSettings.PhysicalNormalCoupling = 0.0;
+uncoupledSettings.ParallaxEnabled = true;
+uncoupledSettings.ParallaxDepth = 0.010;
+var uncoupledPbr = PbrGenerator.Generate(source, uncoupledSettings);
+Require(ImageService.ToBgra(uncoupledPbr.Height, out _, out _)
+        .SequenceEqual(ImageService.ToBgra(physicalPbr.Height, out _, out _)),
+    "V2.06.1 normal coupling does not change Physical Height/POM geometry");
+Require(!ImageService.ToBgra(uncoupledPbr.Normal, out _, out _)
+        .SequenceEqual(ImageService.ToBgra(physicalPbr.Normal, out _, out _)),
+    "V2.06.1 normal coupling has an observable effect on Normal RGB");
 
 // V2.06 invariant: Dry stays byte-identical to V2.05.2 while authored finishes
 // change only the physical response maps, never metallic classification or Height/POM.
@@ -257,8 +276,8 @@ wavyMacroSettings.MacroReliefBoost = 0.75;
 var wavyMacro = PbrGenerator.Generate(wavySource, wavyMacroSettings);
 var wavyMacroNormal = ImageService.ToBgra(wavyMacro.Normal, out _, out _);
 var wavyPhysicalNormal = ImageService.ToBgra(wavyPhysical.Normal, out _, out _);
-Require(wavyMacroNormal.SequenceEqual(wavyPhysicalNormal),
-    "V2.05.2 keeps the accepted MacroRelief Normal unchanged while rebuilding Height");
+Require(!wavyMacroNormal.SequenceEqual(wavyPhysicalNormal),
+    "V2.06.1 couples rebuilt stone Height into Normal while preserving macro/micro detail");
 
 var physicalHeightBytes = ImageService.ToBgra(physicalPbr.Height, out _, out _);
 var physicalHeightSamples = new List<byte>();
@@ -272,14 +291,23 @@ Require(phP95 - phP05 >= 28,
 Require(physicalHeightSamples[0] >= 24 && physicalHeightSamples[^1] <= 230,
     "PhysicalReliefPOM keeps broad safety headroom away from hard 0/255 plateaus");
 
-var nh = ImageService.ToBgra(pbr.NormalHeight, out var nw, out var nhh);
+var nh = ImageService.ToBgra(physicalPbr.NormalHeight, out var nw, out var nhh);
+var coupledNormal = ImageService.ToBgra(physicalPbr.Normal, out _, out _);
+var coupledHeight = ImageService.ToBgra(physicalPbr.Height, out _, out _);
 byte minAlpha = 255, maxAlpha = 0;
-for (int i = 3; i < nh.Length; i += 4)
+int rgbMismatch = 0, alphaMismatch = 0;
+for (int i = 0; i < nh.Length; i += 4)
 {
-    minAlpha = Math.Min(minAlpha, nh[i]);
-    maxAlpha = Math.Max(maxAlpha, nh[i]);
+    minAlpha = Math.Min(minAlpha, nh[i + 3]);
+    maxAlpha = Math.Max(maxAlpha, nh[i + 3]);
+    if (nh[i] != coupledNormal[i] || nh[i + 1] != coupledNormal[i + 1] || nh[i + 2] != coupledNormal[i + 2])
+        rgbMismatch++;
+    if (nh[i + 3] != coupledHeight[i])
+        alphaMismatch++;
 }
-Require(maxAlpha - minAlpha > 40, "_nh alpha contains meaningful height range");
+Require(maxAlpha - minAlpha >= 28, "V2.06.1 _nh alpha contains meaningful Physical Height range");
+Require(rgbMismatch == 0, "V2.06.1 _nh RGB is exactly the coupled tangent-space Normal");
+Require(alphaMismatch == 0, "V2.06.1 _nh Alpha is exactly the Physical Height used by POM");
 
 var orm = ImageService.ToBgra(pbr.Orm, out _, out _);
 double meanMetal = 0, meanRough = 0, meanAo = 0;
@@ -505,4 +533,4 @@ finally
     try { Directory.Delete(temp, true); } catch { }
 }
 
-Console.WriteLine("DARKWOLF_PBR_STUDIO_V206_SELFTEST_PASS");
+Console.WriteLine("DARKWOLF_PBR_STUDIO_V2061_SELFTEST_PASS");
