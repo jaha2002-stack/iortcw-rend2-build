@@ -35,3 +35,6 @@ UNCHANGED
 - .pending startup promotion
 - PBR/Owner/lighting/shadow renderer functionality
 - sky and water remain unsupported
+
+BUILD
+  CI target: DW Texture B2 V2.4.1 Door Picker Fix Win64 TEST
