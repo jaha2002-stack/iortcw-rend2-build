@@ -72,6 +72,16 @@ new2='''\tif ( ps ) {
 s=one(s,old2,new2,"flash model suppression")
 
 p.write_text(s,encoding="utf-8")
+
+# Reuse the stock g_debugBullets cheat cvar as a CI-only proof bit (8).
+# It is off by default and adds no new production/debug cvar.
+gp=root/"SP/code/game/g_weapon.c"
+gbefore=gp.read_text(encoding="utf-8")
+ga="void FireWeapon( gentity_t *ent ) {\n"
+gb=ga+"\tif ( (g_debugBullets.integer & 8) && (ent->s.weapon == WP_DW_MP44 || ent->s.weapon == WP_DW_PPSH) ) {\n\t\tG_Printf( \"DW_WEAPON_PORT_V12_FIRE weapon=%d\\n\", ent->s.weapon );\n\t}\n"
+gafter=one(gbefore,ga,gb,"CI fire proof")
+gp.write_text(gafter,encoding="utf-8")
+
 proof={
   "feature":"DarkWolf Weapon Port V1.2 Fire-Safe",
   "base_run":42980800200,
@@ -81,7 +91,8 @@ proof={
   "kept":["weapon attack animation","server Bullet_Fire","damage/spread","client recoil","stock-safe fire sound","standard bullet impact path"],
   "temporarily_suppressed":["new-weapon muzzle dynamic light","new-weapon brass ejection","new-weapon flash refEntity","RealRTCW custom fire/reload audio"],
   "before_sha256":hashlib.sha256(before.encode()).hexdigest(),
-  "after_sha256":hashlib.sha256(s.encode()).hexdigest()
+  "after_sha256":hashlib.sha256(s.encode()).hexdigest(),
+  "fire_proof_gate":"existing g_debugBullets bit 8; default off"
 }
 (ev/"DW_WEAPON_PORT_V12_FIRE_SAFE_PROOF.json").write_text(json.dumps(proof,indent=2)+"\n",encoding="utf-8")
 print(json.dumps(proof,indent=2))
