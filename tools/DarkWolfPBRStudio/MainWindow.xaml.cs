@@ -50,10 +50,11 @@ public partial class MainWindow : Window
         SurfaceFinishCombo.SelectedItem = SurfaceFinish.Dry;
         ApplyGenerationModePreset(PbrGenerationMode.MacroReliefEnhanced);
 
-        SdCliPathBox.Text = !string.IsNullOrWhiteSpace(_settings.StableDiffusionCliPath)
-            ? _settings.StableDiffusionCliPath
-            : (_sd.IsBundledAvailable ? _sd.BundledCliPath : "");
-        SdModelPathBox.Text = _settings.StableDiffusionModelPath;
+        // V2.06.1 AI-path hotfix: packaged sd-cli.exe is portable and wins over
+        // stale absolute settings from an older Studio directory. Models are relocated
+        // automatically by file name into Tools\\StableDiffusionCpp\\models.
+        SdCliPathBox.Text = _sd.ResolveCliPath(_settings.StableDiffusionCliPath);
+        SdModelPathBox.Text = _sd.ResolveModelPath(_settings.StableDiffusionModelPath);
         SdExtraArgsBox.Text = _settings.StableDiffusionExtraArgs;
         AiStrengthSlider.Value = _settings.AiStrength;
 
@@ -442,29 +443,53 @@ public partial class MainWindow : Window
 
     private bool EnsureStableDiffusionPaths()
     {
+        string cli = _sd.ResolveCliPath(SdCliPathBox.Text.Trim());
+        if (!string.IsNullOrEmpty(cli))
+            SdCliPathBox.Text = cli;
+
         if (!File.Exists(SdCliPathBox.Text.Trim()))
         {
             BrowseSdCli_Click(this, new RoutedEventArgs());
             if (!File.Exists(SdCliPathBox.Text.Trim())) return false;
         }
+
+        string model = _sd.ResolveModelPath(SdModelPathBox.Text.Trim());
+        if (!string.IsNullOrEmpty(model))
+            SdModelPathBox.Text = model;
+
         if (!File.Exists(SdModelPathBox.Text.Trim()))
         {
             BrowseSdModel_Click(this, new RoutedEventArgs());
             if (!File.Exists(SdModelPathBox.Text.Trim())) return false;
         }
+
         SaveSettings();
         return true;
     }
 
     private void BrowseSdCli_Click(object sender, RoutedEventArgs e)
     {
-        var d = new OpenFileDialog { Filter = "stable-diffusion.cpp CLI (sd-cli.exe)|sd-cli.exe|Executables (*.exe)|*.exe" };
+        var d = new OpenFileDialog
+        {
+            Title = "Select stable-diffusion.cpp sd-cli.exe",
+            Filter = "stable-diffusion.cpp CLI (sd-cli.exe)|sd-cli.exe|Executables (*.exe)|*.exe|All files (*.*)|*.*",
+            InitialDirectory = Directory.Exists(_sd.BundledRoot) ? _sd.BundledRoot : null
+        };
         if (d.ShowDialog(this) == true) SdCliPathBox.Text = d.FileName;
     }
 
     private void BrowseSdModel_Click(object sender, RoutedEventArgs e)
     {
-        var d = new OpenFileDialog { Filter = "AI models (*.safetensors;*.gguf;*.ckpt)|*.safetensors;*.gguf;*.ckpt|All files (*.*)|*.*" };
+        string current = SdModelPathBox.Text.Trim();
+        string? initial = File.Exists(current) ? Path.GetDirectoryName(current)
+            : (Directory.Exists(_sd.BundledModelsPath) ? _sd.BundledModelsPath : _sd.BundledRoot);
+
+        var d = new OpenFileDialog
+        {
+            Title = "Select Stable Diffusion model (.safetensors / .gguf / .ckpt)",
+            Filter = "AI models (*.safetensors;*.gguf;*.ckpt)|*.safetensors;*.gguf;*.ckpt|Safetensors (*.safetensors)|*.safetensors|GGUF (*.gguf)|*.gguf|Checkpoint (*.ckpt)|*.ckpt|All files (*.*)|*.*",
+            InitialDirectory = initial
+        };
         if (d.ShowDialog(this) == true) SdModelPathBox.Text = d.FileName;
     }
 
