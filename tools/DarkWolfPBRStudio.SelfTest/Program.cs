@@ -551,4 +551,15 @@ finally
     try { Directory.Delete(aiPathTemp, true); } catch { }
 }
 
+// V2.06.1 AI workflow regression: SD1.x must never be fed an accidental
+// 4K Real-ESRGAN restoration. Preserve aspect ratio and cap only oversized input.
+var sdLarge = MakeTileableStone(2048, 1024);
+var sdSafe = ImageService.ResizeToFit(sdLarge, 1024);
+Require(sdSafe.PixelWidth == 1024 && sdSafe.PixelHeight == 512,
+    "AI workflow caps oversized Stable Diffusion input to 1024 while preserving aspect ratio");
+var sdSmall = MakeTileableStone(512, 256);
+var sdSmallSafe = ImageService.ResizeToFit(sdSmall, 1024);
+Require(sdSmallSafe.PixelWidth == 512 && sdSmallSafe.PixelHeight == 256,
+    "AI workflow leaves model-safe source dimensions unchanged");
+
 Console.WriteLine("DARKWOLF_PBR_STUDIO_V2061_SELFTEST_PASS");
