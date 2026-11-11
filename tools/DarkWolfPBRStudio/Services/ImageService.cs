@@ -74,6 +74,21 @@ public static class ImageService
         return pixels;
     }
 
+    public static BitmapSource ResizeToFit(BitmapSource source, int maxDimension)
+    {
+        if (maxDimension <= 0) throw new ArgumentOutOfRangeException(nameof(maxDimension));
+        int w = source.PixelWidth;
+        int h = source.PixelHeight;
+        int max = Math.Max(w, h);
+        if (max <= maxDimension)
+            return source;
+
+        double scale = maxDimension / (double)max;
+        var transformed = new TransformedBitmap(source, new System.Windows.Media.ScaleTransform(scale, scale));
+        transformed.Freeze();
+        return transformed;
+    }
+
     public static BitmapSource FromBgra(byte[] bytes, int width, int height)
     {
         var bmp = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, bytes, width * 4);
