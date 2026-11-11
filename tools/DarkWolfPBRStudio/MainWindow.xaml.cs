@@ -45,7 +45,8 @@ public partial class MainWindow : Window
         GenerationModeCombo.ItemsSource = Enum.GetValues<PbrGenerationMode>();
         GenerationModeCombo.SelectedItem = PbrGenerationMode.MacroReliefEnhanced;
         AiAuthoringModeCombo.ItemsSource = Enum.GetValues<AiAuthoringMode>();
-        AiAuthoringModeCombo.SelectedItem = AiAuthoringMode.OriginalRestore4x;
+        // Default to the mode that matches the visible "3 candidates" action.
+        AiAuthoringModeCombo.SelectedItem = AiAuthoringMode.ArtisticRebuild;
         SurfaceFinishCombo.ItemsSource = Enum.GetValues<SurfaceFinish>();
         SurfaceFinishCombo.SelectedItem = SurfaceFinish.Dry;
         ApplyGenerationModePreset(PbrGenerationMode.MacroReliefEnhanced);
@@ -298,9 +299,16 @@ public partial class MainWindow : Window
     private void AiAuthoringModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!IsInitialized || AiAuthoringModeCombo.SelectedItem is not AiAuthoringMode mode) return;
-        AiAuthoringHintText.Text = mode == AiAuthoringMode.OriginalRestore4x
-            ? "Original Restore 4x: preserve RTCW composition and identity, then derive deterministic V3.2 maps."
-            : "Artistic Rebuild: local img2img creates new high-quality BaseColor candidates while preserving UV layout and RTCW style.";
+
+        bool restore = mode == AiAuthoringMode.OriginalRestore4x;
+        AiAuthoringHintText.Text = restore
+            ? "Original Restore 4x: one faithful Real-ESRGAN restoration. Use the dedicated Restore button; it does not become AI Next source automatically."
+            : "Artistic Rebuild: local img2img creates exactly 3 BaseColor candidates while preserving UV layout and RTCW style.";
+
+        if (GenerateAiMaterialButton is not null)
+            GenerateAiMaterialButton.Content = restore
+                ? "Generate Original Restore ×4"
+                : "Generate AI Material — 3 candidates";
     }
 
     private void SurfaceFinishCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -329,8 +337,7 @@ public partial class MainWindow : Window
 
         if (!EnsureStableDiffusionPaths()) return;
 
-        string input = Path.Combine(_sessionDir, $"v206_ai_source_{Guid.NewGuid():N}.png");
-        ImageService.SavePng(_current, input);
+        string input = PrepareStableDiffusionInput(_current, "v206_ai_source");
         string prompt = AiMaterialAuthoringPresets.BuildPrompt(
             MaterialProfile.For(CurrentMaterialKind()), finish, PromptBox.Text);
 
@@ -394,8 +401,10 @@ public partial class MainWindow : Window
                 };
                 _variants.Add(item);
                 VariantList.SelectedItem = item;
-                _aiSourcePath = output;
-                Status($"AI Restoration complete: {bmp.PixelWidth}×{bmp.PixelHeight}.");
+                // Do not silently replace the AI Next source with a 4x restoration.
+                // The user can explicitly choose it via "Set as AI source"; if so,
+                // PrepareStableDiffusionInput will cap it safely before SD img2img.
+                Status($"AI Restoration complete: {bmp.PixelWidth}×{bmp.PixelHeight}. AI Next source remains unchanged.");
             });
         });
     }
@@ -412,6 +421,8 @@ public partial class MainWindow : Window
             ImageService.SavePng(_current, _aiSourcePath);
         }
 
+        string safeInput = PrepareStableDiffusionInput(ImageService.LoadFile(_aiSourcePath!), "ai_next_source");
+
         long seed = Random.Shared.NextInt64(1, int.MaxValue);
         string output = Path.Combine(_sessionDir, $"ai_variant_{seed}.png");
         string prompt = PromptBox.Text.Trim();
@@ -420,7 +431,7 @@ public partial class MainWindow : Window
         await BusyAsync($"AI Next — seed {seed}…", async ct =>
         {
             await _sd.Img2ImgAsync(
-                SdCliPathBox.Text.Trim(), SdModelPathBox.Text.Trim(), _aiSourcePath!, output,
+                SdCliPathBox.Text.Trim(), SdModelPathBox.Text.Trim(), safeInput, output,
                 prompt, strength, seed, SdExtraArgsBox.Text.Trim(), ct);
 
             await Dispatcher.InvokeAsync(() =>
@@ -439,6 +450,21 @@ public partial class MainWindow : Window
                 Status($"Generated AI variation seed {seed}. Press AI Next for another.");
             });
         });
+    }
+
+    private string PrepareStableDiffusionInput(BitmapSource source, string stem)
+    {
+        const int maxSdDimension = 1024;
+        BitmapSource prepared = ImageService.ResizeToFit(source, maxSdDimension);
+        string path = Path.Combine(_sessionDir, $"{stem}_{Guid.NewGuid():N}.png");
+        ImageService.SavePng(prepared, path);
+
+        if (prepared.PixelWidth != source.PixelWidth || prepared.PixelHeight != source.PixelHeight)
+        {
+            Status($"Stable Diffusion input capped from {source.PixelWidth}×{source.PixelHeight} to {prepared.PixelWidth}×{prepared.PixelHeight} for VRAM safety.");
+        }
+
+        return path;
     }
 
     private bool EnsureStableDiffusionPaths()
