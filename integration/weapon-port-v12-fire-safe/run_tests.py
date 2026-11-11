@@ -12,7 +12,7 @@ pm=(root/"SP/code/game/bg_pmove.c").read_text(encoding="utf-8")
 pub=(root/"SP/code/game/bg_public.h").read_text(encoding="utf-8")
 checks={
  "marker":"DARKWOLF_WEAPON_PORT_V12_FIRE_SAFE" in cg,
- "ids_preserved":re.search(r"WP_DW_MP44\s*=\s*32",pub) is not None and re.search(r"WP_DW_PPSH\s*=\s*33",pub) is not None,
+ "ids_preserved":re.search(r"WP_DW_MP44,\s*//\s*32",pub) is not None and re.search(r"WP_DW_PPSH,\s*//\s*33",pub) is not None and re.search(r"WP_NUM_WEAPONS\s*//\s*34",pub) is not None,
  "mp44_server_bullet":"case WP_DW_MP44:" in gw and "DW_MP44_SPREAD" in gw and "DW_MP44_DAMAGE" in gw,
  "ppsh_server_bullet":"case WP_DW_PPSH:" in gw and "DW_PPSH_SPREAD" in gw and "DW_PPSH_DAMAGE" in gw,
  "attack_animation_groups":"case WP_DW_MP44:" in pm and "case WP_DW_PPSH:" in pm,
