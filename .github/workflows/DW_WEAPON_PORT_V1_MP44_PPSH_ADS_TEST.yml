@@ -344,7 +344,16 @@ jobs:
           test -f "$build/renderer_sp_rend2_x64.dll"
           file "$build/ioWolfSP.x64.exe" | grep -F PE32+
           file "$build/renderer_sp_rend2_x64.dll" | grep -F PE32+
-          sha256sum "$build/ioWolfSP.x64.exe" "$build/renderer_sp_rend2_x64.dll" | tee evidence/UNIFIED_BINARY_SHA256.txt
+          test -f "$build/main/cgame_sp_x86_64.dll"
+          test -f "$build/main/qagame_sp_x86_64.dll"
+          test -f "$build/main/ui_sp_x86_64.dll"
+          sha256sum "$build/ioWolfSP.x64.exe" "$build/renderer_sp_rend2_x64.dll" \
+            "$build/main/cgame_sp_x86_64.dll" "$build/main/qagame_sp_x86_64.dll" "$build/main/ui_sp_x86_64.dll" \
+            | tee evidence/UNIFIED_BINARY_SHA256.txt
+          grep -aFq 'dw_ads' "$build/main/cgame_sp_x86_64.dll"
+          grep -aFq 'dw_ads' "$build/main/qagame_sp_x86_64.dll"
+          grep -aFq 'weapon_dw_mp44' "$build/main/cgame_sp_x86_64.dll"
+          grep -aFq 'weapon_dw_ppsh' "$build/main/cgame_sp_x86_64.dll"
 
           grep -aFq 'DWTR B2 V2.3:' "$build/ioWolfSP.x64.exe"
           grep -aFq 'r_dwElectricPhysicalOwner' "$build/renderer_sp_rend2_x64.dll"
@@ -386,43 +395,76 @@ jobs:
           set -Eeuo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import json, zipfile, shutil
+          import hashlib, json, zipfile
+
+          H=lambda b: hashlib.sha256(b).hexdigest()
           src=Path("dist/DarkWolf_Rend2_Unified_Clean_Production_PBR32_OwnerV12_TextureB2V24_Win64.zip")
           dst=Path("dist/DarkWolf_Rend2_WeaponPort_V1_MP44_PPSh_ADS_TEST_Win64.zip")
-          tmp=dst.with_suffix(".tmp.zip")
+          build=Path("source/SP/build/release-mingw32-x86_64")
+          root="DarkWolf_Rend2_Unified_Clean_Production_PBR32_OwnerV12_TextureB2V24_Win64/"
+
           assert src.exists()
-          with zipfile.ZipFile(src,"r") as zin, zipfile.ZipFile(tmp,"w",zipfile.ZIP_DEFLATED) as zout:
-              root="DarkWolf_Rend2_Unified_Clean_Production_PBR32_OwnerV12_TextureB2V24_Win64/"
-              manifest_name=root+"DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json"
-              for info in zin.infolist():
-                  data=zin.read(info.filename)
-                  if info.filename==manifest_name:
-                      m=json.loads(data)
-                      m["status"]="TEST_WEAPON_PORT_V1"
-                      m["weapon_port"]={
-                          "base_run":42930103256,
-                          "base_sha":"d6f24744f895e9c602b1b6606c6826f3c92595b9",
-                          "new_weapons":["StG44 / MP44","PPSh-41"],
-                          "new_weapon_ids":{"WP_DW_MP44":32,"WP_DW_PPSH":33},
-                          "ads_weapons":["MP40","STEN"],
-                          "ads_input":"weapalt / right mouse alternate-fire binding",
-                          "ads_mode":"toggle",
-                          "asset_pk3_required":"DW_RealRTCW_WeaponPort_V1_MP44_PPSh.pk3"
-                      }
-                      data=(json.dumps(m,indent=2,ensure_ascii=False)+"\n").encode()
-                  zout.writestr(info,data)
-              readme=(
-                  "DarkWolf Weapon Port V1 TEST\n"
-                  "Base: GitHub Run #42930103256 / d6f24744f895e9c602b1b6606c6826f3c92595b9\n"
-                  "New weapons: StG44/MP44, PPSh-41\n"
-                  "ADS: MP40 + STEN, toggle through weapalt (normally right mouse).\n"
-                  "IMPORTANT: copy DW_RealRTCW_WeaponPort_V1_MP44_PPSh.pk3 into Main before testing new weapons.\n"
-                  "Cheat test: /devmap escape1 ; /give StG44 ; /give PPSh-41\n"
-              )
-              zout.writestr(root+"DW_WEAPON_PORT_V1_TEST_README.txt",readme)
-          tmp.replace(dst)
+          modules={}
+          for fn in ("cgame_sp_x86_64.dll","qagame_sp_x86_64.dll","ui_sp_x86_64.dll"):
+              p=build/"main"/fn
+              assert p.exists() and p.read_bytes()[:2]==b"MZ", p
+              modules[fn]=p.read_bytes()
+
+          entries={}
+          with zipfile.ZipFile(src,"r") as zin:
+              assert zin.testzip() is None
+              for n in zin.namelist():
+                  if n.endswith("/") or not n.startswith(root):
+                      continue
+                  rel=n[len(root):]
+                  entries[rel]=zin.read(n)
+
+          # Replace every stale game module from the base package with this compile.
+          for rel in list(entries):
+              low=rel.lower()
+              if any(low.endswith("/"+fn.lower()) or low==fn.lower() for fn in modules):
+                  del entries[rel]
+          for fn,data in modules.items():
+              entries["Main/"+fn]=data
+
+          manifest_name="DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json"
+          m=json.loads(entries[manifest_name])
+          m["status"]="TEST_WEAPON_PORT_V1"
+          m["weapon_port"]={
+              "base_run":42930103256,
+              "base_sha":"d6f24744f895e9c602b1b6606c6826f3c92595b9",
+              "new_weapons":["StG44 / MP44","PPSh-41"],
+              "new_weapon_ids":{"WP_DW_MP44":32,"WP_DW_PPSH":33},
+              "ads_weapons":["MP40","STEN"],
+              "ads_input":"weapalt / right mouse alternate-fire binding",
+              "ads_mode":"toggle",
+              "asset_pk3_required":"DW_RealRTCW_WeaponPort_V1_MP44_PPSh.pk3",
+              "rebuilt_game_modules":{fn:H(data) for fn,data in modules.items()}
+          }
+          m.setdefault("binary_hashes",{}).update({fn:H(data) for fn,data in modules.items()})
+          entries[manifest_name]=(json.dumps(m,indent=2,ensure_ascii=False)+"\n").encode()
+
+          entries["DW_WEAPON_PORT_V1_TEST_README.txt"]=(
+              "DarkWolf Weapon Port V1 TEST\n"
+              "Base: GitHub Run #42930103256 / d6f24744f895e9c602b1b6606c6826f3c92595b9\n"
+              "New weapons: StG44/MP44, PPSh-41\n"
+              "ADS: MP40 + STEN, toggle through weapalt (normally right mouse).\n"
+              "IMPORTANT: copy DW_RealRTCW_WeaponPort_V1_MP44_PPSh.pk3 into Main before testing new weapons.\n"
+              "Cheat test: /devmap escape1 ; /give StG44 ; /give PPSh-41\n"
+          ).encode()
+
+          # Regenerate package hashes after replacing cgame/qagame/ui.
+          entries.pop("SHA256SUMS.txt",None)
+          entries["SHA256SUMS.txt"]="".join(
+              H(data)+"  "+rel+"\n" for rel,data in sorted(entries.items())
+          ).encode("ascii")
+
+          with zipfile.ZipFile(dst,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as zout:
+              for rel,data in sorted(entries.items()):
+                  zout.writestr(root+rel,data)
+          with zipfile.ZipFile(dst) as z:
+              assert z.testzip() is None
           src.unlink()
-          with zipfile.ZipFile(dst) as z: assert z.testzip() is None
           print(dst)
           PY
 
@@ -444,10 +486,17 @@ jobs:
               assert m["weapon_port"]["new_weapon_ids"]=={"WP_DW_MP44":32,"WP_DW_PPSH":33}
               root=roots[0].rsplit("/",1)[0]+"/"
               assert root+"DW_WEAPON_PORT_V1_TEST_README.txt" in z.namelist()
-              bins=[z.read(n) for n in z.namelist() if n.startswith(root) and n.lower().endswith((".exe",".dll"))]
-              assert any(b"dw_ads" in b for b in bins)
-              assert any(b"weapon_dw_mp44" in b for b in bins)
-              assert any(b"weapon_dw_ppsh" in b for b in bins)
+              names=z.namelist()
+              cgame=root+"Main/cgame_sp_x86_64.dll"
+              qagame=root+"Main/qagame_sp_x86_64.dll"
+              ui=root+"Main/ui_sp_x86_64.dll"
+              assert cgame in names and qagame in names and ui in names
+              assert b"dw_ads" in z.read(cgame)
+              assert b"dw_ads" in z.read(qagame)
+              assert b"weapon_dw_mp44" in z.read(cgame)
+              assert b"weapon_dw_ppsh" in z.read(cgame)
+              assert m["weapon_port"]["rebuilt_game_modules"]["cgame_sp_x86_64.dll"]
+              assert m["weapon_port"]["rebuilt_game_modules"]["qagame_sp_x86_64.dll"]
           print("DW_WEAPON_PORT_V1_FINAL_PASS")
           print("ZIP_SHA256",hashlib.sha256(p.read_bytes()).hexdigest())
           PY
