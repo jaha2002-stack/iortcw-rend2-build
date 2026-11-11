@@ -1,0 +1,655 @@
+name: DW Texture B2 V2.4.1 + Weapon Port V1.1 HD Model Fix Win64 TEST
+
+on:
+  push:
+    branches:
+      - feature/weapon-port-v11-hd-model-limit-fix-from-42975214092
+    paths:
+      - .github/workflows/DW_TEXTURE_B2_V241_WEAPON_PORT_V11_HD_MODEL_FIX_TEST.yml
+      - integration/unified-clean-production-v1/**
+      - integration/texture-ai-b2-v24/**
+      - integration/texture-ai-b2-v241/**
+      - integration/weapon-port-v1/**
+      - integration/weapon-port-v11-hd-model-limit/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dw-texture-v241-weapon-port-v11-hd-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build-validate-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+      DLO_OWNER_SHA: "60ea59d9cce705333dad49a937ba85c71735aa2d"
+      TEXTURE_SHA: "aa60e4d0c68260b6752920cddd8011b718c7dbba"
+      BASE_RUN: "42217883095"
+      OWNER_CLEAN_RUN: "42598872025"
+      PBR_RUN: "42619078136"
+      TEXTURE_CLEAN_RUN: "42588886276"
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Install build and test dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git gh jq python3 unzip zip file \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 \
+            xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev
+
+      - name: Pin and import exact accepted Owner and Texture source integrations
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags --depth=1 origin "$DLO_OWNER_SHA"
+          git checkout "$DLO_OWNER_SHA" -- \
+            integration/electric-owner-audit-v1 \
+            integration/electric-physical-owner-v1 \
+            integration/escape1-dlight-residency-v1 \
+            integration/escape1-physical-dlight-owner-v12
+
+          git fetch --no-tags --depth=1 origin "$TEXTURE_SHA"
+          git checkout "$TEXTURE_SHA" -- \
+            integration/texture-restoration-v1 \
+            integration/texture-ai-b2-v1 \
+            integration/texture-ai-b2-v2 \
+            integration/texture-ai-b2-v21 \
+            integration/texture-ai-b2-v22 \
+            integration/texture-ai-b2-v23
+
+          test ! -e integration/escape1-dlight-residency-fix-v1
+          echo "PINNED_ACCEPTED_INTEGRATIONS_PASS"
+
+      - name: Verify source runs and base lineage
+        run: |
+          set -Eeuo pipefail
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42217883095 --jq .conclusion)" = "success"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42217883095 --jq .head_sha)" = "0ef4fc401daff30c230ccb8226a8029fb0a3519f"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42575742812 --jq .conclusion)" = "success"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42619078136 --jq .conclusion)" = "success"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42581487296 --jq .conclusion)" = "success"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42598872025 --jq .conclusion)" = "success"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/42588886276 --jq .conclusion)" = "success"
+          echo "SOURCE_LINEAGE_VERIFIED"
+
+      - name: Reconstruct exact Clean Production base 42217883095
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence runtime home protected-assets incoming dist third_party
+          mkdir -p evidence
+
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+
+          echo "BASE_42217883095_RECONSTRUCTED"
+
+      - name: Apply accepted Electric Physical Owner V1 and Escape1 Owner Residency V1.2
+        run: |
+          set -Eeuo pipefail
+          python3 integration/electric-owner-audit-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/run_tests.py source evidence
+
+          python3 integration/escape1-dlight-residency-v1/apply.py source evidence
+          python3 integration/escape1-dlight-residency-v1/run_tests.py source evidence
+
+          python3 integration/escape1-physical-dlight-owner-v12/apply.py source evidence
+          python3 integration/escape1-physical-dlight-owner-v12/run_tests.py source evidence
+
+          ! grep -R -Fq 'DARKWOLF_ESCAPE1_DLIGHT_RESIDENCY_FIX_V1_1' source/SP/code
+          echo "OWNER_V1_ESCAPE1_V12_APPLY_PASS"
+
+      - name: Apply accepted Texture Restoration B2 V2.3 lineage
+        run: |
+          set -Eeuo pipefail
+          python3 integration/texture-restoration-v1/apply.py source evidence
+          python3 integration/texture-restoration-v1/run_tests.py source/SP/code/rend2 evidence
+
+          python3 integration/texture-ai-b2-v1/apply.py source evidence
+          python3 integration/texture-ai-b2-v1/run_tests.py source/SP/code/rend2 evidence
+
+          python3 integration/texture-ai-b2-v2/apply.py source evidence
+          python3 integration/texture-ai-b2-v2/run_tests.py source/SP/code/rend2 evidence
+
+          python3 integration/texture-ai-b2-v21/apply.py source evidence
+          python3 integration/texture-ai-b2-v21/run_tests.py source/SP/code/rend2 evidence source
+
+          python3 integration/texture-ai-b2-v22/apply.py source evidence
+          python3 integration/texture-ai-b2-v22/run_tests.py source/SP/code/rend2 evidence
+
+          python3 integration/texture-ai-b2-v23/apply.py source evidence | tee evidence/TEXTURE_B2_V23_APPLY.log
+          python3 integration/texture-ai-b2-v23/run_tests.py source/SP/code evidence | tee evidence/TEXTURE_B2_V23_TEST.log
+
+          echo "TEXTURE_B2_V23_APPLY_PASS"
+
+      - name: Apply Texture AI B2 V2.4 Universal Texture Picker only
+        run: |
+          set -Eeuo pipefail
+          python3 integration/texture-ai-b2-v24/apply.py source evidence | tee evidence/TEXTURE_B2_V24_APPLY.log
+          python3 integration/texture-ai-b2-v24/run_tests.py source/SP/code/rend2 evidence | tee evidence/TEXTURE_B2_V24_TEST.log
+
+          grep -Fq 'Cmd_AddCommand( "dw_tex_save", R_DWTextureSaveV23_f )' source/SP/code/rend2/tr_init.c
+          grep -Fq 'DWTRV23_PACK_NAME "zzzzzz_DW_TextureRestoration.pk3"' source/SP/code/rend2/tr_texture_ai_b2_v23.inc
+          grep -Fq 'Cmd_AddCommand( "dw_tex_pick", R_DWTexturePickV24_f )' source/SP/code/rend2/tr_init.c
+          echo "TEXTURE_B2_V24_PICKER_ONLY_APPLY_PASS"
+
+      - name: Apply Texture AI B2 V2.4.1 Door Picker Fix only
+        run: |
+          set -Eeuo pipefail
+          python3 integration/texture-ai-b2-v241/apply.py source evidence | tee evidence/TEXTURE_B2_V241_APPLY.log
+          python3 integration/texture-ai-b2-v241/run_tests.py source/SP/code/rend2 evidence | tee evidence/TEXTURE_B2_V241_TEST.log
+
+          grep -Fq 'surfIndex >= tr.world->numsurfaces' source/SP/code/rend2/tr_texture_ai_b2_v24.inc
+          ! grep -Fq 'surfIndex >= tr.world->numWorldSurfaces' source/SP/code/rend2/tr_texture_ai_b2_v24.inc
+          grep -Fq 'RF_THIRD_PERSON | RF_FIRST_PERSON | RF_DEPTHHACK' source/SP/code/rend2/tr_texture_ai_b2_v24.inc
+          grep -Fq 'Cmd_AddCommand( "dw_tex_save", R_DWTextureSaveV23_f )' source/SP/code/rend2/tr_init.c
+          echo "TEXTURE_B2_V241_DOOR_FIX_APPLY_PASS"
+
+      - name: Apply PBR V3 + V3.1 + V3.2 Physical Relief POM + Material Binding Audit
+        run: |
+          set -Eeuo pipefail
+          python3 integration/pbr-v2/apply.py source --stage 3 --proof evidence/PBR_V42_PROOF.json
+          python3 integration/pbr-v2/test.py source --stage 3 --out evidence/PBR_V42_STATIC.json
+
+          python3 integration/pbr-v31-ibl/apply.py source --proof evidence/PBR_V31_PROOF.json
+          python3 integration/pbr-v31-ibl/test.py source --out evidence/PBR_V31_STATIC.json
+
+          python3 integration/pbr-v32-pom/apply.py source --proof evidence/PBR_V32_PROOF.json
+          python3 integration/pbr-v32-pom/test.py source --out evidence/PBR_V32_STATIC.json
+
+          python3 integration/pbr-v32-audit/apply.py source --proof evidence/PBR_V32_AUDIT_PROOF.json
+          python3 integration/pbr-v32-audit/test.py source --out evidence/PBR_V32_AUDIT_STATIC.json
+
+          echo "PBR_V32_AUDIT_APPLY_PASS"
+
+      - name: Apply DarkWolf Weapon Port V1 MP44 PPSh and true ADS
+        run: |
+          set -Eeuo pipefail
+          python3 integration/weapon-port-v1/apply.py source evidence | tee evidence/DW_WEAPON_PORT_V1_APPLY.log
+          python3 integration/weapon-port-v1/run_tests.py source evidence | tee evidence/DW_WEAPON_PORT_V1_TEST.log
+          grep -Fq 'WP_DW_MP44' source/SP/code/game/bg_public.h
+          grep -Fq 'WP_DW_PPSH' source/SP/code/game/bg_public.h
+          grep -Fq 'EF_DW_ADS' source/SP/code/game/bg_public.h
+          grep -Fq 'DWAdsToggle' source/SP/code/cgame/cg_weapons.c
+          echo "DW_WEAPON_PORT_V1_STATIC_PASS"
+
+      - name: Apply Weapon Port V1.1 HD model surface limit fix
+        run: |
+          set -Eeuo pipefail
+          python3 integration/weapon-port-v11-hd-model-limit/apply.py source evidence | tee evidence/DW_WEAPON_PORT_V11_HD_MODEL_LIMIT_APPLY.log
+          python3 integration/weapon-port-v11-hd-model-limit/run_tests.py source evidence | tee evidence/DW_WEAPON_PORT_V11_HD_MODEL_LIMIT_TEST.log
+          grep -Fq '#define SHADER_MAX_VERTEXES 16384' source/SP/code/qcommon/qfiles.h
+          grep -Fq '#define MD3_MAX_TRIANGLES   16384' source/SP/code/qcommon/qfiles.h
+          grep -Fq '#define MD3_MAX_VERTS       16384' source/SP/code/qcommon/qfiles.h
+          echo "DW_WEAPON_PORT_V11_HD_MODEL_LIMIT_STATIC_PASS"
+
+      - name: Cross-feature production invariants
+        run: |
+          set -Eeuo pipefail
+          python3 integration/texture-ai-b2-v24/run_unified_v24_tests.py source evidence
+          python3 integration/texture-ai-b2-v241/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/weapon-port-v1/run_tests.py source evidence
+          python3 integration/weapon-port-v11-hd-model-limit/run_tests.py source evidence
+          grep -Fq 'DWTR AI B2 V2.4.1:' source/SP/code/rend2/tr_texture_ai_b2_v24.inc
+          grep -Fq 'DARKWOLF_WEAPON_PORT_V1_MP44_PPSH_ADS' source/SP/code/cgame/cg_weapons.c
+          git -C source diff --check
+          echo "UNIFIED_V241_WEAPON_CROSS_FEATURE_GATES_PASS"
+
+      - name: Native compile unified source
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            > evidence/UNIFIED_NATIVE_BUILD.log 2>&1 \
+            || { tail -400 evidence/UNIFIED_NATIVE_BUILD.log; exit 1; }
+          echo "UNIFIED_NATIVE_COMPILE_PASS"
+
+      - name: Fetch retail assets for combined runtime smoke
+        run: |
+          set -Eeuo pipefail
+          test -n "$DARKWOLF_RTCW_ASSET_TOKEN"
+          default_token="$GH_TOKEN"
+          export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          test -d "$retail_main"
+          echo "$retail_main" > evidence/retail_main_path.txt
+
+      - name: Build safe PBR V3.2 audit fixture
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          out=Path("evidence/unified_pbr_audit_fixture.pk3")
+          w=h=64
+          def nh():
+              hdr=bytearray(18); hdr[2]=2
+              hdr[12]=w&255; hdr[13]=(w>>8)&255
+              hdr[14]=h&255; hdr[15]=(h>>8)&255
+              hdr[16]=32; hdr[17]=0x28
+              data=bytearray()
+              for y in range(h):
+                  for x in range(w):
+                      seam=min(x%16,15-(x%16),y%16,15-(y%16))
+                      height=48 if seam<2 else 216
+                      data.extend((255,128,128,height))
+              return bytes(hdr)+bytes(data)
+          def orm():
+              hdr=bytearray(18); hdr[2]=2
+              hdr[12]=w&255; hdr[13]=(w>>8)&255
+              hdr[14]=h&255; hdr[15]=(h>>8)&255
+              hdr[16]=24; hdr[17]=0x20
+              return bytes(hdr)+bytes((0,180,240))*w*h
+          shader='''textures/snow/s_cathedrale_c06
+          {
+              qer_editorimage textures/snow/s_cathedrale_c06.jpg
+              {
+                  map textures/snow/s_cathedrale_c06.jpg
+                  rgbGen identity
+              }
+              {
+                  map $lightmap
+                  blendFunc GL_DST_COLOR GL_ZERO
+              }
+          }
+          '''
+
+          mtr='''textures/snow/s_cathedrale_c06
+          {
+              qer_editorimage textures/snow/s_cathedrale_c06.jpg
+              {
+                  stage diffuseMap
+                  map textures/snow/s_cathedrale_c06.jpg
+                  rgbGen identity
+              }
+              {
+                  stage normalParallaxMap
+                  map textures/snow/s_cathedrale_c06_nh
+                  normalScale 1 1
+                  parallaxDepth 0.010
+              }
+              {
+                  stage ormMap
+                  map textures/snow/s_cathedrale_c06_orm
+              }
+              {
+                  map $lightmap
+                  blendFunc GL_DST_COLOR GL_ZERO
+              }
+          }
+          '''
+          with zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED) as z:
+              z.writestr("textures/snow/s_cathedrale_c06_nh.tga",nh())
+              z.writestr("textures/snow/s_cathedrale_c06_orm.tga",orm())
+              z.writestr("scripts/dw_unified_pbr_audit.shader",shader)
+              z.writestr("scripts/dw_unified_pbr_audit.mtr",mtr)
+          print(out)
+          PY
+
+      - name: Build HD MD3 capacity runtime fixture
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct,zipfile
+
+          nv=10241
+          nt=12255
+          H=108
+          FH=56
+          SH=108
+
+          frame=struct.pack('<3f3f3ff16s',
+              -1,-1,-1, 1,1,1, 0,0,0, 2.0, b'frame0\0')
+          ofsFrames=H
+          ofsTags=ofsFrames+len(frame)
+          ofsSurfaces=ofsTags
+
+          triangles=b''.join(struct.pack('<3i',i%nv,(i+1)%nv,(i+2)%nv) for i in range(nt))
+          shader_name=b'textures/common/white\0'
+          shader_name += b'\0'*(64-len(shader_name))
+          shaders=struct.pack('<64si',shader_name,0)
+          st=b'\0'*(nv*8)
+          xyz=b'\0'*(nv*8)
+
+          ofsTriangles=SH
+          ofsShaders=ofsTriangles+len(triangles)
+          ofsSt=ofsShaders+len(shaders)
+          ofsXyz=ofsSt+len(st)
+          ofsEnd=ofsXyz+len(xyz)
+
+          surf_name=b'wpn\0'+b'\0'*60
+          surface=struct.pack('<4s64s10i',b'IDP3',surf_name,
+              0,1,1,nv,nt,ofsTriangles,ofsShaders,ofsSt,ofsXyz,ofsEnd)
+          surface += triangles+shaders+st+xyz
+
+          model_name=b'dw_highvert\0'+b'\0'*(64-len(b'dw_highvert\0'))
+          modelEnd=ofsSurfaces+len(surface)
+          header=struct.pack('<4si64s9i',b'IDP3',15,model_name,
+              0,1,0,1,0,ofsFrames,ofsTags,ofsSurfaces,modelEnd)
+          data=header+frame+surface
+          assert len(data)==modelEnd
+
+          out=Path('evidence/dw_hd_md3_capacity_fixture.pk3')
+          with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
+              z.writestr('models/dwtest/highvert_10241.md3',data)
+          print(out, len(data), nv, nt)
+          PY
+
+      - name: Combined runtime smoke on Escape1
+        run: |
+          set -Eeuo pipefail
+          exe="$(find source/SP/build -type f -iname 'iowolfsp*' -perm -111 -print -quit)"
+          test -n "$exe"
+          buildroot="$(dirname "$exe")"
+          retail_main="$(cat evidence/retail_main_path.txt)"
+
+          mkdir -p runtime/main home
+          cp -a "$buildroot/." runtime/
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+          cp evidence/unified_pbr_audit_fixture.pk3 runtime/main/zzz_dw_unified_pbr_audit.pk3
+          cp evidence/dw_hd_md3_capacity_fixture.pk3 runtime/main/zzz_dw_hd_md3_capacity_fixture.pk3
+
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 120s "$PWD/runtime/$(basename "$exe")" \
+            +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
+            +set com_introplayed 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0 \
+            +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
+            +set r_dwElectricPhysicalOwner 1 +set r_dwElectricPhysicalOwnerDiag 0 +set r_dwElectricOwnerAudit 0 \
+            +set r_dwEscape1PhysicalDlightOwnerResidency 1 +set r_dwEscape1ExternalNativeReserve 9 \
+            +set r_dwEscape1PhysicalDlightOwnerDiag 0 +set r_dwEscape1DlightResidencyAudit 0 \
+            +set r_pbr 3 +set r_cubeMapping 0 +set r_normalMapping 1 +set r_specularMapping 1 \
+            +set r_parallaxMapping 2 +set r_parallaxMapShadows 0 \
+            +devmap escape1 +wait 28 \
+            +testmodel models/dwtest/highvert_10241.md3 +wait 3 +modellist +wait 2 \
+            +r_pbrMaterialAudit textures/snow/s_cathedrale_c06 +wait 3 +quit
+          rc=$?
+          set -e
+          echo "$rc" > evidence/UNIFIED_RUNTIME_EXIT.txt
+
+          qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+          test -n "$qlog"
+          cp "$qlog" evidence/UNIFIED_RUNTIME_QCONSOLE.log
+
+          grep -Fq '[DW_PBR_AUDIT] shader=textures/snow/s_cathedrale_c06 status=FOUND' evidence/UNIFIED_RUNTIME_QCONSOLE.log
+          grep -Fq 'normalType=NORMALHEIGHT heightAlpha=1' evidence/UNIFIED_RUNTIME_QCONSOLE.log
+          grep -Fq 'packedORM=1' evidence/UNIFIED_RUNTIME_QCONSOLE.log
+          grep -Fq 'parallaxDepth=0.010000' evidence/UNIFIED_RUNTIME_QCONSOLE.log
+          grep -Fq 'pomV32=ACTIVE' evidence/UNIFIED_RUNTIME_QCONSOLE.log
+          grep -Fq 'models/dwtest/highvert_10241.md3' evidence/UNIFIED_RUNTIME_QCONSOLE.log
+          ! grep -Fq "Can't register model" evidence/UNIFIED_RUNTIME_QCONSOLE.log
+          ! grep -Fq 'R_LoadMD3: models/dwtest/highvert_10241.md3 has more than' evidence/UNIFIED_RUNTIME_QCONSOLE.log
+          ! grep -Eq 'EPOA_SUMMARY|EDRA_SUMMARY|EPO_V1_MEMBER|EDR12_' evidence/UNIFIED_RUNTIME_QCONSOLE.log
+          ! grep -Eiq "GLSL.*(compile|link).*error|GL_INVALID_(ENUM|VALUE|OPERATION|FRAMEBUFFER_OPERATION)|framebuffer.*incomplete" evidence/UNIFIED_RUNTIME_QCONSOLE.log
+
+          echo "UNIFIED_RUNTIME_SMOKE_PASS"
+
+      - name: Build unified Win64 binaries
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release \
+            VERSION=1.51d-SP_DarkWolf-TextureB2V241-WeaponPortV11-HD-MP44-PPSh-ADS \
+            PLATFORM=mingw32 ARCH=x86_64 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-gcc-posix \
+            CXX=x86_64-w64-mingw32-g++-posix \
+            WINDRES=x86_64-w64-mingw32-windres \
+            > evidence/UNIFIED_WIN64_BUILD.log 2>&1 \
+            || { tail -500 evidence/UNIFIED_WIN64_BUILD.log; exit 1; }
+
+          build=source/SP/build/release-mingw32-x86_64
+          test -f "$build/ioWolfSP.x64.exe"
+          test -f "$build/renderer_sp_rend2_x64.dll"
+          file "$build/ioWolfSP.x64.exe" | grep -F PE32+
+          file "$build/renderer_sp_rend2_x64.dll" | grep -F PE32+
+          test -f "$build/main/cgame_sp_x64.dll"
+          test -f "$build/main/qagame_sp_x64.dll"
+          test -f "$build/main/ui_sp_x64.dll"
+          sha256sum "$build/ioWolfSP.x64.exe" "$build/renderer_sp_rend2_x64.dll" \
+            "$build/main/cgame_sp_x64.dll" "$build/main/qagame_sp_x64.dll" "$build/main/ui_sp_x64.dll" \
+            | tee evidence/UNIFIED_BINARY_SHA256.txt
+          grep -aFq 'dw_ads' "$build/main/cgame_sp_x64.dll"
+          grep -aFq 'dw_ads' "$build/main/qagame_sp_x64.dll"
+          grep -aFq 'weapon_dw_mp44' "$build/main/cgame_sp_x64.dll"
+          grep -aFq 'weapon_dw_ppsh' "$build/main/cgame_sp_x64.dll"
+
+          grep -aFq 'DWTR B2 V2.3:' "$build/ioWolfSP.x64.exe"
+          grep -aFq 'r_dwElectricPhysicalOwner' "$build/renderer_sp_rend2_x64.dll"
+          grep -aFq 'r_dwEscape1PhysicalDlightOwnerResidency' "$build/renderer_sp_rend2_x64.dll"
+          grep -aFq 'dw_tex_save' "$build/renderer_sp_rend2_x64.dll"
+          grep -aFq 'DWTR AI B2 V2.4.1:' "$build/renderer_sp_rend2_x64.dll"
+          grep -aFq 'zzzzzz_DW_TextureRestoration.pk3' "$build/renderer_sp_rend2_x64.dll"
+          grep -aFq 'r_pbrMaterialAudit' "$build/renderer_sp_rend2_x64.dll"
+          grep -aFq 'r_pomMinLayers' "$build/renderer_sp_rend2_x64.dll"
+
+          echo "UNIFIED_WIN64_BINARY_MARKERS_PASS"
+
+      - name: Download exact Clean Production component artifacts
+        run: |
+          set -Eeuo pipefail
+          mkdir -p incoming
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/13664398112/zip > incoming/owner_clean_outer.zip
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/13659639998/zip > incoming/texture_clean_outer.zip
+          test -s incoming/owner_clean_outer.zip
+          test -s incoming/texture_clean_outer.zip
+          unzip -t incoming/owner_clean_outer.zip > evidence/OWNER_CLEAN_OUTER_TEST.txt
+          unzip -t incoming/texture_clean_outer.zip > evidence/TEXTURE_CLEAN_OUTER_TEST.txt
+
+      - name: Package unified Clean Production
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist
+          python3 integration/texture-ai-b2-v241/package_unified_v241.py \
+            incoming/owner_clean_outer.zip \
+            incoming/texture_clean_outer.zip \
+            source/SP/build/release-mingw32-x86_64 \
+            dist | tee evidence/UNIFIED_PACKAGE.log
+
+      - name: Convert B2 V2.4.1 package to Weapon Port V1.1 HD Model Fix TEST
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,zipfile
+
+          H=lambda b:hashlib.sha256(b).hexdigest()
+          src=Path("dist/DarkWolf_Rend2_Unified_Clean_Production_PBR32_OwnerV12_TextureB2V241_Win64.zip")
+          dst=Path("dist/DarkWolf_Rend2_TextureB2V241_WeaponPort_V11_HDModelFix_MP44_PPSh_ADS_TEST_Win64.zip")
+          build=Path("source/SP/build/release-mingw32-x86_64")
+          root="DarkWolf_Rend2_Unified_Clean_Production_PBR32_OwnerV12_TextureB2V241_Win64/"
+
+          assert src.exists()
+          modules={}
+          for fn in ("cgame_sp_x64.dll","qagame_sp_x64.dll","ui_sp_x64.dll"):
+              p=build/"main"/fn
+              data=p.read_bytes()
+              assert data[:2]==b"MZ",p
+              modules[fn]=data
+
+          entries={}
+          with zipfile.ZipFile(src,"r") as zin:
+              assert zin.testzip() is None
+              for n in zin.namelist():
+                  if n.endswith("/") or not n.startswith(root): continue
+                  entries[n[len(root):]]=zin.read(n)
+
+          for rel in list(entries):
+              low=rel.lower()
+              if any(low.endswith("/"+fn.lower()) or low==fn.lower() for fn in modules):
+                  del entries[rel]
+          for fn,data in modules.items():
+              entries["Main/"+fn]=data
+
+          manifest_name="DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json"
+          m=json.loads(entries[manifest_name])
+          assert m["components"]["texture_ai"]["feature"]=="Local AI Texture Restoration B2 V2.4.1 Universal Texture Picker"
+          assert m["components"]["texture_ai"]["inline_brush_surface_bound"]=="tr.world->numsurfaces"
+          assert m["components"]["texture_ai"]["player_viewmodel_exclusion"] is True
+          m["status"]="TEST_WEAPON_PORT_V11_HD_MODEL_FIX_ON_B2V241"
+          m["weapon_port"]={
+              "base_run":42970261869,
+              "base_sha":"8c8818d3e8b166d6586f738fe24ae1a388ed890b",
+              "ported_from_run":42972193418,
+              "ported_from_commit":"27467a21481c3f98a2953f7ac2926afba92f72e0",
+              "new_weapons":["StG44 / MP44","PPSh-41"],
+              "new_weapon_ids":{"WP_DW_MP44":32,"WP_DW_PPSH":33},
+              "ads_weapons":["MP40","STEN"],
+              "ads_input":"weapalt / right mouse alternate-fire binding",
+              "ads_mode":"toggle",
+              "asset_pk3_required":"DW_RealRTCW_WeaponPort_V11_MP44_PPSh.pk3",
+              "hd_model_capacity":{
+                  "shader_max_vertexes":16384,
+                  "md3_max_verts":16384,
+                  "md3_max_triangles":16384,
+                  "fix_source_run":42975214092,
+                  "reason":"RealRTCW HD MP44/PPSh surfaces exceed stock ioRTCW 3999-vertex renderer limit"
+              },
+              "rebuilt_game_modules":{fn:H(data) for fn,data in modules.items()}
+          }
+          m.setdefault("binary_hashes",{}).update({fn:H(data) for fn,data in modules.items()})
+          entries[manifest_name]=(json.dumps(m,indent=2,ensure_ascii=False)+"\n").encode()
+
+          entries["DW_WEAPON_PORT_V11_B2V241_TEST_README.txt"]=(
+              "DarkWolf B2 V2.4.1 + Weapon Port V1.1 HD Model Fix TEST\n"
+              "New base: GitHub Run #42970261869 / 8c8818d3e8b166d6586f738fe24ae1a388ed890b\n"
+              "Weapon layer source: Run #42972193418 / 27467a21481c3f98a2953f7ac2926afba92f72e0\n"
+              "Preserved: B2 V2.4.1 Door Picker Fix, PBR V3.2, Owner V1/V1.2 and previous cumulative features.\n"
+              "New weapons: StG44/MP44, PPSh-41\n"
+              "ADS: MP40 + STEN, toggle via weapalt (normally right mouse).\n"
+              "Renderer HD model capacity raised from 4000 to 16384 vertices per surface.\n"
+              "Copy DW_RealRTCW_WeaponPort_V11_MP44_PPSh.pk3 into Main before testing new weapons.\n"
+              "Cheat test: /devmap escape1 ; /give StG44 ; /give PPSh-41\n"
+          ).encode()
+
+          entries.pop("SHA256SUMS.txt",None)
+          entries["SHA256SUMS.txt"]="".join(H(data)+"  "+rel+"\n" for rel,data in sorted(entries.items())).encode("ascii")
+
+          with zipfile.ZipFile(dst,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as zout:
+              for rel,data in sorted(entries.items()):
+                  zout.writestr(root+rel,data)
+          with zipfile.ZipFile(dst) as z:
+              assert z.testzip() is None
+
+          package_hash=H(dst.read_bytes())
+          (Path("dist")/"SHA256SUMS_V241_WEAPON_PORT_V11.txt").write_text(
+              package_hash+"  "+dst.name+"\n"+
+              H(modules["cgame_sp_x64.dll"])+"  cgame_sp_x64.dll\n"+
+              H(modules["qagame_sp_x64.dll"])+"  qagame_sp_x64.dll\n"+
+              H(modules["ui_sp_x64.dll"])+"  ui_sp_x64.dll\n"
+          )
+          proof={
+              "status":"TEST_WEAPON_PORT_V11_HD_MODEL_FIX_ON_B2V241",
+              "package":str(dst),
+              "package_sha256":package_hash,
+              "base_run":42970261869,
+              "base_sha":"8c8818d3e8b166d6586f738fe24ae1a388ed890b",
+              "weapon_source_run":42972193418,
+              "weapon_source_commit":"27467a21481c3f98a2953f7ac2926afba92f72e0",
+              "texture_feature":"B2 V2.4.1 Door Picker Fix",
+              "new_weapon_ids":{"WP_DW_MP44":32,"WP_DW_PPSH":33},
+              "ads_weapons":["MP40","STEN"],
+              "hd_model_limit":16384,
+              "hd_model_fixture":{"verts":10241,"triangles":12255}
+          }
+          (Path("dist")/"WEAPON_PORT_V11_B2V241_PROOF.json").write_text(json.dumps(proof,indent=2)+"\n")
+          src.unlink()
+          print(json.dumps(proof,indent=2))
+          PY
+
+      - name: Final B2 V2.4.1 + Weapon Port V1.1 HD Model Fix verification
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee evidence/DW_V241_WEAPON_PORT_V11_HD_MODEL_FIX_FINAL_VERIFY.txt
+          from pathlib import Path
+          import hashlib,json,zipfile
+
+          p=Path("dist/DarkWolf_Rend2_TextureB2V241_WeaponPort_V11_HDModelFix_MP44_PPSh_ADS_TEST_Win64.zip")
+          assert p.exists() and p.stat().st_size > 20_000_000
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              roots=[n for n in z.namelist() if n.endswith("DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json")]
+              assert len(roots)==1
+              root=roots[0].rsplit("/",1)[0]+"/"
+              names=z.namelist()
+              m=json.loads(z.read(roots[0]))
+
+              assert m["status"]=="TEST_WEAPON_PORT_V11_HD_MODEL_FIX_ON_B2V241"
+              assert m["weapon_port"]["base_run"]==42970261869
+              assert m["weapon_port"]["base_sha"]=="8c8818d3e8b166d6586f738fe24ae1a388ed890b"
+              assert m["weapon_port"]["ported_from_run"]==42972193418
+              assert m["weapon_port"]["new_weapon_ids"]=={"WP_DW_MP44":32,"WP_DW_PPSH":33}
+              assert m["weapon_port"]["ads_weapons"]==["MP40","STEN"]
+              assert m["weapon_port"]["hd_model_capacity"]["shader_max_vertexes"]==16384
+              assert m["weapon_port"]["hd_model_capacity"]["md3_max_verts"]==16384
+              assert m["weapon_port"]["hd_model_capacity"]["md3_max_triangles"]==16384
+
+              tex=m["components"]["texture_ai"]
+              assert tex["feature"]=="Local AI Texture Restoration B2 V2.4.1 Universal Texture Picker"
+              assert tex["v241_door_picker_fix_run_base"]==42930103256
+              assert tex["inline_brush_surface_bound"]=="tr.world->numsurfaces"
+              assert tex["player_viewmodel_exclusion"] is True
+              assert tex["sky_supported"] is False and tex["water_supported"] is False
+
+              renderer=z.read(root+"renderer_sp_rend2_x64.dll")
+              for marker in (b"DWTR AI B2 V2.4.1:",b"r_dwElectricPhysicalOwner",
+                             b"r_dwEscape1PhysicalDlightOwnerResidency",b"dw_tex_save",
+                             b"zzzzzz_DW_TextureRestoration.pk3",b"r_pbrMaterialAudit",b"r_pomMinLayers"):
+                  assert marker in renderer,marker
+
+              cgame=root+"Main/cgame_sp_x64.dll"
+              qagame=root+"Main/qagame_sp_x64.dll"
+              ui=root+"Main/ui_sp_x64.dll"
+              assert cgame in names and qagame in names and ui in names
+              assert b"dw_ads" in z.read(cgame)
+              assert b"dw_ads" in z.read(qagame)
+              assert b"weapon_dw_mp44" in z.read(cgame)
+              assert b"weapon_dw_ppsh" in z.read(cgame)
+              assert root+"DW_WEAPON_PORT_V11_B2V241_TEST_README.txt" in names
+
+          print("DW_V241_WEAPON_PORT_V11_HD_MODEL_FIX_FINAL_PASS")
+          print("ZIP_SHA256",hashlib.sha256(p.read_bytes()).hexdigest())
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Texture-B2-V241-Weapon-Port-V11-HD-Model-Fix-Win64-TEST
+          path: |
+            dist/DarkWolf_Rend2_TextureB2V241_WeaponPort_V11_HDModelFix_MP44_PPSh_ADS_TEST_Win64.zip
+            dist/SHA256SUMS_V241_WEAPON_PORT_V11.txt
+            dist/WEAPON_PORT_V11_B2V241_PROOF.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Texture-B2-V241-Weapon-Port-V11-HD-Model-Fix-Proof
+          path: evidence/**
+          if-no-files-found: warn
+          retention-days: 90
