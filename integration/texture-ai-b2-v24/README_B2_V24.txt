@@ -43,3 +43,6 @@ COMMANDS
 
 The expected practical improvement is that doors implemented as model entities,
 plus scaled brush doors that V2.2 skipped, can now be selected by the same crosshair workflow.
+
+BUILD TARGET
+  GitHub Actions workflow: DW Texture B2 V2.4 Universal Picker Win64 TEST
