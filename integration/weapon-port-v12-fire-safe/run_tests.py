@@ -21,6 +21,7 @@ checks={
  "new_weapon_flash_suppressed":"weaponNum == WP_DW_MP44 || weaponNum == WP_DW_PPSH" in cg and "flash.hModel = 0;" in cg,
  "stock_safe_fire_audio":cg.count('weaponInfo->flashSound[0]=trap_S_RegisterSound("sound/weapons/mp40/mp40f1.wav");') >= 2,
  "standard_impact_group":re.search(r"case WP_MP40:\s*case WP_DW_MP44:\s*case WP_DW_PPSH:\s*case WP_FG42:",cg) is not None,
+ "dormant_fire_proof":'DW_WEAPON_PORT_V12_FIRE weapon=%d' in gw and 'g_debugBullets.integer & 8' in gw,
 }
 bad=[k for k,v in checks.items() if not v]
 (ev/"DW_WEAPON_PORT_V12_FIRE_SAFE_TESTS.json").write_text(json.dumps(checks,indent=2)+"\n",encoding="utf-8")
