@@ -533,4 +533,22 @@ finally
     try { Directory.Delete(temp, true); } catch { }
 }
 
+// V2.06.1 AI path hotfix regression: portable model discovery must find
+// .safetensors automatically in Tools/StableDiffusionCpp/models-style folders.
+string aiPathTemp = Path.Combine(Path.GetTempPath(), "dw_pbrstudio_ai_path_" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(aiPathTemp);
+try
+{
+    string model = Path.Combine(aiPathTemp, "dreamshaper_8.safetensors");
+    File.WriteAllBytes(model, new byte[] { 1, 2, 3, 4 });
+    Require(StableDiffusionService.IsSupportedModel(model), "AI path hotfix recognizes .safetensors");
+    string? discovered = StableDiffusionService.FindModelInDirectory(aiPathTemp, "dreamshaper_8.safetensors");
+    Require(string.Equals(discovered, model, StringComparison.OrdinalIgnoreCase),
+        "AI path hotfix auto-discovers preferred .safetensors model");
+}
+finally
+{
+    try { Directory.Delete(aiPathTemp, true); } catch { }
+}
+
 Console.WriteLine("DARKWOLF_PBR_STUDIO_V2061_SELFTEST_PASS");
