@@ -306,9 +306,10 @@ public partial class MainWindow : Window
             : "Artistic Rebuild: local img2img creates exactly 3 BaseColor candidates while preserving UV layout and RTCW style.";
 
         if (GenerateAiMaterialButton is not null)
-            GenerateAiMaterialButton.Content = restore
-                ? "Generate Original Restore ×4"
-                : "Generate AI Material — 3 candidates";
+        {
+            GenerateAiMaterialButton.Content = "Generate AI Material — 3 candidates";
+            GenerateAiMaterialButton.Visibility = restore ? Visibility.Collapsed : Visibility.Visible;
+        }
     }
 
     private void SurfaceFinishCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
