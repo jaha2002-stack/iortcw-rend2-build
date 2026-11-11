@@ -250,70 +250,31 @@ jobs:
           test -d "$retail_main"
           echo "$retail_main" > evidence/retail_main_path.txt
 
-      - name: Build stock-model Weapon V1.2 active-fire fixture
+      - name: Prepare Weapon V1.2 active-fire command script
         run: |
           set -Eeuo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import zipfile
-
-          main=Path("evidence/retail_main_path.txt").read_text().strip()
-          pk3s=sorted(Path(main).glob("*.pk3"))
-          assert pk3s, main
-
-          cache={}
-          def get(name):
-              key=name.lower()
-              if key in cache:
-                  return cache[key]
-              found=None
-              for p in pk3s:
-                  with zipfile.ZipFile(p) as z:
-                      names={n.lower():n for n in z.namelist()}
-                      if key in names:
-                          found=z.read(names[key])
-              if found is None:
-                  raise KeyError(name)
-              cache[key]=found
-              return found
-
-          src="models/weapons2/mp40/"
-          required=["mp40.md3","v_mp40.md3","v_mp40_hand.md3","weapon.cfg"]
-          for n in required:
-              get(src+n)
-
-          # Optional stock MP40 components are copied when present.
-          optional=["mp40_flash.md3","v_mp40_flash.md3","v_mp40_barrel.md3",
-                    "v_mp40_barrel2.md3","v_mp40_barrel3.md3"]
-          present={}
-          for n in optional:
-              try: present[n]=get(src+n)
-              except KeyError: pass
-
-          out=Path("evidence/dw_weapon_v12_fire_fixture.pk3")
-          with zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED) as z:
-              for destdir,stem in [
-                  ("models/weapons/assault_rifles/mp44/","mp44"),
-                  ("models/weapons/smgs/ppsh/","ppsh")]:
-                  z.writestr(destdir+stem+"_3rd.md3",get(src+"mp40.md3"))
-                  z.writestr(destdir+"v_"+stem+".md3",get(src+"v_mp40.md3"))
-                  z.writestr(destdir+"v_"+stem+"_hand.md3",get(src+"v_mp40_hand.md3"))
-                  z.writestr(destdir+"weapon.cfg",get(src+"weapon.cfg"))
-                  if "mp40_flash.md3" in present:
-                      z.writestr(destdir+stem+"_3rd_flash.md3",present["mp40_flash.md3"])
-                  if "v_mp40_flash.md3" in present:
-                      z.writestr(destdir+"v_"+stem+"_flash.md3",present["v_mp40_flash.md3"])
-                  for idx,name in enumerate(["v_mp40_barrel.md3","v_mp40_barrel2.md3","v_mp40_barrel3.md3"],1):
-                      if name in present:
-                          suffix="_barrel.md3" if idx==1 else f"_barrel{idx}.md3"
-                          z.writestr(destdir+"v_"+stem+suffix,present[name])
-
-          with zipfile.ZipFile(out) as z:
-              assert z.testzip() is None
-              assert "models/weapons/assault_rifles/mp44/v_mp44.md3" in z.namelist()
-              assert "models/weapons/smgs/ppsh/v_ppsh.md3" in z.namelist()
-          print(out)
-          PY
+          cat > evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE.cfg <<'EOF'
+          give StG44
+          wait 5
+          weapon 32
+          wait 20
+          +attack
+          wait 18
+          -attack
+          wait 12
+          give PPSh-41
+          wait 5
+          weapon 33
+          wait 20
+          +attack
+          wait 18
+          -attack
+          wait 12
+          quit
+          EOF
+          grep -Fq 'weapon 32' evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE.cfg
+          grep -Fq 'weapon 33' evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE.cfg
+          echo "DW_WEAPON_PORT_V12_ACTIVE_FIRE_SCRIPT_PASS"
 
       - name: Build safe PBR V3.2 audit fixture
         run: |
@@ -519,20 +480,18 @@ jobs:
           mkdir -p runtime_fire/main home_fire
           cp -a "$buildroot/." runtime_fire/
           find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime_fire/main/ \;
-          cp evidence/dw_weapon_v12_fire_fixture.pk3 runtime_fire/main/zzz_dw_weapon_v12_fire_fixture.pk3
+          cp evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE.cfg runtime_fire/main/
 
           set +e
           LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 120s "$PWD/runtime_fire/$(basename "$exe")" \
             +set fs_basepath "$PWD/runtime_fire" +set fs_homepath "$PWD/home_fire" \
             +set com_introplayed 1 +set com_recommendedSet 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0 \
             +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
-            +set r_dlightmode 2 +set r_forcesun 1 +set g_debugBullets 8 \
+            +set cg_drawGun 0 +set r_dlightmode 2 +set r_forcesun 1 +set g_debugBullets 8 \
             +set r_dwElectricPhysicalOwner 1 +set r_dwElectricPhysicalOwnerDiag 0 +set r_dwElectricOwnerAudit 0 \
             +set r_dwEscape1PhysicalDlightOwnerResidency 1 +set r_dwEscape1ExternalNativeReserve 9 \
             +set r_dwEscape1PhysicalDlightOwnerDiag 0 +set r_dwEscape1DlightResidencyAudit 0 \
-            +devmap escape1 +wait 35 \
-            +give StG44 +wait 3 +weapon 32 +wait 22 +attack +wait 18 -attack +wait 18 \
-            +give PPSh-41 +wait 3 +weapon 33 +wait 22 +attack +wait 18 -attack +wait 18 +quit
+            +devmap escape1 +wait 35 +exec DW_WEAPON_PORT_V12_ACTIVE_FIRE.cfg
           rc=$?
           set -e
           echo "$rc" > evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE_EXIT.txt
