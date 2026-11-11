@@ -260,31 +260,34 @@ jobs:
           test -d "$retail_main"
           echo "$retail_main" > evidence/retail_main_path.txt
 
-      - name: Prepare Weapon V1.2 active-fire command script
+      - name: Prepare Weapon V1.3 active-fire command scripts
         run: |
           set -Eeuo pipefail
-          cat > evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE.cfg <<'EOF'
+          cat > evidence/DW_WEAPON_PORT_V13_MP44_FIRE.cfg <<'EOF'
           give StG44
           wait 5
           weapon 32
           wait 20
           +attack
-          wait 18
+          wait 24
           -attack
           wait 12
+          quit
+          EOF
+          cat > evidence/DW_WEAPON_PORT_V13_PPSH_FIRE.cfg <<'EOF'
           give PPSh-41
           wait 5
           weapon 33
           wait 20
           +attack
-          wait 18
+          wait 24
           -attack
           wait 12
           quit
           EOF
-          grep -Fq 'weapon 32' evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE.cfg
-          grep -Fq 'weapon 33' evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE.cfg
-          echo "DW_WEAPON_PORT_V12_ACTIVE_FIRE_SCRIPT_PASS"
+          grep -Fq 'weapon 32' evidence/DW_WEAPON_PORT_V13_MP44_FIRE.cfg
+          grep -Fq 'weapon 33' evidence/DW_WEAPON_PORT_V13_PPSH_FIRE.cfg
+          echo "DW_WEAPON_PORT_V13_ACTIVE_FIRE_SCRIPTS_PASS"
 
       - name: Build V1.3 animated first-person weapon fixture
         run: |
@@ -597,38 +600,45 @@ jobs:
           buildroot="$(dirname "$exe")"
           retail_main="$(cat evidence/retail_main_path.txt)"
 
-          rm -rf runtime_fire home_fire
-          mkdir -p runtime_fire/main home_fire
+          rm -rf runtime_fire home_fire_mp44 home_fire_ppsh
+          mkdir -p runtime_fire/main home_fire_mp44 home_fire_ppsh
           cp -a "$buildroot/." runtime_fire/
           find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime_fire/main/ \;
-          cp evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE.cfg runtime_fire/main/
           cp evidence/dw_weapon_v13_fp_anim_fixture.pk3 runtime_fire/main/zzzz_dw_weapon_v13_fp_anim_fixture.pk3
+          cp evidence/DW_WEAPON_PORT_V13_MP44_FIRE.cfg runtime_fire/main/
+          cp evidence/DW_WEAPON_PORT_V13_PPSH_FIRE.cfg runtime_fire/main/
 
-          set +e
-          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 120s "$PWD/runtime_fire/$(basename "$exe")" \
-            +set fs_basepath "$PWD/runtime_fire" +set fs_homepath "$PWD/home_fire" \
-            +set com_introplayed 1 +set com_recommendedSet 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0 \
-            +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
-            +set cg_drawGun 1 +set cg_debugAnim 8 +set r_dlightmode 2 +set r_forcesun 1 +set g_debugBullets 8 \
-            +set r_dwElectricPhysicalOwner 1 +set r_dwElectricPhysicalOwnerDiag 0 +set r_dwElectricOwnerAudit 0 \
-            +set r_dwEscape1PhysicalDlightOwnerResidency 1 +set r_dwEscape1ExternalNativeReserve 9 \
-            +set r_dwEscape1PhysicalDlightOwnerDiag 0 +set r_dwEscape1DlightResidencyAudit 0 \
-            +devmap escape1 +wait 35 +exec DW_WEAPON_PORT_V12_ACTIVE_FIRE.cfg
-          rc=$?
-          set -e
-          echo "$rc" > evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE_EXIT.txt
+          run_weapon_fire() {
+            local home_dir="$1"
+            local cfg="$2"
+            local id="$3"
+            local outlog="$4"
+            set +e
+            LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 120s "$PWD/runtime_fire/$(basename "$exe")" \
+              +set fs_basepath "$PWD/runtime_fire" +set fs_homepath "$PWD/$home_dir" \
+              +set com_introplayed 1 +set com_recommendedSet 1 +set s_initsound 0 +set logfile 2 +set developer 0 +set con_notifytime 0 \
+              +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
+              +set cg_drawGun 1 +set cg_debugAnim 8 +set r_dlightmode 2 +set r_forcesun 1 +set g_debugBullets 8 \
+              +set r_dwElectricPhysicalOwner 1 +set r_dwElectricPhysicalOwnerDiag 0 +set r_dwElectricOwnerAudit 0 \
+              +set r_dwEscape1PhysicalDlightOwnerResidency 1 +set r_dwEscape1ExternalNativeReserve 9 \
+              +set r_dwEscape1PhysicalDlightOwnerDiag 0 +set r_dwEscape1DlightResidencyAudit 0 \
+              +devmap escape1 +wait 35 +exec "$cfg"
+            local rc=$?
+            set -e
+            echo "$rc" > "evidence/$outlog_EXIT.txt"
+            local qlog
+            qlog="$(find "$home_dir" -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+            test -n "$qlog"
+            cp "$qlog" "evidence/$outlog_QCONSOLE.log"
+            test "$rc" -eq 0
+            grep -Fq "DW_WEAPON_PORT_V12_FIRE weapon=$id" "evidence/$outlog_QCONSOLE.log"
+            grep -Fq "DW_WEAPON_PORT_V13_FP_ATTACK_SAFE weapon=$id" "evidence/$outlog_QCONSOLE.log"
+            ! grep -Fq 'CG_FireWeapon: ent->weapon >= WP_NUM_WEAPONS' "evidence/$outlog_QCONSOLE.log"
+            ! grep -Eiq 'segmentation fault|assertion.*failed|ERR_DROP|recursive error' "evidence/$outlog_QCONSOLE.log"
+          }
 
-          qlog="$(find home_fire -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
-          test -n "$qlog"
-          cp "$qlog" evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE_QCONSOLE.log
-
-          test "$rc" -eq 0
-          grep -Fq 'DW_WEAPON_PORT_V12_FIRE weapon=32' evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE_QCONSOLE.log
-          grep -Fq 'DW_WEAPON_PORT_V12_FIRE weapon=33' evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE_QCONSOLE.log
-          grep -Fq 'DW_WEAPON_PORT_V13_FP_ATTACK_SAFE weapon=32' evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE_QCONSOLE.log
-          grep -Fq 'DW_WEAPON_PORT_V13_FP_ATTACK_SAFE weapon=33' evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE_QCONSOLE.log
-          ! grep -Fq 'CG_FireWeapon: ent->weapon >= WP_NUM_WEAPONS' evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE_QCONSOLE.log
-          ! grep -Eiq 'segmentation fault|assertion.*failed|ERR_DROP|recursive error' evidence/DW_WEAPON_PORT_V12_ACTIVE_FIRE_QCONSOLE.log
+          run_weapon_fire home_fire_mp44 DW_WEAPON_PORT_V13_MP44_FIRE.cfg 32 DW_WEAPON_PORT_V13_MP44
+          run_weapon_fire home_fire_ppsh DW_WEAPON_PORT_V13_PPSH_FIRE.cfg 33 DW_WEAPON_PORT_V13_PPSH
 
           echo "DW_WEAPON_PORT_V13_FP_ACTIVE_FIRE_RUNTIME_PASS"
 
