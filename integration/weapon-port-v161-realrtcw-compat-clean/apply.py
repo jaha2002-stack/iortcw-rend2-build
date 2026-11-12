@@ -298,20 +298,17 @@ p=root/"SP/code/cgame/cg_weapons.c"
 c=p.read_text(encoding="utf-8")
 old='''		CG_CalculateWeaponPosition( hand.origin, angles );
 
-		VectorMA( hand.origin, cg_gun_x.value + fovOffset[0], cg.refdef.viewaxis[0], hand.origin );'''
+		gunoff[0] = cg_gun_x.value;
+		gunoff[1] = cg_gun_y.value;
+		gunoff[2] = cg_gun_z.value;
+'''
 new='''		CG_CalculateWeaponPosition( hand.origin, angles );
 		DW_V161ApplyWeaponPosition( ps->weapon, hand.origin );
 
-		VectorMA( hand.origin, cg_gun_x.value + fovOffset[0], cg.refdef.viewaxis[0], hand.origin );'''
-# Some exact source variants format this block slightly differently; try the legacy line first.
-if old not in c:
-    old='''		CG_CalculateWeaponPosition( hand.origin, angles );
-
-		VectorMA( hand.origin, cg_gun_x.value, cg.refdef.viewaxis[0], hand.origin );'''
-    new='''		CG_CalculateWeaponPosition( hand.origin, angles );
-		DW_V161ApplyWeaponPosition( ps->weapon, hand.origin );
-
-		VectorMA( hand.origin, cg_gun_x.value, cg.refdef.viewaxis[0], hand.origin );'''
+		gunoff[0] = cg_gun_x.value;
+		gunoff[1] = cg_gun_y.value;
+		gunoff[2] = cg_gun_z.value;
+'''
 c=one(c,old,new,"RealRTCW weaponPosition offsets")
 p.write_text(c,encoding="utf-8")
 
