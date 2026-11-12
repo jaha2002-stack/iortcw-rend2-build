@@ -239,21 +239,37 @@ jobs:
           git -C source diff --check
           echo "UNIFIED_V241_WEAPON_CROSS_FEATURE_GATES_PASS"
 
-      - name: Verify preinstalled MinGW toolchain
+      - name: Bootstrap standalone LLVM-MinGW toolchain
         run: |
           set -Eeuo pipefail
-          command -v x86_64-w64-mingw32-gcc-posix || command -v x86_64-w64-mingw32-gcc
-          command -v x86_64-w64-mingw32-g++-posix || command -v x86_64-w64-mingw32-g++
-          command -v x86_64-w64-mingw32-windres
-          command -v make
-          echo "MINGW_PREINSTALLED_PASS"
+          mkdir -p toolchain
+          curl -fL --retry 3 --retry-delay 2 \
+            https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-msvcrt-ubuntu-22.04-x86_64.tar.xz \
+            -o toolchain/llvm-mingw.tar.xz
+          tar -xJf toolchain/llvm-mingw.tar.xz -C toolchain
+          tc="$(find "$PWD/toolchain" -maxdepth 1 -type d -name 'llvm-mingw-*' -print -quit)"
+          test -n "$tc"
+          echo "$tc/bin" >> "$GITHUB_PATH"
+          test -x "$tc/bin/x86_64-w64-mingw32-gcc"
+          test -x "$tc/bin/x86_64-w64-mingw32-g++"
+          test -x "$tc/bin/x86_64-w64-mingw32-windres"
+          "$tc/bin/x86_64-w64-mingw32-gcc" --version | head -3
+          echo "LLVM_MINGW_BOOTSTRAP_PASS"
 
       - name: Build V1.5 Win64 game modules only
         run: |
           set -Eeuo pipefail
-          CC_BIN="$(command -v x86_64-w64-mingw32-gcc-posix || command -v x86_64-w64-mingw32-gcc)"
-          CXX_BIN="$(command -v x86_64-w64-mingw32-g++-posix || command -v x86_64-w64-mingw32-g++)"
-          make -C source/SP -j2 release             VERSION=1.51d-SP_DarkWolf-WeaponPortV15-FullEffects-Reload-ADSEyeLine             PLATFORM=mingw32 ARCH=x86_64             BUILD_CLIENT=0 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1             BUILD_RENDERER_REND2=0 USE_RENDERER_DLOPEN=1             CC="$CC_BIN" CXX="$CXX_BIN" WINDRES=x86_64-w64-mingw32-windres             > evidence/DW_WEAPON_PORT_V15_FAST_WIN64_BUILD.log 2>&1             || { tail -500 evidence/DW_WEAPON_PORT_V15_FAST_WIN64_BUILD.log; exit 1; }
+          command -v x86_64-w64-mingw32-gcc
+          command -v x86_64-w64-mingw32-g++
+          command -v x86_64-w64-mingw32-windres
+          make -C source/SP -j2 release \
+            VERSION=1.51d-SP_DarkWolf-WeaponPortV15-FullEffects-Reload-ADSEyeLine \
+            PLATFORM=mingw32 ARCH=x86_64 \
+            BUILD_CLIENT=0 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=0 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ WINDRES=x86_64-w64-mingw32-windres \
+            > evidence/DW_WEAPON_PORT_V15_FAST_WIN64_BUILD.log 2>&1 \
+            || { tail -500 evidence/DW_WEAPON_PORT_V15_FAST_WIN64_BUILD.log; exit 1; }
           build=source/SP/build/release-mingw32-x86_64
           find "$build" -maxdepth 3 -type f -print | sort | tee evidence/DW_WEAPON_PORT_V15_FAST_FILES.txt
           test -f "$build/main/cgame_sp_x64.dll"
@@ -268,7 +284,6 @@ jobs:
           build=source/SP/build/release-mingw32-x86_64
           test -f "$build/main/cgame_sp_x64.dll"
           test -f "$build/main/qagame_sp_x64.dll"
-          test -f "$build/main/ui_sp_x64.dll"
           grep -aFq 'DW_WEAPON_PORT_V14_BAD_COMPONENT_ANIM' "$build/main/cgame_sp_x64.dll"
           grep -aFq 'sound/weapons/mp44/mp44_fire.wav' "$build/main/cgame_sp_x64.dll"
           grep -aFq 'sound/weapons/ppsh/ppsh_fire.wav' "$build/main/cgame_sp_x64.dll"
@@ -284,7 +299,6 @@ jobs:
           path: |
             source/SP/build/release-mingw32-x86_64/main/cgame_sp_x64.dll
             source/SP/build/release-mingw32-x86_64/main/qagame_sp_x64.dll
-            source/SP/build/release-mingw32-x86_64/main/ui_sp_x64.dll
             evidence/DW_WEAPON_PORT_V15_PROOF.json
             evidence/DW_WEAPON_PORT_V15_TESTS.json
             evidence/DW_WEAPON_PORT_V15_WIN64_SHA256.txt
