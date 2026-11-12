@@ -608,11 +608,20 @@ extra=anchor+'''\tcase WP_DW_MP34:
 \t\tweaponInfo->ejectBrassFunc=CG_MachineGunEjectBrass; break;
 '''
 c=one(c,anchor,extra,"client registration cases")
-# recoil group: add all append weapons after V1 pair
-anchor='''\tcase WP_DW_MP44:
-\tcase WP_DW_PPSH:
-\tcase WP_FG42:'''
-insert='''\tcase WP_DW_MP44:
+# recoil group: V1 appends MP44/PPSh after STEN in the normal recoil path.
+anchor='''\tcase WP_FG42SCOPE:
+\tcase WP_FG42:
+\tcase WP_MP40:
+\tcase WP_THOMPSON:
+\tcase WP_STEN:
+\tcase WP_DW_MP44:
+\tcase WP_DW_PPSH:'''
+insert='''\tcase WP_FG42SCOPE:
+\tcase WP_FG42:
+\tcase WP_MP40:
+\tcase WP_THOMPSON:
+\tcase WP_STEN:
+\tcase WP_DW_MP44:
 \tcase WP_DW_PPSH:
 \tcase WP_DW_MP34:
 \tcase WP_DW_BAR:
@@ -625,11 +634,10 @@ insert='''\tcase WP_DW_MP44:
 \tcase WP_DW_G43:
 \tcase WP_DW_M97:
 \tcase WP_DW_BROWNING:
-\tcase WP_DW_MG42M:
-\tcase WP_FG42:'''
+\tcase WP_DW_MG42M:'''
 c=one(c,anchor,insert,"recoil group")
-# impact group may have same small anchor occurrence; add new ids.
-# Use first occurrence after known V1 pattern only if exact.
+
+# impact group: unique V1 sequence begins with MP40 then the two append-only weapons.
 anchor='''\tcase WP_MP40:
 \tcase WP_DW_MP44:
 \tcase WP_DW_PPSH:
