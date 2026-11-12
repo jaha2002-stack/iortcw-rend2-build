@@ -1,0 +1,314 @@
+name: DW Weapon Port V1.6.3 ADS Ballistic Alignment Win64 TEST
+
+on:
+  push:
+    branches:
+      - feature/weapon-port-v163-ads-ballistic-alignment-from-v162
+    paths:
+      - .github/workflows/DW_WEAPON_PORT_V163_ADS_BALLISTIC_ALIGNMENT_TEST.yml
+      - integration/weapon-port-v163-ads-ballistic-alignment/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dw-weapon-port-v163-ads-ballistic-alignment-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LLVM_MINGW_URL: https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-msvcrt-ubuntu-22.04-x86_64.tar.xz
+      LLVM_MINGW_SHA256: 6e3342e2e0dfa56e9178f3c34b198f278bd5e603db4a759455d1439cc2230630
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Verify runner tools without apt
+        run: |
+          set -Eeuo pipefail
+          command -v git
+          command -v gh
+          command -v python3
+          command -v curl
+          command -v tar
+          command -v unzip
+          command -v zip
+          command -v make
+          echo "DW_V163_NO_APT_RUNNER_TOOLS_PASS"
+
+      - name: Install portable llvm-mingw without apt
+        run: |
+          set -Eeuo pipefail
+          mkdir -p third_party
+          curl -fL --retry 4 --retry-delay 3 "$LLVM_MINGW_URL" -o third_party/llvm-mingw.tar.xz
+          echo "$LLVM_MINGW_SHA256  third_party/llvm-mingw.tar.xz" | sha256sum -c -
+          tar -xJf third_party/llvm-mingw.tar.xz -C third_party
+          toolroot="$(find third_party -maxdepth 1 -type d -name 'llvm-mingw-*' -print -quit)"
+          test -n "$toolroot"
+          echo "$PWD/$toolroot/bin" >> "$GITHUB_PATH"
+          "$toolroot/bin/x86_64-w64-mingw32-clang" --version | head -1
+          echo "DW_V163_PORTABLE_MINGW_PASS"
+
+      - name: Reconstruct exact accepted source
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence dist incoming
+          mkdir -p evidence dist incoming
+          python3 integration/elss-v1/prepare.py
+          test -f source/SP/code/cgame/cg_weapons.c
+          test -f source/SP/code/game/bg_pmove.c
+          echo "DW_V163_EXACT_SOURCE_RECONSTRUCTED"
+
+      - name: Apply Weapon Port V1
+        run: |
+          set -Eeuo pipefail
+          python3 integration/weapon-port-v1/apply.py source evidence
+          python3 integration/weapon-port-v1/run_tests.py source evidence
+
+      - name: Apply Weapon Port V1.1 HD model limits
+        run: |
+          set -Eeuo pipefail
+          python3 integration/weapon-port-v11-hd-model-limit/apply.py source evidence
+          python3 integration/weapon-port-v11-hd-model-limit/run_tests.py source evidence
+
+      - name: Apply Weapon Port V1.2 Fire Safe baseline
+        run: |
+          set -Eeuo pipefail
+          python3 integration/weapon-port-v12-fire-safe/apply.py source evidence
+          python3 integration/weapon-port-v12-fire-safe/run_tests.py source evidence
+
+      - name: Apply Weapon Port V1.4 component animation safety
+        run: |
+          set -Eeuo pipefail
+          python3 integration/weapon-port-v14-component-anim-index-safety/apply.py source evidence
+          python3 integration/weapon-port-v14-component-anim-index-safety/run_tests.py source evidence
+          ! grep -Fq 'DARKWOLF_WEAPON_PORT_V13_FP_ATTACK_ANIM_SAFE' source/SP/code/cgame/cg_weapons.c
+
+      - name: Apply Weapon Port V1.5 full fire ADS reload
+        run: |
+          set -Eeuo pipefail
+          python3 integration/weapon-port-v15-full-fire-ads-reload/apply.py source evidence
+          python3 integration/weapon-port-v15-full-fire-ads-reload/run_tests.py source evidence
+          grep -Fq 'DARKWOLF_WEAPON_PORT_V15_FULL_FIRE_ADS_RELOAD' source/SP/code/cgame/cg_weapons.c
+          grep -Fq 'DARKWOLF_WEAPON_PORT_V15_FULL_FIRE_ADS_RELOAD' source/SP/code/game/bg_pmove.c
+          echo "DW_V15_STATIC_PASS"
+
+      - name: Apply Weapon Port V1.6 expanded arsenal and ADS calibrator
+        run: |
+          set -Eeuo pipefail
+          python3 integration/weapon-port-v16-expanded-arsenal-ads-calibrator/apply.py source evidence
+          python3 integration/weapon-port-v16-expanded-arsenal-ads-calibrator/run_tests.py source evidence
+          grep -Fq 'WP_DW_MG42M' source/SP/code/game/bg_public.h
+          grep -Fq 'DW_M97_Fire' source/SP/code/game/g_weapon.c
+          grep -Fq 'dw_ads_cal' source/SP/code/cgame/cg_consolecmds.c
+          grep -Fq '#define MD3_MAX_TRIANGLES   32768' source/SP/code/qcommon/qfiles.h
+          echo "DW_V163_STATIC_PASS"
+
+      - name: Apply Weapon Port V1.6.1 RealRTCW compatibility cleanup
+        run: |
+          set -Eeuo pipefail
+          python3 integration/weapon-port-v161-realrtcw-compat-clean/apply.py source evidence
+          python3 integration/weapon-port-v161-realrtcw-compat-clean/run_tests.py source evidence
+          grep -Fq 'DARKWOLF_WEAPON_PORT_V161_REALRTCW_COMPAT_CLEAN' source/SP/code/cgame/cg_weapons.c
+          grep -Fq 'DW_V161PartModelPath' source/SP/code/cgame/cg_weapons.c
+          grep -Fq 'DW_V161_NO_BRASS_TAG' source/SP/code/cgame/cg_weapons.c
+          echo "DW_V163_STATIC_PASS"
+
+      - name: Apply Weapon Port V1.6.2 SP fire sound-range safety
+        run: |
+          set -Eeuo pipefail
+          python3 integration/weapon-port-v162-sp-fire-sound-range-safety/apply.py source evidence
+          python3 integration/weapon-port-v162-sp-fire-sound-range-safety/run_tests.py source evidence
+          grep -Fq 'DARKWOLF_WEAPON_PORT_V162_SP_FIRE_SOUND_RANGE_SAFETY' source/SP/code/game/ai_cast_fight.c
+          for w in WP_DW_MP44 WP_DW_PPSH WP_DW_MP34 WP_DW_BAR WP_DW_TT33 WP_DW_DUAL_TT33 WP_DW_REVOLVER WP_DW_HDM WP_DW_MOSIN WP_DW_M1GARAND WP_DW_G43 WP_DW_M97 WP_DW_BROWNING WP_DW_MG42M; do
+            grep -Fq "case    $w:" source/SP/code/game/ai_cast_fight.c
+          done
+          echo "DW_V163_SP_FIRE_SOUND_RANGE_STATIC_PASS"
+
+      - name: Apply Weapon Port V1.6.3 ADS ballistic alignment
+        run: |
+          set -Eeuo pipefail
+          python3 integration/weapon-port-v163-ads-ballistic-alignment/apply.py source evidence
+          python3 integration/weapon-port-v163-ads-ballistic-alignment/run_tests.py source evidence
+          grep -Fq 'DARKWOLF_WEAPON_PORT_V163_ADS_BALLISTIC_ALIGNMENT' source/SP/code/game/g_weapon.c
+          grep -Fq 'spread = 0.0f;' source/SP/code/game/g_weapon.c
+          ! grep -Fq 'spread *= 0.55f' source/SP/code/game/g_weapon.c
+          echo "DW_V163_ADS_BALLISTIC_STATIC_PASS"
+
+      - name: Build Win64 game modules with portable llvm-mingw
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release \
+            VERSION=1.51d-SP_DarkWolf-WeaponPortV163-ADS-Ballistic-Alignment \
+            PLATFORM=mingw32 ARCH=x86_64 \
+            BUILD_CLIENT=0 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=0 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-clang \
+            CXX=x86_64-w64-mingw32-clang++ \
+            WINDRES=x86_64-w64-mingw32-windres \
+            > evidence/DW_V163_WIN64_BUILD.log 2>&1 \
+            || { tail -500 evidence/DW_V163_WIN64_BUILD.log; exit 1; }
+
+          build=source/SP/build/release-mingw32-x86_64
+          test -f "$build/main/cgame_sp_x64.dll"
+          test -f "$build/main/qagame_sp_x64.dll"
+          test -f "$build/main/ui_sp_x64.dll"
+          grep -aFq 'DW_WEAPON_PORT_V14_BAD_COMPONENT_ANIM raw=%d masked=%d max=%d partid=%d' "$build/main/cgame_sp_x64.dll"
+          grep -aFq 'sound/weapons/mp44/mp44_fire.wav' "$build/main/cgame_sp_x64.dll"
+          grep -aFq 'sound/weapons/ppsh/ppsh_fire.wav' "$build/main/cgame_sp_x64.dll"
+          grep -aFq 'sound/weapons/mg42m/mg42m_fire.wav' "$build/main/cgame_sp_x64.dll"
+          grep -aFq 'sound/weapons/browning/browning_fire.wav' "$build/main/cgame_sp_x64.dll"
+          grep -aFq 'DW ADS CAL %s: right=%.3f up=%.3f forward=%.3f' "$build/main/cgame_sp_x64.dll"
+          grep -aFq 'DW_WEAPON_PORT_V12_FIRE weapon=%d' "$build/main/qagame_sp_x64.dll"
+          sha256sum "$build/main/cgame_sp_x64.dll" "$build/main/qagame_sp_x64.dll" "$build/main/ui_sp_x64.dll" | tee evidence/DW_V163_GAME_DLL_SHA256.txt
+          echo "DW_V163_WIN64_GAME_MODULES_PASS"
+
+      - name: Download V1.2 verified Win64 package
+        run: |
+          set -Eeuo pipefail
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/13839023843/zip > incoming/v12_outer.zip
+          unzip -q incoming/v12_outer.zip -d incoming/v12
+          basezip="$(find incoming/v12 -maxdepth 2 -type f -name 'DarkWolf_Rend2_TextureB2V241_WeaponPort_V12_FireSafe_MP44_PPSh_ADS_TEST_Win64.zip' -print -quit)"
+          test -n "$basezip"
+          echo "$basezip" > evidence/V163_BASE_PACKAGE_PATH.txt
+          echo "DW_V163_V12_BASE_FETCH_PASS"
+
+      - name: Package V1.6.3 TEST
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,hashlib,json
+
+          base=Path(Path('evidence/V163_BASE_PACKAGE_PATH.txt').read_text().strip())
+          build=Path('source/SP/build/release-mingw32-x86_64/main')
+          out=Path('dist/DarkWolf_Rend2_TextureB2V241_WeaponPort_V163_ADSBallisticAlignment_TEST_Win64.zip')
+          H=lambda b:hashlib.sha256(b).hexdigest()
+
+          with zipfile.ZipFile(base) as z:
+              names=z.namelist()
+              root=names[0].split('/')[0]+'/'
+              entries={n[len(root):]:z.read(n) for n in names if n.startswith(root) and not n.endswith('/')}
+
+          for fn in ('cgame_sp_x64.dll','qagame_sp_x64.dll','ui_sp_x64.dll'):
+              entries['Main/'+fn]=(build/fn).read_bytes()
+
+          # Do not ship the old V12 asset pack in the code-only artifact; COMPLETE is assembled
+          # from the user's supplied RealRTCW packs after CI.
+          entries.pop('Main/DW_RealRTCW_WeaponPort_V12_MP44_PPSh.pk3',None)
+
+          ids=[
+            ('MP34',34),('BAR',35),('TT-33',36),('Dual TT-33',37),('Revolver',38),('HDM',39),
+            ('Mosin-Nagant',40),('M1 Garand',41),('G43',42),('Ithaca M97',43),('Browning',44),('MG42M',45)
+          ]
+          # Safe master: only grants items.  Do not rapidly auto-cycle 12 heavy
+          # viewmodels; individual cfgs below select/test one weapon at a time.
+          cfg=['// DarkWolf Weapon Port V1.6.3 SAFE GIVE ALL','cg_drawGun 1','bind r "+reload"']
+          for name,wid in ids:
+              cfg += [f'give {name}']
+          cfg += ['echo "V1.6.3 weapons granted. Use an individual DW_WEAPON_PORT_V163_ID*_TEST.cfg."']
+          entries['Main/DW_WEAPON_PORT_V163_GIVE_ALL.cfg']=('\n'.join(cfg)+'\n').encode()
+          for name,wid in ids:
+              safe=name.upper().replace(' ','_').replace('-','')
+              onecfg=[
+                '// DarkWolf Weapon Port V1.6.3 isolated weapon test',
+                'cg_drawGun 1','bind r "+reload"',f'give {name}',f'weapon {wid}',
+                'wait 20','give ammo 250',
+                f'echo "V1.6.3 ID {wid} {name}: idle -> one shot -> burst if auto -> last shot -> R reload."'
+              ]
+              entries[f'Main/DW_WEAPON_PORT_V163_ID{wid}_{safe}_TEST.cfg']=('\n'.join(onecfg)+'\n').encode()
+
+          ads='''// ADS calibration test
+          cg_drawGun 1
+          echo "Select MP40 or STEN, toggle ADS, then use /dw_ads_cal right up forward"
+          echo "Example to move sight down: /dw_ads_cal 0 -1 0"
+          echo "Reset current weapon: /dw_ads_reset"
+          '''
+          entries['Main/DW_ADS_CALIBRATION_V163.cfg']=ads.encode()
+
+          readme='''DarkWolf Weapon Port V1.6.3 ADS Ballistic Alignment TEST
+          Base: V1.5 full fire/reload success + V1.4 component animation safety.
+          V1.3 hand-frame freeze is NOT present.
+
+          New append-only weapon IDs:
+          34 MP34
+          35 BAR
+          36 TT-33
+          37 Dual TT-33
+          38 Revolver
+          39 HDM
+          40 Mosin-Nagant
+          41 M1 Garand
+          42 G43
+          43 Ithaca M97
+          44 Browning
+          45 MG42M
+
+          Excluded by request: Tesla, Venom and Panzerfaust/rocket weapon ports.
+          Existing stock RTCW versions remain untouched.
+
+          Required asset pack:
+          DW_RealRTCW_WeaponPort_V161_CompatClean.pk3
+
+          Safe test:
+          /exec DW_WEAPON_PORT_V163_GIVE_ALL.cfg only grants the imported weapons; it does NOT auto-cycle them.
+          Test one weapon at a time with DW_WEAPON_PORT_V163_ID34_*_TEST.cfg through ID45.
+          For each: idle first, one shot, burst if automatic, last shot, then R reload.
+
+          ADS MP40/STEN:
+          /exec DW_ADS_CALIBRATION_V163.cfg
+          /dw_ads_cal
+          /dw_ads_cal <right> <up> <forward>
+          /dw_ads_reset
+          Negative UP moves the sight down on screen.
+          '''
+          entries['DW_WEAPON_PORT_V163_TEST_README.txt']=readme.encode()
+
+          proof={
+            'version':'DarkWolf Weapon Port V1.6.3 ADS Ballistic Alignment',
+            'v14_component_animation_index_safety':True,
+            'v15_full_fire_reload_preserved':True,
+            'v13_hand_frame_freeze':False,
+            'new_weapon_ids':dict(ids),
+            'm97_pellets':12,
+            'browning_md3_triangle_limit':32768,
+            'ads_commands':['dw_ads_cal <right> <up> <forward>','dw_ads_reset'],
+            'asset_pk3_required':'DW_RealRTCW_WeaponPort_V161_CompatClean.pk3',
+            'modules':{fn:H((build/fn).read_bytes()) for fn in ('cgame_sp_x64.dll','qagame_sp_x64.dll','ui_sp_x64.dll')}
+          }
+          entries['DW_WEAPON_PORT_V163_PROOF.json']=(json.dumps(proof,indent=2)+'\n').encode()
+
+          with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              for rel,data in sorted(entries.items()):
+                  z.writestr(root+rel,data)
+          with zipfile.ZipFile(out) as z:
+              assert z.testzip() is None
+
+          Path('dist/SHA256SUMS_V163.txt').write_text(H(out.read_bytes())+'  '+out.name+'\n')
+          print(out,H(out.read_bytes()))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Weapon-Port-V163-ADS-Ballistic-Alignment-Win64-TEST
+          path: |
+            dist/DarkWolf_Rend2_TextureB2V241_WeaponPort_V163_ADSBallisticAlignment_TEST_Win64.zip
+            dist/SHA256SUMS_V163.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Weapon-Port-V163-ADS-Ballistic-Alignment-Proof
+          path: evidence/**
+          if-no-files-found: warn
+          retention-days: 90
