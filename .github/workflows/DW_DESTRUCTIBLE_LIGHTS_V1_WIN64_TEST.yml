@@ -1,0 +1,336 @@
+name: DW Destructible Lights V1 Win64 Test
+
+on:
+  push:
+    branches:
+      - feature/destructible-lights-v1-from-43189244002
+    paths:
+      - .github/workflows/DW_DESTRUCTIBLE_LIGHTS_V1_WIN64_TEST.yml
+      - integration/destructible-lights-v1/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DLO_OWNER_SHA: "60ea59d9cce705333dad49a937ba85c71735aa2d"
+      TEXTURE_SHA: "aa60e4d0c68260b6752920cddd8011b718c7dbba"
+      BASE_RUN: "43189244002"
+      BASE_ARTIFACT_ID: "13929023924"
+      LLVM_MINGW_URL: https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-msvcrt-ubuntu-22.04-x86_64.tar.xz
+      LLVM_MINGW_SHA256: 6e3342e2e0dfa56e9178f3c34b198f278bd5e603db4a759455d1439cc2230630
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Install portable llvm-mingw
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p third_party dist incoming stage evidence
+          curl -fL --retry 4 --retry-delay 3 "$LLVM_MINGW_URL" -o third_party/llvm-mingw.tar.xz
+          echo "$LLVM_MINGW_SHA256  third_party/llvm-mingw.tar.xz" | sha256sum -c -
+          tar -xJf third_party/llvm-mingw.tar.xz -C third_party
+          toolroot="$(find third_party -maxdepth 1 -type d -name 'llvm-mingw-*' -print -quit)"
+          test -n "$toolroot"
+          echo "$PWD/$toolroot/bin" >> "$GITHUB_PATH"
+          "$toolroot/bin/x86_64-w64-mingw32-clang" --version | head -1
+          echo "DW_DLV1_MINGW_PASS"
+
+      - name: Pin exact accepted Owner and Texture integrations
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags --depth=1 origin "$DLO_OWNER_SHA"
+          git checkout "$DLO_OWNER_SHA" -- \
+            integration/electric-owner-audit-v1 \
+            integration/electric-physical-owner-v1 \
+            integration/escape1-dlight-residency-v1 \
+            integration/escape1-physical-dlight-owner-v12
+          git fetch --no-tags --depth=1 origin "$TEXTURE_SHA"
+          git checkout "$TEXTURE_SHA" -- \
+            integration/texture-restoration-v1 \
+            integration/texture-ai-b2-v1 \
+            integration/texture-ai-b2-v2 \
+            integration/texture-ai-b2-v21 \
+            integration/texture-ai-b2-v22 \
+            integration/texture-ai-b2-v23
+
+      - name: Reconstruct exact Final V2 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence
+          mkdir -p evidence
+
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+
+          python3 integration/electric-owner-audit-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/run_tests.py source evidence
+          python3 integration/escape1-dlight-residency-v1/apply.py source evidence
+          python3 integration/escape1-dlight-residency-v1/run_tests.py source evidence
+          python3 integration/escape1-physical-dlight-owner-v12/apply.py source evidence
+          python3 integration/escape1-physical-dlight-owner-v12/run_tests.py source evidence
+
+          python3 integration/texture-restoration-v1/apply.py source evidence
+          python3 integration/texture-restoration-v1/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v1/apply.py source evidence
+          python3 integration/texture-ai-b2-v1/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v2/apply.py source evidence
+          python3 integration/texture-ai-b2-v2/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v21/apply.py source evidence
+          python3 integration/texture-ai-b2-v21/run_tests.py source/SP/code/rend2 evidence source
+          python3 integration/texture-ai-b2-v22/apply.py source evidence
+          python3 integration/texture-ai-b2-v22/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v23/apply.py source evidence
+          python3 integration/texture-ai-b2-v23/run_tests.py source/SP/code evidence
+          python3 integration/texture-ai-b2-v24/apply.py source evidence
+          python3 integration/texture-ai-b2-v24/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v241/apply.py source evidence
+          python3 integration/texture-ai-b2-v241/run_tests.py source/SP/code/rend2 evidence
+
+          python3 integration/pbr-v2/apply.py source --stage 3 --proof evidence/PBR_V42_PROOF.json
+          python3 integration/pbr-v2/test.py source --stage 3 --out evidence/PBR_V42_STATIC.json
+          python3 integration/pbr-v31-ibl/apply.py source --proof evidence/PBR_V31_PROOF.json
+          python3 integration/pbr-v31-ibl/test.py source --out evidence/PBR_V31_STATIC.json
+          python3 integration/pbr-v32-pom/apply.py source --proof evidence/PBR_V32_PROOF.json
+          python3 integration/pbr-v32-pom/test.py source --out evidence/PBR_V32_STATIC.json
+          python3 integration/pbr-v32-audit/apply.py source --proof evidence/PBR_V32_AUDIT_PROOF.json
+          python3 integration/pbr-v32-audit/test.py source --out evidence/PBR_V32_AUDIT_STATIC.json
+          python3 integration/texture-ai-b2-v24/run_unified_v24_tests.py source evidence
+
+          python3 integration/weapon-port-v1/apply.py source evidence
+          python3 integration/weapon-port-v1/run_tests.py source evidence
+          python3 integration/weapon-port-v11-hd-model-limit/apply.py source evidence
+          python3 integration/weapon-port-v11-hd-model-limit/run_tests.py source evidence
+          python3 integration/weapon-port-v12-fire-safe/apply.py source evidence
+          python3 integration/weapon-port-v12-fire-safe/run_tests.py source evidence
+          python3 integration/weapon-port-v14-component-anim-index-safety/apply.py source evidence
+          python3 integration/weapon-port-v14-component-anim-index-safety/run_tests.py source evidence
+          python3 integration/weapon-port-v15-full-fire-ads-reload/apply.py source evidence
+          python3 integration/weapon-port-v15-full-fire-ads-reload/run_tests.py source evidence
+          python3 integration/weapon-port-v16-expanded-arsenal-ads-calibrator/apply.py source evidence
+          python3 integration/weapon-port-v16-expanded-arsenal-ads-calibrator/run_tests.py source evidence
+          python3 integration/weapon-port-v161-realrtcw-compat-clean/apply.py source evidence
+          python3 integration/weapon-port-v161-realrtcw-compat-clean/run_tests.py source evidence
+          python3 integration/weapon-port-v162-sp-fire-sound-range-safety/apply.py source evidence
+          python3 integration/weapon-port-v162-sp-fire-sound-range-safety/run_tests.py source evidence
+          python3 integration/weapon-port-v163-ads-ballistic-alignment/apply.py source evidence
+          python3 integration/weapon-port-v163-ads-ballistic-alignment/run_tests.py source evidence
+          python3 integration/weapon-port-v164-ads-calibrator-angle-debug/apply.py source evidence
+          python3 integration/weapon-port-v164-ads-calibrator-angle-debug/run_tests.py source evidence
+          python3 integration/weapon-port-v165-ads-cvar-calibrator/apply.py source evidence
+          python3 integration/weapon-port-v165-ads-cvar-calibrator/run_tests.py source evidence
+          python3 integration/weapon-port-v166-final-ads-transform-calibrator/apply.py source evidence
+          python3 integration/weapon-port-v166-final-ads-transform-calibrator/run_tests.py source evidence
+
+          git -C source diff --check
+          echo "DW_DL_V1_SOURCE_RECONSTRUCT_PASS"
+
+      - name: Apply Destructible Lights V1 and static tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 integration/destructible-lights-v1/apply.py source
+          python3 integration/destructible-lights-v1/run_tests.py source
+          git -C source diff --check
+          echo "DW_DLV1_APPLY_STATIC_PASS"
+
+      - name: Build Win64 client renderer and game modules
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release \
+            VERSION=1.51d-SP_DarkWolf-Destructible-Lights-V1 \
+            PLATFORM=mingw32 ARCH=x86_64 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-clang \
+            CXX=x86_64-w64-mingw32-clang++ \
+            WINDRES=x86_64-w64-mingw32-windres \
+            > evidence/DW_DLV1_BUILD.log 2>&1 \
+            || { tail -600 evidence/DW_DLV1_BUILD.log; exit 1; }
+
+          build=source/SP/build/release-mingw32-x86_64
+          renderer="$(find "$build" -type f -name 'renderer_sp_rend2_x64.dll' -print -quit)"
+          cgame="$(find "$build" -type f -name 'cgame_sp_x64.dll' -print -quit)"
+          qagame="$(find "$build" -type f -name 'qagame_sp_x64.dll' -print -quit)"
+          test -f "$renderer"; test -f "$cgame"; test -f "$qagame"
+          grep -aFq 'darkwolf_light_bindings.txt' "$renderer"
+          grep -aFq 'dw_dlr_bind' "$renderer"
+          grep -aFq 'r_dwElectricPhysicalOwner' "$renderer"
+          grep -aFq 'r_dwEscape1PhysicalDlightOwnerResidency' "$renderer"
+          grep -aFq 'DWTR AI B2 V2.4.1:' "$renderer"
+          grep -aFq 'dw_lamp_bind' "$cgame"
+          grep -aFq 'cg_dwAdsStenPitch' "$cgame"
+          grep -aFq 'alarmbox.md3' "$qagame"
+          grep -aFq 'dw_lightCircuit' "$qagame"
+          grep -aFq 'DW_V162_SKIP_AI_FIRE_RECORD' "$qagame"
+          sha256sum "$renderer" "$cgame" "$qagame" | tee evidence/DW_DLV1_DLL_SHA256.txt
+          printf '%s\n%s\n%s\n' "$renderer" "$cgame" "$qagame" > evidence/DW_DLV1_BUILD_PATHS.txt
+          echo "DW_DLV1_WIN64_BUILD_PASS"
+
+      - name: Package over exact Run 43189244002
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/${BASE_ARTIFACT_ID}/zip > incoming/base_outer.zip
+          unzip -q incoming/base_outer.zip -d incoming/base_outer
+          inner="$(find incoming/base_outer -type f -name 'DarkWolf_Rend2_FINAL_CLEAN_PRODUCTION_V2_WeaponPort_ADS_HDRendererFix_CODE_CORE_Win64.zip' -print -quit)"
+          test -f "$inner"
+          unzip -q "$inner" -d stage
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,shutil,zipfile
+          H=lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          roots=[p for p in Path('stage').iterdir() if p.is_dir()]
+          assert len(roots)==1,roots
+          root=roots[0]
+          base={p.relative_to(root).as_posix():H(p) for p in root.rglob('*') if p.is_file()}
+
+          build=Path('source/SP/build/release-mingw32-x86_64')
+          def one(name):
+              xs=list(build.rglob(name)); assert len(xs)==1,(name,xs); return xs[0]
+          renderer=one('renderer_sp_rend2_x64.dll')
+          cgame=one('cgame_sp_x64.dll')
+          qagame=one('qagame_sp_x64.dll')
+          shutil.copy2(renderer,root/'renderer_sp_rend2_x64.dll')
+          shutil.copy2(cgame,root/'Main/cgame_sp_x64.dll')
+          shutil.copy2(qagame,root/'Main/qagame_sp_x64.dll')
+
+          readme=root/'Main/DW_DESTRUCTIBLE_LIGHTS_V1_README.txt'
+          readme.write_text(
+              'DarkWolf Destructible Lights V1 - TEST CANDIDATE\n'
+              'Exact base: GitHub Run #43189244002.\n\n'
+              'Lamp types: ceiling, wall, projector.\n'
+              'Switch type 1: alarmbox; type 2: phone; type 3: loudspeaker2.\n\n'
+              'AUTHORING:\n'
+              '1) Aim at a StaticPromote electric lamp and run: /dw_lamp_bind 1 ceiling\n'
+              '2) Aim at a wall and run: /dw_switch_add 1 1\n'
+              '3) Press normal USE on the installed switch.\n'
+              '4) Add more lamps to same group with /dw_lamp_bind 1 wall or projector.\n\n'
+              'MANUAL TEST: /dw_circuit 1 toggle\n'
+              'LIST: /dw_dlr_list\n'
+              'UNBIND aimed lamp: /dw_dlr_unbind\n\n'
+              'Shoot a bound lamp proxy to destroy that lamp individually.\n'
+              'Circuit IDs supported: 1..16.\n'
+          )
+          cfg=root/'Main/DW_DESTRUCTIBLE_LIGHTS_V1_ESCAPE1_GUARDROOM_TEST.cfg'
+          cfg.write_text(
+              'echo "DarkWolf Destructible Lights V1 - Escape1 guard room"\n'
+              'echo "Aim at ONE ceiling lamp, then: /dw_lamp_bind 1 ceiling"\n'
+              'echo "Aim at wall, then: /dw_switch_add 1 1"\n'
+              'echo "Use the switch with normal USE key; shoot the lamp to destroy it."\n'
+              'echo "Add more group lamps with /dw_lamp_bind 1 ceiling"\n'
+          )
+
+          mp=root/'DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json'
+          if mp.exists():
+              m=json.loads(mp.read_text())
+              m['destructible_lights_v1_test']={
+                  'status':'TEST_CANDIDATE',
+                  'exact_base_run':43189244002,
+                  'lamp_types':['ceiling','wall','projector'],
+                  'switch_types':['alarmbox','phone','loudspeaker2'],
+                  'circuits':16,
+                  'individual_destruction':True,
+                  'physical_owner_filter_before_shadow_localvol':True
+              }
+              mp.write_text(json.dumps(m,indent=2,ensure_ascii=False)+'\n')
+
+          allowed={
+              'renderer_sp_rend2_x64.dll',
+              'Main/cgame_sp_x64.dll',
+              'Main/qagame_sp_x64.dll',
+              'DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json'
+          }
+          post={p.relative_to(root).as_posix():H(p) for p in root.rglob('*') if p.is_file()}
+          unexpected=[k for k,v in base.items() if k not in allowed and post.get(k)!=v]
+          assert not unexpected,unexpected
+          proof={
+              'status':'TEST_CANDIDATE',
+              'base_run':43189244002,
+              'unexpected_base_changes':unexpected,
+              'replaced_binaries':['renderer_sp_rend2_x64.dll','Main/cgame_sp_x64.dll','Main/qagame_sp_x64.dll'],
+              'ui_unchanged':post.get('Main/ui_sp_x64.dll')==base.get('Main/ui_sp_x64.dll'),
+              'exe_unchanged':post.get('ioWolfSP.x64.exe')==base.get('ioWolfSP.x64.exe'),
+              'opengl1_unchanged':post.get('renderer_sp_opengl1_x64.dll')==base.get('renderer_sp_opengl1_x64.dll')
+          }
+          Path('evidence/DW_DLV1_PACKAGE_PROOF.json').write_text(json.dumps(proof,indent=2)+'\n')
+
+          sums=[]
+          for p in sorted(x for x in root.rglob('*') if x.is_file() and x.name!='SHA256SUMS.txt'):
+              sums.append(f"{H(p)}  {p.relative_to(root).as_posix()}")
+          (root/'SHA256SUMS.txt').write_text('\n'.join(sums)+'\n')
+          out=Path('dist/DarkWolf_Rend2_Destructible_Lights_V1_FROM_43189244002_Win64_TEST.zip')
+          with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              for p in sorted(x for x in root.rglob('*') if x.is_file()):
+                  z.write(p,Path(root.name)/p.relative_to(root))
+          with zipfile.ZipFile(out) as z: assert z.testzip() is None
+          Path('dist/SHA256SUMS_DW_DLV1.txt').write_text(H(out)+'  '+out.name+'\n')
+          print('DW_DLV1_PACKAGE_PASS',out,H(out))
+          PY
+
+      - name: Final archive verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          p=Path('dist/DarkWolf_Rend2_Destructible_Lights_V1_FROM_43189244002_Win64_TEST.zip')
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              root=names[0].split('/')[0]+'/'
+              rnd=z.read(root+'renderer_sp_rend2_x64.dll')
+              cg=z.read(root+'Main/cgame_sp_x64.dll')
+              qg=z.read(root+'Main/qagame_sp_x64.dll')
+              for x in (b'dw_dlr_bind',b'darkwolf_light_bindings.txt',b'r_dwElectricPhysicalOwner'):
+                  assert x in rnd,x
+              for x in (b'dw_lamp_bind',b'cg_dwAdsStenPitch'):
+                  assert x in cg,x
+              for x in (b'alarmbox.md3',b'dw_lightCircuit',b'DW_V162_SKIP_AI_FIRE_RECORD'):
+                  assert x in qg,x
+              assert root+'Main/DW_DESTRUCTIBLE_LIGHTS_V1_ESCAPE1_GUARDROOM_TEST.cfg' in names
+          print('DW_DLV1_FINAL_VERIFY_PASS')
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Destructible-Lights-V1-From-43189244002-Win64-Test
+          path: |
+            dist/DarkWolf_Rend2_Destructible_Lights_V1_FROM_43189244002_Win64_TEST.zip
+            dist/SHA256SUMS_DW_DLV1.txt
+          retention-days: 90
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Destructible-Lights-V1-Evidence
+          path: evidence/**
+          retention-days: 90
+          if-no-files-found: warn
