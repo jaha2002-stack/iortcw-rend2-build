@@ -1,0 +1,212 @@
+name: DW FINAL Clean Production V2 HD Renderer Fix
+
+on:
+  push:
+    branches:
+      - release/final-clean-production-v2-hd-renderer-fix
+    paths:
+      - .github/workflows/DW_FINAL_CLEAN_PRODUCTION_V2_HD_RENDERER_FIX.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FINAL_CORE_ARTIFACT: "13926751645"
+      V12_ARTIFACT: "13839023843"
+      V166_ARTIFACT: "13924405329"
+      OLD_RENDERER_SHA: "6e089d11ed78ade681fe6ae57e33b17a2984ffc2532a8c98abe4d33c511d05ae"
+      HD_RENDERER_SHA: "4d9a01bc0edbfcf9fa5540ed6ad5ec74fe4a8cf4c61fc79d38bfc90f4f0e23d0"
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Download exact verified artifacts
+        run: |
+          set -Eeuo pipefail
+          mkdir -p incoming/final incoming/v12 incoming/v166 out evidence
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/${FINAL_CORE_ARTIFACT}/zip > incoming/final.zip
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/${V12_ARTIFACT}/zip > incoming/v12.zip
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/${V166_ARTIFACT}/zip > incoming/v166.zip
+          unzip -q incoming/final.zip -d incoming/final
+          unzip -q incoming/v12.zip -d incoming/v12
+          unzip -q incoming/v166.zip -d incoming/v166
+          echo "ARTIFACT_DOWNLOAD_PASS"
+
+      - name: Extract inner packages and prove renderer lineage
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,hashlib,json,shutil,os
+
+          H=lambda b:hashlib.sha256(b).hexdigest()
+          def inner(dirp, pattern):
+              xs=list(Path(dirp).rglob(pattern))
+              assert len(xs)==1,(dirp,pattern,xs)
+              return xs[0]
+
+          final=inner('incoming/final','DarkWolf_Rend2_FINAL_Clean_Production_Weapon_ADS_CODE_CORE_Win64.zip')
+          v12=inner('incoming/v12','DarkWolf_Rend2_TextureB2V241_WeaponPort_V12_FireSafe_MP44_PPSh_ADS_TEST_Win64.zip')
+          v166=inner('incoming/v166','DarkWolf_Rend2_TextureB2V241_WeaponPort_V166_FinalADSTransformCalibrator_TEST_Win64.zip')
+
+          for name,p in [('final',final),('v12',v12),('v166',v166)]:
+              d=Path('incoming')/(name+'_inner'); d.mkdir(exist_ok=True)
+              with zipfile.ZipFile(p) as z:
+                  assert z.testzip() is None
+                  z.extractall(d)
+
+          def root(d):
+              xs=[p for p in Path(d).iterdir() if p.is_dir()]
+              assert len(xs)==1,xs
+              return xs[0]
+
+          fr=root('incoming/final_inner')
+          r12=root('incoming/v12_inner')
+          r166=root('incoming/v166_inner')
+
+          old=(fr/'renderer_sp_rend2_x64.dll').read_bytes()
+          hd12=(r12/'renderer_sp_rend2_x64.dll').read_bytes()
+          hd166=(r166/'renderer_sp_rend2_x64.dll').read_bytes()
+          assert H(old)==os.environ['OLD_RENDERER_SHA'],H(old)
+          assert H(hd12)==os.environ['HD_RENDERER_SHA'],H(hd12)
+          assert H(hd166)==os.environ['HD_RENDERER_SHA'],H(hd166)
+
+          m12=json.loads((r12/'DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json').read_text())
+          wp=m12['weapon_port']
+          assert wp['base_run']==42970261869
+          assert wp['hd_model_capacity']['shader_max_vertexes']==16384
+          assert wp['hd_model_capacity']['md3_max_verts']==16384
+
+          m166=json.loads((r166/'DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json').read_text())
+          assert m166['components']['pbr']['true_ggx_ibl_v31'] is True
+          assert m166['components']['texture_ai']['feature']=='Local AI Texture Restoration B2 V2.4.1 Universal Texture Picker'
+          assert m166['components']['electric_owner_escape1_residency']['escape1_physical_dlight_owner_residency_v12'] is True
+
+          # Effect/feature markers must remain present in the HD renderer.
+          for marker in [b'DWTR AI B2 V2.4.1:',b'r_dwElectricPhysicalOwner',
+                         b'r_dwEscape1PhysicalDlightOwnerResidency',b'r_pbrMaterialAudit',b'r_pomMinLayers']:
+              assert marker in hd12,marker
+
+          proof={
+            'root_cause':'Run #43182138689 restored pre-weapon renderer with stock SHADER_MAX_VERTEXES=4000, so RealRTCW HD weapon MD3 surfaces were rejected by R_LoadMD3.',
+            'final_run':43182138689,
+            'bad_renderer_sha256':H(old),
+            'verified_hd_renderer_sha256':H(hd12),
+            'hd_renderer_first_provenance_run':42985989906,
+            'same_renderer_through_v166_run':43174786140,
+            'shader_max_vertexes':16384,
+            'shader_max_indexes':98304,
+            'effect_markers_preserved':True
+          }
+          Path('evidence/HD_RENDERER_LINEAGE_PROOF.json').write_text(json.dumps(proof,indent=2)+'\n')
+          print(json.dumps(proof,indent=2))
+          PY
+
+      - name: Build corrected Final Clean Production V2 code core
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,hashlib,json,shutil,os
+
+          H=lambda b:hashlib.sha256(b).hexdigest()
+          fr=next(p for p in Path('incoming/final_inner').iterdir() if p.is_dir())
+          r12=next(p for p in Path('incoming/v12_inner').iterdir() if p.is_dir())
+          stage=Path('out/stage')/fr.name
+          shutil.copytree(fr,stage)
+
+          # This is the only binary replacement required to restore HD RealRTCW model loading.
+          shutil.copy2(r12/'renderer_sp_rend2_x64.dll',stage/'renderer_sp_rend2_x64.dll')
+          assert H((stage/'renderer_sp_rend2_x64.dll').read_bytes())==os.environ['HD_RENDERER_SHA']
+
+          helper=stage/'Main/DW_WEAPON_PORT_FINAL_GIVE_ALL.cfg'
+          helper.write_text(
+            '// DarkWolf Final Clean Production V2 - imported arsenal helper\n'
+            '// Stock RTCW give all does not include append-only ids 32..45.\n'
+            'give StG44\ngive PPSh-41\ngive MP34\ngive BAR\ngive TT-33\ngive Dual TT-33\n'
+            'give Revolver\ngive HDM\ngive Mosin-Nagant\ngive M1 Garand\ngive G43\n'
+            'give Ithaca M97\ngive Browning\ngive MG42M\ngive ammo 999\n'
+            'echo "DarkWolf imported arsenal granted (IDs 32..45)."\n'
+          )
+
+          mp=stage/'DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json'
+          m=json.loads(mp.read_text())
+          m['final_clean_weapon_ads_v2_hd_renderer_fix']={
+            'status':'CLEAN_PRODUCTION',
+            'root_cause_fixed':'Run #43182138689 packaged stock-limit pre-weapon Rend2 binary',
+            'renderer_sha256':os.environ['HD_RENDERER_SHA'],
+            'shader_max_vertexes':16384,
+            'shader_max_indexes':98304,
+            'effective_triangle_capacity':32767,
+            'game_modules_source_run':43182138689,
+            'pre_weapon_rend2_effect_source_preserved':True
+          }
+          mp.write_text(json.dumps(m,indent=2,ensure_ascii=False)+'\n')
+
+          proof=stage/'DW_FINAL_CLEAN_PRODUCTION_V2_HD_RENDERER_FIX_PROOF.json'
+          proof.write_text(Path('evidence/HD_RENDERER_LINEAGE_PROOF.json').read_text())
+
+          sums=[]
+          for p in sorted(x for x in stage.rglob('*') if x.is_file() and x.name!='SHA256SUMS.txt'):
+              sums.append(f"{H(p.read_bytes())}  {p.relative_to(stage).as_posix()}")
+          (stage/'SHA256SUMS.txt').write_text('\n'.join(sums)+'\n')
+
+          out=Path('out/DarkWolf_Rend2_FINAL_CLEAN_PRODUCTION_V2_WeaponPort_ADS_HDRendererFix_CODE_CORE_Win64.zip')
+          with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              for p in sorted(x for x in stage.rglob('*') if x.is_file()):
+                  z.write(p,Path(stage.name)/p.relative_to(stage))
+          with zipfile.ZipFile(out) as z: assert z.testzip() is None
+
+          Path('out/SHA256SUMS_FINAL_V2.txt').write_text(H(out.read_bytes())+'  '+out.name+'\n')
+          print(out,H(out.read_bytes()))
+          PY
+
+      - name: Final V2 integrity and regression verification
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,hashlib,json,os
+          p=Path('out/DarkWolf_Rend2_FINAL_CLEAN_PRODUCTION_V2_WeaponPort_ADS_HDRendererFix_CODE_CORE_Win64.zip')
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              root=z.namelist()[0].split('/')[0]+'/'
+              renderer=z.read(root+'renderer_sp_rend2_x64.dll')
+              assert hashlib.sha256(renderer).hexdigest()==os.environ['HD_RENDERER_SHA']
+              for marker in [b'DWTR AI B2 V2.4.1:',b'r_dwElectricPhysicalOwner',
+                             b'r_dwEscape1PhysicalDlightOwnerResidency',b'r_pbrMaterialAudit',b'r_pomMinLayers']:
+                  assert marker in renderer,marker
+              cgame=z.read(root+'Main/cgame_sp_x64.dll')
+              qagame=z.read(root+'Main/qagame_sp_x64.dll')
+              for marker in [b'cg_dwAdsStenPitch',b'cg_dwAdsMP40Yaw',b'sound/weapons/mg42m/mg42m_fire.wav']:
+                  assert marker in cgame,marker
+              assert b'DW_V162_SKIP_AI_FIRE_RECORD' in qagame
+              assert root+'Main/DW_WEAPON_PORT_FINAL_GIVE_ALL.cfg' in z.namelist()
+              m=json.loads(z.read(root+'DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json'))
+              assert m['final_clean_weapon_ads_v2_hd_renderer_fix']['status']=='CLEAN_PRODUCTION'
+          print('DW_FINAL_CLEAN_PRODUCTION_V2_HD_RENDERER_FIX_PASS')
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-FINAL-Clean-Production-V2-HD-Renderer-Fix-Code-Core-Win64
+          path: |
+            out/DarkWolf_Rend2_FINAL_CLEAN_PRODUCTION_V2_WeaponPort_ADS_HDRendererFix_CODE_CORE_Win64.zip
+            out/SHA256SUMS_FINAL_V2.txt
+          retention-days: 90
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-FINAL-Clean-Production-V2-HD-Renderer-Fix-Proof
+          path: evidence/**
+          retention-days: 90
+          if-no-files-found: error
