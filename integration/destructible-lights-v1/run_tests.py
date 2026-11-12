@@ -27,3 +27,5 @@ for rel,needles in checks.items():
 scene=(root/"rend2/tr_scene.c").read_text()
 if "DW_DLV1_MAX_CIRCUITS 16" in scene: raise SystemExit("include leaked into scene")
 print("DW_DESTRUCTIBLE_LIGHTS_V1_STATIC_TESTS_PASS",sum(map(len,checks.values())))
+
+# Build trigger: exact base Run 43189244002
