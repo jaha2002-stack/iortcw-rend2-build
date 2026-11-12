@@ -29,7 +29,7 @@ checks={
  "ppsh_custom_reload":'sound/weapons/ppsh/ppsh_reload.wav' in cg,
  "brass_restored":"weaponInfo->ejectBrassFunc=CG_MachineGunEjectBrass" in cg,
  "dlight_restored":"MAKERGB( weaponInfo->flashDlightColor, 1.0, 0.6, 0.23 )" in cg,
- "v12_flash_suppression_removed":"flash.hModel = 0;" not in cg[cg.find("DARKWOLF_WEAPON_PORT_V15_FULL_EFFECTS_RELOAD_ADS_EYELINE"):],
+ "v12_flash_suppression_removed":"DARKWOLF_WEAPON_PORT_V12_FIRE_SAFE: imported HD models are already stable at idle." not in cg,
  "ads_marker":"DARKWOLF_WEAPON_PORT_V15_ADS_EYELINE" in cg,
  "ads_mp40_relief":"eyeRelief = ( weaponNum == WP_STEN ) ? 10.0f : 8.0f" in cg,
  "ads_bore_offset":"boreBelowEye = 1.25f" in cg,
