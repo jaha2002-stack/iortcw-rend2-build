@@ -564,6 +564,15 @@ edit("rend2/tr_init.c",
 \tri.Cmd_AddCommand( "dw_dlr_unbind", R_DLV1_Unbind_f );
 \tri.Cmd_AddCommand( "dw_dlr_list", R_DLV1_List_f );
 ''')
+
+edit("rend2/tr_local.h",
+'''void R_ELSS_List_f(void);
+''',
+'''void R_ELSS_List_f(void);
+void R_DLV1_Bind_f(void);
+void R_DLV1_Unbind_f(void);
+void R_DLV1_List_f(void);
+''')
 edit("rend2/tr_init.c",
 '''\tri.Cmd_RemoveCommand( "imagelist" );
 ''',
