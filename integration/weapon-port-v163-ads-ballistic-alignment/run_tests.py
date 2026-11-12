@@ -7,8 +7,8 @@ ev=Path(sys.argv[2]).resolve() if len(sys.argv)>2 else root/"evidence"
 ev.mkdir(parents=True,exist_ok=True)
 
 s=(root/"SP/code/game/g_weapon.c").read_text(encoding="utf-8")
-start=s.index("void Bullet_Fire( gentity_t *ent, float spread, int damage )")
-end=s.index("void Bullet_Fire_Extended",start)
+start=s.index("void Bullet_Fire( gentity_t *ent, float spread, int damage ) {")
+end=s.index("\n}\n",start)+3
 fn=s[start:end]
 
 checks={
