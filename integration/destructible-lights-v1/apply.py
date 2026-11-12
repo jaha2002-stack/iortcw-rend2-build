@@ -594,16 +594,18 @@ edit("game/g_cmds.c",
 
 # Activation path: custom switch use before stock special cases.
 edit("game/g_cmds.c",
-'''\ttraceEnt = &g_entities[trace.entityNum];
+'''\ttraceEnt = &g_entities[ tr.entityNum ];
 
+\t// G_Printf( "%s activate %s\\n", ent->classname, traceEnt->classname);
 ''',
-'''\ttraceEnt = &g_entities[trace.entityNum];
+'''\ttraceEnt = &g_entities[ tr.entityNum ];
 
 \tif (traceEnt->classname && !Q_stricmp(traceEnt->classname, "dw_light_switch") && traceEnt->use) {
 \t\ttraceEnt->use(traceEnt, ent, ent);
 \t\treturn;
 \t}
 
+\t// G_Printf( "%s activate %s\\n", ent->classname, traceEnt->classname);
 ''')
 
 # Reset runtime dead list and circuit states on map initialization.
