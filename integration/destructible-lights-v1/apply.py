@@ -581,17 +581,16 @@ edit("game/g_cmds.c",
 #include "g_destructible_lights_v1.inc"
 ''')
 edit("game/g_cmds.c",
-'''\tcmd = ConcatArgs( 0 );
+'''\ttrap_Argv( 0, cmd, sizeof( cmd ) );
 
 ''',
-'''\tcmd = ConcatArgs( 0 );
+'''\ttrap_Argv( 0, cmd, sizeof( cmd ) );
 
 \tif (DW_Lights_ClientCommand(ent, cmd)) {
 \t\treturn;
 \t}
 
 ''')
-# Above final source may use trap_Argv rather than ConcatArgs for ClientCommand; fallback anchor below is handled by test script if needed.
 
 # Activation path: custom switch use before stock special cases.
 edit("game/g_cmds.c",
