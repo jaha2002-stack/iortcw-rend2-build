@@ -334,7 +334,12 @@ void DW_Lights_SwitchUse(gentity_t *self, gentity_t *other, gentity_t *activator
     char name[64], value[16];
     int current;
     if (!self) return;
-    Com_sprintf(name,sizeof(name),"dw_lightCircuit%02d",CLAMP(self->count,1,DW_DLV1_MAX_CIRCUITS));
+    {
+    int circuit = self->count;
+    if (circuit < 1) circuit = 1;
+    if (circuit > DW_DLV1_MAX_CIRCUITS) circuit = DW_DLV1_MAX_CIRCUITS;
+    Com_sprintf(name,sizeof(name),"dw_lightCircuit%02d",circuit);
+}
     current = trap_Cvar_VariableIntegerValue(name) ? 1 : 0;
     Com_sprintf(value,sizeof(value),"%d",current?0:1);
     trap_Cvar_Set(name,value);
@@ -348,7 +353,8 @@ void DW_Lights_ProxyDie(gentity_t *self, gentity_t *inflictor, gentity_t *attack
     int slot = trap_Cvar_VariableIntegerValue("dw_dl_deadCount");
     char name[64], value[128];
     if (!self) return;
-    slot = CLAMP(slot,0,DW_DLV1_MAX_DEAD);
+    if (slot < 0) slot = 0;
+    if (slot > DW_DLV1_MAX_DEAD) slot = DW_DLV1_MAX_DEAD;
     if (slot < DW_DLV1_MAX_DEAD) {
         Com_sprintf(name,sizeof(name),"dw_dl_dead%02d",slot);
         Com_sprintf(value,sizeof(value),"%.1f %.1f %.1f",
