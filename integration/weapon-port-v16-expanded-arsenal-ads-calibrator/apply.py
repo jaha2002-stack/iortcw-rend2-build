@@ -63,7 +63,7 @@ p.write_text(q1,encoding="utf-8")
 # ---- model hard limit: Browning has 18,054 triangles on one surface ----
 p=root/"SP/code/qcommon/qfiles.h"
 f0=p.read_text(encoding="utf-8")
-f1=one(f0,"#define MD3_MAX_TRIANGLES   16384\n","#define MD3_MAX_TRIANGLES   32768 // DarkWolf V1.6 Browning HD model safety\n","MD3 triangle limit")
+f1=one(f0,"#define MD3_MAX_TRIANGLES   16384   // per surface - DARKWOLF_WEAPON_PORT_V11_HD_MODEL_LIMIT","#define MD3_MAX_TRIANGLES   32768   // per surface - DARKWOLF_WEAPON_PORT_V16_EXPANDED_ARSENAL_ADS_CAL","MD3 triangle limit")
 p.write_text(f1,encoding="utf-8")
 
 # ---- ammo table and item definitions ----
