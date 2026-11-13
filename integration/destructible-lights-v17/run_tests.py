@@ -20,7 +20,7 @@ checks=[
  ("staticpromote off gating","allowed && !R_DLV1_FixtureEnabled(light)" in scene),
  ("proxy exact origin networked","VectorCopy(exactOrigin,e->s.origin2);" in g),
  ("visual uses exact fixture origin","VectorCopy(s1->origin2,ent.origin);" in c),
- ("destroyed proxy retained","self->classname=\\"dw_destroyed_lamp\\";" in g),
+ ("destroyed proxy retained",'self->classname="dw_destroyed_lamp";' in g),
  ("destroyed proxy no collision","self->r.contents=0;" in g and "self->clipmask=0;" in g),
  ("destroyed visual locked off","self->s.effect2Time=0;" in g),
  ("switch compact scale","? 0.64f : 0.24f;" in c),
