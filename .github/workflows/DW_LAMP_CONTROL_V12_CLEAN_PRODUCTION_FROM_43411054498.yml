@@ -1,0 +1,245 @@
+name: DW Lamp Control V1.2 Clean Production Promotion
+
+on:
+  push:
+    branches:
+      - release/lamp-control-v12-clean-production-from-43411054498
+    paths:
+      - .github/workflows/DW_LAMP_CONTROL_V12_CLEAN_PRODUCTION_FROM_43411054498.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dw-lamp-control-v12-clean-production-from-43411054498
+  cancel-in-progress: false
+
+jobs:
+  promote-tested-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ACCEPTED_RUN: "43411054498"
+      ACCEPTED_HEAD_SHA: "250669a231dc7bd571b4e2b3405c045f90ba64c1"
+      ACCEPTED_ARTIFACT_ID: "14029468123"
+      ACCEPTED_ARTIFACT_DIGEST: "c34dec5dde230e06e36129d2fac8f051ad6b98129ac2877d42fb92db0721689f"
+      ACCEPTED_INNER_SHA256: "af18da0c530c1862c08434b22de0b9da96c92b5bbe4613349ed87fe7f4c2febb"
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Verify exact accepted test run
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/${ACCEPTED_RUN} --jq .conclusion)" = "success"
+          test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/${ACCEPTED_RUN} --jq .head_sha)" = "${ACCEPTED_HEAD_SHA}"
+
+          actual_artifact_id="$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/${ACCEPTED_RUN}/artifacts             --jq '.artifacts[] | select(.name=="DW-Lamp-Control-V12-Exact-Visible-From-43189244002-Win64-Test") | .id')"
+          test "$actual_artifact_id" = "${ACCEPTED_ARTIFACT_ID}"
+
+          actual_digest="$(gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/${ACCEPTED_ARTIFACT_ID} --jq .digest)"
+          test "$actual_digest" = "sha256:${ACCEPTED_ARTIFACT_DIGEST}"
+
+          echo "DW_LAMP_CONTROL_V12_ACCEPTED_RUN_VERIFIED"
+
+      - name: Download exact tested artifact and verify accepted inner ZIP
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf incoming stage dist evidence
+          mkdir -p incoming stage dist evidence
+
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/${ACCEPTED_ARTIFACT_ID}/zip > incoming/accepted_outer.zip
+          unzip -t incoming/accepted_outer.zip > evidence/ACCEPTED_OUTER_ZIP_TEST.txt
+          unzip -q incoming/accepted_outer.zip -d incoming/accepted_outer
+
+          accepted_inner="$(find incoming/accepted_outer -type f -name 'DarkWolf_Rend2_Lamp_Control_V12_EXACT_VISIBLE_FROM_43189244002_Win64_TEST.zip' -print -quit)"
+          test -f "$accepted_inner"
+
+          actual_inner_sha="$(sha256sum "$accepted_inner" | awk '{print $1}')"
+          test "$actual_inner_sha" = "${ACCEPTED_INNER_SHA256}"
+          echo "${actual_inner_sha}  $(basename "$accepted_inner")" > evidence/ACCEPTED_INNER_SHA256.txt
+
+          unzip -t "$accepted_inner" > evidence/ACCEPTED_INNER_ZIP_TEST.txt
+          unzip -q "$accepted_inner" -d stage
+
+          echo "$accepted_inner" > evidence/ACCEPTED_INNER_PATH.txt
+          echo "DW_LAMP_CONTROL_V12_ACCEPTED_BINARY_PACKAGE_VERIFIED"
+
+      - name: Promote package metadata only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, shutil, zipfile
+
+          H=lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+
+          roots=[p for p in Path('stage').iterdir() if p.is_dir()]
+          assert len(roots)==1, roots
+          root=roots[0]
+
+          # Capture every executable binary before promotion.
+          binary_suffixes={'.dll','.exe'}
+          before_bins={
+              p.relative_to(root).as_posix():H(p)
+              for p in root.rglob('*')
+              if p.is_file() and p.suffix.lower() in binary_suffixes
+          }
+
+          # Remove TEST-only helper cfg/readme; production gets a clean concise README.
+          for rel in [
+              'Main/DW_LAMP_CONTROL_V12_TEST.cfg',
+              'Main/DW_LAMP_CONTROL_V12_README.txt',
+          ]:
+              p=root/rel
+              if p.exists():
+                  p.unlink()
+
+          readme=root/'Main/DW_LAMP_CONTROL_V12_CLEAN_PRODUCTION_README.txt'
+          readme.write_text(
+              'DarkWolf Lamp Control V1.2 Exact Visible - CLEAN PRODUCTION\n'
+              'Promoted unchanged from user-accepted GitHub Run #43411054498.\n'
+              'Exact renderer binary from tested V1.2 is preserved byte-for-byte.\n\n'
+              'Purpose:\n'
+              '  Select an existing visible electric lamp by crosshair and enable/disable its dynamic lighting resources.\n'
+              '  The physical BSP lamp artwork is intentionally not changed.\n\n'
+              'Commands:\n'
+              '  /dw_lamp_toggle       - toggle selected lamp ON/OFF\n'
+              '  /dw_lamp_off          - force selected lamp OFF\n'
+              '  /dw_lamp_on           - force selected lamp ON\n'
+              '  /dw_lamp_list         - list disabled fixtures on current map\n'
+              '  /dw_lamp_restore_all  - restore all disabled fixtures on current map\n\n'
+              'Persistence file: darkwolf_lamp_control_v12.txt\n'
+              'Selection: exact visible runtime DLight owner; max 512 units; ambiguity refuses mutation.\n'
+              'OFF path: releases StaticPromote candidate and removes resolved DLight before point-shadow/LocalVol consumers.\n'
+          )
+
+          manifest_path=root/'DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json'
+          assert manifest_path.exists()
+          manifest=json.loads(manifest_path.read_text())
+
+          old=manifest.pop('lamp_control_v12_test', None)
+          assert old is not None, 'accepted test manifest entry missing'
+
+          manifest['lamp_control_v12_clean_production']={
+              **old,
+              'status':'CLEAN_PRODUCTION',
+              'accepted_test_run':43411054498,
+              'accepted_test_head_sha':'250669a231dc7bd571b4e2b3405c045f90ba64c1',
+              'accepted_test_inner_sha256':'af18da0c530c1862c08434b22de0b9da96c92b5bbe4613349ed87fe7f4c2febb',
+              'promotion_method':'metadata_only_no_recompile',
+              'renderer_binary_changed_since_test':False,
+              'cgame_changed_since_test':False,
+              'qagame_changed_since_test':False,
+              'test_cfg_removed':True,
+          }
+          manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False)+'\n')
+
+          # Recompute package checksums after metadata-only promotion.
+          sums=[]
+          for p in sorted(x for x in root.rglob('*') if x.is_file() and x.name!='SHA256SUMS.txt'):
+              sums.append(f"{H(p)}  {p.relative_to(root).as_posix()}")
+          (root/'SHA256SUMS.txt').write_text('\n'.join(sums)+'\n')
+
+          after_bins={
+              p.relative_to(root).as_posix():H(p)
+              for p in root.rglob('*')
+              if p.is_file() and p.suffix.lower() in binary_suffixes
+          }
+          assert after_bins==before_bins, (before_bins, after_bins)
+
+          proof={
+              'status':'CLEAN_PRODUCTION',
+              'promotion_source_run':43411054498,
+              'promotion_source_artifact_id':14029468123,
+              'promotion_source_inner_sha256':'af18da0c530c1862c08434b22de0b9da96c92b5bbe4613349ed87fe7f4c2febb',
+              'promotion_method':'metadata_only_no_recompile',
+              'all_exe_dll_byte_identical_to_accepted_test':True,
+              'binary_sha256':before_bins,
+              'test_cfg_removed':True,
+          }
+          Path('evidence/DW_LAMP_CONTROL_V12_CLEAN_PRODUCTION_PROOF.json').write_text(
+              json.dumps(proof, indent=2)+'\n'
+          )
+
+          out=Path('dist/DarkWolf_Rend2_Lamp_Control_V12_EXACT_VISIBLE_CLEAN_PRODUCTION_FROM_43411054498_Win64.zip')
+          with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              for p in sorted(x for x in root.rglob('*') if x.is_file()):
+                  z.write(p, Path(root.name)/p.relative_to(root))
+          with zipfile.ZipFile(out) as z:
+              assert z.testzip() is None
+
+          sha=H(out)
+          Path('dist/SHA256SUMS_DW_LAMP_CONTROL_V12_CLEAN_PRODUCTION.txt').write_text(
+              sha+'  '+out.name+'\n'
+          )
+          print('DW_LAMP_CONTROL_V12_CLEAN_PRODUCTION_PACKAGE_PASS',out,sha)
+          PY
+
+      - name: Final Clean Production verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,zipfile
+
+          p=Path('dist/DarkWolf_Rend2_Lamp_Control_V12_EXACT_VISIBLE_CLEAN_PRODUCTION_FROM_43411054498_Win64.zip')
+          assert p.exists() and p.stat().st_size > 20_000_000
+
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              root=names[0].split('/')[0]+'/'
+
+              assert root+'Main/DW_LAMP_CONTROL_V12_CLEAN_PRODUCTION_README.txt' in names
+              assert root+'Main/DW_LAMP_CONTROL_V12_TEST.cfg' not in names
+
+              manifest=json.loads(z.read(root+'DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json'))
+              cp=manifest['lamp_control_v12_clean_production']
+              assert cp['status']=='CLEAN_PRODUCTION'
+              assert cp['accepted_test_run']==43411054498
+              assert cp['promotion_method']=='metadata_only_no_recompile'
+              assert cp['renderer_binary_changed_since_test'] is False
+
+              rnd=z.read(root+'renderer_sp_rend2_x64.dll')
+              for marker in (
+                  b'darkwolf_lamp_control_v12.txt',
+                  b'dw_lamp_toggle',b'dw_lamp_off',b'dw_lamp_on',
+                  b'dw_lamp_list',b'dw_lamp_restore_all',
+                  b'DW_LAMP_CONTROL_V12',b'ambiguous crosshair',
+                  b'r_dwElectricPhysicalOwner',b'DWTR AI B2 V2.4.1:'
+              ):
+                  assert marker in rnd, marker
+
+              # No old destructible-switch experiment files in production package.
+              assert not any('Destructible_Switches' in n or 'Destructible_Lights_V1' in n for n in names)
+
+          print('DW_LAMP_CONTROL_V12_CLEAN_PRODUCTION_FINAL_VERIFY_PASS')
+          print('ZIP_SHA256',hashlib.sha256(p.read_bytes()).hexdigest())
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Lamp-Control-V12-Exact-Visible-Clean-Production-From-43411054498-Win64
+          path: |
+            dist/DarkWolf_Rend2_Lamp_Control_V12_EXACT_VISIBLE_CLEAN_PRODUCTION_FROM_43411054498_Win64.zip
+            dist/SHA256SUMS_DW_LAMP_CONTROL_V12_CLEAN_PRODUCTION.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Lamp-Control-V12-Exact-Visible-Clean-Production-Proof
+          path: evidence/**
+          if-no-files-found: warn
+          retention-days: 90
