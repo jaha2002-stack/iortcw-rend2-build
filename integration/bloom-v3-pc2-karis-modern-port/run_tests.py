@@ -30,6 +30,7 @@ def main() -> int:
       "no_debug_trace_cvars": 'r_bloomDebug' not in init and 'r_bloomTrace' not in init and 'r_bloomDebug' not in local and 'r_bloomTrace' not in local,
       "mode2_fallback": '#define REND2_BLOOM_V2_LEVELS 3' in local and 'RB_BloomV2Prepare' in be and 'RB_BloomV2Composite' in be,
       "five_levels": '#define REND2_BLOOM_PYRAMID_LEVELS 5' in local,
+      "fbo_capacity_80": 'DW_BLOOM_V3_FBO_CAPACITY_80' in local and 'MAX_FBOS      80' in local,
       "full_safety": 'r_bloomScatterSafety' in alltxt and 'r_bloomScatterMaxLevels' in alltxt and 'r_bloomScatterSafeMax' in alltxt,
       "pbr": 'USE_PBR2' in light and 'DW_LinearToSRGB' in light,
       "ggx": 'USE_PBR2_IBL_V31' in light,
