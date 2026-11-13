@@ -1,0 +1,276 @@
+name: DW Lamp Control V1.2 Exact Picker Source Audit
+# V17 retry after regression-test quoting fix
+
+on:
+  push:
+    branches:
+      - feature/lamp-control-v12-exact-picker-from-43189244002
+    paths:
+      - .github/workflows/DW_LAMP_CONTROL_V12_EXACT_PICKER_AUDIT.yml
+      - integration/lamp-control-v1/**
+      - integration/lamp-control-v11/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DLO_OWNER_SHA: "60ea59d9cce705333dad49a937ba85c71735aa2d"
+      TEXTURE_SHA: "aa60e4d0c68260b6752920cddd8011b718c7dbba"
+      BASE_RUN: "43189244002"
+      BASE_ARTIFACT_ID: "13929023924"
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Install proven MinGW GCC toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist incoming stage evidence
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git gh jq python3 unzip zip file \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+          x86_64-w64-mingw32-gcc-posix --version | head -1
+          echo "DW_LC11_PROVEN_MINGW_GCC_PASS"
+
+      - name: Pin exact accepted Owner and Texture integrations
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags --depth=1 origin "$DLO_OWNER_SHA"
+          git checkout "$DLO_OWNER_SHA" -- \
+            integration/electric-owner-audit-v1 \
+            integration/electric-physical-owner-v1 \
+            integration/escape1-dlight-residency-v1 \
+            integration/escape1-physical-dlight-owner-v12
+          git fetch --no-tags --depth=1 origin "$TEXTURE_SHA"
+          git checkout "$TEXTURE_SHA" -- \
+            integration/texture-restoration-v1 \
+            integration/texture-ai-b2-v1 \
+            integration/texture-ai-b2-v2 \
+            integration/texture-ai-b2-v21 \
+            integration/texture-ai-b2-v22 \
+            integration/texture-ai-b2-v23
+
+      - name: Reconstruct exact Final V2 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence
+          mkdir -p evidence
+
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+
+          python3 integration/electric-owner-audit-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/run_tests.py source evidence
+          python3 integration/escape1-dlight-residency-v1/apply.py source evidence
+          python3 integration/escape1-dlight-residency-v1/run_tests.py source evidence
+          python3 integration/escape1-physical-dlight-owner-v12/apply.py source evidence
+          python3 integration/escape1-physical-dlight-owner-v12/run_tests.py source evidence
+
+          python3 integration/texture-restoration-v1/apply.py source evidence
+          python3 integration/texture-restoration-v1/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v1/apply.py source evidence
+          python3 integration/texture-ai-b2-v1/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v2/apply.py source evidence
+          python3 integration/texture-ai-b2-v2/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v21/apply.py source evidence
+          python3 integration/texture-ai-b2-v21/run_tests.py source/SP/code/rend2 evidence source
+          python3 integration/texture-ai-b2-v22/apply.py source evidence
+          python3 integration/texture-ai-b2-v22/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v23/apply.py source evidence
+          python3 integration/texture-ai-b2-v23/run_tests.py source/SP/code evidence
+          python3 integration/texture-ai-b2-v24/apply.py source evidence
+          python3 integration/texture-ai-b2-v24/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v241/apply.py source evidence
+          python3 integration/texture-ai-b2-v241/run_tests.py source/SP/code/rend2 evidence
+
+          python3 integration/pbr-v2/apply.py source --stage 3 --proof evidence/PBR_V42_PROOF.json
+          python3 integration/pbr-v2/test.py source --stage 3 --out evidence/PBR_V42_STATIC.json
+          python3 integration/pbr-v31-ibl/apply.py source --proof evidence/PBR_V31_PROOF.json
+          python3 integration/pbr-v31-ibl/test.py source --out evidence/PBR_V31_STATIC.json
+          python3 integration/pbr-v32-pom/apply.py source --proof evidence/PBR_V32_PROOF.json
+          python3 integration/pbr-v32-pom/test.py source --out evidence/PBR_V32_STATIC.json
+          python3 integration/pbr-v32-audit/apply.py source --proof evidence/PBR_V32_AUDIT_PROOF.json
+          python3 integration/pbr-v32-audit/test.py source --out evidence/PBR_V32_AUDIT_STATIC.json
+          python3 integration/texture-ai-b2-v24/run_unified_v24_tests.py source evidence
+
+          python3 integration/weapon-port-v1/apply.py source evidence
+          python3 integration/weapon-port-v1/run_tests.py source evidence
+          python3 integration/weapon-port-v11-hd-model-limit/apply.py source evidence
+          python3 integration/weapon-port-v11-hd-model-limit/run_tests.py source evidence
+          python3 integration/weapon-port-v12-fire-safe/apply.py source evidence
+          python3 integration/weapon-port-v12-fire-safe/run_tests.py source evidence
+          python3 integration/weapon-port-v14-component-anim-index-safety/apply.py source evidence
+          python3 integration/weapon-port-v14-component-anim-index-safety/run_tests.py source evidence
+          python3 integration/weapon-port-v15-full-fire-ads-reload/apply.py source evidence
+          python3 integration/weapon-port-v15-full-fire-ads-reload/run_tests.py source evidence
+          python3 integration/weapon-port-v16-expanded-arsenal-ads-calibrator/apply.py source evidence
+          python3 integration/weapon-port-v16-expanded-arsenal-ads-calibrator/run_tests.py source evidence
+          python3 integration/weapon-port-v161-realrtcw-compat-clean/apply.py source evidence
+          python3 integration/weapon-port-v161-realrtcw-compat-clean/run_tests.py source evidence
+          python3 integration/weapon-port-v162-sp-fire-sound-range-safety/apply.py source evidence
+          python3 integration/weapon-port-v162-sp-fire-sound-range-safety/run_tests.py source evidence
+          python3 integration/weapon-port-v163-ads-ballistic-alignment/apply.py source evidence
+          python3 integration/weapon-port-v163-ads-ballistic-alignment/run_tests.py source evidence
+          python3 integration/weapon-port-v164-ads-calibrator-angle-debug/apply.py source evidence
+          python3 integration/weapon-port-v164-ads-calibrator-angle-debug/run_tests.py source evidence
+          python3 integration/weapon-port-v165-ads-cvar-calibrator/apply.py source evidence
+          python3 integration/weapon-port-v165-ads-cvar-calibrator/run_tests.py source evidence
+          python3 integration/weapon-port-v166-final-ads-transform-calibrator/apply.py source evidence
+          python3 integration/weapon-port-v166-final-ads-transform-calibrator/run_tests.py source evidence
+
+          git -C source diff --check
+          echo "DW_LC11_SOURCE_RECONSTRUCT_PASS"
+
+      - name: Apply Lamp Control V1 renderer-only patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          def tree_hash(root):
+              rows=[]
+              for p in sorted(Path(root).rglob('*')):
+                  if p.is_file():
+                      rows.append((p.relative_to(root).as_posix(),hashlib.sha256(p.read_bytes()).hexdigest()))
+              return hashlib.sha256(json.dumps(rows,separators=(',',':')).encode()).hexdigest()
+          Path('evidence/DW_LC11_NONRENDER_BEFORE.json').write_text(json.dumps({
+              'game':tree_hash('source/SP/code/game'),
+              'cgame':tree_hash('source/SP/code/cgame')
+          },indent=2)+'\n')
+          PY
+
+          python3 integration/lamp-control-v1/apply.py source
+          python3 integration/lamp-control-v1/run_tests.py source
+          python3 integration/lamp-control-v11/apply.py source
+          python3 integration/lamp-control-v11/run_tests.py source
+          git -C source diff --check
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          def tree_hash(root):
+              rows=[]
+              for p in sorted(Path(root).rglob('*')):
+                  if p.is_file():
+                      rows.append((p.relative_to(root).as_posix(),hashlib.sha256(p.read_bytes()).hexdigest()))
+              return hashlib.sha256(json.dumps(rows,separators=(',',':')).encode()).hexdigest()
+          before=json.loads(Path('evidence/DW_LC11_NONRENDER_BEFORE.json').read_text())
+          after={'game':tree_hash('source/SP/code/game'),'cgame':tree_hash('source/SP/code/cgame')}
+          assert after==before,(before,after)
+          Path('evidence/DW_LC11_NONRENDER_AFTER.json').write_text(json.dumps(after,indent=2)+'\n')
+          print('DW_LAMP_CONTROL_V11_RENDERER_ONLY_SOURCE_PASS')
+          PY
+
+          # Capture exact call-order context for the hard-OFF path.
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('source/SP/code/rend2/tr_scene.c').read_text()
+          owner=s.find('R_DarkWolfAssignPhysicalElectricOwnerIds();')
+          filt=s.find('R_DWLC1_FilterDisabledSceneDlights')
+          assert owner >= 0 and filt > owner
+          Path('evidence/DW_LC11_CALL_ORDER.txt').write_text(
+              s[max(0,owner-600):min(len(s),filt+500)])
+          print('DW_LAMP_CONTROL_V11_APPLY_STATIC_PASS')
+          PY
+
+      - name: Audit exact picker primitives
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          files=[
+              Path('source/SP/code/rend2/tr_elss.inc'),
+              Path('source/SP/code/rend2/tr_iflc.inc'),
+              Path('source/SP/code/rend2/tr_iflc_self.inc'),
+              Path('source/SP/code/rend2/tr_scene.c'),
+          ]
+          names=[
+              'R_ELSS_FirstHit',
+              'R_ELSS_Select_f',
+              'R_ELSS_Selected',
+              'R_IFLC_FirstHit',
+              'R_IFLC_LineVisible',
+              'R_IFLC_Select_f',
+              'R_IFLC_Pick',
+              'R_StaticPromoteFindCrosshairFixture',
+              'R_StaticPromoteRootCauseRuntimeDlight',
+              'R_StaticPromoteUSLRDFindNativeRuntimeDlight',
+              'R_DarkWolfAssignPhysicalElectricOwnerIds',
+          ]
+
+          def extract_function(text,pos):
+              start=text.rfind('\n',0,pos)+1
+              brace=text.find('{',pos)
+              if brace<0: return text[start:min(len(text),pos+1000)]
+              depth=0
+              i=brace
+              while i<len(text):
+                  if text[i]=='{': depth+=1
+                  elif text[i]=='}':
+                      depth-=1
+                      if depth==0:
+                          return text[start:i+1]
+                  i+=1
+              return text[start:min(len(text),pos+3000)]
+
+          out=[]
+          for p in files:
+              s=p.read_text(errors='replace')
+              out.append('\n===== '+str(p)+' =====\n')
+              for name in names:
+                  hits=[m.start() for m in re.finditer(re.escape(name),s)]
+                  if not hits: continue
+                  out.append(f'\n--- {name} hits={len(hits)} ---\n')
+                  seen=set()
+                  for pos in hits[:10]:
+                      fn=extract_function(s,pos)
+                      if fn in seen: continue
+                      seen.add(fn)
+                      out.append(fn+'\n')
+              # Also collect all selection/pick function signatures.
+              sigs=[]
+              for m in re.finditer(r'(?m)^(?:static\s+)?(?:qboolean|int|void|float)\s+(R_(?:ELSS|IFLC)_[A-Za-z0-9_]*(?:Pick|Select|Hit|Visible)[A-Za-z0-9_]*)\s*\(',s):
+                  sigs.append(m.group(1))
+              out.append('\n--- picker-related signatures ---\n'+'\n'.join(sorted(set(sigs)))+'\n')
+
+          Path('evidence/DW_LC12_EXACT_PICKER_AUDIT.txt').write_text('\n'.join(out))
+          print('\n'.join(out))
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Lamp-Control-V12-Exact-Picker-Audit
+          path: evidence/DW_LC12_EXACT_PICKER_AUDIT.txt
+          retention-days: 30
+          if-no-files-found: error
