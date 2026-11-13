@@ -166,14 +166,14 @@ g=g.replace("VectorMA(tr.endpos,0.75f,normal,origin);",
             "VectorMA(tr.endpos,1.50f,normal,origin);",1)
 
 # Add modelindex sanity output on freshly installed switch.
-old="""    DW_Lights_SpawnSwitchRecord(r);
+old=r"""    DW_Lights_SpawnSwitchRecord(r);
     trap_SendServerCommand(player-g_entities,
-        va("print \"DW persistent switch installed: circuit=%d type=%s normal=(%.2f %.2f %.2f)\\n\"",
+        va("print \"DW persistent switch installed: circuit=%d type=%s normal=(%.2f %.2f %.2f)\n\"",
         circuit,DW_Lights_SwitchTypeName(type),normal[0],normal[1],normal[2]));
 """
-new="""    DW_Lights_SpawnSwitchRecord(r);
+new=r"""    DW_Lights_SpawnSwitchRecord(r);
     trap_SendServerCommand(player-g_entities,
-        va("print \"DW V1.3 switch installed: circuit=%d type=%s origin=(%.1f %.1f %.1f) normal=(%.2f %.2f %.2f)\\n\"",
+        va("print \"DW V1.3 switch installed: circuit=%d type=%s origin=(%.1f %.1f %.1f) normal=(%.2f %.2f %.2f)\n\"",
         circuit,DW_Lights_SwitchTypeName(type),origin[0],origin[1],origin[2],
         normal[0],normal[1],normal[2]));
 """
