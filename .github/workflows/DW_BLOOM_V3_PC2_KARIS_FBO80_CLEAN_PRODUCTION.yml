@@ -27,6 +27,9 @@ jobs:
       SOURCE_ARTIFACT_ID: "14015082196"
       SOURCE_ARTIFACT_NAME: "DW-Bloom-V3-PC2-Karis-Port-43189244002-Win64-TEST"
       SOURCE_ARTIFACT_SHA256: "865fb42dfeae3649021c0184d32d89261d24c0adf201124920a99ce24cadc8f9"
+      SOURCE_PROOF_ARTIFACT_ID: "14015042292"
+      SOURCE_PROOF_ARTIFACT_NAME: "DW-Bloom-V3-PC2-Karis-Port-43189244002-Proof"
+      SOURCE_PROOF_ARTIFACT_SHA256: "75bc52fef84e88ce2daf0b98c9dece7599b0559f01f80aa2cb44386ff4139dff"
       SOURCE_INNER_ZIP_SHA256: "c01c2fb8659c9fcace66dbe33f53ee7bc8f569c8b6d6771617eba15d916c1da9"
       ACCEPTED_RENDERER_SHA256: "ef8d53e42f92238740361d2cd939aa3073520861d47858b7a9196bd8a7cb076b"
 
@@ -42,10 +45,18 @@ jobs:
           test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID} --jq .expired)" = false
           api_digest="$(gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID} --jq '.digest // ""')"
           test "$api_digest" = "sha256:${SOURCE_ARTIFACT_SHA256}"
+
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_PROOF_ARTIFACT_ID} --jq .name)" = "${SOURCE_PROOF_ARTIFACT_NAME}"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_PROOF_ARTIFACT_ID} --jq .expired)" = false
+          proof_digest="$(gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_PROOF_ARTIFACT_ID} --jq '.digest // ""')"
+          test "$proof_digest" = "sha256:${SOURCE_PROOF_ARTIFACT_SHA256}"
+
           mkdir -p incoming dist proof
           gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip > incoming/source_artifact.zip
+          gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_PROOF_ARTIFACT_ID}/zip > incoming/source_proof_artifact.zip
           test "$(sha256sum incoming/source_artifact.zip | awk '{print $1}')" = "${SOURCE_ARTIFACT_SHA256}"
-          echo ACCEPTED_SOURCE_ARTIFACT_IDENTITY_PASS
+          test "$(sha256sum incoming/source_proof_artifact.zip | awk '{print $1}')" = "${SOURCE_PROOF_ARTIFACT_SHA256}"
+          echo ACCEPTED_SOURCE_ARTIFACT_AND_PROOF_IDENTITY_PASS
 
       - name: Verify tested package integrity and accepted renderer
         run: |
@@ -97,7 +108,6 @@ jobs:
                   b"REND2_BLOOM_V3_1_HDR_INPUT_VALIDATION_SCATTER_STABILITY",
                   b"REND2_BLOOM_V3_22_LIGHTALL_NONFINITE_OUTPUT_FIREWALL_PC2",
                   b"REND2_BLOOM_PC2_KARIS_ANTIFIREFLY_PRODUCTION_CANDIDATE_V2",
-                  b"DW_BLOOM_V3_FBO_CAPACITY_80",
               ]
               for m in required_markers:
                   assert m in rb, m
@@ -118,6 +128,39 @@ jobs:
                   checked+=1
               assert checked>10
 
+          # FBO80 and runtime acceptance are source/proof properties, not string markers in the PE binary.
+          proof_outer=Path("incoming/source_proof_artifact.zip")
+          with zipfile.ZipFile(proof_outer) as pz:
+              pnames=pz.namelist()
+              cap=[n for n in pnames if n.endswith("DW_BLOOM_V3_FBO_CAPACITY_PROOF.json")]
+              port=[n for n in pnames if n.endswith("DW_BLOOM_V3_PC2_KARIS_PORT_PROOF.json")]
+              runtime_exit=[n for n in pnames if n.endswith("BLOOM_PORT_RUNTIME_EXIT.txt")]
+              runtime_log=[n for n in pnames if n.endswith("BLOOM_PORT_RUNTIME_QCONSOLE.log")]
+              stress_log=[n for n in pnames if n.endswith("BLOOM_PORT_FBO_STRESS_QCONSOLE.log")]
+              assert all(len(x)==1 for x in (cap,port,runtime_exit,runtime_log,stress_log))
+              capj=json.loads(pz.read(cap[0]))
+              assert capj["capacity"]==80
+              assert capj["worst_case_fbo_budget"]==67
+              assert capj["headroom"]==13
+              assert all(capj["checks"].values())
+              portj=json.loads(pz.read(port[0]))
+              assert all(portj["checks"].values())
+              assert sorted(portj["changed_files"])==sorted([
+                  "SP/code/rend2/glsl/bloom_fp.glsl",
+                  "SP/code/rend2/glsl/lightall_fp.glsl",
+                  "SP/code/rend2/tr_backend.c",
+                  "SP/code/rend2/tr_init.c",
+                  "SP/code/rend2/tr_local.h",
+              ])
+              assert pz.read(runtime_exit[0]).decode("utf-8").strip()=="0"
+              q=pz.read(runtime_log[0]).decode("utf-8",errors="replace")
+              s=pz.read(stress_log[0]).decode("utf-8",errors="replace")
+              assert "MAX_FBOS hit" not in q and "MAX_FBOS hit" not in s
+              assert "------- FBO_Init -------" in s
+              assert "--- Common Initialization Complete ---" in s
+              assert not re.search(r"GLSL.*(compile|link).*error|GL_INVALID_(ENUM|VALUE|OPERATION|FRAMEBUFFER_OPERATION)|framebuffer.*incomplete|segmentation fault|ERR_DROP|recursive error", q, re.I)
+              assert not re.search(r"GLSL.*(compile|link).*error|GL_INVALID_(ENUM|VALUE|OPERATION|FRAMEBUFFER_OPERATION)|framebuffer.*incomplete|segmentation fault|ERR_DROP|recursive error", s, re.I)
+
           proof={
               "source_run":43376292153,
               "source_head_sha":os.environ["SOURCE_HEAD_SHA"],
@@ -126,6 +169,12 @@ jobs:
               "source_tested_inner_zip_sha256":expected_inner,
               "accepted_renderer_sha256":os.environ["ACCEPTED_RENDERER_SHA256"],
               "source_manifest_entries_verified":checked,
+              "source_proof_artifact_id":14015042292,
+              "source_proof_artifact_sha256":os.environ["SOURCE_PROOF_ARTIFACT_SHA256"],
+              "fbo_capacity":80,
+              "fbo_worst_case_budget":67,
+              "fbo_headroom":13,
+              "source_runtime_exit":0,
               "source_identity_verified":True,
               "renderer_markers_verified":True,
               "forbidden_debug_trace_markers_absent":True,
