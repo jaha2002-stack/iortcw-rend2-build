@@ -1,0 +1,413 @@
+name: DW Bloom V3 PC2 Karis Port from 32847437364 to 43189244002 TEST
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dw-bloom-v3-pc2-karis-port-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build-validate-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DARKWOLF_RTCW_ASSET_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+      DLO_OWNER_SHA: "60ea59d9cce705333dad49a937ba85c71735aa2d"
+      TEXTURE_SHA: "aa60e4d0c68260b6752920cddd8011b718c7dbba"
+      TARGET_RUN: "43189244002"
+      TARGET_RENDERER_SHA: "4d9a01bc0edbfcf9fa5540ed6ad5ec74fe4a8cf4c61fc79d38bfc90f4f0e23d0"
+      TARGET_ARTIFACT_ID: "13929023924"
+      V3_SHA: "625a7540fa1af38ba1d6ac515ae62f7d4679e523"
+      V31_SHA: "6cf522adf2f5614c2cd8f149c40fc6e5f868d654"
+      V3_PATCHER_SHA: "4b26737888da037e9ac8de68b00dd59b4087ec1739d07652199d891db62474fd"
+      V31_PATCHER_SHA: "7a1fcb7d31a8e6f4813962797e494ae264e1296007517d5f957a3d6c5a9b2dc6"
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Install build and validation dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git gh jq python3 unzip zip file \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 \
+            xvfb xauth mesa-utils libgl1-mesa-dev libegl1-mesa-dev glslang-tools
+
+      - name: Verify immutable source and target identities
+        run: |
+          set -Eeuo pipefail
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/32847437364 --jq .conclusion)" = success
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/32847437364 --jq .head_sha)" = a2a4a9546f4f911538055bb91a802b5c99ecf464
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/${TARGET_RUN} --jq .conclusion)" = success
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/${TARGET_RUN} --jq .head_sha)" = 0bf17698bb3d579a8e236a089800e90dceb95852
+          echo IDENTITIES_PASS
+
+      - name: Pin exact accepted Owner and Texture integration sources
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags --depth=1 origin "$DLO_OWNER_SHA"
+          git checkout "$DLO_OWNER_SHA" -- \
+            integration/electric-owner-audit-v1 \
+            integration/electric-physical-owner-v1 \
+            integration/escape1-dlight-residency-v1 \
+            integration/escape1-physical-dlight-owner-v12
+          git fetch --no-tags --depth=1 origin "$TEXTURE_SHA"
+          git checkout "$TEXTURE_SHA" -- \
+            integration/texture-restoration-v1 \
+            integration/texture-ai-b2-v1 integration/texture-ai-b2-v2 \
+            integration/texture-ai-b2-v21 integration/texture-ai-b2-v22 integration/texture-ai-b2-v23
+          echo PINNED_INTEGRATIONS_PASS
+
+      - name: Reconstruct exact modern renderer source lineage
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence runtime home protected-assets incoming dist hist
+          mkdir -p evidence hist
+
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+
+          python3 integration/electric-owner-audit-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/run_tests.py source evidence
+          python3 integration/escape1-dlight-residency-v1/apply.py source evidence
+          python3 integration/escape1-dlight-residency-v1/run_tests.py source evidence
+          python3 integration/escape1-physical-dlight-owner-v12/apply.py source evidence
+          python3 integration/escape1-physical-dlight-owner-v12/run_tests.py source evidence
+
+          python3 integration/texture-restoration-v1/apply.py source evidence
+          python3 integration/texture-restoration-v1/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v1/apply.py source evidence
+          python3 integration/texture-ai-b2-v1/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v2/apply.py source evidence
+          python3 integration/texture-ai-b2-v2/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v21/apply.py source evidence
+          python3 integration/texture-ai-b2-v21/run_tests.py source/SP/code/rend2 evidence source
+          python3 integration/texture-ai-b2-v22/apply.py source evidence
+          python3 integration/texture-ai-b2-v22/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v23/apply.py source evidence
+          python3 integration/texture-ai-b2-v23/run_tests.py source/SP/code evidence
+          python3 integration/texture-ai-b2-v24/apply.py source evidence
+          python3 integration/texture-ai-b2-v24/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v241/apply.py source evidence
+          python3 integration/texture-ai-b2-v241/run_tests.py source/SP/code/rend2 evidence
+
+          python3 integration/pbr-v2/apply.py source --stage 3 --proof evidence/PBR_V42_PROOF.json
+          python3 integration/pbr-v2/test.py source --stage 3 --out evidence/PBR_V42_STATIC.json
+          python3 integration/pbr-v31-ibl/apply.py source --proof evidence/PBR_V31_PROOF.json
+          python3 integration/pbr-v31-ibl/test.py source --out evidence/PBR_V31_STATIC.json
+          python3 integration/pbr-v32-pom/apply.py source --proof evidence/PBR_V32_PROOF.json
+          python3 integration/pbr-v32-pom/test.py source --out evidence/PBR_V32_STATIC.json
+          python3 integration/pbr-v32-audit/apply.py source --proof evidence/PBR_V32_AUDIT_PROOF.json
+          python3 integration/pbr-v32-audit/test.py source --out evidence/PBR_V32_AUDIT_STATIC.json
+
+          python3 integration/weapon-port-v1/apply.py source evidence
+          python3 integration/weapon-port-v1/run_tests.py source evidence
+          python3 integration/weapon-port-v11-hd-model-limit/apply.py source evidence
+          python3 integration/weapon-port-v11-hd-model-limit/run_tests.py source evidence
+          python3 integration/weapon-port-v12-fire-safe/apply.py source evidence
+          python3 integration/weapon-port-v12-fire-safe/run_tests.py source evidence
+
+          grep -Fq 'DWTR AI B2 V2.4.1:' source/SP/code/rend2/tr_texture_ai_b2_v24.inc
+          grep -Fq 'USE_PBR2_IBL_V31' source/SP/code/rend2/glsl/lightall_fp.glsl
+          grep -Fq 'USE_PBR_PHYSICAL_RELIEF_V32' source/SP/code/rend2/glsl/lightall_fp.glsl
+          grep -Fq 'r_pbrMaterialAudit' source/SP/code/rend2/tr_init.c
+          grep -Fq '#define REND2_BLOOM_PYRAMID_LEVELS 3' source/SP/code/rend2/tr_local.h
+          test "$(sha256sum source/SP/code/rend2/glsl/bloom_fp.glsl | awk '{print $1}')" = 80f9c017788db5296f804d5165432b5d788f4f252abe30eceac1006536ae0dd5
+          git -C source diff --check
+          echo MODERN_SOURCE_RECONSTRUCTION_PASS
+
+      - name: Build modern baseline and verify accepted renderer identity
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release \
+            VERSION=1.51d-SP_DarkWolf-TextureB2V241-WeaponPortV12-FireSafe-MP44-PPSh-ADS \
+            PLATFORM=mingw32 ARCH=x86_64 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-gcc-posix \
+            CXX=x86_64-w64-mingw32-g++-posix \
+            WINDRES=x86_64-w64-mingw32-windres \
+            > evidence/BASELINE_WIN64_BUILD.log 2>&1 || { tail -500 evidence/BASELINE_WIN64_BUILD.log; exit 1; }
+          base=source/SP/build/release-mingw32-x86_64
+          got="$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')"
+          echo "$got  renderer_sp_rend2_x64.dll" | tee evidence/BASELINE_RENDERER_SHA256.txt
+          test "$got" = "$TARGET_RENDERER_SHA"
+          echo EXACT_MODERN_RENDERER_IDENTITY_PASS
+
+      - name: Materialize exact historical Bloom V3 and V3.1 patchers
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags --depth=1 origin "$V3_SHA"
+          git show "$V3_SHA:.github/workflows/build-iortcw-rend2-bloom-v3-hdr-scatter-over-v2-sp.yml" > hist/v3.yml
+          git fetch --no-tags --depth=1 origin "$V31_SHA"
+          git show "$V31_SHA:.github/workflows/build-iortcw-rend2-bloom-v3-1-hdr-stability-over-v3-sp.yml" > hist/v31.yml
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64,re
+          jobs=[
+            ("hist/v3.yml","apply_rend2_bloom_v3_hdr_scatter_sp.py","B64_APPLY_REND2_BLOOM_V3_HDR_SCATTER_SP_PY","hist/v3.py"),
+            ("hist/v31.yml","apply_rend2_bloom_v3_1_hdr_stability_sp.py","B64_APPLY_REND2_BLOOM_V3_1_HDR_STABILITY_SP_PY","hist/v31.py"),
+          ]
+          for yml,name,tag,out in jobs:
+              s=Path(yml).read_text()
+              pat=rf"cat > buildkit/{re.escape(name)}\.b64 <<'{tag}'\n([A-Za-z0-9+/=\n ]+?)\n\s*{tag}"
+              m=re.search(pat,s)
+              if not m: raise SystemExit("embedded patcher payload not found: "+name)
+              Path(out).write_bytes(base64.b64decode("".join(m.group(1).split())))
+          PY
+          test "$(sha256sum hist/v3.py | awk '{print $1}')" = "$V3_PATCHER_SHA"
+          test "$(sha256sum hist/v31.py | awk '{print $1}')" = "$V31_PATCHER_SHA"
+          python3 -m py_compile hist/v3.py hist/v31.py
+          echo HISTORICAL_PATCHERS_EXACT_PASS
+
+      - name: Apply surgical Bloom V3 V3.1 PC2 Karis forward port
+        run: |
+          set -Eeuo pipefail
+          python3 integration/bloom-v3-pc2-karis-modern-port/apply.py source \
+            --v3-patcher hist/v3.py --v31-patcher hist/v31.py \
+            --proof evidence/DW_BLOOM_V3_PC2_KARIS_PORT_PROOF.json \
+            | tee evidence/DW_BLOOM_V3_PC2_KARIS_PORT_APPLY.log
+          python3 integration/bloom-v3-pc2-karis-modern-port/run_tests.py source \
+            --proof evidence/DW_BLOOM_V3_PC2_KARIS_PORT_PROOF.json \
+            | tee evidence/DW_BLOOM_V3_PC2_KARIS_PORT_STATIC.log
+          git -C source diff --check
+          git -C source diff --name-only | LC_ALL=C sort > evidence/BLOOM_PORT_CHANGED_FILES.txt
+          cat > evidence/BLOOM_PORT_EXPECTED_FILES.txt <<'EOF'
+          SP/code/rend2/glsl/bloom_fp.glsl
+          SP/code/rend2/glsl/lightall_fp.glsl
+          SP/code/rend2/tr_backend.c
+          SP/code/rend2/tr_init.c
+          SP/code/rend2/tr_local.h
+          EOF
+          LC_ALL=C sort -o evidence/BLOOM_PORT_EXPECTED_FILES.txt evidence/BLOOM_PORT_EXPECTED_FILES.txt
+          cmp evidence/BLOOM_PORT_EXPECTED_FILES.txt evidence/BLOOM_PORT_CHANGED_FILES.txt
+          git -C source diff --binary -- \
+            SP/code/rend2/glsl/bloom_fp.glsl SP/code/rend2/glsl/lightall_fp.glsl \
+            SP/code/rend2/tr_backend.c SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h \
+            > evidence/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch
+          echo SURGICAL_PORT_ALLOWLIST_PASS
+
+      - name: Compile embedded GLSL sources
+        run: |
+          set -Eeuo pipefail
+          glslangValidator -d --glsl-version 120 -S vert source/SP/code/rend2/glsl/bloom_vp.glsl
+          glslangValidator -d --glsl-version 120 -S frag source/SP/code/rend2/glsl/bloom_fp.glsl
+          echo GLSL_STATIC_COMPILE_PASS
+
+      - name: Rebuild modern Win64 with Bloom V3 port
+        run: |
+          set -Eeuo pipefail
+          rm -rf source/SP/build/release-mingw32-x86_64
+          make -C source/SP -j2 release \
+            VERSION=1.51d-SP_DarkWolf-BloomV3-PC2-Karis-Port43189244002-TEST \
+            PLATFORM=mingw32 ARCH=x86_64 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-gcc-posix \
+            CXX=x86_64-w64-mingw32-g++-posix \
+            WINDRES=x86_64-w64-mingw32-windres \
+            > evidence/BLOOM_PORT_WIN64_BUILD.log 2>&1 || { tail -500 evidence/BLOOM_PORT_WIN64_BUILD.log; exit 1; }
+          b=source/SP/build/release-mingw32-x86_64
+          file "$b/renderer_sp_rend2_x64.dll" | grep -F PE32+
+          sha256sum "$b/renderer_sp_rend2_x64.dll" | tee evidence/BLOOM_PORT_RENDERER_SHA256.txt
+
+          for marker in \
+            'DWTR AI B2 V2.4.1:' r_dwElectricPhysicalOwner r_dwEscape1PhysicalDlightOwnerResidency \
+            dw_tex_save zzzzzz_DW_TextureRestoration.pk3 r_pbrMaterialAudit r_pomMinLayers \
+            r_bloomScatterThreshold r_bloomScatterSafety r_bloomScatterMaxLevels r_bloomScatterSafeMax \
+            REND2_BLOOM_V3_HDR_SCATTER_PYRAMID \
+            REND2_BLOOM_V3_1_HDR_INPUT_VALIDATION_SCATTER_STABILITY \
+            REND2_BLOOM_V3_22_LIGHTALL_NONFINITE_OUTPUT_FIREWALL_PC2 \
+            REND2_BLOOM_PC2_KARIS_ANTIFIREFLY_PRODUCTION_CANDIDATE_V2; do
+              grep -aFq "$marker" "$b/renderer_sp_rend2_x64.dll"
+          done
+          ! grep -aFq 'hdrEligibility' "$b/renderer_sp_rend2_x64.dll"
+          ! grep -aFq 'REND2_BLOOM_WHITE_BLOCK_PRODUCTION_FIX_CANDIDATE_V1' "$b/renderer_sp_rend2_x64.dll"
+          echo BINARY_MARKER_REGRESSION_PASS
+
+      - name: Fetch protected RTCW assets and run Escape1 Mode3 runtime smoke
+        run: |
+          set -Eeuo pipefail
+          test -n "$DARKWOLF_RTCW_ASSET_TOKEN"
+          default_token="$GH_TOKEN"; export GH_TOKEN="$DARKWOLF_RTCW_ASSET_TOKEN"
+          retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
+          export GH_TOKEN="$default_token"
+          test -d "$retail_main"
+          b=source/SP/build/release-mingw32-x86_64
+          rm -rf runtime home; mkdir -p runtime/main home
+          cp -a "$b/." runtime/
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
+          cat > runtime/main/DW_BLOOM_V3_PC2_KARIS_TEST.cfg <<'EOF'
+          seta r_bloom 1
+          seta r_bloomMode 3
+          seta r_bloomStrength 1.00
+          seta r_bloomScatterThreshold 0.70
+          seta r_bloomScatterKnee 0.60
+          seta r_bloomScatterSourceGain 1.75
+          seta r_bloomScatterRadius 1.95
+          seta r_bloomScatterFactor 1.00
+          seta r_bloomScatterCoreStrength 0.10
+          seta r_bloomScatterHaloStrength 1.20
+          seta r_bloomScatterSafety 3
+          seta r_bloomScatterMaxLevels 5
+          seta r_bloomScatterSafeMax 64.0
+          seta r_bloomDebug 0
+          seta r_bloomTrace 0
+          EOF
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 120s "$PWD/runtime/ioWolfSP.x64.exe" \
+            +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
+            +set com_introplayed 1 +set com_recommendedSet 1 +set s_initsound 0 +set logfile 2 +set developer 0 \
+            +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
+            +set r_dlightmode 2 +set r_forcesun 1 \
+            +set r_dwElectricPhysicalOwner 1 +set r_dwElectricPhysicalOwnerDiag 0 +set r_dwElectricOwnerAudit 0 \
+            +set r_dwEscape1PhysicalDlightOwnerResidency 1 +set r_dwEscape1ExternalNativeReserve 9 \
+            +set r_dwEscape1PhysicalDlightOwnerDiag 0 +set r_dwEscape1DlightResidencyAudit 0 \
+            +set r_pbr 3 +set r_cubeMapping 0 +set r_normalMapping 1 +set r_specularMapping 1 \
+            +set r_parallaxMapping 2 +set r_parallaxMapShadows 0 \
+            +exec DW_BLOOM_V3_PC2_KARIS_TEST.cfg +devmap escape1 +wait 45 +quit
+          rc=$?
+          set -e
+          echo "$rc" > evidence/BLOOM_PORT_RUNTIME_EXIT.txt
+          qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+          test -n "$qlog"; cp "$qlog" evidence/BLOOM_PORT_RUNTIME_QCONSOLE.log
+          test "$rc" -eq 0
+          ! grep -Eiq 'GLSL.*(compile|link).*error|GL_INVALID_(ENUM|VALUE|OPERATION|FRAMEBUFFER_OPERATION)|framebuffer.*incomplete|segmentation fault|ERR_DROP|recursive error' evidence/BLOOM_PORT_RUNTIME_QCONSOLE.log
+          ! grep -Eq 'EPOA_SUMMARY|EDRA_SUMMARY|EPO_V1_MEMBER|EDR12_' evidence/BLOOM_PORT_RUNTIME_QCONSOLE.log
+          echo ESCAPE1_MODE3_RUNTIME_SMOKE_PASS
+
+      - name: Package TEST overlay onto exact 43189244002 release
+        run: |
+          set -Eeuo pipefail
+          mkdir -p incoming dist
+          gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${TARGET_ARTIFACT_ID}/zip > incoming/target_outer.zip
+          unzip -t incoming/target_outer.zip >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,zipfile,shutil
+          outer=Path("incoming/target_outer.zip")
+          with zipfile.ZipFile(outer) as z:
+              inner_names=[n for n in z.namelist() if n.endswith(".zip")]
+              assert len(inner_names)==1,inner_names
+              inner=Path("incoming/base431.zip"); inner.write_bytes(z.read(inner_names[0]))
+          assert hashlib.sha256(inner.read_bytes()).hexdigest()=="909fe628fa9d4cfa320bc8813ce1d745ba24f75a13b40be79db6fc2fb5e840d0"
+          new_renderer=Path("source/SP/build/release-mingw32-x86_64/renderer_sp_rend2_x64.dll").read_bytes()
+          cfg='''seta r_bloom 1
+          seta r_bloomMode 3
+          seta r_bloomStrength 1.00
+          seta r_bloomScatterThreshold 0.70
+          seta r_bloomScatterKnee 0.60
+          seta r_bloomScatterSourceGain 1.75
+          seta r_bloomScatterRadius 1.95
+          seta r_bloomScatterFactor 1.00
+          seta r_bloomScatterCoreStrength 0.10
+          seta r_bloomScatterHaloStrength 1.20
+          seta r_bloomScatterSafety 3
+          seta r_bloomScatterMaxLevels 5
+          seta r_bloomScatterSafeMax 64.0
+          seta r_bloomDebug 0
+          seta r_bloomTrace 0
+          '''
+          out=Path("dist/DarkWolf_Rend2_BloomV3_PC2_Karis_Port_From_32847437364_To_43189244002_TEST_Win64.zip")
+          with zipfile.ZipFile(inner) as zin:
+              names=zin.namelist(); roots={n.split("/",1)[0] for n in names if "/" in n}; assert len(roots)==1
+              root=next(iter(roots))+"/"
+              rend=root+"renderer_sp_rend2_x64.dll"
+              with zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as zout:
+                  for info in zin.infolist():
+                      if info.filename in {rend,root+"SHA256SUMS.txt"}: continue
+                      zout.writestr(info,zin.read(info.filename))
+                  zout.writestr(rend,new_renderer)
+                  zout.writestr(root+"Main/DW_BLOOM_V3_PC2_KARIS_TEST.cfg",cfg)
+                  zout.writestr(root+"docs/DW_BLOOM_V3_PC2_KARIS_PORT_PROOF.json",Path("evidence/DW_BLOOM_V3_PC2_KARIS_PORT_PROOF.json").read_bytes())
+                  zout.writestr(root+"docs/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch",Path("evidence/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch").read_bytes())
+                  readme=("TEST ONLY - Bloom V3 PC2 + Karis surgical forward port\n"
+                          "Base package: Run #43189244002. Historical accepted Bloom reference: Run #32847437364.\n"
+                          "Default existing profiles remain Bloom Mode 2. To test Mode 3: /exec DW_BLOOM_V3_PC2_KARIS_TEST.cfg\n"
+                          "Primary visual acceptance remains Norway: no large white rectangle, no transient white/black blocks, Bloom visible normally.\n")
+                  zout.writestr(root+"README_BLOOM_V3_PC2_KARIS_TEST.txt",readme)
+              # Re-open and create a fresh package checksum manifest that covers every current member except itself.
+          with zipfile.ZipFile(out,"a",zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              lines=[]
+              for n in sorted(z.namelist()):
+                  if n.endswith("/SHA256SUMS.txt") or n.endswith("SHA256SUMS.txt"): continue
+                  if n.endswith("/"): continue
+                  rel=n.split("/",1)[1] if "/" in n else n
+                  lines.append(hashlib.sha256(z.read(n)).hexdigest()+"  "+rel)
+              z.writestr(root+"SHA256SUMS.txt","\n".join(lines)+"\n")
+          print("PACKAGE",out,hashlib.sha256(out.read_bytes()).hexdigest())
+          PY
+          unzip -t dist/DarkWolf_Rend2_BloomV3_PC2_Karis_Port_From_32847437364_To_43189244002_TEST_Win64.zip >/dev/null
+          sha256sum dist/*.zip | tee dist/SHA256SUMS.txt
+
+      - name: Final package preservation audit
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,zipfile
+          base=Path("incoming/base431.zip")
+          new=Path("dist/DarkWolf_Rend2_BloomV3_PC2_Karis_Port_From_32847437364_To_43189244002_TEST_Win64.zip")
+          with zipfile.ZipFile(base) as a, zipfile.ZipFile(new) as b:
+              roots={n.split("/",1)[0] for n in a.namelist() if "/" in n}; assert len(roots)==1
+              root=next(iter(roots))+"/"
+              allowed={root+"renderer_sp_rend2_x64.dll",root+"SHA256SUMS.txt",
+                       root+"Main/DW_BLOOM_V3_PC2_KARIS_TEST.cfg",
+                       root+"docs/DW_BLOOM_V3_PC2_KARIS_PORT_PROOF.json",
+                       root+"docs/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch",
+                       root+"README_BLOOM_V3_PC2_KARIS_TEST.txt"}
+              an={x.filename:x for x in a.infolist() if not x.is_dir()}
+              bn={x.filename:x for x in b.infolist() if not x.is_dir()}
+              for n in sorted(set(an)&set(bn)):
+                  if n in allowed: continue
+                  assert a.read(n)==b.read(n), "unexpected package mutation: "+n
+              added=set(bn)-set(an)
+              assert added <= allowed,added
+              assert hashlib.sha256(a.read(root+"renderer_sp_rend2_x64.dll")).hexdigest()=="4d9a01bc0edbfcf9fa5540ed6ad5ec74fe4a8cf4c61fc79d38bfc90f4f0e23d0"
+              r=b.read(root+"renderer_sp_rend2_x64.dll")
+              for m in [b"r_pbrMaterialAudit",b"r_pomMinLayers",b"DWTR AI B2 V2.4.1:",
+                        b"REND2_BLOOM_V3_HDR_SCATTER_PYRAMID",
+                        b"REND2_BLOOM_V3_22_LIGHTALL_NONFINITE_OUTPUT_FIREWALL_PC2",
+                        b"REND2_BLOOM_PC2_KARIS_ANTIFIREFLY_PRODUCTION_CANDIDATE_V2"]:
+                  assert m in r,m
+          print("FINAL_PACKAGE_PRESERVATION_AUDIT_PASS")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Bloom-V3-PC2-Karis-Port-43189244002-Win64-TEST
+          path: |
+            dist/DarkWolf_Rend2_BloomV3_PC2_Karis_Port_From_32847437364_To_43189244002_TEST_Win64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@ea165f8d65b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Bloom-V3-PC2-Karis-Port-43189244002-Proof
+          path: evidence/**
+          if-no-files-found: warn
+          retention-days: 90
