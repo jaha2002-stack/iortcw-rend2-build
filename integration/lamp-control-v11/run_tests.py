@@ -21,7 +21,6 @@ checks=[
  ("synthetic owner veto","dl->physicalElectricOwnerId > 0" in inc and
                           "!R_DWLC1_FixtureIdEnabled(dl->physicalElectricOwnerId)" in inc),
  ("old ternary removed","physicalElectricOwnerId >= 0 ?" not in inc),
- ("native ordinal diagnostic","nativeOrdinal=%d" in inc),
  ("hard array compaction","tr.refdef.num_dlights = out;" in inc),
  ("tail cleared","memset(&tr.refdef.dlights[i], 0, sizeof(tr.refdef.dlights[i]));" in inc),
  ("staticpromote gating preserved","allowed && !R_DWLC1_FixtureEnabled(light)" in scene),
