@@ -135,29 +135,6 @@ if old not in s:
     raise SystemExit("V1 hard filter body missing")
 s=s.replace(old,new,1)
 
-# Diagnostics: report stable physical native ordinal. Runtime route is frame-local
-# and OFF fixtures intentionally do not enter normal route classification.
-old='''        "rayForward=%.1f rayLateral=%.1f direct=%s shadow=%s staticPromote=%s\n",
-        mapName, fixtureId, targetEnabled ? "ON" : "OFF",
-        light->candidate.origin[0], light->candidate.origin[1], light->candidate.origin[2],
-        forwardDistance, lateralDistance,
-        targetEnabled ? "ENABLED" : "REMOVED",
-        targetEnabled ? "ELIGIBLE" : "RELEASED",
-        targetEnabled ? "ELIGIBLE" : "RELEASED");
-'''
-new='''        "rayForward=%.1f rayLateral=%.1f nativeOrdinal=%d "
-        "direct=%s shadow=%s staticPromote=%s\n",
-        mapName, fixtureId, targetEnabled ? "ON" : "OFF",
-        light->candidate.origin[0], light->candidate.origin[1], light->candidate.origin[2],
-        forwardDistance, lateralDistance,
-        light->physicalNativeDlightOrdinal,
-        targetEnabled ? "ENABLED" : "REMOVED",
-        targetEnabled ? "ELIGIBLE" : "RELEASED",
-        targetEnabled ? "ELIGIBLE" : "RELEASED");
-'''
-if old not in s:
-    raise SystemExit("V1 toggle diag anchor missing")
-s=s.replace(old,new,1)
 inc.write_text(s)
 
 t=scene.read_text()
