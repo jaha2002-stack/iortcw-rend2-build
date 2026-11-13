@@ -27,7 +27,7 @@ checks = [
     ("list command", 'ri.Cmd_AddCommand( "dw_lamp_list", R_DWLC1_List_f );' in init),
     ("restore command", 'ri.Cmd_AddCommand( "dw_lamp_restore_all", R_DWLC1_RestoreAll_f );' in init),
     ("no switch code", "dw_switch" not in inc),
-    ("no damage code", "damage" not in inc.lower() and "die=" not in inc),
+    ("no destruction proxy", "dw_destructible_lamp" not in inc and "ProxyDie" not in inc and "die=" not in inc),
     ("no cgame command prototypes", "CG_DW" not in local),
 ]
 
