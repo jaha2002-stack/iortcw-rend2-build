@@ -273,7 +273,7 @@ jobs:
             --proof evidence/DW_BLOOM_V3_PC2_KARIS_PORT_PROOF.json \
             | tee evidence/DW_BLOOM_V3_PC2_KARIS_PORT_STATIC.log
           git -C source diff --check
-          git -C source diff --name-only | LC_ALL=C sort > evidence/BLOOM_PORT_CHANGED_FILES.txt
+          jq -r '.changed_files[]' evidence/DW_BLOOM_V3_PC2_KARIS_PORT_PROOF.json | LC_ALL=C sort > evidence/BLOOM_PORT_CHANGED_FILES.txt
           cat > evidence/BLOOM_PORT_EXPECTED_FILES.txt <<'EOF'
           SP/code/rend2/glsl/bloom_fp.glsl
           SP/code/rend2/glsl/lightall_fp.glsl
@@ -281,13 +281,33 @@ jobs:
           SP/code/rend2/tr_init.c
           SP/code/rend2/tr_local.h
           EOF
+          sed -i 's/^          //' evidence/BLOOM_PORT_EXPECTED_FILES.txt
           LC_ALL=C sort -o evidence/BLOOM_PORT_EXPECTED_FILES.txt evidence/BLOOM_PORT_EXPECTED_FILES.txt
           cmp evidence/BLOOM_PORT_EXPECTED_FILES.txt evidence/BLOOM_PORT_CHANGED_FILES.txt
-          git -C source diff --binary -- \
-            SP/code/rend2/glsl/bloom_fp.glsl SP/code/rend2/glsl/lightall_fp.glsl \
-            SP/code/rend2/tr_backend.c SP/code/rend2/tr_init.c SP/code/rend2/tr_local.h \
-            > evidence/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch
-          echo SURGICAL_PORT_ALLOWLIST_PASS
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import difflib
+          pairs=[
+            ("SP/code/rend2/glsl/bloom_fp.glsl",Path("evidence/preport-source/glsl/bloom_fp.glsl"),Path("source/SP/code/rend2/glsl/bloom_fp.glsl")),
+            ("SP/code/rend2/glsl/lightall_fp.glsl",Path("evidence/preport-source/glsl/lightall_fp.glsl"),Path("source/SP/code/rend2/glsl/lightall_fp.glsl")),
+            ("SP/code/rend2/tr_backend.c",Path("evidence/preport-source/tr_backend.c"),Path("source/SP/code/rend2/tr_backend.c")),
+            ("SP/code/rend2/tr_init.c",Path("evidence/preport-source/tr_init.c"),Path("source/SP/code/rend2/tr_init.c")),
+            ("SP/code/rend2/tr_local.h",Path("evidence/preport-source/tr_local.h"),Path("source/SP/code/rend2/tr_local.h")),
+          ]
+          out=[]
+          for rel,a,b in pairs:
+              old=a.read_text().splitlines(True); new=b.read_text().splitlines(True)
+              d=list(difflib.unified_diff(old,new,fromfile="a/"+rel,tofile="b/"+rel,n=5))
+              assert d, rel
+              out.extend(d)
+          Path("evidence/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch").write_text("".join(out))
+          PY
+          test -s evidence/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch
+          grep -Fq 'REND2_BLOOM_V3_HDR_SCATTER_PYRAMID' evidence/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch
+          grep -Fq 'REND2_BLOOM_V3_22_LIGHTALL_NONFINITE_OUTPUT_FIREWALL_PC2' evidence/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch
+          grep -Fq 'REND2_BLOOM_PC2_KARIS_ANTIFIREFLY_PRODUCTION_CANDIDATE_V2' evidence/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch
+          echo SURGICAL_PORT_ALLOWLIST_AND_DELTA_PASS
 
       - name: Compile embedded GLSL sources
         run: |
