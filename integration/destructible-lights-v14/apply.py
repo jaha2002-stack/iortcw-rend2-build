@@ -87,6 +87,13 @@ if old not in g: raise SystemExit("switch visual block missing")
 g=g.replace(old,new,1)
 g=g.replace("DW_Lights_UpdateSwitchModels(circuit);","DW_Lights_UpdateVisualStates(circuit);")
 
+# In SP there is only one local client; broadcast these tiny authoring entities so
+# their visibility cannot depend on runtime PVS/cluster bookkeeping.
+old="    e->r.svFlags &= ~SVF_NOCLIENT;\n"
+new="    e->r.svFlags &= ~SVF_NOCLIENT;\n    e->r.svFlags |= SVF_BROADCAST;\n"
+if old not in g: raise SystemExit("switch svFlags anchor missing")
+g=g.replace(old,new,1)
+
 old=r'''static void DW_Lights_AddProxy(gentity_t *player, int circuit, int type)
 {
     trace_t tr;
@@ -154,6 +161,7 @@ new=r'''static void DW_Lights_AddProxy(gentity_t *player, int circuit, int type)
     e->die=DW_Lights_ProxyDie;
     e->r.contents=CONTENTS_SOLID;
     e->clipmask=MASK_SHOT;
+    e->r.svFlags |= SVF_BROADCAST;
     VectorSet(e->r.mins,-10,-10,-10);
     VectorSet(e->r.maxs, 10, 10, 10);
     G_SetOrigin(e,origin);
