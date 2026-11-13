@@ -8,7 +8,7 @@ c=(root/"cgame/cg_ents.c").read_text()
 checks=[
  ("vfs probe","CG_DLV16_VfsBytes" in c and "trap_FS_FOpenFile" in c),
  ("custom model bytes diagnostic","DW_DLV16 SWITCH_ASSET" in c and "vfsBytes=%d" in c),
- ("stock model fallback","DW_DLV16_StockSwitchFallback" in c and "SWITCH_STOCK_FALLBACK" in c),
+ ("stock model fallback","CG_DLV16_StockSwitchFallback" in c and "SWITCH_STOCK_FALLBACK" in c),
  ("toggle stock fallback","models/mapobjects/electronics/alarmbox.md3" in c),
  ("knife stock fallback","models/mapobjects/electronics/phone.md3" in c),
  ("rotary stock fallback","models/mapobjects/electronics/loudspeaker2.md3" in c),
