@@ -150,13 +150,40 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          def tree_hash(root):
+              rows=[]
+              for p in sorted(Path(root).rglob('*')):
+                  if p.is_file():
+                      rows.append((p.relative_to(root).as_posix(),hashlib.sha256(p.read_bytes()).hexdigest()))
+              return hashlib.sha256(json.dumps(rows,separators=(',',':')).encode()).hexdigest()
+          Path('evidence/DW_LC1_NONRENDER_BEFORE.json').write_text(json.dumps({
+              'game':tree_hash('source/SP/code/game'),
+              'cgame':tree_hash('source/SP/code/cgame')
+          },indent=2)+'\n')
+          PY
+
           python3 integration/lamp-control-v1/apply.py source
           python3 integration/lamp-control-v1/run_tests.py source
           git -C source diff --check
 
-          # Prove this feature did not touch game or cgame source trees.
-          git -C source diff --quiet -- SP/code/game
-          git -C source diff --quiet -- SP/code/cgame
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          def tree_hash(root):
+              rows=[]
+              for p in sorted(Path(root).rglob('*')):
+                  if p.is_file():
+                      rows.append((p.relative_to(root).as_posix(),hashlib.sha256(p.read_bytes()).hexdigest()))
+              return hashlib.sha256(json.dumps(rows,separators=(',',':')).encode()).hexdigest()
+          before=json.loads(Path('evidence/DW_LC1_NONRENDER_BEFORE.json').read_text())
+          after={'game':tree_hash('source/SP/code/game'),'cgame':tree_hash('source/SP/code/cgame')}
+          assert after==before,(before,after)
+          Path('evidence/DW_LC1_NONRENDER_AFTER.json').write_text(json.dumps(after,indent=2)+'\n')
+          print('DW_LAMP_CONTROL_V1_RENDERER_ONLY_SOURCE_PASS')
+          PY
 
           # Capture exact call-order context for the hard-OFF path.
           python3 - <<'PY'
