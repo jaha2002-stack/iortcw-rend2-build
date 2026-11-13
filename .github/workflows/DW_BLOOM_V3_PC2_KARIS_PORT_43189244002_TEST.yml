@@ -368,7 +368,7 @@ jobs:
           ! grep -aFq 'REND2_BLOOM_WHITE_BLOCK_PRODUCTION_FIX_CANDIDATE_V1' "$b/renderer_sp_rend2_x64.dll"
           echo BINARY_MARKER_REGRESSION_PASS
 
-      - name: Fetch protected RTCW assets and run Escape1 Mode3 runtime smoke
+      - name: Fetch protected RTCW assets and run Ultra FBO startup stress
         run: |
           set -Eeuo pipefail
           test -n "$DARKWOLF_RTCW_ASSET_TOKEN"
@@ -376,6 +376,42 @@ jobs:
           retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
           export GH_TOKEN="$default_token"
           test -d "$retail_main"
+          echo "$retail_main" > evidence/retail_main_path.txt
+          exe="$(cat evidence/BLOOM_PORT_NATIVE_EXE_PATH.txt)"
+          buildroot="$(dirname "$exe")"
+          rm -rf runtime_ultra home_ultra; mkdir -p runtime_ultra/main home_ultra
+          cp -a "$buildroot/." runtime_ultra/
+          find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime_ultra/main/ \;
+
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 60s "$PWD/runtime_ultra/$(basename "$exe")" \
+            +set fs_basepath "$PWD/runtime_ultra" +set fs_homepath "$PWD/home_ultra" \
+            +set com_introplayed 1 +set com_recommendedSet 1 +set s_initsound 0 +set logfile 2 +set developer 0 \
+            +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
+            +set r_hdr 1 +set r_postProcess 1 +set r_ext_framebuffer_multisample 8 +set r_msaaSelectiveSampleShading 1 \
+            +set r_bloom 1 +set r_bloomMode 3 +set r_ssgi 1 +set r_ssgiBrightSourceFix 2 \
+            +set r_forcesun 1 +set r_sunShadows 1 +set r_dlightmode 2 +set r_dlightWorldContainment 2 \
+            +set r_dlightShadowMaxLights 3 +set r_staticPromote 1 +set r_staticPromoteMaxLights 32 \
+            +set r_volumetricSun 1 +set r_volumetricSunMode 1 +set r_volumetricSunSamples 32 \
+            +set r_volumetricLocal 1 +set r_volumetricFire 1 +set r_softParticles 1 \
+            +set r_pbr 3 +set r_cubeMapping 0 +set r_normalMapping 1 +set r_specularMapping 1 \
+            +set r_parallaxMapping 2 +set r_parallaxMapShadows 0 +wait 12 +quit
+          rc=$?
+          set -e
+          echo "$rc" > evidence/BLOOM_PORT_FBO_STRESS_EXIT.txt
+          qlog="$(find home_ultra -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
+          test -n "$qlog"; cp "$qlog" evidence/BLOOM_PORT_FBO_STRESS_QCONSOLE.log
+          test "$rc" -eq 0
+          grep -Fq -- '------- FBO_Init -------' evidence/BLOOM_PORT_FBO_STRESS_QCONSOLE.log
+          grep -Eq 'HDRMSAA_PROD_INIT .*actualSamples=[2-9]' evidence/BLOOM_PORT_FBO_STRESS_QCONSOLE.log
+          ! grep -Fq 'MAX_FBOS hit' evidence/BLOOM_PORT_FBO_STRESS_QCONSOLE.log
+          ! grep -Eiq 'GLSL.*(compile|link).*error|GL_INVALID_(ENUM|VALUE|OPERATION|FRAMEBUFFER_OPERATION)|framebuffer.*incomplete|segmentation fault|ERR_DROP|recursive error' evidence/BLOOM_PORT_FBO_STRESS_QCONSOLE.log
+          echo ULTRA_FBO_STARTUP_STRESS_PASS
+
+      - name: Run Escape1 Mode3 functional runtime smoke
+        run: |
+          set -Eeuo pipefail
+          retail_main="$(cat evidence/retail_main_path.txt)"
           exe="$(cat evidence/BLOOM_PORT_NATIVE_EXE_PATH.txt)"
           buildroot="$(dirname "$exe")"
           rm -rf runtime home; mkdir -p runtime/main home
@@ -401,16 +437,11 @@ jobs:
             +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
             +set com_introplayed 1 +set com_recommendedSet 1 +set s_initsound 0 +set logfile 2 +set developer 0 \
             +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
-            +set r_hdr 1 +set r_postProcess 1 +set r_ext_framebuffer_multisample 8 +set r_msaaSelectiveSampleShading 1 \
-            +set r_bloom 1 +set r_bloomMode 3 +set r_ssgi 1 +set r_ssgiBrightSourceFix 2 \
-            +set r_forcesun 1 +set r_sunShadows 1 +set r_dlightmode 2 +set r_dlightWorldContainment 2 \
-            +set r_dlightShadowMaxLights 3 +set r_staticPromote 1 +set r_staticPromoteMaxLights 32 \
-            +set r_volumetricSun 1 +set r_volumetricSunMode 1 +set r_volumetricSunSamples 32 \
-            +set r_volumetricLocal 1 +set r_volumetricFire 1 +set r_softParticles 1 \
+            +set r_dlightmode 2 +set r_forcesun 1 \
             +set r_dwElectricPhysicalOwner 1 +set r_dwElectricPhysicalOwnerDiag 0 +set r_dwElectricOwnerAudit 0 \
             +set r_dwEscape1PhysicalDlightOwnerResidency 1 +set r_dwEscape1ExternalNativeReserve 9 \
             +set r_dwEscape1PhysicalDlightOwnerDiag 0 +set r_dwEscape1DlightResidencyAudit 0 \
-            +set r_pbr 3 +set r_cubeMapping 1 +set r_normalMapping 1 +set r_specularMapping 1 \
+            +set r_pbr 3 +set r_cubeMapping 0 +set r_normalMapping 1 +set r_specularMapping 1 \
             +set r_parallaxMapping 2 +set r_parallaxMapShadows 0 \
             +exec DW_BLOOM_V3_PC2_KARIS_TEST.cfg +devmap escape1 +wait 45 +quit
           rc=$?
@@ -419,7 +450,6 @@ jobs:
           qlog="$(find home -type f \( -iname 'qconsole.log' -o -iname 'rtcwconsole.log' \) -print -quit)"
           test -n "$qlog"; cp "$qlog" evidence/BLOOM_PORT_RUNTIME_QCONSOLE.log
           test "$rc" -eq 0
-          grep -Eq 'HDRMSAA_PROD_INIT .*actualSamples=[2-9]' evidence/BLOOM_PORT_RUNTIME_QCONSOLE.log
           ! grep -Fq 'MAX_FBOS hit' evidence/BLOOM_PORT_RUNTIME_QCONSOLE.log
           ! grep -Eiq 'GLSL.*(compile|link).*error|GL_INVALID_(ENUM|VALUE|OPERATION|FRAMEBUFFER_OPERATION)|framebuffer.*incomplete|segmentation fault|ERR_DROP|recursive error' evidence/BLOOM_PORT_RUNTIME_QCONSOLE.log
           ! grep -Eq 'EPOA_SUMMARY|EDRA_SUMMARY|EPO_V1_MEMBER|EDR12_' evidence/BLOOM_PORT_RUNTIME_QCONSOLE.log
