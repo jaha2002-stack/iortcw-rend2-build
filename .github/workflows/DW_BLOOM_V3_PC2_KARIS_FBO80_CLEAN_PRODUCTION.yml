@@ -1,0 +1,393 @@
+name: DW FINAL Clean Production Bloom V3 PC2 Karis FBO80
+
+on:
+  push:
+    branches:
+      - release/bloom-v3-pc2-karis-fbo80-clean-production
+    paths:
+      - .github/workflows/DW_BLOOM_V3_PC2_KARIS_FBO80_CLEAN_PRODUCTION.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dw-final-clean-production-bloom-v3-pc2-karis-fbo80-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  promote-verify-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SOURCE_RUN: "43376292153"
+      SOURCE_HEAD_SHA: "7b2bea69df6bedec926f4765cc64520796a5c45a"
+      SOURCE_ARTIFACT_ID: "14015082196"
+      SOURCE_ARTIFACT_NAME: "DW-Bloom-V3-PC2-Karis-Port-43189244002-Win64-TEST"
+      SOURCE_ARTIFACT_SHA256: "865fb42dfeae3649021c0184d32d89261d24c0adf201124920a99ce24cadc8f9"
+      SOURCE_INNER_ZIP_SHA256: "c01c2fb8659c9fcace66dbe33f53ee7bc8f569c8b6d6771617eba15d916c1da9"
+      ACCEPTED_RENDERER_SHA256: "ef8d53e42f92238740361d2cd939aa3073520861d47858b7a9196bd8a7cb076b"
+
+    steps:
+      - name: Verify accepted source run and artifact identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN} --jq .conclusion)" = success
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN} --jq .head_sha)" = "${SOURCE_HEAD_SHA}"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID} --jq .name)" = "${SOURCE_ARTIFACT_NAME}"
+          test "$(gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID} --jq .expired)" = false
+          api_digest="$(gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID} --jq '.digest // ""')"
+          test "$api_digest" = "sha256:${SOURCE_ARTIFACT_SHA256}"
+          mkdir -p incoming dist proof
+          gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip > incoming/source_artifact.zip
+          test "$(sha256sum incoming/source_artifact.zip | awk '{print $1}')" = "${SOURCE_ARTIFACT_SHA256}"
+          echo ACCEPTED_SOURCE_ARTIFACT_IDENTITY_PASS
+
+      - name: Verify tested package integrity and accepted renderer
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, zipfile, json, os, re
+
+          outer=Path("incoming/source_artifact.zip")
+          with zipfile.ZipFile(outer) as z:
+              inn=[n for n in z.namelist() if n.endswith(".zip")]
+              assert len(inn)==1, inn
+              inner=Path("incoming/accepted_tested_package.zip")
+              inner.write_bytes(z.read(inn[0]))
+
+          expected_inner=os.environ["SOURCE_INNER_ZIP_SHA256"]
+          assert hashlib.sha256(inner.read_bytes()).hexdigest()==expected_inner
+
+          with zipfile.ZipFile(inner) as z:
+              names=z.namelist()
+              roots={n.split("/",1)[0] for n in names if "/" in n}
+              assert len(roots)==1, roots
+              root=next(iter(roots))+"/"
+              renderer=root+"renderer_sp_rend2_x64.dll"
+              assert renderer in names
+              rb=z.read(renderer)
+              assert hashlib.sha256(rb).hexdigest()==os.environ["ACCEPTED_RENDERER_SHA256"]
+
+              required_test_files={
+                  root+"Main/DW_BLOOM_V3_PC2_KARIS_TEST.cfg",
+                  root+"docs/DW_BLOOM_V3_PC2_KARIS_PORT_PROOF.json",
+                  root+"docs/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch",
+                  root+"README_BLOOM_V3_PC2_KARIS_TEST.txt",
+                  root+"SHA256SUMS.txt",
+              }
+              assert required_test_files <= set(names)
+
+              required_markers=[
+                  b"DWTR AI B2 V2.4.1:",
+                  b"r_dwElectricPhysicalOwner",
+                  b"r_dwEscape1PhysicalDlightOwnerResidency",
+                  b"r_pbrMaterialAudit",
+                  b"r_pomMinLayers",
+                  b"r_bloomScatterThreshold",
+                  b"r_bloomScatterSafety",
+                  b"r_bloomScatterMaxLevels",
+                  b"r_bloomScatterSafeMax",
+                  b"REND2_BLOOM_V3_HDR_SCATTER_PYRAMID",
+                  b"REND2_BLOOM_V3_1_HDR_INPUT_VALIDATION_SCATTER_STABILITY",
+                  b"REND2_BLOOM_V3_22_LIGHTALL_NONFINITE_OUTPUT_FIREWALL_PC2",
+                  b"REND2_BLOOM_PC2_KARIS_ANTIFIREFLY_PRODUCTION_CANDIDATE_V2",
+                  b"DW_BLOOM_V3_FBO_CAPACITY_80",
+              ]
+              for m in required_markers:
+                  assert m in rb, m
+              for forbidden in (b"hdrEligibility",b"REND2_BLOOM_WHITE_BLOCK_PRODUCTION_FIX_CANDIDATE_V1",
+                                b"r_bloomDebug",b"r_bloomTrace"):
+                  assert forbidden not in rb, forbidden
+
+              # Validate the tested package's own manifest before promotion.
+              manifest=z.read(root+"SHA256SUMS.txt").decode("utf-8")
+              checked=0
+              for line in manifest.splitlines():
+                  if not line.strip(): continue
+                  digest, rel=line.split(None,1)
+                  rel=rel.strip()
+                  member=root+rel
+                  assert member in names, member
+                  assert hashlib.sha256(z.read(member)).hexdigest()==digest, rel
+                  checked+=1
+              assert checked>10
+
+          proof={
+              "source_run":43376292153,
+              "source_head_sha":os.environ["SOURCE_HEAD_SHA"],
+              "source_artifact_id":14015082196,
+              "source_artifact_sha256":os.environ["SOURCE_ARTIFACT_SHA256"],
+              "source_tested_inner_zip_sha256":expected_inner,
+              "accepted_renderer_sha256":os.environ["ACCEPTED_RENDERER_SHA256"],
+              "source_manifest_entries_verified":checked,
+              "source_identity_verified":True,
+              "renderer_markers_verified":True,
+              "forbidden_debug_trace_markers_absent":True,
+          }
+          Path("proof/SOURCE_ACCEPTANCE_PROOF.json").write_text(json.dumps(proof,indent=2,sort_keys=True)+"\n")
+          print("TESTED_PACKAGE_AND_RENDERER_IDENTITY_PASS")
+          PY
+
+      - name: Promote exact tested binary into Clean Production package
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, zipfile, json, os
+
+          src=Path("incoming/accepted_tested_package.zip")
+          out=Path("dist/DarkWolf_Rend2_FINAL_CLEAN_PRODUCTION_BloomV3_PC2_Karis_FBO80_Win64.zip")
+
+          profiles={
+          "DW_BLOOM_V3_PERFORMANCE.cfg": """// DarkWolf Bloom V3 - PERFORMANCE
+          seta r_bloom 1
+          seta r_bloomMode 3
+          seta r_bloomStrength 0.85
+          seta r_bloomScatterMaxLevels 4
+          seta r_bloomScatterThreshold 0.90
+          seta r_bloomScatterKnee 0.55
+          seta r_bloomScatterSourceGain 1.40
+          seta r_bloomScatterRadius 1.55
+          seta r_bloomScatterFactor 0.85
+          seta r_bloomScatterCoreStrength 0.07
+          seta r_bloomScatterHaloStrength 0.90
+          seta r_bloomScatterSafety 3
+          seta r_bloomScatterSafeMax 64
+          """,
+          "DW_BLOOM_V3_BALANCED.cfg": """// DarkWolf Bloom V3 - BALANCED
+          seta r_bloom 1
+          seta r_bloomMode 3
+          seta r_bloomStrength 0.95
+          seta r_bloomScatterMaxLevels 5
+          seta r_bloomScatterThreshold 0.82
+          seta r_bloomScatterKnee 0.58
+          seta r_bloomScatterSourceGain 1.50
+          seta r_bloomScatterRadius 1.75
+          seta r_bloomScatterFactor 0.95
+          seta r_bloomScatterCoreStrength 0.08
+          seta r_bloomScatterHaloStrength 1.00
+          seta r_bloomScatterSafety 3
+          seta r_bloomScatterSafeMax 64
+          """,
+          "DW_BLOOM_V3_QUALITY.cfg": """// DarkWolf Bloom V3 - QUALITY (recommended)
+          seta r_bloom 1
+          seta r_bloomMode 3
+          seta r_bloomStrength 1.00
+          seta r_bloomScatterMaxLevels 5
+          seta r_bloomScatterThreshold 0.75
+          seta r_bloomScatterKnee 0.60
+          seta r_bloomScatterSourceGain 1.65
+          seta r_bloomScatterRadius 2.00
+          seta r_bloomScatterFactor 1.00
+          seta r_bloomScatterCoreStrength 0.10
+          seta r_bloomScatterHaloStrength 1.10
+          seta r_bloomScatterSafety 3
+          seta r_bloomScatterSafeMax 64
+          """,
+          "DW_BLOOM_V3_HIGH.cfg": """// DarkWolf Bloom V3 - HIGH
+          seta r_bloom 1
+          seta r_bloomMode 3
+          seta r_bloomStrength 1.08
+          seta r_bloomScatterMaxLevels 5
+          seta r_bloomScatterThreshold 0.68
+          seta r_bloomScatterKnee 0.62
+          seta r_bloomScatterSourceGain 1.78
+          seta r_bloomScatterRadius 2.20
+          seta r_bloomScatterFactor 1.05
+          seta r_bloomScatterCoreStrength 0.12
+          seta r_bloomScatterHaloStrength 1.22
+          seta r_bloomScatterSafety 3
+          seta r_bloomScatterSafeMax 64
+          """,
+          "DW_BLOOM_V3_ULTRA.cfg": """// DarkWolf Bloom V3 - ULTRA
+          seta r_bloom 1
+          seta r_bloomMode 3
+          seta r_bloomStrength 1.15
+          seta r_bloomScatterMaxLevels 5
+          seta r_bloomScatterThreshold 0.62
+          seta r_bloomScatterKnee 0.65
+          seta r_bloomScatterSourceGain 1.90
+          seta r_bloomScatterRadius 2.40
+          seta r_bloomScatterFactor 1.10
+          seta r_bloomScatterCoreStrength 0.15
+          seta r_bloomScatterHaloStrength 1.35
+          seta r_bloomScatterSafety 3
+          seta r_bloomScatterSafeMax 64
+          """,
+          }
+          # De-indent only the YAML/Python embedding indentation.
+          profiles={k:"\n".join(line.strip() if line.lstrip().startswith(("seta ","//")) else line for line in v.strip().splitlines())+"\n"
+                    for k,v in profiles.items()}
+
+          allowed_cvars={
+              "r_bloom","r_bloomMode","r_bloomStrength","r_bloomScatterMaxLevels",
+              "r_bloomScatterThreshold","r_bloomScatterKnee","r_bloomScatterSourceGain",
+              "r_bloomScatterRadius","r_bloomScatterFactor","r_bloomScatterCoreStrength",
+              "r_bloomScatterHaloStrength","r_bloomScatterSafety","r_bloomScatterSafeMax"
+          }
+          for name,text in profiles.items():
+              vals={}
+              for raw in text.splitlines():
+                  line=raw.strip()
+                  if not line or line.startswith("//"): continue
+                  p=line.split()
+                  assert len(p)==3 and p[0]=="seta", (name,line)
+                  assert p[1] in allowed_cvars, (name,p[1])
+                  vals[p[1]]=p[2]
+              assert vals["r_bloom"]=="1"
+              assert vals["r_bloomMode"]=="3"
+              assert vals["r_bloomScatterSafety"]=="3"
+              assert vals["r_bloomScatterSafeMax"]=="64"
+              assert vals["r_bloomScatterMaxLevels"] in {"4","5"}
+              assert "debug" not in text.lower() and "trace" not in text.lower()
+
+          with zipfile.ZipFile(src) as zin:
+              roots={n.split("/",1)[0] for n in zin.namelist() if "/" in n}
+              assert len(roots)==1
+              root=next(iter(roots))+"/"
+              remove={
+                  root+"Main/DW_BLOOM_V3_PC2_KARIS_TEST.cfg",
+                  root+"docs/DW_BLOOM_V3_PC2_KARIS_PORT_PROOF.json",
+                  root+"docs/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch",
+                  root+"README_BLOOM_V3_PC2_KARIS_TEST.txt",
+                  root+"SHA256SUMS.txt",
+              }
+              with zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as zout:
+                  for info in zin.infolist():
+                      if info.filename in remove: continue
+                      zout.writestr(info,zin.read(info.filename))
+                  for name,text in profiles.items():
+                      zout.writestr(root+"Main/"+name,text)
+                  readme=(
+                    "DarkWolf Rend2 FINAL CLEAN PRODUCTION - Bloom V3 PC2 + Karis + FBO80\n"
+                    "Promoted byte-for-byte from user-accepted Run #43376292153 renderer.\n"
+                    "No renderer rebuild was performed during promotion.\n"
+                    "Bloom V3 profiles: PERFORMANCE / BALANCED / QUALITY / HIGH / ULTRA.\n"
+                    "Recommended: /exec DW_BLOOM_V3_QUALITY.cfg\n"
+                    "Safety remains r_bloomScatterSafety 3 and r_bloomScatterSafeMax 64.\n"
+                    "Default renderer startup behavior is preserved from the accepted build.\n"
+                  )
+                  zout.writestr(root+"README_BLOOM_V3_CLEAN_PRODUCTION.txt",readme)
+
+          with zipfile.ZipFile(out,"a",zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              root=next(iter({n.split("/",1)[0] for n in z.namelist() if "/" in n}))+"/"
+              lines=[]
+              for n in sorted(z.namelist()):
+                  if n.endswith("/") or n.endswith("/SHA256SUMS.txt"): continue
+                  rel=n.split("/",1)[1] if "/" in n else n
+                  lines.append(hashlib.sha256(z.read(n)).hexdigest()+"  "+rel)
+              z.writestr(root+"SHA256SUMS.txt","\n".join(lines)+"\n")
+
+          print("PRODUCTION_PACKAGE",out,hashlib.sha256(out.read_bytes()).hexdigest())
+          PY
+          python3 -m zipfile -t dist/DarkWolf_Rend2_FINAL_CLEAN_PRODUCTION_BloomV3_PC2_Karis_FBO80_Win64.zip
+          sha256sum dist/*.zip | tee dist/SHA256SUMS.txt
+
+      - name: Final Clean Production preservation and profile audit
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, zipfile, json, os
+
+          src=Path("incoming/accepted_tested_package.zip")
+          dst=Path("dist/DarkWolf_Rend2_FINAL_CLEAN_PRODUCTION_BloomV3_PC2_Karis_FBO80_Win64.zip")
+          accepted=os.environ["ACCEPTED_RENDERER_SHA256"]
+
+          with zipfile.ZipFile(src) as a, zipfile.ZipFile(dst) as b:
+              roots={n.split("/",1)[0] for n in a.namelist() if "/" in n}; assert len(roots)==1
+              root=next(iter(roots))+"/"
+              removed={
+                  root+"Main/DW_BLOOM_V3_PC2_KARIS_TEST.cfg",
+                  root+"docs/DW_BLOOM_V3_PC2_KARIS_PORT_PROOF.json",
+                  root+"docs/DW_BLOOM_V3_PC2_KARIS_MODERN_PORT.patch",
+                  root+"README_BLOOM_V3_PC2_KARIS_TEST.txt",
+              }
+              added={root+"Main/DW_BLOOM_V3_"+x+".cfg" for x in ("PERFORMANCE","BALANCED","QUALITY","HIGH","ULTRA")}
+              added.add(root+"README_BLOOM_V3_CLEAN_PRODUCTION.txt")
+
+              an={x.filename for x in a.infolist() if not x.is_dir()}
+              bn={x.filename for x in b.infolist() if not x.is_dir()}
+              assert (an-bn)==removed, (an-bn)
+              assert (bn-an)==added, (bn-an)
+
+              # Everything common except regenerated manifest must be byte-for-byte identical.
+              for n in sorted((an & bn)-{root+"SHA256SUMS.txt"}):
+                  assert a.read(n)==b.read(n), "unexpected mutation: "+n
+
+              rb=b.read(root+"renderer_sp_rend2_x64.dll")
+              assert hashlib.sha256(rb).hexdigest()==accepted
+
+              # Production manifest must validate every current member except itself.
+              manifest=b.read(root+"SHA256SUMS.txt").decode("utf-8")
+              checked=0
+              for line in manifest.splitlines():
+                  if not line.strip(): continue
+                  digest,rel=line.split(None,1); rel=rel.strip()
+                  member=root+rel
+                  assert member in bn, member
+                  assert hashlib.sha256(b.read(member)).hexdigest()==digest, rel
+                  checked+=1
+              assert checked>10
+
+              for name in ("PERFORMANCE","BALANCED","QUALITY","HIGH","ULTRA"):
+                  text=b.read(root+"Main/DW_BLOOM_V3_"+name+".cfg").decode("utf-8")
+                  assert "seta r_bloomMode 3" in text
+                  assert "seta r_bloomScatterSafety 3" in text
+                  assert "seta r_bloomScatterSafeMax 64" in text
+                  assert "debug" not in text.lower() and "trace" not in text.lower()
+
+          result={
+              "promotion":"CLEAN_PRODUCTION",
+              "source_run":43376292153,
+              "source_tested_zip_sha256":os.environ["SOURCE_INNER_ZIP_SHA256"],
+              "renderer_sha256":accepted,
+              "renderer_rebuilt":False,
+              "renderer_byte_identical_to_user_accepted_test":True,
+              "common_runtime_files_byte_identical":True,
+              "test_only_files_removed":sorted(x.split("/",1)[1] for x in removed),
+              "production_profiles_added":["PERFORMANCE","BALANCED","QUALITY","HIGH","ULTRA"],
+              "production_manifest_entries_verified":checked,
+              "debug_trace_cvars_added":False,
+              "result":"PASS",
+          }
+          Path("proof/DW_BLOOM_V3_CLEAN_PRODUCTION_PROMOTION_PROOF.json").write_text(
+              json.dumps(result,indent=2,sort_keys=True)+"\n"
+          )
+          print(json.dumps(result,indent=2,sort_keys=True))
+          print("FINAL_CLEAN_PRODUCTION_PRESERVATION_AUDIT_PASS")
+          PY
+
+      - name: Verify final archive SHA and emit promotion summary
+        run: |
+          set -Eeuo pipefail
+          test -s dist/DarkWolf_Rend2_FINAL_CLEAN_PRODUCTION_BloomV3_PC2_Karis_FBO80_Win64.zip
+          test -s proof/DW_BLOOM_V3_CLEAN_PRODUCTION_PROMOTION_PROOF.json
+          jq -e '.result=="PASS" and .renderer_rebuilt==false and .renderer_byte_identical_to_user_accepted_test==true'             proof/DW_BLOOM_V3_CLEAN_PRODUCTION_PROMOTION_PROOF.json >/dev/null
+          echo "SOURCE_RUN=#43376292153"
+          echo "ACCEPTED_RENDERER_SHA256=${ACCEPTED_RENDERER_SHA256}"
+          sha256sum dist/DarkWolf_Rend2_FINAL_CLEAN_PRODUCTION_BloomV3_PC2_Karis_FBO80_Win64.zip
+          echo CLEAN_PRODUCTION_PROMOTION_READY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-FINAL-Clean-Production-BloomV3-PC2-Karis-FBO80-Win64
+          path: |
+            dist/DarkWolf_Rend2_FINAL_CLEAN_PRODUCTION_BloomV3_PC2_Karis_FBO80_Win64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-FINAL-Clean-Production-BloomV3-PC2-Karis-FBO80-Proof
+          path: |
+            proof/SOURCE_ACCEPTANCE_PROOF.json
+            proof/DW_BLOOM_V3_CLEAN_PRODUCTION_PROMOTION_PROOF.json
+          if-no-files-found: error
+          retention-days: 90
