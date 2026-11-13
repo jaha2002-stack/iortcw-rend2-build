@@ -1,0 +1,422 @@
+name: DW Lamp Control V1.2 Exact Visible Picker Win64 Test
+# V17 retry after regression-test quoting fix
+
+on:
+  push:
+    branches:
+      - feature/lamp-control-v12-exact-picker-from-43189244002
+    paths:
+      - .github/workflows/DW_LAMP_CONTROL_V12_EXACT_VISIBLE_WIN64_TEST.yml
+      - integration/lamp-control-v1/**
+      - integration/lamp-control-v11/**
+      - integration/lamp-control-v12/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DLO_OWNER_SHA: "60ea59d9cce705333dad49a937ba85c71735aa2d"
+      TEXTURE_SHA: "aa60e4d0c68260b6752920cddd8011b718c7dbba"
+      BASE_RUN: "43189244002"
+      BASE_ARTIFACT_ID: "13929023924"
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Install proven MinGW GCC toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist incoming stage evidence
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git gh jq python3 unzip zip file \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+          x86_64-w64-mingw32-gcc-posix --version | head -1
+          echo "DW_LC12_PROVEN_MINGW_GCC_PASS"
+
+      - name: Pin exact accepted Owner and Texture integrations
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags --depth=1 origin "$DLO_OWNER_SHA"
+          git checkout "$DLO_OWNER_SHA" -- \
+            integration/electric-owner-audit-v1 \
+            integration/electric-physical-owner-v1 \
+            integration/escape1-dlight-residency-v1 \
+            integration/escape1-physical-dlight-owner-v12
+          git fetch --no-tags --depth=1 origin "$TEXTURE_SHA"
+          git checkout "$TEXTURE_SHA" -- \
+            integration/texture-restoration-v1 \
+            integration/texture-ai-b2-v1 \
+            integration/texture-ai-b2-v2 \
+            integration/texture-ai-b2-v21 \
+            integration/texture-ai-b2-v22 \
+            integration/texture-ai-b2-v23
+
+      - name: Reconstruct exact Final V2 source postimage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf source evidence
+          mkdir -p evidence
+
+          python3 integration/elss-v1/prepare.py
+          python3 integration/elss-v1/apply.py source evidence
+          python3 integration/elss-v101/apply.py source evidence
+          python3 integration/firevol-flashfix-v1/apply.py source evidence
+          python3 integration/firevol-fixture-v3/apply.py source evidence
+          python3 integration/firevol-continuity-v4/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v5/apply.py source/SP/code/rend2
+          python3 integration/firevol-chateau-v6/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/apply.py source/SP/code/rend2
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/elss-v11cp/apply.py source evidence
+          python3 integration/elss-v11cp/refine_exact_pick.py source/SP/code/rend2/tr_elss.inc
+          python3 integration/elss-v11cp/run_tests.py source evidence
+
+          python3 integration/electric-owner-audit-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/apply.py source evidence
+          python3 integration/electric-physical-owner-v1/run_tests.py source evidence
+          python3 integration/escape1-dlight-residency-v1/apply.py source evidence
+          python3 integration/escape1-dlight-residency-v1/run_tests.py source evidence
+          python3 integration/escape1-physical-dlight-owner-v12/apply.py source evidence
+          python3 integration/escape1-physical-dlight-owner-v12/run_tests.py source evidence
+
+          python3 integration/texture-restoration-v1/apply.py source evidence
+          python3 integration/texture-restoration-v1/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v1/apply.py source evidence
+          python3 integration/texture-ai-b2-v1/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v2/apply.py source evidence
+          python3 integration/texture-ai-b2-v2/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v21/apply.py source evidence
+          python3 integration/texture-ai-b2-v21/run_tests.py source/SP/code/rend2 evidence source
+          python3 integration/texture-ai-b2-v22/apply.py source evidence
+          python3 integration/texture-ai-b2-v22/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v23/apply.py source evidence
+          python3 integration/texture-ai-b2-v23/run_tests.py source/SP/code evidence
+          python3 integration/texture-ai-b2-v24/apply.py source evidence
+          python3 integration/texture-ai-b2-v24/run_tests.py source/SP/code/rend2 evidence
+          python3 integration/texture-ai-b2-v241/apply.py source evidence
+          python3 integration/texture-ai-b2-v241/run_tests.py source/SP/code/rend2 evidence
+
+          python3 integration/pbr-v2/apply.py source --stage 3 --proof evidence/PBR_V42_PROOF.json
+          python3 integration/pbr-v2/test.py source --stage 3 --out evidence/PBR_V42_STATIC.json
+          python3 integration/pbr-v31-ibl/apply.py source --proof evidence/PBR_V31_PROOF.json
+          python3 integration/pbr-v31-ibl/test.py source --out evidence/PBR_V31_STATIC.json
+          python3 integration/pbr-v32-pom/apply.py source --proof evidence/PBR_V32_PROOF.json
+          python3 integration/pbr-v32-pom/test.py source --out evidence/PBR_V32_STATIC.json
+          python3 integration/pbr-v32-audit/apply.py source --proof evidence/PBR_V32_AUDIT_PROOF.json
+          python3 integration/pbr-v32-audit/test.py source --out evidence/PBR_V32_AUDIT_STATIC.json
+          python3 integration/texture-ai-b2-v24/run_unified_v24_tests.py source evidence
+
+          python3 integration/weapon-port-v1/apply.py source evidence
+          python3 integration/weapon-port-v1/run_tests.py source evidence
+          python3 integration/weapon-port-v11-hd-model-limit/apply.py source evidence
+          python3 integration/weapon-port-v11-hd-model-limit/run_tests.py source evidence
+          python3 integration/weapon-port-v12-fire-safe/apply.py source evidence
+          python3 integration/weapon-port-v12-fire-safe/run_tests.py source evidence
+          python3 integration/weapon-port-v14-component-anim-index-safety/apply.py source evidence
+          python3 integration/weapon-port-v14-component-anim-index-safety/run_tests.py source evidence
+          python3 integration/weapon-port-v15-full-fire-ads-reload/apply.py source evidence
+          python3 integration/weapon-port-v15-full-fire-ads-reload/run_tests.py source evidence
+          python3 integration/weapon-port-v16-expanded-arsenal-ads-calibrator/apply.py source evidence
+          python3 integration/weapon-port-v16-expanded-arsenal-ads-calibrator/run_tests.py source evidence
+          python3 integration/weapon-port-v161-realrtcw-compat-clean/apply.py source evidence
+          python3 integration/weapon-port-v161-realrtcw-compat-clean/run_tests.py source evidence
+          python3 integration/weapon-port-v162-sp-fire-sound-range-safety/apply.py source evidence
+          python3 integration/weapon-port-v162-sp-fire-sound-range-safety/run_tests.py source evidence
+          python3 integration/weapon-port-v163-ads-ballistic-alignment/apply.py source evidence
+          python3 integration/weapon-port-v163-ads-ballistic-alignment/run_tests.py source evidence
+          python3 integration/weapon-port-v164-ads-calibrator-angle-debug/apply.py source evidence
+          python3 integration/weapon-port-v164-ads-calibrator-angle-debug/run_tests.py source evidence
+          python3 integration/weapon-port-v165-ads-cvar-calibrator/apply.py source evidence
+          python3 integration/weapon-port-v165-ads-cvar-calibrator/run_tests.py source evidence
+          python3 integration/weapon-port-v166-final-ads-transform-calibrator/apply.py source evidence
+          python3 integration/weapon-port-v166-final-ads-transform-calibrator/run_tests.py source evidence
+
+          git -C source diff --check
+          echo "DW_LC12_SOURCE_RECONSTRUCT_PASS"
+
+      - name: Apply Lamp Control V1 renderer-only patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          def tree_hash(root):
+              rows=[]
+              for p in sorted(Path(root).rglob('*')):
+                  if p.is_file():
+                      rows.append((p.relative_to(root).as_posix(),hashlib.sha256(p.read_bytes()).hexdigest()))
+              return hashlib.sha256(json.dumps(rows,separators=(',',':')).encode()).hexdigest()
+          Path('evidence/DW_LC12_NONRENDER_BEFORE.json').write_text(json.dumps({
+              'game':tree_hash('source/SP/code/game'),
+              'cgame':tree_hash('source/SP/code/cgame')
+          },indent=2)+'\n')
+          PY
+
+          python3 integration/lamp-control-v1/apply.py source
+          python3 integration/lamp-control-v1/run_tests.py source
+          python3 integration/lamp-control-v11/apply.py source
+          python3 integration/lamp-control-v11/run_tests.py source
+          python3 integration/lamp-control-v12/apply.py source
+          python3 integration/lamp-control-v12/run_tests.py source
+          git -C source diff --check
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          def tree_hash(root):
+              rows=[]
+              for p in sorted(Path(root).rglob('*')):
+                  if p.is_file():
+                      rows.append((p.relative_to(root).as_posix(),hashlib.sha256(p.read_bytes()).hexdigest()))
+              return hashlib.sha256(json.dumps(rows,separators=(',',':')).encode()).hexdigest()
+          before=json.loads(Path('evidence/DW_LC12_NONRENDER_BEFORE.json').read_text())
+          after={'game':tree_hash('source/SP/code/game'),'cgame':tree_hash('source/SP/code/cgame')}
+          assert after==before,(before,after)
+          Path('evidence/DW_LC12_NONRENDER_AFTER.json').write_text(json.dumps(after,indent=2)+'\n')
+          print('DW_LAMP_CONTROL_V12_RENDERER_ONLY_SOURCE_PASS')
+          PY
+
+          # Capture exact call-order context for the hard-OFF path.
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('source/SP/code/rend2/tr_scene.c').read_text()
+          owner=s.find('R_DarkWolfAssignPhysicalElectricOwnerIds();')
+          filt=s.find('R_DWLC1_FilterDisabledSceneDlights')
+          assert owner >= 0 and filt > owner
+          Path('evidence/DW_LC12_CALL_ORDER.txt').write_text(
+              s[max(0,owner-600):min(len(s),filt+500)])
+          print('DW_LAMP_CONTROL_V12_APPLY_STATIC_PASS')
+          PY
+
+      - name: Build Win64 renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 release \
+            VERSION=1.51d-SP_DarkWolf-Lamp-Control-V12-Exact-Visible \
+            PLATFORM=mingw32 ARCH=x86_64 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-gcc-posix \
+            CXX=x86_64-w64-mingw32-g++-posix \
+            WINDRES=x86_64-w64-mingw32-windres \
+            > evidence/DW_LC12_BUILD.log 2>&1 \
+            || { tail -600 evidence/DW_LC12_BUILD.log; exit 1; }
+
+          build=source/SP/build/release-mingw32-x86_64
+          renderer="$(find "$build" -type f -name 'renderer_sp_rend2_x64.dll' -print -quit)"
+          test -f "$renderer"
+
+          grep -aFq 'darkwolf_lamp_control_v12.txt' "$renderer"
+          grep -aFq 'DW_LAMP_CONTROL_V12' "$renderer"
+          grep -aFq 'ambiguous crosshair' "$renderer"
+          grep -aFq 'dw_lamp_toggle' "$renderer"
+          grep -aFq 'dw_lamp_off' "$renderer"
+          grep -aFq 'dw_lamp_on' "$renderer"
+          grep -aFq 'dw_lamp_list' "$renderer"
+          grep -aFq 'dw_lamp_restore_all' "$renderer"
+          grep -aFq 'DW_LAMP_CONTROL_V1' "$renderer"
+          grep -aFq 'r_dwElectricPhysicalOwner' "$renderer"
+          grep -aFq 'r_dwEscape1PhysicalDlightOwnerResidency' "$renderer"
+          grep -aFq 'DWTR AI B2 V2.4.1:' "$renderer"
+
+          sha256sum "$renderer" | tee evidence/DW_LC12_RENDERER_SHA256.txt
+          printf '%s\n' "$renderer" > evidence/DW_LC12_BUILD_PATH.txt
+          echo "DW_LAMP_CONTROL_V12_WIN64_BUILD_PASS"
+
+      - name: Package over exact Run 43189244002
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/${BASE_ARTIFACT_ID}/zip > incoming/base_outer.zip
+          unzip -q incoming/base_outer.zip -d incoming/base_outer
+          inner="$(find incoming/base_outer -type f -name 'DarkWolf_Rend2_FINAL_CLEAN_PRODUCTION_V2_WeaponPort_ADS_HDRendererFix_CODE_CORE_Win64.zip' -print -quit)"
+          test -f "$inner"
+          unzip -q "$inner" -d stage
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,shutil,zipfile
+
+          H=lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          roots=[p for p in Path('stage').iterdir() if p.is_dir()]
+          assert len(roots)==1,roots
+          root=roots[0]
+          base={p.relative_to(root).as_posix():H(p) for p in root.rglob('*') if p.is_file()}
+
+          build=Path('source/SP/build/release-mingw32-x86_64')
+          xs=list(build.rglob('renderer_sp_rend2_x64.dll'))
+          assert len(xs)==1,xs
+          shutil.copy2(xs[0],root/'renderer_sp_rend2_x64.dll')
+
+          readme=root/'Main/DW_LAMP_CONTROL_V12_README.txt'
+          readme.write_text(
+              'DarkWolf Lamp Control V1.2 - Exact Visible Picker TEST CANDIDATE\n'
+              'Exact root base: GitHub Run #43189244002.\n\n'
+              'Purpose: individually enable/disable the REAL visible electric DLight owner under the crosshair.\n'
+              'V1/V1.1 diagnostic cone picker is removed from Lamp Control.\n'
+              'Selection uses first visible world-surface hit (ELSS/IFLC proven ray), max 512 units, tight visibility gating, and an actual runtime DLight owner.\n'
+              'If more than one distinct electric fixture is eligible, V1.2 refuses to change anything and reports ambiguity.\n'
+              'OFF still uses V1.1 route-independent PROMOTED/NATIVE/SYNTHETIC hard removal before point-shadow/LocalVol consumers.\n'
+              'V1/V1.1 registry is intentionally ignored; V1.2 persists only to darkwolf_lamp_control_v12.txt.\n'
+              'No switch models. No damage/destruction. No physical bulb-darkening.\n\n'
+              'Commands:\n'
+              '  /dw_lamp_toggle       - aim at lamp; OFF if ON, ON if OFF\n'
+              '  /dw_lamp_off          - aim at lamp; force OFF\n'
+              '  /dw_lamp_on           - aim at lamp; force ON\n'
+              '  /dw_lamp_list         - list disabled fixtures on current map\n'
+              '  /dw_lamp_restore_all  - restore all disabled fixtures on current map\n'
+          )
+
+          cfg=root/'Main/DW_LAMP_CONTROL_V12_TEST.cfg'
+          cfg.write_text(
+              'echo "DarkWolf Lamp Control V1 - renderer-only"\n'
+              'echo "Aim at an electric StaticPromote lamp and run: /dw_lamp_toggle"\n'
+              'echo "Run the same command on the same lamp to enable it again."\n'
+              'echo "List disabled lamps: /dw_lamp_list"\n'
+              'echo "Restore whole current map: /dw_lamp_restore_all"\n'
+          )
+
+          mp=root/'DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json'
+          if mp.exists():
+              m=json.loads(mp.read_text())
+              m['lamp_control_v12_test']={
+                  'status':'TEST_CANDIDATE',
+                  'exact_base_run':43189244002,
+                  'implementation':'renderer_only',
+                  'persistent_registry':'darkwolf_lamp_control_v12.txt',
+                  'old_v1_registry_imported':False,
+                  'identity':'map_plus_fixture_id',
+                  'crosshair_retoggle_disabled_fixture':True,
+                  'selection':'exact_visible_runtime_dlight_owner',
+                  'old_staticpromote_cone_picker_used':False,
+                  'max_pick_distance':512,
+                  'surface_hit':'ELSS_IFLC_world_surface_ray',
+                  'occlusion_guard':True,
+                  'ambiguous_selection_mutates_state':False,
+                  'route_independent_off':True,
+                  'native_route_mapping':'unifiedNativeSceneIndex',
+                  'promoted_identity':'staticPromoteFixtureId',
+                  'synthetic_identity':'physicalElectricOwnerId',
+                  'staticpromote_selection_released_when_off':True,
+                  'resolved_dlight_removed_when_off':True,
+                  'point_shadow_candidate_released_when_off':True,
+                  'localvol_candidate_released_when_off':True,
+                  'physical_bulb_visual_changed':False,
+                  'switches_present':False,
+                  'destruction_present':False,
+                  'damage_proxy_present':False,
+                  'cgame_changed':False,
+                  'qagame_changed':False
+              }
+              mp.write_text(json.dumps(m,indent=2,ensure_ascii=False)+'\n')
+
+          allowed={
+              'renderer_sp_rend2_x64.dll',
+              'DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json'
+          }
+          post={p.relative_to(root).as_posix():H(p) for p in root.rglob('*') if p.is_file()}
+          unexpected=[k for k,v in base.items() if k not in allowed and post.get(k)!=v]
+          assert not unexpected,unexpected
+
+          proof={
+              'status':'TEST_CANDIDATE',
+              'base_run':43189244002,
+              'unexpected_base_changes':unexpected,
+              'replaced_binaries':['renderer_sp_rend2_x64.dll'],
+              'cgame_unchanged':post.get('Main/cgame_sp_x64.dll')==base.get('Main/cgame_sp_x64.dll'),
+              'qagame_unchanged':post.get('Main/qagame_sp_x64.dll')==base.get('Main/qagame_sp_x64.dll'),
+              'ui_unchanged':post.get('Main/ui_sp_x64.dll')==base.get('Main/ui_sp_x64.dll'),
+              'exe_unchanged':post.get('ioWolfSP.x64.exe')==base.get('ioWolfSP.x64.exe'),
+              'opengl1_unchanged':post.get('renderer_sp_opengl1_x64.dll')==base.get('renderer_sp_opengl1_x64.dll'),
+              'switch_assets_added':False,
+              'gameplay_entities_added':False
+          }
+          Path('evidence/DW_LC12_PACKAGE_PROOF.json').write_text(json.dumps(proof,indent=2)+'\n')
+
+          sums=[]
+          for p in sorted(x for x in root.rglob('*') if x.is_file() and x.name!='SHA256SUMS.txt'):
+              sums.append(f"{H(p)}  {p.relative_to(root).as_posix()}")
+          (root/'SHA256SUMS.txt').write_text('\n'.join(sums)+'\n')
+
+          out=Path('dist/DarkWolf_Rend2_Lamp_Control_V12_EXACT_VISIBLE_FROM_43189244002_Win64_TEST.zip')
+          with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              for p in sorted(x for x in root.rglob('*') if x.is_file()):
+                  z.write(p,Path(root.name)/p.relative_to(root))
+          with zipfile.ZipFile(out) as z:
+              assert z.testzip() is None
+          Path('dist/SHA256SUMS_DW_LC12.txt').write_text(H(out)+'  '+out.name+'\n')
+          print('DW_LAMP_CONTROL_V12_PACKAGE_PASS',out,H(out))
+          PY
+
+      - name: Final archive verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          p=Path('dist/DarkWolf_Rend2_Lamp_Control_V12_EXACT_VISIBLE_FROM_43189244002_Win64_TEST.zip')
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              root=names[0].split('/')[0]+'/'
+              rnd=z.read(root+'renderer_sp_rend2_x64.dll')
+              cg=z.read(root+'Main/cgame_sp_x64.dll')
+              qg=z.read(root+'Main/qagame_sp_x64.dll')
+
+              for x in (
+                  b'darkwolf_lamp_control_v12.txt',
+                  b'DW_LAMP_CONTROL_V12',b'ambiguous crosshair',
+                  b'dw_lamp_toggle',b'dw_lamp_off',b'dw_lamp_on',
+                  b'dw_lamp_list',b'dw_lamp_restore_all',
+                  b'DW_LAMP_CONTROL_V1',
+                  b'r_dwElectricPhysicalOwner',
+                  b'DWTR AI B2 V2.4.1:'
+              ):
+                  assert x in rnd,x
+
+              # New feature is strictly renderer-only.
+              for x in (b'dw_switch_add',b'darkwolf_switches_v11.txt',
+                        b'DarkWolf lamp destroyed',b'dw_destructible_lamp'):
+                  assert x not in cg,x
+                  assert x not in qg,x
+
+              assert root+'Main/DW_LAMP_CONTROL_V12_README.txt' in names
+              assert root+'Main/DW_LAMP_CONTROL_V12_TEST.cfg' in names
+
+          print('DW_LAMP_CONTROL_V12_FINAL_VERIFY_PASS')
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Lamp-Control-V12-Exact-Visible-From-43189244002-Win64-Test
+          path: |
+            dist/DarkWolf_Rend2_Lamp_Control_V12_EXACT_VISIBLE_FROM_43189244002_Win64_TEST.zip
+            dist/SHA256SUMS_DW_LC12.txt
+          retention-days: 90
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Lamp-Control-V12-Exact-Visible-Evidence
+          path: evidence/**
+          retention-days: 90
+          if-no-files-found: warn
