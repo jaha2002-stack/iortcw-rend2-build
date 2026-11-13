@@ -1,0 +1,225 @@
+name: DW Destructible Lights V1.2 RTCW Art Pass Win64 Test
+
+on:
+  push:
+    branches:
+      - feature/destructible-lights-v12-rtcw-art-pass-from-43347815867
+    paths:
+      - .github/workflows/DW_DESTRUCTIBLE_LIGHTS_V12_RTCW_ART_PASS_WIN64_TEST.yml
+      - integration/destructible-lights-v12/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  package-art-pass:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BASE_RUN: "43347815867"
+      BASE_ARTIFACT_ID: "14002731527"
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Generate V1.2 RTCW-style switch assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist_assets incoming stage dist evidence
+          python3 integration/destructible-lights-v12/generate_switch_assets.py \
+            dist_assets/zz_DW_Destructible_Switches_V12_RTCW_ArtPass.pk3
+          unzip -t dist_assets/zz_DW_Destructible_Switches_V12_RTCW_ArtPass.pk3 \
+            | tee evidence/DW_DLV12_PK3_TEST.txt
+          sha256sum dist_assets/zz_DW_Destructible_Switches_V12_RTCW_ArtPass.pk3 \
+            | tee evidence/DW_DLV12_PK3_SHA256.txt
+          echo "DW_DLV12_ASSET_GENERATION_PASS"
+
+      - name: Download exact successful V1.1 package
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/${BASE_ARTIFACT_ID}/zip > incoming/v11_outer.zip
+          unzip -q incoming/v11_outer.zip -d incoming/v11_outer
+          inner="$(find incoming/v11_outer -type f -name 'DarkWolf_Rend2_Destructible_Lights_V11_PERSISTENT_SWITCHES_FROM_43189244002_Win64_TEST.zip' -print -quit)"
+          test -f "$inner"
+          cp "$inner" incoming/v11_inner.zip
+          unzip -q incoming/v11_inner.zip -d stage
+          echo "DW_DLV12_BASE_V11_FETCH_PASS"
+
+      - name: Package V1.2 art-only update
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,shutil,zipfile
+
+          H=lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          roots=[p for p in Path('stage').iterdir() if p.is_dir()]
+          assert len(roots)==1,roots
+          root=roots[0]
+
+          protected=[
+              'renderer_sp_rend2_x64.dll',
+              'Main/cgame_sp_x64.dll',
+              'Main/qagame_sp_x64.dll',
+              'Main/ui_sp_x64.dll',
+              'ioWolfSP.x64.exe',
+              'renderer_sp_opengl1_x64.dll'
+          ]
+          before={k:H(root/k) for k in protected if (root/k).exists()}
+
+          old=root/'Main/zz_DW_Destructible_Switches_V11.pk3'
+          assert old.exists(),old
+          old_sha=H(old)
+          old.unlink()
+
+          newpk3=root/'Main/zz_DW_Destructible_Switches_V12_RTCW_ArtPass.pk3'
+          shutil.copy2('dist_assets/zz_DW_Destructible_Switches_V12_RTCW_ArtPass.pk3',newpk3)
+
+          readme=root/'Main/DW_DESTRUCTIBLE_LIGHTS_V12_RTCW_ART_PASS_README.txt'
+          readme.write_text(
+              'DarkWolf Destructible Lights V1.2 - RTCW Switch Art Pass TEST\n'
+              'Mechanical base: successful Run #43347815867 (V1.1).\n'
+              'Original project baseline remains Run #43189244002.\n\n'
+              'THIS IS AN ASSET-ONLY ART PASS.\n'
+              'Renderer, cgame, qagame, UI and EXE are unchanged from V1.1.\n\n'
+              'Switch mechanics preserved:\n'
+              '- persistent placement/restoration\n'
+              '- surface-normal alignment\n'
+              '- CircuitId 1..16\n'
+              '- ON/OFF model switching\n'
+              '- switch remove/list commands\n\n'
+              'V1.2 visual changes:\n'
+              '- RTCW-style low/mid-low-poly silhouettes\n'
+              '- muted field-gray/olive metal\n'
+              '- dark brown bakelite\n'
+              '- dull steel/brass accents\n'
+              '- restrained wear/grime\n'
+              '- 128x128 textures (V1.1 used 64x64)\n\n'
+              'Commands stay unchanged:\n'
+              '/dw_switch_add 1 toggle\n'
+              '/dw_switch_add 1 knife\n'
+              '/dw_switch_add 1 rotary\n'
+          )
+
+          mp=root/'DW_UNIFIED_CLEAN_PRODUCTION_MANIFEST.json'
+          if mp.exists():
+              m=json.loads(mp.read_text())
+              m['destructible_lights_v12_art_pass']={
+                  'status':'TEST_CANDIDATE',
+                  'mechanical_base_run':43347815867,
+                  'original_base_run':43189244002,
+                  'asset_only':True,
+                  'dlls_changed':False,
+                  'switch_types':['toggle','knife','rotary'],
+                  'texture_resolution':'128x128',
+                  'palette':'muted RTCW field-gray/olive + dark bakelite + dull steel',
+                  'persistent_switches_preserved':True,
+                  'surface_normal_placement_preserved':True
+              }
+              mp.write_text(json.dumps(m,indent=2,ensure_ascii=False)+'\n')
+
+          after={k:H(root/k) for k in protected if (root/k).exists()}
+          assert before==after,(before,after)
+
+          proof={
+              'status':'TEST_CANDIDATE',
+              'mechanical_base_run':43347815867,
+              'original_base_run':43189244002,
+              'old_v11_pk3_sha256':old_sha,
+              'new_v12_pk3_sha256':H(newpk3),
+              'protected_binary_hashes_before':before,
+              'protected_binary_hashes_after':after,
+              'protected_binaries_identical':before==after,
+              'v11_pk3_removed':not old.exists(),
+              'v12_pk3_present':newpk3.exists()
+          }
+          Path('evidence/DW_DLV12_ART_ONLY_PROOF.json').write_text(json.dumps(proof,indent=2)+'\n')
+
+          sums=[]
+          for p in sorted(x for x in root.rglob('*') if x.is_file() and x.name!='SHA256SUMS.txt'):
+              sums.append(f"{H(p)}  {p.relative_to(root).as_posix()}")
+          (root/'SHA256SUMS.txt').write_text('\n'.join(sums)+'\n')
+
+          out=Path('dist/DarkWolf_Rend2_Destructible_Lights_V12_RTCW_ART_PASS_FROM_43347815867_Win64_TEST.zip')
+          with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              for p in sorted(x for x in root.rglob('*') if x.is_file()):
+                  z.write(p,Path(root.name)/p.relative_to(root))
+          with zipfile.ZipFile(out) as z:
+              assert z.testzip() is None
+          Path('dist/SHA256SUMS_DW_DLV12.txt').write_text(H(out)+'  '+out.name+'\n')
+          print('DW_DLV12_PACKAGE_PASS',out,H(out))
+          PY
+
+      - name: Final V1.2 archive verification
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import io,zipfile,struct,json,hashlib
+
+          p=Path('dist/DarkWolf_Rend2_Destructible_Lights_V12_RTCW_ART_PASS_FROM_43347815867_Win64_TEST.zip')
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              root=names[0].split('/')[0]+'/'
+              assert root+'Main/zz_DW_Destructible_Switches_V11.pk3' not in names
+              pk3=root+'Main/zz_DW_Destructible_Switches_V12_RTCW_ArtPass.pk3'
+              assert pk3 in names
+              for required in (
+                  root+'renderer_sp_rend2_x64.dll',
+                  root+'Main/cgame_sp_x64.dll',
+                  root+'Main/qagame_sp_x64.dll',
+                  root+'Main/DW_DESTRUCTIBLE_LIGHTS_V12_RTCW_ART_PASS_README.txt'
+              ):
+                  assert required in names,required
+
+              with zipfile.ZipFile(io.BytesIO(z.read(pk3))) as pz:
+                  assert pz.testzip() is None
+                  pnames=set(pz.namelist())
+                  assert 'scripts/dw_destructible_switches_v12.shader' in pnames
+                  manifest=json.loads(pz.read('docs/DW_SWITCHES_V12_MANIFEST.json'))
+                  assert manifest['asset_only'] is True
+                  assert manifest['texture_size']=='128x128'
+                  for kind in ('toggle','knife','rotary'):
+                      t=pz.read(f'models/darkwolf/switches/{kind}.tga')
+                      assert struct.unpack_from('<H',t,12)[0]==128
+                      assert struct.unpack_from('<H',t,14)[0]==128
+                      for state in ('on','off'):
+                          n=f'models/darkwolf/switches/{kind}_{state}.md3'
+                          b=pz.read(n)
+                          assert b[:4]==b'IDP3'
+                          assert struct.unpack_from('<i',b,4)[0]==15
+                          assert len(b)>1500
+
+          proof=json.loads(Path('evidence/DW_DLV12_ART_ONLY_PROOF.json').read_text())
+          assert proof['protected_binaries_identical'] is True
+          assert proof['v11_pk3_removed'] is True
+          assert proof['v12_pk3_present'] is True
+          print('DW_DLV12_FINAL_VERIFY_PASS')
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DW-Destructible-Lights-V12-RTCW-Art-Pass-From-43347815867-Win64-Test
+          path: |
+            dist/DarkWolf_Rend2_Destructible_Lights_V12_RTCW_ART_PASS_FROM_43347815867_Win64_TEST.zip
+            dist/SHA256SUMS_DW_DLV12.txt
+          retention-days: 90
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DW-Destructible-Lights-V12-RTCW-Art-Pass-Evidence
+          path: evidence/**
+          retention-days: 90
+          if-no-files-found: warn
