@@ -18,6 +18,7 @@ checks=[
  ("cgame direct switch","trap_R_RegisterModel(path)" in c and "CG_DLV14_CustomGeneral" in c),
  ("cgame modelindex bypass","if (CG_DLV14_CustomGeneral(cent))" in c),
  ("switch guaranteed fallback","ent.reType=RT_SPRITE;" in c and "cgs.media.whiteShader" in c),
+ ("visual markers broadcast","SVF_BROADCAST" in g),
  ("lamp off mask","darkwolf/dlv14_lamp_off" in c and "!s1->effect2Time" in c),
 ]
 bad=[n for n,ok in checks if not ok]
