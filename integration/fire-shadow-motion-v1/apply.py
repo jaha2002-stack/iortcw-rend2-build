@@ -7,7 +7,7 @@ p=source/"SP/code/rend2/tr_scene.c"
 s=p.read_text()
 marker="DARKWOLF_FIRE_SHADOW_MOTION_V1_CRYPT1_291"
 assert marker not in s, "Already applied"
-anchor="\tR_IFLC_Frame(fd);\n\n\tRE_BeginScene(fd);"
+anchor="\tR_ELSS_Frame(fd);\n\n\tRE_BeginScene(fd);"
 assert s.count(anchor)==1, ("Expected unique post-IFLC pre-RE_BeginScene hook",s.count(anchor))
 helper=r"""
 // DARKWOLF_FIRE_SHADOW_MOTION_V1_CRYPT1_291
@@ -66,7 +66,7 @@ static void R_DWFireShadowMotionV1Frame(const refdef_t *fd)
 function_anchor="void RE_RenderScene( const refdef_t *fd ) {"
 assert s.count(function_anchor)==1
 s=s.replace(function_anchor,helper+"\n"+function_anchor,1)
-s=s.replace(anchor,"\tR_IFLC_Frame(fd);\n\tR_DWFireShadowMotionV1Frame(fd); // "+marker+"\n\n\tRE_BeginScene(fd);",1)
+s=s.replace(anchor,"\tR_ELSS_Frame(fd);\n\tR_DWFireShadowMotionV1Frame(fd); // "+marker+"\n\n\tRE_BeginScene(fd);",1)
 p.write_text(s)
 assert s.count("R_DWFireShadowMotionV1Frame(fd);")==1
 assert s.count(marker)==2
