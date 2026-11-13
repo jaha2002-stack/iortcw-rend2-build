@@ -155,9 +155,12 @@ jobs:
           git -C source diff --check
           echo MODERN_SOURCE_RECONSTRUCTION_PASS
 
-      - name: Build modern baseline and verify accepted renderer identity
+      - name: Build modern baseline and verify source/artifact identity
         run: |
           set -Eeuo pipefail
+          find source/SP/code/rend2 -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > evidence/BASELINE_REND2_SOURCE_SHA256.txt
+          sha256sum evidence/BASELINE_REND2_SOURCE_SHA256.txt > evidence/BASELINE_REND2_TREE_FINGERPRINT.txt
+
           make -C source/SP -j2 release \
             VERSION=1.51d-SP_DarkWolf-TextureB2V241-WeaponPortV12-FireSafe-MP44-PPSh-ADS \
             PLATFORM=mingw32 ARCH=x86_64 \
@@ -168,10 +171,32 @@ jobs:
             WINDRES=x86_64-w64-mingw32-windres \
             > evidence/BASELINE_WIN64_BUILD.log 2>&1 || { tail -500 evidence/BASELINE_WIN64_BUILD.log; exit 1; }
           base=source/SP/build/release-mingw32-x86_64
-          got="$(sha256sum "$base/renderer_sp_rend2_x64.dll" | awk '{print $1}')"
-          echo "$got  renderer_sp_rend2_x64.dll" | tee evidence/BASELINE_RENDERER_SHA256.txt
-          test "$got" = "$TARGET_RENDERER_SHA"
-          echo EXACT_MODERN_RENDERER_IDENTITY_PASS
+          sha256sum "$base/renderer_sp_rend2_x64.dll" | tee evidence/BASELINE_REBUILD_RENDERER_SHA256.txt
+          for marker in 'DWTR AI B2 V2.4.1:' r_dwElectricPhysicalOwner r_dwEscape1PhysicalDlightOwnerResidency dw_tex_save zzzzzz_DW_TextureRestoration.pk3 r_pbrMaterialAudit r_pomMinLayers; do
+            grep -aFq "$marker" "$base/renderer_sp_rend2_x64.dll"
+          done
+
+          mkdir -p incoming
+          gh api /repos/${GITHUB_REPOSITORY}/actions/artifacts/${TARGET_ARTIFACT_ID}/zip > incoming/target_outer.zip
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,zipfile
+          outer=Path("incoming/target_outer.zip")
+          with zipfile.ZipFile(outer) as z:
+              inn=[n for n in z.namelist() if n.endswith(".zip")]
+              assert len(inn)==1,inn
+              inner=Path("incoming/base431.zip"); inner.write_bytes(z.read(inn[0]))
+          assert hashlib.sha256(inner.read_bytes()).hexdigest()=="909fe628fa9d4cfa320bc8813ce1d745ba24f75a13b40be79db6fc2fb5e840d0"
+          with zipfile.ZipFile(inner) as z:
+              rn=[n for n in z.namelist() if n.endswith("/renderer_sp_rend2_x64.dll")]
+              assert len(rn)==1
+              data=z.read(rn[0])
+              assert hashlib.sha256(data).hexdigest()=="4d9a01bc0edbfcf9fa5540ed6ad5ec74fe4a8cf4c61fc79d38bfc90f4f0e23d0"
+              for m in (b"DWTR AI B2 V2.4.1:",b"r_dwElectricPhysicalOwner",b"r_dwEscape1PhysicalDlightOwnerResidency",b"r_pbrMaterialAudit",b"r_pomMinLayers"):
+                  assert m in data,m
+          print("ACCEPTED_431_ARTIFACT_RENDERER_IDENTITY_PASS")
+          PY
+          echo MODERN_SOURCE_AND_ACCEPTED_ARTIFACT_IDENTITY_PASS
 
       - name: Materialize exact historical Bloom V3 and V3.1 patchers
         run: |
