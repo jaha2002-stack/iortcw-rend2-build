@@ -8,6 +8,14 @@ if not cg.exists():
     raise SystemExit("missing cg_ents.c")
 c=cg.read_text()
 
+
+# Cache whether each state uses our compact custom model or a large stock fallback.
+old_decl="static qboolean s_dwDlv14SwitchModelTried[3][2];\n"
+new_decl="static qboolean s_dwDlv14SwitchModelTried[3][2];\nstatic qboolean s_dwDlv16SwitchUsesCustom[3][2];\n"
+if old_decl not in c:
+    raise SystemExit("V1.6 custom-cache declaration anchor missing")
+c=c.replace(old_decl,new_decl,1)
+
 old=r'''static qhandle_t CG_DLV14_GetSwitchModel(int type, int on)
 {
     int ti, si;
@@ -70,12 +78,14 @@ static qhandle_t CG_DLV14_GetSwitchModel(int type, int on)
         path = CG_DLV14_SwitchModelPath(type,on);
         bytes = CG_DLV16_VfsBytes(path);
         h = trap_R_RegisterModel(path);
+        s_dwDlv16SwitchUsesCustom[ti][si] = h ? qtrue : qfalse;
         CG_Printf("DW_DLV16 SWITCH_ASSET path=%s vfsBytes=%d handle=%d\n",
             path,bytes,(int)h);
 
         if (!h) {
             fallback = CG_DLV16_StockSwitchFallback(type);
             h = trap_R_RegisterModel(fallback);
+            s_dwDlv16SwitchUsesCustom[ti][si] = qfalse;
             CG_Printf("DW_DLV16 SWITCH_STOCK_FALLBACK path=%s handle=%d\n",
                 fallback,(int)h);
         }
@@ -155,9 +165,10 @@ old=r'''        if (h) {
 '''
 new=r'''        if (h) {
             float visualScale;
-            const char *customPath = CG_DLV14_SwitchModelPath(
-                s1->effect1Time, s1->effect2Time ? 1 : 0);
-            visualScale = CG_DLV16_VfsBytes(customPath) > 0 ? 1.15f : 0.34f;
+            int ti = s1->effect1Time;
+            int si = s1->effect2Time ? 1 : 0;
+            if (ti < 1 || ti > 3) ti = 1;
+            visualScale = s_dwDlv16SwitchUsesCustom[ti-1][si] ? 1.15f : 0.34f;
 
             ent.reType=RT_MODEL;
             ent.hModel=h;
