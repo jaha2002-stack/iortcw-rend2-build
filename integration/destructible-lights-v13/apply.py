@@ -81,14 +81,14 @@ r=r.replace(old,new,1)
 
 old="""    light = R_DLV1_PickFixture();
     if (!light || !tr.world) {
-        ri.Printf(PRINT_WARNING, "DW_DLV1 no StaticPromote fixture under view\n");
+        ri.Printf(PRINT_WARNING, "DW_DLV1 no StaticPromote fixture under view\\n");
         return;
     }
 """
 new="""    light = R_DLV1_PickFixture(&forwardDistance, &lateralDistance);
     if (!light || !tr.world) {
         ri.Printf(PRINT_WARNING,
-            "DW_DLV13 BIND FAILED: no StaticPromote fixture near crosshair. Aim at the bulb/fixture and move closer.\n");
+            "DW_DLV13 BIND FAILED: no StaticPromote fixture near crosshair. Aim at the bulb/fixture and move closer.\\n");
         return;
     }
 """
@@ -96,13 +96,13 @@ if old not in r: raise SystemExit("bind picker call missing")
 r=r.replace(old,new,1)
 
 old="""    ri.Printf(PRINT_ALL,
-        "DW_DLV1 BOUND map=%s fixture=%d circuit=%d type=%d origin=(%.1f %.1f %.1f)\n",
+        "DW_DLV1 BOUND map=%s fixture=%d circuit=%d type=%d origin=(%.1f %.1f %.1f)\\n",
         b->mapName, b->fixtureId, b->circuit, b->lampType,
         light->candidate.origin[0], light->candidate.origin[1], light->candidate.origin[2]);
 """
 new="""    ri.Printf(PRINT_ALL,
         "DW_DLV13 BOUND EXACT map=%s fixture=%d circuit=%d type=%d physical=%d nativeOrdinal=%d "
-        "origin=(%.1f %.1f %.1f) rayForward=%.1f rayLateral=%.1f enabled=%d\n",
+        "origin=(%.1f %.1f %.1f) rayForward=%.1f rayLateral=%.1f enabled=%d\\n",
         b->mapName, b->fixtureId, b->circuit, b->lampType,
         light->physicalRecognitionAccepted ? 1 : 0, light->physicalNativeDlightOrdinal,
         light->candidate.origin[0], light->candidate.origin[1], light->candidate.origin[2],
