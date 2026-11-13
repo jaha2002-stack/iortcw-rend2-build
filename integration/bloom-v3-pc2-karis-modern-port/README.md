@@ -13,3 +13,5 @@ Hard changed-file allowlist:
 - SP/code/rend2/tr_local.h
 
 Mode 2 remains the current three-level Bloom V2 fallback. Mode 3 is the five-level HDR Scatter + V3.1 safety + PC2 + Karis test path.
+
+CI trigger marker: feature-branch test only.
