@@ -17,6 +17,8 @@ checks=[
  ("lamp diagnostic","DW_DLV16 LAMP_OFF_ASSET" in c),
  ("ceiling mask enlarged",'? 10.0f : 10.0f' in c),
  ("dark stock mask fallback","ent.shaderRGBA[0]=22" in c and "ent.shaderRGBA[3]=240" in c),
+ ("custom model state cached","s_dwDlv16SwitchUsesCustom" in c),
+ ("no per-frame VFS scale probe","visualScale = CG_DLV16_VfsBytes" not in c),
  ("v15 snapshot marker preserved","DW_DLV15 SWITCH_SNAPSHOT" in c and "DW_DLV15 LAMP_SNAPSHOT" in c),
 ]
 bad=[n for n,ok in checks if not ok]
