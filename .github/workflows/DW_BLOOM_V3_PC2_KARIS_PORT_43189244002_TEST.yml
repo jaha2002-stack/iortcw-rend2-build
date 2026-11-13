@@ -316,6 +316,24 @@ jobs:
           glslangValidator -d --glsl-version 120 -S frag source/SP/code/rend2/glsl/bloom_fp.glsl
           echo GLSL_STATIC_COMPILE_PASS
 
+      - name: Native compile ported source for runtime validation
+        run: |
+          set -Eeuo pipefail
+          make -C source/SP -j2 \
+            BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 \
+            BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            > evidence/BLOOM_PORT_NATIVE_BUILD.log 2>&1 \
+            || { tail -500 evidence/BLOOM_PORT_NATIVE_BUILD.log; exit 1; }
+          exe="$(find source/SP/build -type f -iname 'iowolfsp*' -perm -111 ! -iname '*.exe' -print -quit)"
+          test -n "$exe"
+          echo "$exe" > evidence/BLOOM_PORT_NATIVE_EXE_PATH.txt
+          native_renderer="$(find "$(dirname "$exe")" -maxdepth 1 -type f -name 'renderer_sp_rend2_*.so' -print -quit)"
+          test -n "$native_renderer"
+          for marker in r_bloomScatterSafety REND2_BLOOM_V3_HDR_SCATTER_PYRAMID REND2_BLOOM_V3_22_LIGHTALL_NONFINITE_OUTPUT_FIREWALL_PC2 REND2_BLOOM_PC2_KARIS_ANTIFIREFLY_PRODUCTION_CANDIDATE_V2; do
+            grep -aFq "$marker" "$native_renderer"
+          done
+          echo BLOOM_PORT_NATIVE_COMPILE_PASS
+
       - name: Rebuild modern Win64 with Bloom V3 port
         run: |
           set -Eeuo pipefail
@@ -355,9 +373,10 @@ jobs:
           retail_main="$(bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets | tail -1)"
           export GH_TOKEN="$default_token"
           test -d "$retail_main"
-          b=source/SP/build/release-mingw32-x86_64
+          exe="$(cat evidence/BLOOM_PORT_NATIVE_EXE_PATH.txt)"
+          buildroot="$(dirname "$exe")"
           rm -rf runtime home; mkdir -p runtime/main home
-          cp -a "$b/." runtime/
+          cp -a "$buildroot/." runtime/
           find "$retail_main" -maxdepth 1 -type f -iname '*.pk3' -exec cp -a {} runtime/main/ \;
           cat > runtime/main/DW_BLOOM_V3_PC2_KARIS_TEST.cfg <<'EOF'
           seta r_bloom 1
@@ -373,11 +392,9 @@ jobs:
           seta r_bloomScatterSafety 3
           seta r_bloomScatterMaxLevels 5
           seta r_bloomScatterSafeMax 64.0
-          seta r_bloomDebug 0
-          seta r_bloomTrace 0
           EOF
           set +e
-          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 120s "$PWD/runtime/ioWolfSP.x64.exe" \
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout -k 10s 120s "$PWD/runtime/$(basename "$exe")" \
             +set fs_basepath "$PWD/runtime" +set fs_homepath "$PWD/home" \
             +set com_introplayed 1 +set com_recommendedSet 1 +set s_initsound 0 +set logfile 2 +set developer 0 \
             +set r_fullscreen 0 +set r_renderer rend2 +set r_mode -1 +set r_customwidth 800 +set r_customheight 600 \
@@ -427,8 +444,6 @@ jobs:
           seta r_bloomScatterSafety 3
           seta r_bloomScatterMaxLevels 5
           seta r_bloomScatterSafeMax 64.0
-          seta r_bloomDebug 0
-          seta r_bloomTrace 0
           '''
           out=Path("dist/DarkWolf_Rend2_BloomV3_PC2_Karis_Port_From_32847437364_To_43189244002_TEST_Win64.zip")
           with zipfile.ZipFile(inner) as zin:
