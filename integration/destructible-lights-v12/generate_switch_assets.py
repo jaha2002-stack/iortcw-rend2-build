@@ -224,7 +224,17 @@ shader_lines=[]
 stats={}
 for kind in ("toggle","knife","rotary"):
     shader=f"models/darkwolf/switches/{kind}"
-    shader_lines += [shader,"{",f"    map models/darkwolf/switches/{kind}.tga","    rgbGen identity","}",""]
+    shader_lines += [
+        shader,
+        "{",
+        "    cull disable",
+        "    {",
+        f"        map models/darkwolf/switches/{kind}.tga",
+        "        rgbGen lightingDiffuse",
+        "    }",
+        "}",
+        ""
+    ]
     files[f"models/darkwolf/switches/{kind}.tga"]=tga(kind)
     stats[kind]={}
     for state in ("on","off"):
@@ -235,12 +245,13 @@ for kind in ("toggle","knife","rotary"):
 
 files["scripts/dw_destructible_switches_v12.shader"]=("\n".join(shader_lines)+"\n").encode("ascii")
 manifest={
-  "feature":"DarkWolf Destructible Lights V1.2 RTCW Art Pass",
+  "feature":"DarkWolf Destructible Lights V1.2.1 RTCW Art Pass Visibility Fix",
   "base_mechanics":"V1.1 Run #43347815867 unchanged",
   "asset_only":True,
   "texture_size":"128x128",
   "palette":"muted RTCW field-gray/olive, dark bakelite, dull steel",
   "model_qpaths_unchanged":True,
+  "shader_visibility_fix":"valid nested stage + lightingDiffuse + cull disable",
   "stats":stats
 }
 files["docs/DW_SWITCHES_V12_MANIFEST.json"]=(json.dumps(manifest,indent=2)+"\n").encode("utf-8")
