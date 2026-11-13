@@ -201,6 +201,8 @@ static qboolean DW_Lights_SaveSwitchRegistry(void)
     return qtrue;
 }
 
+void DW_Lights_SwitchUse(gentity_t *self, gentity_t *other, gentity_t *activator);
+
 static void DW_Lights_SpawnSwitchRecord(const dwSwitchPersist_t *r)
 {
     gentity_t *e;
