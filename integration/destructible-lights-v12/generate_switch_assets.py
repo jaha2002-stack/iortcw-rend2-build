@@ -94,13 +94,14 @@ def model(kind,on):
         m.box((1.0,0,0),(2.0,20,27),rect=METAL)
         for y in (-7.5,7.5):
             for z in (-10.8,10.8): m.screw(y,z,2.5,1.0)
-        m.cyl_x((4.1,0,0),4.5,7.4,18,BAKELITE)
-        m.cyl_x((6.7,0,0),1.7,3.0,14,STEEL)
-        ang=-27 if on else 27
-        z=2.8 if on else -2.8
-        m.box((10.0,0,z),(8.8,2.8,2.8),rot_y=ang,rect=STEEL)
-        tipz=5.3 if on else -5.3
-        m.cyl_x((14.0,0,tipz),2.7,2.0,12,BAKELITE)
+        m.cyl_x((4.1,0,0),4.2,6.4,18,BAKELITE)
+        m.cyl_x((6.6,0,0),1.8,3.1,14,STEEL)
+        # Short chunky toggle blade remains readable from the front in both states.
+        ang=-32 if on else 32
+        z=2.7 if on else -2.7
+        m.box((9.0,0,z),(5.8,3.0,5.2),rot_y=ang,rect=STEEL)
+        tipz=4.9 if on else -4.9
+        m.cyl_x((11.8,0,tipz),2.4,1.75,12,BAKELITE)
         # Small recessed name/inspection plate keeps the silhouette RTCW-like.
         m.box((2.35,0,-9.0),(0.8,8.0,2.5),rect=DARK)
 
@@ -171,19 +172,19 @@ def patch_color(kind, patch):
       "toggle":{
         0:(69,72,64),   # aged field-gray/olive metal
         1:(55,36,27),   # dark brown bakelite
-        2:(126,117,95), # dull nickel/steel
+        2:(99,96,84),  # dark dull nickel/steel
         3:(31,32,29),   # near-black enamel
       },
       "knife":{
         0:(74,78,67),
         1:(49,32,24),
-        2:(139,124,91),
+        2:(105,99,82),
         3:(39,42,36),
       },
       "rotary":{
         0:(65,69,64),
         1:(48,34,27),
-        2:(119,113,97),
+        2:(96,94,84),
         3:(27,29,28),
       }
     }
