@@ -279,6 +279,14 @@ jobs:
           roots=[p for p in Path('stage').iterdir() if p.is_dir()]
           assert len(roots)==1,roots
           root=roots[0]
+
+          # Preserve the previous full Win64 system-file distribution, but deliberately
+          # exclude every PK3 archive as requested. Game data remains external.
+          excluded_pk3=sorted(p.relative_to(root).as_posix() for p in root.rglob('*')
+                              if p.is_file() and p.suffix.lower()=='.pk3')
+          for rel in excluded_pk3:
+              (root/rel).unlink()
+          assert not [p for p in root.rglob('*') if p.is_file() and p.suffix.lower()=='.pk3']
           base={p.relative_to(root).as_posix():H(p) for p in root.rglob('*') if p.is_file()}
 
           build=Path('source/SP/build/release-mingw32-x86_64')
@@ -291,6 +299,7 @@ jobs:
               'DarkWolf Lamp Control V1.2 - Exact Visible Picker TEST CANDIDATE\n'
               'Exact root base: GitHub Run #43189244002.\n\n'
               'Purpose: individually enable/disable the REAL visible electric DLight owner under the crosshair.\n'
+              'Distribution: complete Win64 system-file package; PK3 archives are intentionally excluded.\n'
               'V1/V1.1 diagnostic cone picker is removed from Lamp Control.\n'
               'Selection uses first visible world-surface hit (ELSS/IFLC proven ray), max 512 units, tight visibility gating, and an actual runtime DLight owner.\n'
               'If more than one distinct electric fixture is eligible, V1.2 refuses to change anything and reports ambiguity.\n'
@@ -367,7 +376,9 @@ jobs:
               'exe_unchanged':post.get('ioWolfSP.x64.exe')==base.get('ioWolfSP.x64.exe'),
               'opengl1_unchanged':post.get('renderer_sp_opengl1_x64.dll')==base.get('renderer_sp_opengl1_x64.dll'),
               'switch_assets_added':False,
-              'gameplay_entities_added':False
+              'gameplay_entities_added':False,
+              'pk3_files_excluded_from_base':excluded_pk3,
+              'pk3_files_in_final_package':0
           }
           Path('evidence/DW_LC12_PACKAGE_PROOF.json').write_text(json.dumps(proof,indent=2)+'\n')
 
@@ -448,12 +459,18 @@ jobs:
             exit 1
           fi
           tag="dw-lamp-volumetric-mode5-wave-clean-20261125"
-          gh release create "$tag" \
-            dist/DarkWolf_Rend2_Lamp_Control_V12_VOLUMETRIC_MODE5_WAVE_CLEAN_Win64.zip \
-            dist/SHA256SUMS_DW_LC12.txt \
-            --target "$GITHUB_SHA" \
-            --title "DarkWolf Rend2 Win64 — Local Volumetric Mode 5 Wave Clean" \
-            --notes "Experimental Win64 build. Public r_volumetricLocalMode 5 dispatches lamp rendering through internal GLSL mode 3. Jitter is disabled only for that lamp shader path. Fire GLSL modes 5–8 and sun volumetrics are unchanged. In-game visual validation is still required."
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" \
+              dist/DarkWolf_Rend2_Lamp_Control_V12_VOLUMETRIC_MODE5_WAVE_CLEAN_Win64.zip \
+              dist/SHA256SUMS_DW_LC12.txt --clobber
+          else
+            gh release create "$tag" \
+              dist/DarkWolf_Rend2_Lamp_Control_V12_VOLUMETRIC_MODE5_WAVE_CLEAN_Win64.zip \
+              dist/SHA256SUMS_DW_LC12.txt \
+              --target "$GITHUB_SHA" \
+              --title "DarkWolf Rend2 Win64 — Local Volumetric Mode 5 Wave Clean" \
+              --notes "Full Win64 system-file distribution based on the previous production package. PK3 archives are excluded. Public r_volumetricLocalMode 5 dispatches lamp rendering through internal GLSL mode 3. Jitter is disabled only for that lamp shader path. Fire GLSL modes 5–8 and sun volumetrics are unchanged. In-game visual validation is still required."
+          fi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
