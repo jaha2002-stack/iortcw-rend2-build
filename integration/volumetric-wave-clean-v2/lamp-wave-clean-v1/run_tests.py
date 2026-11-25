@@ -16,3 +16,5 @@ assert proof["public_production_mode"]==5 and proof["shader_mode_patched"]==3
 assert proof["fire_shader_modes_5_to_8_modified"] is False
 assert proof["sun_shader_modified"] is False and proof["protected_files_unchanged"] is True
 print("DW_LAMP_WAVE_CLEAN_MODE5_STATIC_TESTS_PASS")
+
+# Trigger dedicated Win64 Mode 5 build after workflow permissions were corrected.
