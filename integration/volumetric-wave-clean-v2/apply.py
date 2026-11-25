@@ -22,7 +22,7 @@ def apply(root):
     before = {f: (parent / f).read_text() for f in FILES}
     # Exact production source AFTER 40480112714 Universal Portal-Sky patch.
     backend_sha = hashlib.sha256(before["tr_backend.c"].encode()).hexdigest()
-    assert backend_sha == "505ef716a0e316a99f00f0ce8d2e4e81ecef650424bfd22a537227ffbfbb37ba", ("WRONG_404801_SKY_BASE", backend_sha)
+    assert backend_sha == "d00ad069e116142f7c5573a81a5dfd8fd4d01cbf518d124008abbb8d00d83af1", ("WRONG_V12_BASE_BACKEND", backend_sha)
     assert "DARKWOLF_PORTAL_SKY_SINGLE_SAMPLE_UNIVERSAL_V1" in before["tr_backend.c"]
     assert "DARKWOLF_VOLUMETRIC_EDGE_RAY_CSM_AA_V1" in before["glsl/volumetricsun_fp.glsl"]
     assert "DARKWOLF_VOLUMETRIC_EDGE_RAY_CSM_AA_V1" in before["glsl/volumetriclocal_upscale_fp.glsl"]
