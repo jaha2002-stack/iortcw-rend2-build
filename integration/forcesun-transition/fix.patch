@@ -1,0 +1,441 @@
+diff --git a/SP/code/rend2/tr_backend.c b/SP/code/rend2/tr_backend.c
+index 7b1cf21..a7f11b7 100644
+--- a/SP/code/rend2/tr_backend.c
++++ b/SP/code/rend2/tr_backend.c
+@@ -4213,12 +4213,11 @@ static void RB_VolumetricSun(FBO_t *srcFbo, ivec4_t srcBox)
+ 	qboolean gateWorld = (backEnd.refdef.rdflags & RDF_NOWORLDMODEL) ? qfalse : qtrue;
+ 	qboolean gateDepth = tr.renderDepthImage ? qtrue : qfalse;
+ 	qboolean gateSunlight = (r_sunlightMode && r_sunlightMode->integer) ? qtrue : qfalse;
+-	qboolean legacySunSource = (tr.sunShadows || (r_forceSun && r_forceSun->integer)) ? qtrue : qfalse;
+ 	qboolean c0 = tr.sunShadowDepthImage[0] ? qtrue : qfalse;
+ 	qboolean c1 = tr.sunShadowDepthImage[1] ? qtrue : qfalse;
+ 	qboolean c2 = tr.sunShadowDepthImage[2] ? qtrue : qfalse;
+ 	qboolean c3 = tr.sunShadowDepthImage[3] ? qtrue : qfalse;
+-	qboolean gateMapSun, gateCsmAllocated, gateCsmUsable;
++	qboolean gateMapSun, gateCsmAllocated;
+ 
+ 	if (!r_volumetricSun || !r_volumetricSun->integer ||
+ 		!r_volumetricSunMode || !r_volumetricSunMode->integer)
+@@ -4228,12 +4227,11 @@ static void RB_VolumetricSun(FBO_t *srcFbo, ivec4_t srcBox)
+ 	sunPeak = MAX(backEnd.refdef.sunCol[0], MAX(backEnd.refdef.sunCol[1], backEnd.refdef.sunCol[2]));
+ 	gateMapSun = (sunDirLenSq > 0.25f && sunPeak > 0.0001f) ? qtrue : qfalse;
+ 	gateCsmAllocated = (r_shadowCascadeZFar->integer != 0) ? (c0 && c1 && c2 && c3) : c3;
+-	gateCsmUsable = legacySunSource ? gateCsmAllocated :
+-		((r_shadowCascadeZFar->integer != 0) ?
+-		 (tr.volumetricSunCsmValid[0] && tr.volumetricSunCsmValid[1] && tr.volumetricSunCsmValid[2] && tr.volumetricSunCsmValid[3]) :
+-		 tr.volumetricSunCsmValid[3]);
+ 
+-	if (!gateShader || !gateFbo || !gateSrc || !gateHdr || !gateWorld || !gateDepth || !gateSunlight || !gateMapSun || !gateCsmUsable)
++	// The draw command carries the producer's state for this view. A later
++	// scene may already have changed the global cache on the front end.
++	if (!gateShader || !gateFbo || !gateSrc || !gateHdr || !gateWorld || !gateDepth ||
++		!gateSunlight || !gateMapSun || !gateCsmAllocated || !(backEnd.viewParms.flags & VPF_USESUNCSM))
+ 		return;
+ 
+ 
+diff --git a/SP/code/rend2/tr_local.h b/SP/code/rend2/tr_local.h
+index b10c317..74ff4cb 100644
+--- a/SP/code/rend2/tr_local.h
++++ b/SP/code/rend2/tr_local.h
+@@ -1102,9 +1102,18 @@ typedef enum {
+ 	VPF_FARPLANEFRUSTUM = 0x40,
+ 	VPF_DLIGHT_WORLD_OCCLUSION = 0x200, // Separate two-sided, world-only containment capture.
+ 	VPF_FIREVOL_SYNTHETIC_SHADOW = 0x100, // DARKWOLF_FIREVOL_OCCLUSION_PRODUCTION_V1: isolated two-sided synthetic FireVol shadow capture
+-	VPF_NOCUBEMAPS      = 0x80
++	VPF_NOCUBEMAPS      = 0x80,
++	VPF_USESUNCSM       = 0x400  // Sun cascade textures and matrices are paired for this view.
+ } viewParmFlags_t;
+ 
++typedef enum {
++	SUN_CSM_NONE,
++	SUN_CSM_FORCED_STATIC,
++	SUN_CSM_FORCED_DYNAMIC,
++	SUN_CSM_MAP_VISIBLE,
++	SUN_CSM_MAP_VOLUMETRIC
++} sunCsmSource_t;
++
+ typedef struct {
+ 	orientationr_t	or;
+ 	orientationr_t	world;
+@@ -1991,6 +2000,7 @@ typedef struct {
+ 	float                   sunShadowScale;
+ 
+ 	qboolean                sunShadows;
++	sunCsmSource_t          sunCsmSource;
+ 	vec3_t					sunLight;			// from the sky shader for this level
+ 	vec3_t					sunDirection;
+ 	vec3_t                  lastCascadeSunDirection;
+diff --git a/SP/code/rend2/tr_scene.c b/SP/code/rend2/tr_scene.c
+index 2020a8f..7ac3e7c 100644
+--- a/SP/code/rend2/tr_scene.c
++++ b/SP/code/rend2/tr_scene.c
+@@ -6622,15 +6622,12 @@ to handle mirrors,
+ @@@@@@@@@@@@@@@@@@@@@
+ */
+ // DARKWOLF_SUN_VOLUMETRIC_V0_3
+-static qboolean R_VolumetricSunMapSourceValid(const refdef_t *fd)
++static qboolean R_VolumetricSunMapSourceValid(void)
+ {
+ 	float dirLenSq;
+ 	float sunPeak;
+-	if (!r_volumetricSun || !r_volumetricSun->integer ||
+-		!r_volumetricSunCsmProducer || !r_volumetricSunCsmProducer->integer ||
+-		!r_sunlightMode || !r_sunlightMode->integer ||
+-		(fd->rdflags & (RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL)))
+-		return qfalse; // DARKWOLF_SUN_VOLUMETRIC_PERF_ISOLATION_V0_3; DARKWOLF_SUN_VOLUMETRIC_CSM_SMART_UPDATE_V1: main-world producer only
++	if (!r_volumetricSun || !r_volumetricSun->integer)
++		return qfalse;
+ 	dirLenSq = DotProduct(tr.refdef.sunDir, tr.refdef.sunDir);
+ 	sunPeak = MAX(tr.refdef.sunCol[0], MAX(tr.refdef.sunCol[1], tr.refdef.sunCol[2]));
+ 	return (dirLenSq > 0.25f && sunPeak > 0.0001f) ? qtrue : qfalse;
+@@ -6645,14 +6642,14 @@ static qboolean R_VolumetricSunDirectionChanged(const vec3_t currentDir, const v
+ 	return (DotProduct(delta, delta) > 0.000001f) ? qtrue : qfalse;
+ }
+ 
+-static qboolean R_VolumetricSunShouldUpdateCascade(int cascade, int frame, qboolean sunChanged)
++static qboolean R_VolumetricSunShouldUpdateCascade(int cascade, int frame)
+ {
+ 	int baseInterval;
+ 	int period;
+ 	int phase;
+ 	if (cascade < 0 || cascade > 3)
+ 		return qfalse;
+-	if (!tr.volumetricSunCsmValid[cascade] || sunChanged)
++	if (!tr.volumetricSunCsmValid[cascade])
+ 		return qtrue;
+ 
+ 	// Conservative fallback: original approved v0.3 cadence, but with the resume/direction false-positive fixes below.
+@@ -6696,7 +6693,6 @@ static void R_VolumetricSunRestoreCascade(int cascade)
+ // intermediate frames in the middle/far cascades.  This changes update cadence
+ // only: map resolution, projection, PCF/filtering, caster selection and lighting
+ // remain the existing production path.
+-static int s_forceSunVisibleCsmActive = 0;
+ 
+ // DARKWOLF_RC4_FORCE_SUN_CSM_REPRIME_V1
+ // The world-level fourth cascade is camera-independent but still needs a
+@@ -6722,8 +6718,7 @@ static forceSunVisibleCsmState_t s_forceSunVisibleCsmState;
+ static qboolean R_ForceSunVisibleNeedsReprime(const refdef_t *fd)
+ {
+ 	vec3_t delta;
+-	if (!s_forceSunVisibleCsmActive ||
+-		s_forceSunVisibleCsmState.world != tr.world ||
++	if (s_forceSunVisibleCsmState.world != tr.world ||
+ 		// DARKWOLF_CSM_PRIMARY_VIEW_AREAMASK_V1: the shared areamaskModified flag is a false positive after
+ 		// RDF_SKYBOXPORTAL, whose areamask differs from the player view.
+ 		// Keep real primary areamask transitions as hard invalidations.
+@@ -6781,11 +6776,131 @@ static qboolean R_ForceSunVisibleShouldUpdateCascade(int cascade)
+ 	return qfalse;
+ }
+ 
++static sunCsmSource_t R_SunCsmSourceForView(void)
++{
++	if (!glRefConfig.framebufferObject || !r_sunlightMode->integer)
++		return SUN_CSM_NONE;
++	if (r_forceSun->integer == 1)
++		return SUN_CSM_FORCED_STATIC;
++	if (r_forceSun->integer == 2)
++		return SUN_CSM_FORCED_DYNAMIC;
++	if (r_forceSun->integer || tr.sunShadows)
++		return SUN_CSM_MAP_VISIBLE;
++	if (R_VolumetricSunMapSourceValid())
++		return SUN_CSM_MAP_VOLUMETRIC;
++	return SUN_CSM_NONE;
++}
++
++static viewParmFlags_t R_PrepareSunCascades(const refdef_t *fd)
++{
++	sunCsmSource_t source;
++	qboolean sourceChanged, cascades, sunChanged;
++	int firstCascade, cascade;
++
++	tr.volumetricSunPerfCsmRenderedThisFrame = 0;
++	tr.volumetricSunPerfCsmRequestThisFrame = 0;
++	// The skybox precedes the main view and has no cascades of its own.
++	if (fd->rdflags & (RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL))
++		return VPF_NONE;
++
++	source = R_SunCsmSourceForView();
++	sourceChanged = source != tr.sunCsmSource;
++	if (sourceChanged)
++	{
++		// All producers overwrite the same depth textures. A matrix cached by
++		// a different producer no longer identifies the contents of that texture.
++		Com_Memset(tr.volumetricSunCsmValid, 0, sizeof(tr.volumetricSunCsmValid));
++		tr.volumetricSunCsmLastRequestTime = 0;
++		tr.sunCsmSource = source;
++	}
++	if (source == SUN_CSM_NONE)
++		return VPF_NONE;
++
++	cascades = r_shadowCascadeZFar->integer != 0;
++	firstCascade = cascades ? 0 : 3;
++	if (!cascades)
++	{
++		for (cascade = 0; cascade < 3; ++cascade)
++			Mat4Zero(tr.refdef.sunShadowMvp[cascade]);
++	}
++
++	if (source == SUN_CSM_MAP_VOLUMETRIC &&
++		(!r_volumetricSunCsmProducer || !r_volumetricSunCsmProducer->integer))
++	{
++		// A paused producer can only reuse a complete set from this source.
++		for (cascade = firstCascade; cascade < 4; ++cascade)
++		{
++			if (!tr.volumetricSunCsmValid[cascade])
++				return VPF_NONE;
++			R_VolumetricSunRestoreCascade(cascade);
++		}
++	}
++	else if (source == SUN_CSM_MAP_VOLUMETRIC || source == SUN_CSM_FORCED_STATIC)
++	{
++		const qboolean volumetricOnly = source == SUN_CSM_MAP_VOLUMETRIC;
++		sunChanged = R_VolumetricSunDirectionChanged(tr.refdef.sunDir, tr.volumetricSunCsmSunDirection);
++		if (volumetricOnly)
++		{
++			const int lastRequestTime = tr.volumetricSunCsmLastRequestTime;
++			sunChanged = sunChanged || lastRequestTime <= 0 || fd->time < lastRequestTime ||
++				fd->time - lastRequestTime > 1000;
++			tr.volumetricSunCsmRequestFrame = tr.frameCount;
++			tr.volumetricSunCsmLastRequestTime = fd->time;
++			tr.volumetricSunPerfCsmRequestThisFrame = 1;
++		}
++		else
++		{
++			if (R_ForceSunVisibleNeedsReprime(fd))
++				Com_Memset(tr.volumetricSunCsmValid, 0, sizeof(tr.volumetricSunCsmValid));
++			R_ForceSunVisibleRemember(fd);
++		}
++
++		for (cascade = firstCascade; cascade < 4; ++cascade)
++		{
++			if (sunChanged || (volumetricOnly ?
++				R_VolumetricSunShouldUpdateCascade(cascade, tr.frameCount) :
++				R_ForceSunVisibleShouldUpdateCascade(cascade)))
++			{
++				R_RenderSunShadowMaps(fd, cascade);
++				R_VolumetricSunCommitCascade(cascade);
++			}
++			else
++			{
++				R_VolumetricSunRestoreCascade(cascade);
++			}
++		}
++		if (sunChanged)
++			VectorCopy(tr.refdef.sunDir, tr.volumetricSunCsmSunDirection);
++	}
++	else
++	{
++		for (cascade = firstCascade; cascade < 3; ++cascade)
++			R_RenderSunShadowMaps(fd, cascade);
++
++		if (sourceChanged || source == SUN_CSM_FORCED_DYNAMIC ||
++			!VectorCompare(tr.refdef.sunDir, tr.lastCascadeSunDirection))
++		{
++			VectorCopy(tr.refdef.sunDir, tr.lastCascadeSunDirection);
++			R_RenderSunShadowMaps(fd, 3);
++			Mat4Copy(tr.refdef.sunShadowMvp[3], tr.lastCascadeSunMvp);
++		}
++		else
++		{
++			Mat4Copy(tr.lastCascadeSunMvp, tr.refdef.sunShadowMvp[3]);
++		}
++	}
++
++	if (!r_depthPrepass->integer)
++		return VPF_NONE;
++	if (source == SUN_CSM_MAP_VOLUMETRIC)
++		return VPF_USESUNCSM;
++	return VPF_USESUNCSM | VPF_USESUNLIGHT;
++}
++
+ void RE_RenderScene( const refdef_t *fd ) {
+ 	viewParms_t		parms;
+ 	int				startTime;
+-	qboolean			volumetricSunCsmRequest = qfalse; // DARKWOLF_SUN_VOLUMETRIC_V0_3
+-	qboolean			volumetricSunCsmResumed = qfalse;
++	viewParmFlags_t		sunFlags;
+ 	int dlightDiagInjectedIndex;
+ 
+ 	if ( !tr.registered ) {
+@@ -6813,38 +6928,12 @@ void RE_RenderScene( const refdef_t *fd ) {
+ 	RE_BeginScene(fd);
+ 	R_DarkWolfAssignPhysicalElectricOwnerIds(); // metadata only; Direct DLight is unchanged
+ 	R_DWLC1_FilterDisabledSceneDlights(&dlightDiagInjectedIndex); // DARKWOLF_LAMP_CONTROL_V1 hard OFF
+-	// DARKWOLF_RC4_FORCE_SUN_CSM_REPRIME_V1: source mode exit invalidates reuse.
+-	if (!(fd->rdflags & (RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL)) &&
+-		(r_forceSun->integer != 1 || !r_sunlightMode->integer || !glRefConfig.framebufferObject))
+-		s_forceSunVisibleCsmActive = 0;
+-	tr.volumetricSunPerfCsmRenderedThisFrame = 0; // DARKWOLF_SUN_VOLUMETRIC_PERF_ISOLATION_V0_3
+-	tr.volumetricSunPerfCsmRequestThisFrame = 0;
+ 	// DARKWOLF_LOCAL_VOLUMETRIC_V0_1: freeze cgame spotlight bridge into this rendered scene.
+ 	tr.refdef.localVolumetricSpotCount = s_localVolumetricSpotCount;
+ 	if (s_localVolumetricSpotCount > 0)
+ 		Com_Memcpy(tr.refdef.localVolumetricSpots, s_localVolumetricSpots,
+ 			s_localVolumetricSpotCount * sizeof(localVolumetricSpot_t));
+ 
+-	// DARKWOLF_SUN_VOLUMETRIC_V0_3: classic map sun gets CSM only for volumetrics.
+-	volumetricSunCsmRequest = R_VolumetricSunMapSourceValid(fd) && !(r_forceSun->integer || tr.sunShadows);
+-	tr.volumetricSunPerfCsmRequestThisFrame = volumetricSunCsmRequest ? 1 : 0;
+-	if (r_volumetricSun && r_volumetricSun->integer && r_volumetricSunMode && r_volumetricSunMode->integer &&
+-		r_volumetricSunCsmProducer && !r_volumetricSunCsmProducer->integer && !(fd->rdflags & RDF_NOWORLDMODEL))
+-	{
+-		int cachedCascade;
+-		for (cachedCascade = 0; cachedCascade < 4; ++cachedCascade)
+-			R_VolumetricSunRestoreCascade(cachedCascade);
+-	}
+-	if (volumetricSunCsmRequest)
+-	{
+-		const int lastRequestTime = tr.volumetricSunCsmLastRequestTime;
+-		// DARKWOLF_SUN_VOLUMETRIC_CSM_SMART_UPDATE_V1: frameCount can advance through auxiliary views. A real request gap is instead
+-		// detected from game time. First use, map-time reset, or >1 s gap forces one full re-prime.
+-		volumetricSunCsmResumed = (lastRequestTime <= 0 || fd->time < lastRequestTime ||
+-			(fd->time - lastRequestTime) > 1000) ? qtrue : qfalse;
+-		tr.volumetricSunCsmRequestFrame = tr.frameCount;
+-		tr.volumetricSunCsmLastRequestTime = fd->time;
+-	}
+ 	tr.refdef.dlightDiagInjectedIndex = dlightDiagInjectedIndex;
+ 
+ 	// SmileTheory: playing with shadow mapping
+@@ -6866,129 +6955,7 @@ void RE_RenderScene( const refdef_t *fd ) {
+ 		R_RenderPshadowMaps(fd);
+ 	}
+ 
+-	// playing with even more shadows
+-	if(glRefConfig.framebufferObject && r_sunlightMode->integer && !( fd->rdflags & RDF_NOWORLDMODEL ) &&
+-		(r_forceSun->integer || tr.sunShadows || volumetricSunCsmRequest) &&
+-		!(fd->rdflags & RDF_SKYBOXPORTAL))
+-{
+-		if (volumetricSunCsmRequest)
+-		{
+-			qboolean sunChanged = volumetricSunCsmResumed || R_VolumetricSunDirectionChanged(tr.refdef.sunDir, tr.volumetricSunCsmSunDirection); // DARKWOLF_SUN_VOLUMETRIC_CSM_SMART_UPDATE_V1
+-			int c;
+-			if (r_shadowCascadeZFar->integer != 0)
+-			{
+-				for (c = 0; c < 3; ++c)
+-				{
+-					if (R_VolumetricSunShouldUpdateCascade(c, tr.frameCount, sunChanged))
+-					{
+-						R_RenderSunShadowMaps(fd, c);
+-						R_VolumetricSunCommitCascade(c);
+-					}
+-					else
+-					{
+-						R_VolumetricSunRestoreCascade(c);
+-					}
+-				}
+-			}
+-			else
+-			{
+-				Mat4Zero(tr.refdef.sunShadowMvp[0]);
+-				Mat4Zero(tr.refdef.sunShadowMvp[1]);
+-				Mat4Zero(tr.refdef.sunShadowMvp[2]);
+-			}
+-
+-			if (R_VolumetricSunShouldUpdateCascade(3, tr.frameCount, sunChanged))
+-			{
+-				R_RenderSunShadowMaps(fd, 3);
+-				R_VolumetricSunCommitCascade(3);
+-			}
+-			else
+-			{
+-				R_VolumetricSunRestoreCascade(3);
+-			}
+-			if (sunChanged)
+-				VectorCopy(tr.refdef.sunDir, tr.volumetricSunCsmSunDirection); // DARKWOLF_SUN_VOLUMETRIC_CSM_SMART_UPDATE_V1: cache-generation direction
+-		}
+-		else if (r_forceSun->integer == 1)
+-		{
+-			qboolean sunChanged;
+-			int cascade;
+-
+-			if (R_ForceSunVisibleNeedsReprime(fd))
+-			{
+-				for (cascade = 0; cascade < 4; ++cascade)
+-					tr.volumetricSunCsmValid[cascade] = qfalse;
+-			}
+-			s_forceSunVisibleCsmActive = 1;
+-			R_ForceSunVisibleRemember(fd);
+-
+-			sunChanged = R_VolumetricSunDirectionChanged(tr.refdef.sunDir, tr.volumetricSunCsmSunDirection);
+-
+-			if (r_shadowCascadeZFar->integer != 0)
+-			{
+-				for (cascade = 0; cascade < 3; ++cascade)
+-				{
+-					if (sunChanged || R_ForceSunVisibleShouldUpdateCascade(cascade))
+-					{
+-						R_RenderSunShadowMaps(fd, cascade);
+-						R_VolumetricSunCommitCascade(cascade);
+-					}
+-					else
+-					{
+-						R_VolumetricSunRestoreCascade(cascade);
+-					}
+-				}
+-			}
+-			else
+-			{
+-				Mat4Zero(tr.refdef.sunShadowMvp[0]);
+-				Mat4Zero(tr.refdef.sunShadowMvp[1]);
+-				Mat4Zero(tr.refdef.sunShadowMvp[2]);
+-			}
+-
+-			if (sunChanged || !tr.volumetricSunCsmValid[3])
+-			{
+-				R_RenderSunShadowMaps(fd, 3);
+-				R_VolumetricSunCommitCascade(3);
+-			}
+-			else
+-			{
+-				R_VolumetricSunRestoreCascade(3);
+-			}
+-
+-			if (sunChanged)
+-				VectorCopy(tr.refdef.sunDir, tr.volumetricSunCsmSunDirection);
+-		}
+-		else
+-		{
+-			s_forceSunVisibleCsmActive = 0;
+-
+-			if (r_shadowCascadeZFar->integer != 0)
+-			{
+-				R_RenderSunShadowMaps(fd, 0);
+-				R_RenderSunShadowMaps(fd, 1);
+-				R_RenderSunShadowMaps(fd, 2);
+-			}
+-			else
+-			{
+-				Mat4Zero(tr.refdef.sunShadowMvp[0]);
+-				Mat4Zero(tr.refdef.sunShadowMvp[1]);
+-				Mat4Zero(tr.refdef.sunShadowMvp[2]);
+-			}
+-
+-			// only rerender last cascade if sun has changed position
+-			if (r_forceSun->integer == 2 || !VectorCompare(tr.refdef.sunDir, tr.lastCascadeSunDirection))
+-			{
+-				VectorCopy(tr.refdef.sunDir, tr.lastCascadeSunDirection);
+-				R_RenderSunShadowMaps(fd, 3);
+-				Mat4Copy(tr.refdef.sunShadowMvp[3], tr.lastCascadeSunMvp);
+-			}
+-			else
+-			{
+-				Mat4Copy(tr.lastCascadeSunMvp, tr.refdef.sunShadowMvp[3]);
+-			}
+-			}
+-	}
++	sunFlags = R_PrepareSunCascades(fd);
+ 
+ 	// playing with cube maps
+ 	// this is where dynamic cubemaps would be rendered
+@@ -7030,10 +6997,7 @@ void RE_RenderScene( const refdef_t *fd ) {
+ 
+ 	VectorCopy( fd->vieworg, parms.pvsOrigin );
+ 
+-	if(!( fd->rdflags & RDF_NOWORLDMODEL ) && r_depthPrepass->value && ((r_forceSun->integer) || tr.sunShadows))
+-	{
+-		parms.flags = VPF_USESUNLIGHT;
+-	}
++	parms.flags = sunFlags;
+ 
+ 	R_RenderView( &parms );
+ 
