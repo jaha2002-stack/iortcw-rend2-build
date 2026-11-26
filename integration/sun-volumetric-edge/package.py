@@ -30,7 +30,7 @@ assert b'volumetricsun_coverage' in new_renderer and b'stableLampJitter' in new_
 
 docs = Path(__file__).resolve().parent
 files = {n: d for n, d in base.items() if n not in {
-    'SHA256SUMS.txt', 'PRODUCTION_MANIFEST.json', 'PRODUCTION_RELEASE_FINALIZATION_REPORT_RU.md',
+    'SHA256SUMS.txt', 'README_RU.md', 'PRODUCTION_MANIFEST.json', 'PRODUCTION_RELEASE_FINALIZATION_REPORT_RU.md',
 }}
 files['docs/BASE_PRODUCTION_MANIFEST.json'] = base['PRODUCTION_MANIFEST.json']
 files[renderer] = new_renderer
@@ -41,7 +41,7 @@ expected = manifest['binary_and_import_audit']
 expected[renderer]['sha256'] = digest(new_renderer)
 with tempfile.TemporaryDirectory() as directory:
     audit = inspect_binaries(Path(directory), files, {'architecture_and_imports': expected})
-files['README_SUN_EDGE_TEST_RU.md'] = (docs / 'README_RU.md').read_bytes()
+files['README_RU.md'] = (docs / 'README_RU.md').read_bytes()
 files['SUN_EDGE_TECH_REPORT_RU.md'] = (docs / 'TECH_REPORT_RU.md').read_bytes()
 files['SUN_EDGE_TEST_MANIFEST.json'] = (json.dumps({
     'status': 'WIN64_TEST_CANDIDATE',
