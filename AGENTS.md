@@ -1,8 +1,8 @@
 ## Current Production Baseline
 
 - Status: CLEAN PRODUCTION — STABLE. The owner validated the Sun Volumetric silhouette AA fix in game with `r_volumetricSun 1`.
-- Use production tag `darkwolf-sun-volumetric-silhouette-aa-clean-production-20261126` as the starting point for subsequent fixes unless the owner specifies another baseline.
-- Approved runtime: GitHub Actions Run `45788582832` at `c7e13e20bda4fe6671f4fd16791b03247bb087b2`. The production release preserves those binaries and configuration byte for byte.
+- Use [Actions Run `45799720282`](https://github.com/jaha2002-stack/iortcw-rend2-build/actions/runs/45799720282) as the approved baseline for subsequent fixes and development unless the owner specifies another baseline. Base changes on commit `88d667dcfd49e42910209fa9ad11f31a8bd96ebc` or its production tag `darkwolf-sun-volumetric-silhouette-aa-clean-production-20261126`.
+- Validated binary provenance: GitHub Actions Run `45788582832` at `c7e13e20bda4fe6671f4fd16791b03247bb087b2`. The production release preserves those binaries and configuration byte for byte.
 - The preceding Local Volumetric 2, 3 and 5 baseline is Run `45778124832`, tag `darkwolf-localvol-modes-235-clean-production-20261126`.
 - ioRTCW upstream: `438e7d413b5f7277187c35b032eb0ef9093ae778`. Verify the production manifest and checksums before developing or rolling back.
 - Download the Win64 ZIP, production audit and exact Rend2 source snapshot from [the Production Release](https://github.com/jaha2002-stack/iortcw-rend2-build/releases/tag/darkwolf-sun-volumetric-silhouette-aa-clean-production-20261126).
