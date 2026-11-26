@@ -1,3 +1,11 @@
+## Current Production Baseline
+
+- Status: CLEAN PRODUCTION — STABLE. Targeted Local Volumetric modes 2, 3 and 5 validated in game by the owner.
+- Use production tag `darkwolf-localvol-modes-235-clean-production-20261126` as the starting point for subsequent fixes unless the owner specifies another baseline.
+- Runtime binaries: GitHub Actions Run `45778124832` at `e5b1938884bc09abc1fe649bd0af854f41caf05f` (build attempt 1). Baseline approval uses those binaries byte for byte.
+- ioRTCW upstream: `438e7d413b5f7277187c35b032eb0ef9093ae778`. Verify the Production manifest and checksums before developing or rolling back.
+- Download the Production Win64 ZIP, report and exact renderer source snapshot from [the Production Release](https://github.com/jaha2002-stack/iortcw-rend2-build/releases/tag/darkwolf-localvol-modes-235-clean-production-20261126).
+
 
 
 \# DarkWolf RTCW — Engineering Instructions
