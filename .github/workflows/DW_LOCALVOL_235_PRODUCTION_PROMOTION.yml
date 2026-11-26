@@ -1,0 +1,129 @@
+name: Promote validated DarkWolf Local Volumetric 2 3 5 Production
+
+on:
+  push:
+    branches:
+      - release/dw-localvol-235-production-20261126
+    paths:
+      - '.github/workflows/DW_LOCALVOL_235_PRODUCTION_PROMOTION.yml'
+      - 'integration/localvol-production/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: darkwolf-localvol-235-production-20261126
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Check out the exact accepted reconstruction recipe
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 250669a231dc7bd571b4e2b3405c045f90ba64c1
+          path: accepted-kit
+
+      - name: Fetch and verify the user-validated ZIP
+        run: |
+          run_api="repos/$GITHUB_REPOSITORY/actions/runs/45778124832"
+          gh api "$run_api" | jq -e '
+            .conclusion == "success" and
+            .head_sha == "e5b1938884bc09abc1fe649bd0af854f41caf05f"'
+          mkdir -p incoming
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/15097496040/zip" > incoming/test-outer.zip
+          echo '95e9a183795d97bd943a57761c6d6d39af75ddd2c3ca86068c3b9eae8858f781  incoming/test-outer.zip' | sha256sum -c
+          unzip -q incoming/test-outer.zip -d incoming
+          file=DarkWolf_Rend2_LocalVol_Modes_2_3_5_Win64.zip
+          curl -fLsS --retry 2 --max-time 45 \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/dw-localvol-modes-2-3-5-fix-run43414829881/$file" \
+            -o incoming/test-release.zip
+          cmp "incoming/$file" incoming/test-release.zip
+          echo '1d6c7b93157cc6f8b1856c0328498a86bab11fe217a79c4c69bbf668614e5caf  incoming/test-release.zip' | sha256sum -c
+
+      - name: Restore and verify the source snapshot for escrow
+        run: |
+          if ! /usr/bin/python3 -c 'import yaml'; then
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 update
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 install -y --no-install-recommends python3-yaml
+          fi
+          /usr/bin/python3 integration/localvol-lamps/replay.py accepted-kit prepare
+          patch="$PWD/integration/localvol-lamps/fix.patch"
+          git -C accepted-kit/source apply --check "$patch"
+          git -C accepted-kit/source apply "$patch"
+          git -C accepted-kit/source diff --check
+
+      - name: Clean package and verify byte-for-byte runtime
+        run: |
+          python3 integration/localvol-production/prepare.py incoming/test-release.zip accepted-kit/source dist \
+            --commit "$GITHUB_SHA" --run "$GITHUB_RUN_ID"
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+
+      - name: Upload audited production files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf_Rend2_LocalVol_235_Clean_Production
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    needs: package
+    if: github.repository == 'jaha2002-stack/iortcw-rend2-build' && github.ref == 'refs/heads/release/dw-localvol-235-production-20261126'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: darkwolf-localvol-modes-235-clean-production-20261126
+    steps:
+      - name: Verify assets and publish the unique Production release
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name DarkWolf_Rend2_LocalVol_235_Clean_Production --dir dist
+          cd dist
+          sha256sum -c SHA256SUMS.txt
+          api="repos/$GITHUB_REPOSITORY/releases"
+          release_id="$(gh api "$api?per_page=100" --paginate | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id')"
+          if [[ -z "$release_id" ]]; then
+            release_id="$(gh api --method POST "$api" \
+              -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -F draft=true -F prerelease=false \
+              -f name='DarkWolf Rend2 — Local Volumetric 2, 3 & 5 Clean Production (Win64)' \
+              -f body='CLEAN PRODUCTION — STABLE. The owner verified the Local Volumetric banding fix in game. This release preserves the tested binaries and settings from GitHub Actions Run 45778124832. The complete Win64 system ZIP, provenance manifest, SHA-256, audit and exact Rend2 source are provided below.' \
+              --jq .id)"
+          fi
+          release="$api/$release_id"
+          gh api "$release" | jq -e --arg tag "$TAG" --arg commit "$GITHUB_SHA" '
+            .tag_name == $tag and .target_commitish == $commit and .draft'
+          for file in *; do
+            expected="sha256:$(sha256sum "$file" | cut -d' ' -f1)"
+            actual="$(gh api "$release" | jq -r --arg name "$file" '.assets[] | select(.name == $name) | .digest')"
+            if [[ -z "$actual" ]]; then
+              for attempt in 1 2 3; do
+                if gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY"; then
+                  break
+                fi
+                sleep 3
+              done
+            fi
+            gh api "$release" | jq -e --arg name "$file" --arg checksum "$expected" '
+              any(.assets[]; .name == $name and .state == "uploaded" and .digest == $checksum)'
+          done
+          gh api --method PATCH "$release" -F draft=false -F prerelease=false -f make_latest=true \
+            --jq .html_url
