@@ -1,0 +1,268 @@
+diff --git a/SP/code/rend2/tr_elss.inc b/SP/code/rend2/tr_elss.inc
+index 352386a..3369bfc 100644
+--- a/SP/code/rend2/tr_elss.inc
++++ b/SP/code/rend2/tr_elss.inc
+@@ -446,7 +446,9 @@ void R_ELSS_SelfPick_f(void)
+ {
+     int surface=-1,seedTri=-1,seedMode=ELSS_SEED_GROUP,p,i;float hit,triHit;vec3_t target;elssProfile_t candidate;elssFixture_t test;elssOwner_t *o;qboolean wholeSafe;
+     if(!R_ELSS_Selected()||!s_iflcViewValid)return;o=&s_elssOwners[s_elssSelected];
+-    if(!R_ELSS_FirstHit(target,&surface,&hit)){ri.Printf(PRINT_ALL,"ELSS: aim at a solid part of the selected lamp housing.\n");return;}
++    surface=R_IFLC_PickBodySurface(&hit);
++    if(surface<0){ri.Printf(PRINT_ALL,"ELSS: aim at a solid part of the selected lamp housing.\n");return;}
++    VectorMA(s_iflcViewOrigin,hit,s_iflcViewForward,target);
+     if(!R_IFLC_LineVisible(s_iflcViewOrigin,target)){ri.Printf(PRINT_WARNING,"ELSS: selected body part is occluded; no change.\n");return;}
+     wholeSafe=R_ELSS_ManualSurfaceSafe(o,surface);
+     if(!wholeSafe){
+diff --git a/SP/code/rend2/tr_iflc.inc b/SP/code/rend2/tr_iflc.inc
+index 6de9174..3170629 100644
+--- a/SP/code/rend2/tr_iflc.inc
++++ b/SP/code/rend2/tr_iflc.inc
+@@ -728,18 +728,15 @@ invalid:
+ void R_IFLC_SelfPick_f(void)
+ {
+     iflcProfile_t candidate, *p; iflcSelfFixture_t test;
+-    float nearest = 512.0f, hit; int i, selected = -1;
++    float hit; int i, selected;
+     if (!R_IFLC_SelectedEditable() || !s_iflcViewValid) return;
+     /* V1.5 Universal: manual body selection trusts the already selected
+      * unambiguous owner, not compact flame BSP bounds. This is what allows
+      * native/promoted/VOLUME_ONLY fire fixtures whose visual flame geometry is
+      * split, missing or shared to use the same safe manual workflow. */
+-    for (i = 0; i < tr.world->numWorldSurfaces; ++i)
+-        if (R_IFLC_RaySurface(&tr.world->surfaces[i], s_iflcViewOrigin, s_iflcViewForward, nearest, &hit)) {
+-            nearest = hit; selected = i;
+-        }
++    selected = R_IFLC_PickBodySurface(&hit);
+     if (selected < 0) { ri.Printf(PRINT_ALL, "IFLC: aim at the solid body of the selected flame fixture.\n"); return; }
+-    {vec3_t target;VectorMA(s_iflcViewOrigin,nearest,s_iflcViewForward,target);
++    {vec3_t target;VectorMA(s_iflcViewOrigin,hit,s_iflcViewForward,target);
+      if(!R_IFLC_LineVisible(s_iflcViewOrigin,target)) {ri.Printf(PRINT_WARNING,"IFLC: fixture body is occluded; binding refused.\n");return;}}
+     p = R_IFLC_ProfileForOwner(s_iflcSelected, qfalse);
+     if (p) candidate = *p;
+@@ -1012,6 +1009,7 @@ static void R_IFLC_AddOptIn(const refdef_t *fd, iflcOwner_t *owner, const iflcPr
+ 		owner->optInFadeTime = fd->time;
+ 	}
+ 	R_IFLC_ApplyProfile(dl, p, qtrue);
++	dl->iflcOptInOwner = p->owner + 1;
+ 	/* Smooth only the user-created Direct bridge. Radius/shadow identity and the
+ 	 * persistent profile remain unchanged; FireVol has its own independent guard. */
+ 	if (r_dwFireVolFlashFix && r_dwFireVolFlashFix->integer &&
+diff --git a/SP/code/rend2/tr_iflc_self.inc b/SP/code/rend2/tr_iflc_self.inc
+index b0423e0..5ba8cbd 100644
+--- a/SP/code/rend2/tr_iflc_self.inc
++++ b/SP/code/rend2/tr_iflc_self.inc
+@@ -155,6 +155,30 @@ static qboolean R_IFLC_ManualSurfaceBasic(int ownerIndex,int index)
+     if(largest>128 && second>64)return qfalse;
+     return qtrue;
+ }
++/* Ignore visual-only flame/decal layers in the body pick. Retain both
++ * solid blockers and supported cutout casters so validation cannot bind
++ * an unrelated fixture behind intervening architecture. */
++static int R_IFLC_PickBodySurface(float *distance)
++{
++    float nearest = 512.0f;
++    int i, selected = -1;
++
++    for (i = 0; i < tr.world->numWorldSurfaces; ++i) {
++        const msurface_t *surface = &tr.world->surfaces[i];
++        float hit;
++        if (!R_IFLC_SurfaceBlocks(surface) &&
++            !R_DarkWolfSupportedShadowCasterMaterial(surface->shader))
++            continue;
++        if (R_IFLC_RaySurface(surface, s_iflcViewOrigin, s_iflcViewForward, nearest, &hit)) {
++            nearest = hit;
++            selected = i;
++        }
++    }
++    if (selected >= 0)
++        *distance = nearest;
++    return selected;
++}
++
+ static qboolean R_IFLC_ManualSeedSafe(int ownerIndex,int index)
+ {
+     return R_IFLC_ManualSurfaceBasic(ownerIndex,index) && !R_IFLC_SelfSamePlaneAsLargeArchitecture(index);
+@@ -335,11 +359,15 @@ static void R_IFLC_PrepareSelfFixture(int index)
+ 
+ static int R_IFLC_CustomFixture(const dlight_t *dl)
+ {
+-    int i=-1,j;const iflcProfile_t *p;
++    int i;const iflcProfile_t *p;
+     if(!dl || !s_iflcReady || s_iflcCatalogOverflow || !r_dwFireLightControl || !r_dwFireLightControl->integer)return -1;
+     if(dl->iflcOptIn) {
+-        for(j=0;j<s_iflcOwnerCount;++j)if(s_iflcOwners[j].kind==IFLC_SURFACE &&
+-            R_IFLC_DistanceSquared(dl->origin,s_iflcOwners[j].origin)<.0001f){if(i>=0)return 0;i=j;}
++        /* The bridge was emitted by this exact profile. Other catalog entries
++         * at the same point must not cancel its explicit caster policy. */
++        if(dl->iflcOptInOwner<=0 || dl->iflcOptInOwner>s_iflcOwnerCount)return 0;
++        i=dl->iflcOptInOwner-1;
++        if(s_iflcOwners[i].kind!=IFLC_SURFACE ||
++           R_IFLC_DistanceSquared(dl->origin,s_iflcOwners[i].origin)>.0001f)return 0;
+     } else i=R_IFLC_DlightOwner(dl);
+     if(i<0 || s_iflcOwners[i].ambiguous)return -1;
+     p=R_IFLC_ProfileForOwner(i,qfalse);if(!p || !p->selfShadow)return -1;
+diff --git a/SP/code/rend2/tr_local.h b/SP/code/rend2/tr_local.h
+index fdb2740..b10c317 100644
+--- a/SP/code/rend2/tr_local.h
++++ b/SP/code/rend2/tr_local.h
+@@ -633,6 +633,7 @@ typedef struct dlight_s {
+ 	// These renderer-private fields do not change the cgame/refimport ABI.
+ 	qboolean iflcActive;
+ 	qboolean iflcOptIn;
++	int iflcOptInOwner; // Map-local IFLC owner index + 1, zero when unset.
+ 	vec3_t iflcBaseColor;
+ 	float iflcBaseRadius;
+ 	float iflcVolumeGain;
+diff --git a/SP/code/rend2/tr_main.c b/SP/code/rend2/tr_main.c
+index 01f44f0..321830b 100644
+--- a/SP/code/rend2/tr_main.c
++++ b/SP/code/rend2/tr_main.c
+@@ -2794,9 +2794,33 @@ static qboolean R_DlightWorldCacheMatches(const dlightWorldCache_t *cache,
+ 		&& cache->electricFixtureKey == electricFixtureKey && cache->brushKey == brushKey;
+ }
+ 
++/* Inherit only explicit ELSS settings from an already resolved physical
++ * owner. Leave ElectricOwner assignment and the legacy AUTO classifier alone. */
++static qboolean R_ElectricCapturePolicy(const dlight_t *dl, int *fixture)
++{
++    int i;
++    if (R_ELSS_ElectricPolicy(dl, fixture))
++        return qtrue;
++    if (dl->staticPromoteFixtureId < 0 || dl->physicalElectricOwnerId <= 0 ||
++        dl->staticPromoteFixtureId == dl->physicalElectricOwnerId ||
++        dl->shadowSourceClass != DWSHADOW_SOURCE_PERSISTENT_PHYSICAL ||
++        dl->noDlightShadow || dl->iflcOptIn || dl->fireVolumetricSource || dl->transientBlast)
++        return qfalse;
++
++    for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i) {
++        const dlight_t *owner = &tr.refdef.dlights[i];
++        if (owner->staticPromoteFixtureId == dl->physicalElectricOwnerId &&
++            owner->physicalElectricOwnerId == dl->physicalElectricOwnerId)
++            return R_ELSS_ElectricPolicy(owner, fixture);
++    }
++    return qfalse;
++}
++
+ void R_RenderDlightWorldOcclusion(const refdef_t *fd)
+ {
+ 	qboolean active[DLIGHT_WORLD_CACHE_MAX];
++	int electricFixture[MAX_DLIGHTS];
++	unsigned int electricKey[MAX_DLIGHTS];
+ 	int i, j, side;
+ 	Com_Memset(tr.refdef.dlightWorldSlot, -1, sizeof(tr.refdef.dlightWorldSlot));
+ 	Com_Memset(tr.refdef.dlightWorldOrigin, 0, sizeof(tr.refdef.dlightWorldOrigin));
+@@ -2816,10 +2840,13 @@ void R_RenderDlightWorldOcclusion(const refdef_t *fd)
+ 		vec3_t testCaptureOrigin;
+ 		float requiredRadius;
+ 		if (!dl->worldOcclusion || !(dl->radius > 0.0f)) continue;
++		if (!R_ElectricCapturePolicy(dl, &electricFixture[i]))
++			electricFixture[i] = R_ElectricFixtureForLightAuto(dl);
++		electricKey[i] = R_ElectricFixtureKey(electricFixture[i]);
+ 		R_DWProductionTeslaWorldCaptureOrigin(dl, testCaptureOrigin);
+ 		requiredRadius = dl->radius + fabs(testCaptureOrigin[0] - dl->origin[0]);
+ 		for (j = 0; j < DLIGHT_WORLD_CACHE_MAX; ++j)
+-			if (R_DlightWorldCacheMatches(&tr.dlightWorldCache[j], testCaptureOrigin, requiredRadius, R_IFLC_FixturePolicyKey(R_IFLC_ShadowFixture(dl)), R_ElectricFixtureKey(R_ElectricFixtureForLight(dl)), R_ArchitecturalBrushKey(tr.refdef.entities, tr.refdef.num_entities, testCaptureOrigin, requiredRadius)))
++			if (R_DlightWorldCacheMatches(&tr.dlightWorldCache[j], testCaptureOrigin, requiredRadius, R_IFLC_FixturePolicyKey(R_IFLC_ShadowFixture(dl)), electricKey[i], R_ArchitecturalBrushKey(tr.refdef.entities, tr.refdef.num_entities, testCaptureOrigin, requiredRadius)))
+ 			{
+ 				active[j] = qtrue;
+ 				tr.refdef.dlightWorldSlot[i] = j;
+@@ -2839,7 +2866,7 @@ void R_RenderDlightWorldOcclusion(const refdef_t *fd)
+ 		// A preceding miss can have populated the same exact origin this scene.
+ 		if (slot < 0)
+ 			for (j = 0; j < DLIGHT_WORLD_CACHE_MAX; ++j)
+-				if (R_DlightWorldCacheMatches(&tr.dlightWorldCache[j], testCaptureOrigin, requiredRadius, R_IFLC_FixturePolicyKey(R_IFLC_ShadowFixture(dl)), R_ElectricFixtureKey(R_ElectricFixtureForLight(dl)), R_ArchitecturalBrushKey(tr.refdef.entities, tr.refdef.num_entities, testCaptureOrigin, requiredRadius))) { slot = j; break; }
++				if (R_DlightWorldCacheMatches(&tr.dlightWorldCache[j], testCaptureOrigin, requiredRadius, R_IFLC_FixturePolicyKey(R_IFLC_ShadowFixture(dl)), electricKey[i], R_ArchitecturalBrushKey(tr.refdef.entities, tr.refdef.num_entities, testCaptureOrigin, requiredRadius))) { slot = j; break; }
+ 		if (slot < 0)
+ 		{
+ 			unsigned int oldest = ~0u;
+@@ -2867,8 +2894,8 @@ void R_RenderDlightWorldOcclusion(const refdef_t *fd)
+ 			shadowParms.flags = VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_NOVIEWMODEL | VPF_DLIGHT_WORLD_OCCLUSION;
+ 			shadowParms.iflcFixture = R_IFLC_ShadowFixture(dl);
+ 			shadowParms.iflcFixtureKey = R_IFLC_FixturePolicyKey(shadowParms.iflcFixture);
+-			shadowParms.electricFixture = R_ElectricFixtureForLight(dl);
+-			shadowParms.electricFixtureKey = R_ElectricFixtureKey(shadowParms.electricFixture);
++			shadowParms.electricFixture = electricFixture[i];
++			shadowParms.electricFixtureKey = electricKey[i];
+ 			shadowParms.zFar = range;
+ 			VectorCopy(testCaptureOrigin, shadowParms.or.origin);
+ 			// Cold-cache captures may exceed the shared command/surface rings.
+@@ -3400,31 +3427,48 @@ static int R_DarkWolfPersistentPhysicalShadowResidentCandidate(
+ }
+ 
+ 
+-/* A group capture is shared: every member must identify the same housing.
+- * Preserve the original cast geometry on ANY ambiguity. Allocation and capture
+- * positions are unchanged. This does not remove other lights' shadows. */
++/* A manual mask is a negative fixture id. Apply it to a shared cubemap
++ * only if every member resolves to the same explicit policy. Keep the legacy
++ * positive AUTO consensus when nobody has an explicit policy. */
+ static int R_ElectricFixtureForCapture(int index)
+ {
+-    int i, fixture = 0, group;
++    int i, group, manual = 0, automatic = 0, count = 0, explicitCount = 0;
++    qboolean autoConflict = qfalse;
++    const dlight_t *dl;
++
+     if (index < 0 || index >= tr.refdef.num_dlights || index >= MAX_DLIGHTS) return 0;
+-    if (!R_DarkWolfStaticPromoteShadowGroupEligible(&tr.refdef.dlights[index]))
+-        return R_ElectricFixtureForLight(&tr.refdef.dlights[index]);
++    dl = &tr.refdef.dlights[index];
++    if (!R_DarkWolfStaticPromoteShadowGroupEligible(dl)) {
++        int fixture;
++        return R_ElectricCapturePolicy(dl, &fixture) ? fixture : R_ElectricFixtureForLightAuto(dl);
++    }
+     group = R_DarkWolfStaticPromoteShadowGroupCanonicalId(index);
+     if (group < 0) return 0;
+-    // DARKWOLF_ELECTRIC_PHYSICAL_OWNER_V1: PhysicalElectricOwnerId is a
+-    // StaticPromote identity, not an ELSS electric-fixture id. For a shared
+-    // shadow capture, retain ELSS only when all positively resolved members
+-    // agree on one Electric Fixture. Unresolved synthetic children are neutral.
+-    for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i)
+-        if (R_DarkWolfStaticPromoteShadowGroupEligible(&tr.refdef.dlights[i]) &&
+-            R_DarkWolfStaticPromoteShadowGroupCanonicalId(i) == group)
+-        {
+-            int peerFixture = R_ElectricFixtureForLight(&tr.refdef.dlights[i]);
+-            if (peerFixture <= 0) continue;
+-            if (!fixture) fixture = peerFixture;
+-            else if (peerFixture != fixture) return 0;
++
++    for (i = 0; i < tr.refdef.num_dlights && i < MAX_DLIGHTS; ++i) {
++        const dlight_t *peer = &tr.refdef.dlights[i];
++        int fixture;
++        if (!R_DarkWolfStaticPromoteShadowGroupEligible(peer) ||
++            R_DarkWolfStaticPromoteShadowGroupCanonicalId(i) != group)
++            continue;
++        ++count;
++        if (R_ElectricCapturePolicy(peer, &fixture)) {
++            if (explicitCount && manual != fixture)
++                return 0;
++            manual = fixture;
++            ++explicitCount;
++            continue;
+         }
+-    return fixture;
++        fixture = R_ElectricFixtureForLightAuto(peer);
++        if (fixture > 0) {
++            if (automatic && automatic != fixture)
++                autoConflict = qtrue;
++            automatic = fixture;
++        }
++    }
++    if (explicitCount)
++        return explicitCount == count ? manual : 0;
++    return autoConflict ? 0 : automatic;
+ }
+ 
+ static int R_IFLC_FixtureForCapture(int index)
+diff --git a/SP/code/rend2/tr_scene.c b/SP/code/rend2/tr_scene.c
+index 67624ca..2020a8f 100644
+--- a/SP/code/rend2/tr_scene.c
++++ b/SP/code/rend2/tr_scene.c
+@@ -461,6 +461,7 @@ void RE_AddLightToScene( const vec3_t org, float intensity, float r, float g, fl
+ 	// DARKWOLF_IFLC_V1: reset private metadata when a frame reuses a dlight slot.
+ 	dl->iflcActive = qfalse;
+ 	dl->iflcOptIn = qfalse;
++	dl->iflcOptInOwner = 0;
+ 	VectorClear(dl->iflcBaseColor);
+ 	dl->iflcBaseRadius = 0.0f;
+ 	dl->iflcVolumeGain = 1.0f;
