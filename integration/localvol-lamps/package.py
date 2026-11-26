@@ -37,7 +37,7 @@ def omitted(name):
 files = {n: d for n, d in baseline.items() if not omitted(n) and n != 'SHA256SUMS.txt'}
 files[renderer] = dll.read_bytes()
 assert files[renderer] != baseline[renderer]
-for marker in ('mode5LampJitter', 'DW_LAMP_CONTROL_V12', 'r_dwElectricPhysicalOwner', 'DWTR AI B2 V2.4.1:'):
+for marker in ('stableLampJitter', 'DW_LAMP_CONTROL_V12', 'r_dwElectricPhysicalOwner', 'DWTR AI B2 V2.4.1:'):
     assert marker.encode() in files[renderer], marker
 
 required = {'Main/cgame_sp_x64.dll', 'Main/qagame_sp_x64.dll', 'Main/ui_sp_x64.dll',
@@ -74,10 +74,13 @@ with tempfile.TemporaryDirectory(dir=output.parent) as td:
             assert data == baseline[name]
         audit[name] = {'architecture': 'AMD64 PE32+', 'sha256': digest(data), 'imports': imports, 'export_count': len(exports), 'GetRefAPI': 'GetRefAPI' in exports}
 
-files['README_MODE5_TEST_RU.txt'] = Path(__file__).with_name('README_MODE5_TEST_RU.txt').read_bytes()
-files['MODE5_TEST_MANIFEST.json'] = (json.dumps({
+files['README_LOCALVOL_TEST_RU.txt'] = Path(__file__).with_name('README_LOCALVOL_TEST_RU.txt').read_bytes()
+files['CHANGELOG_LOCALVOL_RU.md'] = Path(__file__).with_name('CHANGELOG_RU.md').read_bytes()
+files['LOCALVOL_TEST_MANIFEST.json'] = (json.dumps({
     'status': 'WIN64_TEST_CANDIDATE',
     'base_run': 43414829881,
+    'previous_mode5_release_run': 45774590836,
+    'covered_local_volumetric_modes': [2, 3, 5],
     'build_commit': args.commit,
     'build_run': args.run,
     'accepted_source_run': 43411054498,

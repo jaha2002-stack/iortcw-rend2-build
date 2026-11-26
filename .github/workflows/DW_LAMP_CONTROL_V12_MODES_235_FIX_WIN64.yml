@@ -1,12 +1,12 @@
-name: DarkWolf Local Volumetric Mode 5 Fix Win64
+name: DarkWolf Local Volumetric Modes 2 3 5 Fix Win64
 
 on:
   push:
     branches:
-      - fix/dw-localvol-mode5-run43414829881
+      - fix/dw-localvol-modes-235
     paths:
-      - '.github/workflows/DW_LAMP_CONTROL_V12_MODE5_FIX_WIN64.yml'
-      - 'integration/localvol-mode5/**'
+      - '.github/workflows/DW_LAMP_CONTROL_V12_MODES_235_FIX_WIN64.yml'
+      - 'integration/localvol-lamps/**'
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: darkwolf-localvol-mode5-${{ github.ref }}
+  group: darkwolf-localvol-modes-235-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -42,10 +42,10 @@ jobs:
             libsdl2-dev libopenal-dev libcurl4-openssl-dev \
             gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
 
-      - name: Restore the accepted source and apply the Mode 5 patch
+      - name: Restore the accepted source and apply the lamp volumetric patch
         run: |
-          /usr/bin/python3 integration/localvol-mode5/replay.py accepted-kit prepare
-          patch="$PWD/integration/localvol-mode5/fix.patch"
+          /usr/bin/python3 integration/localvol-lamps/replay.py accepted-kit prepare
+          patch="$PWD/integration/localvol-lamps/fix.patch"
           git -C accepted-kit/source apply --check "$patch"
           git -C accepted-kit/source apply "$patch"
           git -C accepted-kit/source diff --check
@@ -55,10 +55,10 @@ jobs:
         run: |
           python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
           python3 integration/lamp-control-v12/run_tests.py source
-          python3 ../integration/localvol-mode5/check-shaders.py source
+          python3 ../integration/localvol-lamps/check-shaders.py source
 
       - name: Compile Win64 with the accepted MinGW recipe
-        run: /usr/bin/python3 integration/localvol-mode5/replay.py accepted-kit build
+        run: /usr/bin/python3 integration/localvol-lamps/replay.py accepted-kit build
 
       - name: Package the complete Win64 runtime
         run: |
@@ -66,16 +66,16 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14030454225/zip" > incoming/donor.zip
           echo '5352e4a4c6f7c272a3988ac2d351887321e78136e3c4c6b72d52764434e2f901  incoming/donor.zip' | sha256sum --check
           unzip -q incoming/donor.zip -d incoming
-          python3 integration/localvol-mode5/package.py \
+          python3 integration/localvol-lamps/package.py \
             incoming/DarkWolf_Rend2_Lamp_Control_V12_EXACT_VISIBLE_CLEAN_PRODUCTION_FROM_43411054498_Win64.zip \
             accepted-kit/source/SP/build/release-mingw32-x86_64/renderer_sp_rend2_x64.dll \
-            dist/DarkWolf_Rend2_Mode5_Test_Win64.zip --commit "$GITHUB_SHA" --run "$GITHUB_RUN_ID"
-          (cd dist && sha256sum -c DarkWolf_Rend2_Mode5_Test_Win64.zip.sha256)
+            dist/DarkWolf_Rend2_LocalVol_Modes_2_3_5_Win64.zip --commit "$GITHUB_SHA" --run "$GITHUB_RUN_ID"
+          (cd dist && sha256sum -c DarkWolf_Rend2_LocalVol_Modes_2_3_5_Win64.zip.sha256)
 
       - name: Upload the Win64 package and SHA-256
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DarkWolf_Rend2_Mode5_Test_Win64
+          name: DarkWolf_Rend2_LocalVol_Modes_2_3_5_Win64
           path: dist/*
           if-no-files-found: error
           retention-days: 90
@@ -84,33 +84,41 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DarkWolf_Rend2_Mode5_Win64_Build_Log
+          name: DarkWolf_Rend2_LocalVol_Modes_2_3_5_Build_Log
           path: accepted-kit/evidence/DW_LC12_BUILD.log
           if-no-files-found: ignore
 
   release:
     needs: build
-    if: github.repository == 'jaha2002-stack/iortcw-rend2-build' && github.ref == 'refs/heads/fix/dw-localvol-mode5-run43414829881'
+    if: github.repository == 'jaha2002-stack/iortcw-rend2-build' && github.ref == 'refs/heads/fix/dw-localvol-modes-235'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: dw-localvol-mode5-fix-test-run43414829881
-      RELEASE_ID: '459063246'
-      ZIP: DarkWolf_Rend2_Mode5_Test_Win64.zip
+      TAG: dw-localvol-modes-2-3-5-fix-run43414829881
+      ZIP: DarkWolf_Rend2_LocalVol_Modes_2_3_5_Win64.zip
     steps:
       - name: Publish the verified draft as a separate test release
         run: |
-          api="repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
+          releases="repos/$GITHUB_REPOSITORY/releases"
+          release_id="$(gh api "$releases?per_page=100" --paginate | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id')"
+          if [[ -z "$release_id" ]]; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --prerelease --latest=false \
+              --target "$GITHUB_SHA" --title "DarkWolf Rend2 — Local Volumetric Modes 2, 3 & 5 (Win64)" \
+              --notes "Modes 2 and 3 now use the lamp banding fix verified in mode 5. Mode 2 stays unshadowed, mode 3 retains cubemap shadows. Test package based on Run 43414829881. PK3, PK4 and Main/dw_ai are excluded."
+            release_id="$(gh api "$releases?per_page=100" --paginate | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id')"
+          fi
+          test -n "$release_id"
+          api="$releases/$release_id"
           gh api "$api" --jq .tag_name | grep -Fx "$TAG"
           if [[ "$(gh api "$api" --jq .draft)" != true ]]; then
             echo "The test release is already published."
             exit 0
           fi
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --name DarkWolf_Rend2_Mode5_Test_Win64 --dir dist
+            --name DarkWolf_Rend2_LocalVol_Modes_2_3_5_Win64 --dir dist
           cd dist
           sha256sum -c "$ZIP.sha256"
           sha="$(sha256sum "$ZIP" | cut -d' ' -f1)"

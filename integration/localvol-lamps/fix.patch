@@ -1,47 +1,52 @@
 --- a/SP/code/rend2/tr_backend.c
 +++ b/SP/code/rend2/tr_backend.c
-@@ -5518,6 +5518,9 @@
+@@ -5518,6 +5518,12 @@
      return match;
  }
  
-+// Private dispatch for public LocalVol mode 5; GLSL mode 3 remains the lamp shader.
-+enum { LOCALVOL_MODE5_LAMP = 10 };
++// Mark lamp passes without changing the GLSL mode or the shared fire dispatch.
++enum {
++    LOCALVOL_FILTERED_UNSHADOWED_LAMP = 10,
++    LOCALVOL_FILTERED_SHADOWED_LAMP
++};
 +
  static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
  	const dlight_t *lamp, int shadowSlot, const localVolumetricSpot_t *spot, float sourceWeight, float fireGeometryRadius,
  	const vec3_t fireVolumeOrigin, image_t *shadowCubemapOverride,
-@@ -5532,9 +5535,16 @@
+@@ -5532,9 +5538,16 @@
  	vec4_t alarmWorldCapture = {0, 0, 0, 0};
  	image_t *alarmWorldCube = NULL;
  
 -	if (!srcFbo || !tr.quarterFbo[0] || !tr.renderDepthImage || !tr.volumetricLocalShader.program)
-+	const qboolean mode5Lamp = (mode == LOCALVOL_MODE5_LAMP);
-+	FBO_t *raymarchFbo = (mode5Lamp && tr.volumetricMode5LampHalfFbo)
-+		? tr.volumetricMode5LampHalfFbo : tr.quarterFbo[0];
++	const qboolean filteredLamp = (mode == LOCALVOL_FILTERED_UNSHADOWED_LAMP || mode == LOCALVOL_FILTERED_SHADOWED_LAMP);
++	FBO_t *raymarchFbo = (filteredLamp && tr.volumetricLampHalfFbo)
++		? tr.volumetricLampHalfFbo : tr.quarterFbo[0];
 +
 +	if (!srcFbo || !raymarchFbo || !tr.renderDepthImage || !tr.volumetricLocalShader.program)
  		return;
  
-+	if (mode5Lamp)
-+		mode = 3;
++	if (filteredLamp)
++		mode = (mode == LOCALVOL_FILTERED_UNSHADOWED_LAMP) ? 2 : 3;
 +
  	if ((mode >= 1 && mode <= 3) || (mode >= 5 && mode <= 9))
  	{
  		if (!lamp)
-@@ -5640,7 +5650,7 @@
+@@ -5639,8 +5652,8 @@
+ 	VectorScale(backEnd.refdef.viewaxis[2], ymax, viewVector);
  	GLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_VIEWUP, viewVector);
  	// DARKWOLF_FIRE_VOLUMETRIC_V0_2_CORE_SHAPE: z carries seconds for procedural fire turbulence.
- 	// Existing local/spot shaders only consumed x/y, so modes 1..4 remain behavior-compatible.
+-	// Existing local/spot shaders only consumed x/y, so modes 1..4 remain behavior-compatible.
 -	VectorSet4(viewInfo, zmax / r_znear->value, zmax, (float)backEnd.refdef.time * 0.001f, 0.0f);
-+	VectorSet4(viewInfo, zmax / r_znear->value, zmax, (float)backEnd.refdef.time * 0.001f, mode5Lamp ? 1.0f : 0.0f);
++	// w selects the higher-precision lamp sampling path.
++	VectorSet4(viewInfo, zmax / r_znear->value, zmax, (float)backEnd.refdef.time * 0.001f, filteredLamp ? 1.0f : 0.0f);
  	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_VIEWINFO, viewInfo);
  	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_PRIMARYLIGHTORIGIN, source);
  	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_CUBEMAPINFO, volumeInfo); // DARKWOLF_FIREVOL_OCCLUSION_PRODUCTION_V1
-@@ -5684,6 +5694,12 @@
+@@ -5684,6 +5697,12 @@
  		(float)Com_Clamp(0, 2, r_volumetricLocalShadowPcf->integer),
  		(mode == 4) ? Com_Clamp(0.0f, 0.50f, r_volumetricLocalSpotJitter->value) : Com_Clamp(0.0f, 0.50f, r_volumetricLocalJitter->value),
  		(float)mode);
-+	if (mode5Lamp)
++	if (filteredLamp)
 +	{
 +		// Use complete sample pairs and keep the increase in shadow lookups bounded.
 +		int samples = (int)qualityParams[0];
@@ -50,7 +55,7 @@
  	if (useShadow)
  	{
  		float cubeWidth = (float)MAX(shadowImage ? shadowImage->width : 1, 1);
-@@ -5701,7 +5717,7 @@
+@@ -5701,7 +5720,7 @@
  	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_ENABLETEXTURES, qualityParams);
  	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_BASECOLOR, energyParams);
  
@@ -59,7 +64,7 @@
  	{
  		int reconstructionMode = 0;
  		float reconstructionDepthReject = 10.0f;
-@@ -5730,7 +5746,7 @@
+@@ -5730,7 +5749,7 @@
                  (mode >= 5 && mode <= 8 && reconstructionMode >= 2) ? 2.0f : 4.0f,
                  1.0f, 0.0f);
  			RB_VolumetricUpscaleInputs(srcFbo, srcBox, viewInfo);
@@ -68,7 +73,7 @@
  			FBO_Blit(tr.volumetricFullresFbo, srcBox, NULL, srcFbo, srcBox, NULL, NULL, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
  		}
  		else if (reconstructionMode == 3 && tr.screenScratchFbo && tr.volumetricLocalUpscaleShader.program)
-@@ -5753,7 +5769,7 @@
+@@ -5753,7 +5772,7 @@
  		}
  		else
  		{
@@ -77,31 +82,48 @@
  		}
  	}
  	// PC02 has no temporal accumulation/history; mode 3 changes reconstruction output resolution only.
-@@ -5765,7 +5781,8 @@
+@@ -5765,7 +5784,9 @@
  	// A learned/promoted fire may also have a generic LocalVol companion. Keep
  	// its original tint/energy while changing direct RGB; FireVol's volume gain
  	// belongs only to the separate fire pass. Diagnostic marker colors stay explicit.
 -	const float *volumeColor = (lamp && lamp->iflcActive && lamp->localVolumetricLamp && mode >= 1 && mode <= 3) ?
 +	const float *volumeColor = (lamp && lamp->iflcActive && lamp->localVolumetricLamp &&
-+		((mode >= 1 && mode <= 3) || mode == LOCALVOL_MODE5_LAMP)) ?
++		((mode >= 1 && mode <= 3) ||
++		 mode == LOCALVOL_FILTERED_UNSHADOWED_LAMP || mode == LOCALVOL_FILTERED_SHADOWED_LAMP)) ?
  		lamp->iflcBaseColor : NULL;
  	RB_LocalVolumetricRenderEx(srcFbo, srcBox, mode, lamp, shadowSlot, spot, sourceWeight, fireGeometryRadius,
  		NULL, NULL, volumeColor, 1.0f);
-@@ -5909,7 +5926,7 @@
+@@ -5909,7 +5930,7 @@
              s_uslrdRcVolFadeIn = 1.0f;
              s_uslrdRcVolSourceWeight = bestWeight;
          }
 -        RB_LocalVolumetricRender(srcFbo, srcBox, 3, &groupDl, -1, NULL, bestWeight, 0.0f);
-+        RB_LocalVolumetricRender(srcFbo, srcBox, LOCALVOL_MODE5_LAMP, &groupDl, -1, NULL, bestWeight, 0.0f);
++        RB_LocalVolumetricRender(srcFbo, srcBox, LOCALVOL_FILTERED_SHADOWED_LAMP, &groupDl, -1, NULL, bestWeight, 0.0f);
          ++count;
      }
      if (((r_staticPromoteUnifiedDiag && r_staticPromoteUnifiedDiag->integer) ||
-@@ -9849,7 +9866,7 @@
+@@ -9827,7 +9848,14 @@
+ 	if (mode >= 1 && mode <= 3)
+ 	{
+ 		if (lamp && (mode != 3 || lampShadow))
+-			RB_LocalVolumetricRender(srcFbo, srcBox, mode, lamp, lampSlot, NULL, 1.0f, 0.0f);
++		{
++			int renderMode = mode;
++			if (mode == 2)
++				renderMode = LOCALVOL_FILTERED_UNSHADOWED_LAMP;
++			else if (mode == 3)
++				renderMode = LOCALVOL_FILTERED_SHADOWED_LAMP;
++			RB_LocalVolumetricRender(srcFbo, srcBox, renderMode, lamp, lampSlot, NULL, 1.0f, 0.0f);
++		}
+ 	}
+ 	else if (mode == 4)
+ 	{
+@@ -9849,7 +9877,7 @@
  				{
  					if (RB_USLRDRootCauseEnabled() && backEnd.refdef.dlights[index].staticPromoteFixtureId == r_staticPromoteRootCauseFocus->integer)
  						s_uslrdRcVolRendered = 1;
 -					RB_LocalVolumetricRender(srcFbo, srcBox, 3, &backEnd.refdef.dlights[index],
-+					RB_LocalVolumetricRender(srcFbo, srcBox, LOCALVOL_MODE5_LAMP, &backEnd.refdef.dlights[index],
++					RB_LocalVolumetricRender(srcFbo, srcBox, LOCALVOL_FILTERED_SHADOWED_LAMP, &backEnd.refdef.dlights[index],
  						multiLampShadowSlot[multiLampIt], NULL, multiLampWeight[multiLampIt], 0.0f);
  				}
  			}
@@ -111,7 +133,7 @@
  	image_t					*pshadowMaps[MAX_DRAWN_PSHADOWS];
  	image_t					*screenScratchImage;
  	image_t                 *volumetricFullresImage; // DARKWOLF_VOLUMETRIC_COVERAGE_AA_PRODUCTION_V443
-+	image_t                 *volumetricMode5LampHalfImage;
++	image_t                 *volumetricLampHalfImage;
  	image_t                 *volumetricSunHalfImage; // DARKWOLF_SUN_HDR16F_PRECISION_V1_40878732886
  	image_t					*textureScratchImage[2];
  	image_t                 *quarterImage[2];
@@ -119,7 +141,7 @@
  	FBO_t					*pshadowFbos[MAX_DRAWN_PSHADOWS];
  	FBO_t					*screenScratchFbo;
  	FBO_t                   *volumetricFullresFbo; // DARKWOLF_VOLUMETRIC_COVERAGE_AA_PRODUCTION_V443
-+	FBO_t                   *volumetricMode5LampHalfFbo;
++	FBO_t                   *volumetricLampHalfFbo;
  	FBO_t                   *volumetricSunHalfFbo; // DARKWOLF_SUN_HDR16F_PRECISION_V1_40878732886
  	FBO_t					*textureScratchFbo[2];
  	FBO_t                   *quarterFbo[2];
@@ -139,7 +161,7 @@
  
 +        // Retain dim per-lamp scatter until it is added to the HDR scene.
 +        if (r_hdr->integer && glRefConfig.textureFloat)
-+            tr.volumetricMode5LampHalfImage = R_CreateImage("*volumetricMode5LampHalf", NULL,
++            tr.volumetricLampHalfImage = R_CreateImage("*volumetricLampHalf", NULL,
 +                MAX(1, width / 2), MAX(1, height / 2), IMGTYPE_COLORALPHA,
 +                IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F_ARB);
 +
@@ -152,13 +174,13 @@
  		R_CheckFBO(tr.fireVolumetricSyntheticShadowFbo);
  	}
  
-+    if (tr.volumetricMode5LampHalfImage && tr.numFBOs < MAX_FBOS)
++    if (tr.volumetricLampHalfImage && tr.numFBOs < MAX_FBOS)
 +    {
-+        image_t *image = tr.volumetricMode5LampHalfImage;
-+        FBO_t *lampHalf = FBO_Create("_volumetricMode5LampHalf", image->width, image->height);
++        image_t *image = tr.volumetricLampHalfImage;
++        FBO_t *lampHalf = FBO_Create("_volumetricLampHalf", image->width, image->height);
 +        FBO_AttachImage(lampHalf, image, GL_COLOR_ATTACHMENT0, 0);
 +        if (R_CheckFBO(lampHalf))
-+            tr.volumetricMode5LampHalfFbo = lampHalf;
++            tr.volumetricLampHalfFbo = lampHalf;
 +    }
 +
  	GL_CheckErrors();
@@ -171,7 +193,7 @@
  
  uniform vec3 u_ViewOrigin;
 -uniform vec4 u_ViewInfo;
-+uniform vec4 u_ViewInfo; // w opts lamp GLSL mode 3 into public LocalVol mode 5 sampling
++uniform vec4 u_ViewInfo; // w enables filtered sampling for the selected lamp passes
  uniform vec4 u_PrimaryLightOrigin;
  uniform vec4 u_CubeMapInfo;
  uniform vec3 u_PrimaryLightColor;
@@ -180,7 +202,7 @@
  }
  
 +// A stable pixel hash without the large sine multiplier of the legacy jitter.
-+float mode5LampJitter(vec2 pixel)
++float stableLampJitter(vec2 pixel)
 +{
 +    vec3 p = fract(floor(pixel).xyx * 0.1031);
 +    p += dot(p, p.yzx + 33.33);
@@ -195,10 +217,10 @@
      float segmentLength = segmentEnd - segmentStart;
      float stepLength = segmentLength / float(sampleCount);
 -    float jitter = (stableVolumetricJitter(gl_FragCoord.xy) - 0.5) * jitterAmount;
-+    bool mode5Lamp = mode == 3 && u_ViewInfo.w > 0.5;
++    bool filteredLamp = (mode == 2 || mode == 3) && u_ViewInfo.w > 0.5;
 +    float jitter;
-+    if (mode5Lamp)
-+        jitter = (mode5LampJitter(gl_FragCoord.xy) - 0.5) * min(0.98, 10.0 * jitterAmount);
++    if (filteredLamp)
++        jitter = (stableLampJitter(gl_FragCoord.xy) - 0.5) * min(0.98, 10.0 * jitterAmount);
 +    else
 +        jitter = (stableVolumetricJitter(gl_FragCoord.xy) - 0.5) * jitterAmount;
      vec4 fireSetup = vec4(0.0);
@@ -210,7 +232,7 @@
      float transmittanceDecay = exp(-opticalStep);
 +    // Paired offsets keep adjacent samples centered as a pair. Correct the
 +    // transmission at the mirrored sample without an exponential per step.
-+    float mirroredTransmission = mode5Lamp ? exp(2.0 * opticalStep * jitter) : 1.0;
++    float mirroredTransmission = filteredLamp ? exp(2.0 * opticalStep * jitter) : 1.0;
      float integrated = 0.0;
      vec3 integratedFire = vec3(0.0); // v0.8 production per-sample flame tint
      float debugCoverage = 0.0; // v0.5 direct visibility proof; only consumed by mode 8
@@ -220,7 +242,7 @@
          transmittanceState *= transmittanceDecay;
 -        float t = segmentStart + stepLength * (float(i) + 0.5 + jitter);
 +        float sampleJitter = jitter;
-+        if (mode5Lamp && mod(float(i), 2.0) >= 1.0)
++        if (filteredLamp && mod(float(i), 2.0) >= 1.0)
 +        {
 +            sampleJitter = -jitter;
 +            transmittance *= mirroredTransmission;
