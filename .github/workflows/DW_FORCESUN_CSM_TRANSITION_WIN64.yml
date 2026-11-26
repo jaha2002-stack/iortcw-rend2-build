@@ -3,7 +3,7 @@ name: DarkWolf r_forceSun Transition Win64 Test
 on:
   push:
     branches:
-      - fix/dw-forcesun-csm-transition
+      - fix/dw-forcesun-dlight-cubemap
     paths:
       - '.github/workflows/DW_FORCESUN_CSM_TRANSITION_WIN64.yml'
       - 'integration/forcesun-transition/**'
@@ -18,7 +18,7 @@ defaults:
     shell: bash
 
 concurrency:
-  group: darkwolf-forcesun-csm-transition-${{ github.ref }}
+  group: darkwolf-forcesun-dlight-cubemap-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -49,9 +49,11 @@ jobs:
           tar xzf incoming/source.tar.gz -C source --strip-components=1
           (cd source && sha256sum --quiet -c SOURCE_SHA256SUMS.txt)
           git -C source init -q
-          patch="$PWD/integration/forcesun-transition/fix.patch"
-          git -C source apply --check --whitespace=error-all "$patch"
-          git -C source apply --whitespace=error-all "$patch"
+          for name in fix.patch dlight-cubemap.patch; do
+            patch="$PWD/integration/forcesun-transition/$name"
+            git -C source apply --check --whitespace=error-all "$patch"
+            git -C source apply --whitespace=error-all "$patch"
+          done
 
       - name: Install existing Win64 compiler and GLSL validator
         timeout-minutes: 7
@@ -63,7 +65,7 @@ jobs:
             build-essential git jq unzip zip file glslang-tools \
             gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
 
-      - name: Check source transitions, cascade pairing and auxiliary views
+      - name: Check sun cascades and point-light shader state
         run: python3 -B integration/forcesun-transition/check.py source
 
       - name: Link Sun coverage and accepted LocalVol shader variants
@@ -85,14 +87,14 @@ jobs:
         run: |
           python3 integration/forcesun-transition/package.py incoming/base.zip \
             source/SP/build/release-mingw32-x86_64/renderer_sp_rend2_x64.dll \
-            source dist/DarkWolf_Rend2_ForceSun_Csm_Transition_Test_Win64.zip \
+            source dist/DarkWolf_Rend2_ForceSun_Dlight_Cubemap_Test_Win64.zip \
             --commit "$GITHUB_SHA" --run "$GITHUB_RUN_ID"
           (cd dist && sha256sum -c *.zip.sha256)
 
       - name: Upload verified test ZIP and checksum
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DarkWolf_Rend2_ForceSun_Csm_Transition_Test_Win64
+          name: DarkWolf_Rend2_ForceSun_Dlight_Cubemap_Test_Win64
           path: dist/*
           if-no-files-found: error
           retention-days: 90
@@ -101,13 +103,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DarkWolf_Rend2_ForceSun_Csm_Transition_Build_Log
+          name: DarkWolf_Rend2_ForceSun_Dlight_Cubemap_Build_Log
           path: logs/win64.log
           if-no-files-found: ignore
 
   release:
     needs: build
-    if: github.repository == 'jaha2002-stack/iortcw-rend2-build' && github.ref == 'refs/heads/fix/dw-forcesun-csm-transition'
+    if: github.repository == 'jaha2002-stack/iortcw-rend2-build' && github.ref == 'refs/heads/fix/dw-forcesun-dlight-cubemap'
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     permissions:
@@ -115,12 +117,12 @@ jobs:
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: dw-forcesun-csm-transition-test-20261126
+      TAG: dw-forcesun-dlight-cubemap-test-20261126
     steps:
       - name: Verify assets and publish a separate test release
         run: |
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --name DarkWolf_Rend2_ForceSun_Csm_Transition_Test_Win64 --dir dist
+            --name DarkWolf_Rend2_ForceSun_Dlight_Cubemap_Test_Win64 --dir dist
           cd dist
           sha256sum -c *.zip.sha256
           api="repos/$GITHUB_REPOSITORY/releases"
@@ -128,8 +130,8 @@ jobs:
           if [[ -z "$release_id" ]]; then
             release_id="$(gh api --method POST "$api" \
               -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -F draft=true -F prerelease=true \
-              -f name='DarkWolf Rend2 — r_forceSun Transition Test (Win64)' \
-              -f body='Win64 test candidate based on Production Run 45818977157. Rebuilds sun cascades on source changes and restricts shadow sampling to views with matching cascade data. The Rend2 DLL is the only changed runtime file. See README_RU.md in the ZIP for steps to verify the original scene on Windows.' \
+              -f name='DarkWolf Rend2 — r_forceSun Point-Light Cubemap Test (Win64)' \
+              -f body='Win64 test candidate based on Production Run 45818977157. Retains the sun cascade transition fix from Run 45823631698 and clears inherited environment lighting before the point-light shadow cubemap is read. The Rend2 DLL is the only changed runtime file. See README_RU.md in the ZIP for steps to verify the original scene on Windows.' \
               --jq .id)"
           fi
           release="$api/$release_id"

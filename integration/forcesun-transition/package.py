@@ -20,6 +20,7 @@ SOURCE_CHANGES = {
     'SP/code/rend2/tr_backend.c',
     'SP/code/rend2/tr_local.h',
     'SP/code/rend2/tr_scene.c',
+    'SP/code/rend2/tr_shade.c',
 }
 
 
@@ -69,8 +70,9 @@ def main():
     files['docs/BASE_PRODUCTION_MANIFEST.json'] = files.pop('PRODUCTION_MANIFEST.json')
     files['README_RU.md'] = (DOCS / 'README_RU.md').read_bytes()
     files['CHANGELOG_RU.md'] = (
-        '## Исправление переключения r_forceSun\n\n'
-        '- Актуальность каскадных теней привязана к источнику солнца и команде отрисовки.\n'
+        '## r_forceSun и кубические карты точечных источников\n\n'
+        '- Проход точечного света сбрасывает параметры непрямого света предыдущего материала.\n'
+        '- Сохранена правка актуальности каскадных теней при переключении солнца.\n'
         '- Предыдущие настройки и файлы игры сохранены. Заменена DLL Rend2.\n\n'
     ).encode() + base['CHANGELOG_RU.md']
     files['FORCESUN_TEST_MANIFEST.json'] = (json.dumps({
@@ -81,6 +83,8 @@ def main():
         'base_source_archive_sha256': BASE_SOURCE_SHA,
         'upstream': production['upstream'],
         'patch_sha256': digest((DOCS / 'fix.patch').read_bytes()),
+        'dlight_cubemap_patch_sha256': digest((DOCS / 'dlight-cubemap.patch').read_bytes()),
+        'previous_test_run': 45823631698,
         'source_files_changed': sorted(SOURCE_CHANGES),
         'test_build_commit': args.commit,
         'test_build_run': args.run,
