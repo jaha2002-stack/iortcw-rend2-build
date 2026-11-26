@@ -1,0 +1,127 @@
+name: DarkWolf Local Volumetric Mode 5 Fix Win64
+
+on:
+  push:
+    branches:
+      - fix/dw-localvol-mode5-run43414829881
+    paths:
+      - '.github/workflows/DW_LAMP_CONTROL_V12_MODE5_FIX_WIN64.yml'
+      - 'integration/localvol-mode5/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: darkwolf-localvol-mode5-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Check out the accepted renderer recipe
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 250669a231dc7bd571b4e2b3405c045f90ba64c1
+          path: accepted-kit
+
+      - name: Install Win64 and GLSL tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git gh jq python3-yaml unzip zip file glslang-tools \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+
+      - name: Restore the accepted source and apply the Mode 5 patch
+        run: |
+          /usr/bin/python3 integration/localvol-mode5/replay.py accepted-kit prepare
+          patch="$PWD/integration/localvol-mode5/fix.patch"
+          git -C accepted-kit/source apply --check "$patch"
+          git -C accepted-kit/source apply "$patch"
+          git -C accepted-kit/source diff --check
+
+      - name: Verify fire, lamp control and GLSL
+        working-directory: accepted-kit
+        run: |
+          python3 integration/firevol-clean-production/run_tests.py source/SP/code/rend2
+          python3 integration/lamp-control-v12/run_tests.py source
+          python3 ../integration/localvol-mode5/check-shaders.py source
+
+      - name: Compile Win64 with the accepted MinGW recipe
+        run: /usr/bin/python3 integration/localvol-mode5/replay.py accepted-kit build
+
+      - name: Package the complete Win64 runtime
+        run: |
+          mkdir -p incoming dist
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14030454225/zip" > incoming/donor.zip
+          echo '5352e4a4c6f7c272a3988ac2d351887321e78136e3c4c6b72d52764434e2f901  incoming/donor.zip' | sha256sum --check
+          unzip -q incoming/donor.zip -d incoming
+          python3 integration/localvol-mode5/package.py \
+            incoming/DarkWolf_Rend2_Lamp_Control_V12_EXACT_VISIBLE_CLEAN_PRODUCTION_FROM_43411054498_Win64.zip \
+            accepted-kit/source/SP/build/release-mingw32-x86_64/renderer_sp_rend2_x64.dll \
+            dist/DarkWolf_Rend2_Mode5_Test_Win64.zip --commit "$GITHUB_SHA" --run "$GITHUB_RUN_ID"
+          (cd dist && sha256sum -c DarkWolf_Rend2_Mode5_Test_Win64.zip.sha256)
+
+      - name: Upload the Win64 package and SHA-256
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf_Rend2_Mode5_Test_Win64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf_Rend2_Mode5_Win64_Build_Log
+          path: accepted-kit/evidence/DW_LC12_BUILD.log
+          if-no-files-found: ignore
+
+  release:
+    needs: build
+    if: github.repository == 'jaha2002-stack/iortcw-rend2-build' && github.ref == 'refs/heads/fix/dw-localvol-mode5-run43414829881'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: dw-localvol-mode5-fix-test-run43414829881
+      RELEASE_ID: '459063246'
+      ZIP: DarkWolf_Rend2_Mode5_Test_Win64.zip
+    steps:
+      - name: Publish the verified draft as a separate test release
+        run: |
+          api="repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
+          gh api "$api" --jq .tag_name | grep -Fx "$TAG"
+          if [[ "$(gh api "$api" --jq .draft)" != true ]]; then
+            echo "The test release is already published."
+            exit 0
+          fi
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name DarkWolf_Rend2_Mode5_Test_Win64 --dir dist
+          cd dist
+          sha256sum -c "$ZIP.sha256"
+          sha="$(sha256sum "$ZIP" | cut -d' ' -f1)"
+          size="$(stat -c %s "$ZIP")"
+          for name in "$ZIP" "$ZIP.sha256"; do
+            if ! gh api "$api" --jq '.assets[].name' | grep -Fxq "$name"; then
+              gh release upload "$TAG" "$name" --repo "$GITHUB_REPOSITORY"
+            fi
+          done
+          gh api "$api" | jq -e --arg file "$ZIP" --arg digest "sha256:$sha" --argjson size "$size" \
+            '.draft and any(.assets[]; .name == $file and .state == "uploaded" and .size == $size and .digest == $digest)'
+          gh api --method PATCH "$api" \
+            -f target_commitish="$GITHUB_SHA" -F draft=false -F prerelease=true -f make_latest=false \
+            --jq .html_url
