@@ -1,0 +1,51 @@
+name: Crypt1 Grate Material Alpha and BSP Shader Audit
+on:
+  push:
+    branches: [rend2-crypt1-grate-shadow-ab-20261024]
+    paths:
+      - 'testlab/scripts/crypt1_grate_material_probe.py'
+      - '.github/workflows/CRYPT1_GRATE_MATERIAL_ALPHA_AUDIT.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  crypt1-spawn-grate-geometry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect BSP geometry parser and dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -m py_compile testlab/scripts/crypt1_grate_material_probe.py testlab/scripts/rc4_assault_camera.py
+          mkdir -p evidence/crypt1-grate-geometry
+      - name: Fetch licensed retail RTCW map only on protected runner
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}" || { echo BLOCKED_MISSING_LICENSED_ASSETS > evidence/crypt1-grate-geometry/status.txt; exit 1; }
+          bash testlab/scripts/fetch_private_release_assets.sh \
+            jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets \
+            > evidence/crypt1-grate-geometry/assets.log
+          tail -1 evidence/crypt1-grate-geometry/assets.log > .retail_main
+      - name: Inspect exact Crypt1 grate shader/material alpha stage and BSP surface flags
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 testlab/scripts/crypt1_grate_material_probe.py \
+            "$(cat .retail_main)" evidence/crypt1-grate-geometry/CRYPT1_GRATE_MATERIAL_ALPHA_SHADER_FACTS.json \
+            | tee evidence/crypt1-grate-geometry/geometry-probe.log
+          grep -Fq CRYPT1_GRATE_AUTHORED_SHADER_AND_SURFACE_FLAGS_AUDIT_PASS evidence/crypt1-grate-geometry/geometry-probe.log
+          echo GEOMETRY_AUDIT_COMPLETE
+      - name: Store derived geometry only — do not upload licensed PK3/BSP
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Crypt1-Grate-Material-Alpha-and-BSP-Shader-Audit
+          path: evidence/crypt1-grate-geometry/
+          if-no-files-found: warn
+          retention-days: 90

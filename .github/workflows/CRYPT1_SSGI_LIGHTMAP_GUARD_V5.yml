@@ -1,0 +1,70 @@
+name: Crypt1 SSGI Lightmap Diagnostic Guard V5
+on:
+  push:
+    branches: [rend2-crypt1-shadow-causal-20261024]
+    paths: ['.github/workflows/CRYPT1_SSGI_LIGHTMAP_GUARD_V5.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verify-guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real image-rendering prerequisites
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri libopenal-dev libcurl4-openssl-dev xvfb xauth python3-pil python3-numpy python3-yaml
+      - name: Reconstruct current October renderer from immutable SHA-pinned inputs
+        run: |
+          set -Eeuo pipefail
+          mkdir -p evidence/guard
+          bash integration/lut-v05/ci_lut_v05_candidate.sh > evidence/guard/source-build.log 2>&1 || { tail -100 evidence/guard/source-build.log; exit 1; }
+          grep -Fq LUT_V05_DIAGNOSTIC_COMPILE_PASS evidence/guard/source-build.log
+      - name: Apply one-condition guard and compile Linux game
+        run: |
+          set -Eeuo pipefail
+          python3 integration/crypt1-ssgi-lightmap-isolation/apply.py source | tee evidence/guard/patch-proof.log
+          python3 testlab/scripts/crypt1_ssgi_depth_filter_source_ab.py instrument source
+          make -C source/SP -j2 release VERSION=1.51d-SP-DW-Crypt1SSGILightmapGuard BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 > evidence/guard/native-build.log 2>&1 || { tail -100 evidence/guard/native-build.log; exit 1; }
+      - name: Protected retail Crypt1 BSP
+        env:
+          GH_TOKEN: ${{ secrets.DARKWOLF_RTCW_ASSET_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          bash testlab/scripts/fetch_private_release_assets.sh jaha2002-stack/DarkWolfRTCW-TestAssets rtcw-retail-v1 protected-assets > evidence/guard/assets.log
+          tail -1 evidence/guard/assets.log > .retail_main
+          test -s "$(cat .retail_main)/pak0.pk3"
+      - name: Real Crypt1 frames SSGI on and off normal and diagnostic lightmap
+        run: |
+          set -Eeuo pipefail
+          python3 -u testlab/scripts/crypt1_ssgi_depth_filter_source_ab.py capture source "$(cat .retail_main)" evidence/guard 2>&1 | tee evidence/guard/driver.log
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import numpy as np,json
+          root=Path('evidence/guard')
+          checks=[]
+          for view in ('grate_near48_pitch28','grate_near72_pitch42'):
+              im=lambda mode:np.array(Image.open(root/f'crypt1_{view}_{mode}.png').convert('RGB'),dtype=np.int16)
+              lightmap_difference=np.abs(im('lightmap_only')-im('lightmap_no_ssgi'))
+              normal_difference=np.abs(im('baseline')-im('no_ssgi'))
+              lm_max=int(lightmap_difference.max())
+              normal_pct=round(float(np.mean(np.any(normal_difference>4,axis=2))*100),4)
+              checks.append({'view':view,'lightmap_max_difference':lm_max,'normal_ssgi_changed_pct':normal_pct})
+              assert lm_max == 0, 'lightmap must be pure independent of SSGI toggle'
+              assert normal_pct > 0, 'SSGI must remain enabled for ordinary gameplay'
+          (root/'CRYPT1_GUARD_RESULTS.json').write_text(json.dumps(checks,indent=2))
+          print('CRYPT1_SSGI_LIGHTMAP_GUARD_RUNTIME_PASS',checks)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Crypt1-SSGI-Lightmap-Guard-V5-Actual-Game-Evidence
+          path: evidence/guard/
+          retention-days: 90

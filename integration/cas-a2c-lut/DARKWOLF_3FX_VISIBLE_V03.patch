@@ -1,0 +1,94 @@
+diff --git a/SP/code/rend2/glsl/dwfinal_fp.glsl b/SP/code/rend2/glsl/dwfinal_fp.glsl
+--- a/SP/code/rend2/glsl/dwfinal_fp.glsl
++++ b/SP/code/rend2/glsl/dwfinal_fp.glsl
+@@ -10,19 +10,35 @@
+ vec3 DW_CAS(vec2 uv, vec3 center)
+ {
+     vec2 lo = u_ViewInfo.xy;
+     vec2 hi = u_ViewInfo.zw;
+-    vec3 n = texture2D(u_TextureMap, clamp(uv + vec2(0.0, -u_InvTexRes.y), lo, hi)).rgb;
+-    vec3 s = texture2D(u_TextureMap, clamp(uv + vec2(0.0,  u_InvTexRes.y), lo, hi)).rgb;
+-    vec3 w = texture2D(u_TextureMap, clamp(uv + vec2(-u_InvTexRes.x, 0.0), lo, hi)).rgb;
+-    vec3 e = texture2D(u_TextureMap, clamp(uv + vec2( u_InvTexRes.x, 0.0), lo, hi)).rgb;
+-    vec3 mn = min(center, min(min(n,s), min(w,e)));
+-    vec3 mx = max(center, max(max(n,s), max(w,e)));
+-    vec3 headroom = max(min(mn, 1.0 - mx), vec3(0.0));
+-    vec3 attenuation = sqrt(clamp(headroom / max(mx, vec3(0.0001)), 0.0, 1.0));
+-    vec3 weight = (-0.125 * clamp(u_Color.x, 0.0, 0.75)) * attenuation;
+-    vec3 sharpened = (center + weight * (n + s + w + e)) / (1.0 + 4.0 * weight);
+-    return clamp(sharpened, 0.0, 1.0);
++    // 9-tap neighborhood: distinguish high-frequency texture detail from hard edges.
++    vec3 n  = texture2D(u_TextureMap, clamp(uv + vec2( 0.0, -u_InvTexRes.y), lo, hi)).rgb;
++    vec3 s  = texture2D(u_TextureMap, clamp(uv + vec2( 0.0,  u_InvTexRes.y), lo, hi)).rgb;
++    vec3 w  = texture2D(u_TextureMap, clamp(uv + vec2(-u_InvTexRes.x, 0.0), lo, hi)).rgb;
++    vec3 e  = texture2D(u_TextureMap, clamp(uv + vec2( u_InvTexRes.x, 0.0), lo, hi)).rgb;
++    vec3 nw = texture2D(u_TextureMap, clamp(uv + vec2(-u_InvTexRes.x, -u_InvTexRes.y), lo, hi)).rgb;
++    vec3 ne = texture2D(u_TextureMap, clamp(uv + vec2( u_InvTexRes.x, -u_InvTexRes.y), lo, hi)).rgb;
++    vec3 sw = texture2D(u_TextureMap, clamp(uv + vec2(-u_InvTexRes.x,  u_InvTexRes.y), lo, hi)).rgb;
++    vec3 se = texture2D(u_TextureMap, clamp(uv + vec2( u_InvTexRes.x,  u_InvTexRes.y), lo, hi)).rgb;
++    vec3 mn = min(center, min(min(n, s), min(w, e)));
++    vec3 mx = max(center, max(max(n, s), max(w, e)));
++    mn = min(mn, min(min(nw, ne), min(sw, se)));
++    mx = max(mx, max(max(nw, ne), max(sw, se)));
++    vec3 lum = vec3(0.2126, 0.7152, 0.0722);
++    float range = max(dot(mx - mn, lum), 0.0);
++    // Fade in on texture detail, fade out at high-contrast silhouettes to limit halos.
++    float textureDetail = smoothstep(0.009, 0.074, range);
++    float edgeGuard = 1.0 - smoothstep(0.30, 0.63, range);
++    vec3 crossMean = (n + s + w + e) * 0.25;
++    vec3 cornerMean = (nw + ne + sw + se) * 0.25;
++    vec3 lowPass = mix(crossMean, cornerMean, 0.18);
++    float gain = (0.22 + 1.95 * clamp(u_Color.x, 0.0, 0.75)) * textureDetail * edgeGuard;
++    vec3 candidate = center + gain * (center - lowPass);
++    // Neighborhood-limited correction forbids broad bright/dark sharpening halos.
++    float allowance = 0.011 + 0.020 * range;
++    return clamp(candidate, max(mn - vec3(allowance), vec3(0.0)),
++                             min(mx + vec3(allowance), vec3(1.0)));
+ }
+ 
+ vec3 DW_AtlasSlice(vec3 rgb, float sliceIndex)
+ {
+diff --git a/SP/code/rend2/tr_image.c b/SP/code/rend2/tr_image.c
+--- a/SP/code/rend2/tr_image.c
++++ b/SP/code/rend2/tr_image.c
+@@ -15,19 +15,30 @@
+ 		{
+ 			float c[3] = { r / 15.0f, g / 15.0f, b / 15.0f };
+ 			float l = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
+ 			int index = ((g * 256) + b * 16 + r) * 4;
+-			if (mode == 1) // subtle warm highlights, cool shadows
++			if (mode == 1 || mode == 2) // DARKWOLF_3FX_VISIBLE_V03: intentional filmic look
+ 			{
+-				c[0] *= 1.0f + 0.070f * l;
+-				c[1] *= 1.0f + 0.008f * l;
+-				c[2] = c[2] * (1.0f - 0.046f * l) + 0.012f * (1.0f - l);
+-			}
+-			if (mode == 2) // cool industrial grade; neutral highlights
+-			{
+-				c[0] *= 1.0f - 0.065f * (1.0f - l);
+-				c[1] *= 1.0f + 0.005f * (1.0f - l);
+-				c[2] = c[2] * (1.0f + 0.070f * (1.0f - l));
++				float shadow = Com_Clamp(0.0f, 1.0f, (0.73f - l) * 2.15f);
++				float highlight = 1.0f - shadow;
++				// Controlled contrast/saturation, leaving identity mode 0 untouched.
++				for (int k = 0; k < 3; ++k)
++				{
++					float sat = l + 1.08f * (c[k] - l);
++					c[k] = Com_Clamp(0.0f, 1.0f, (sat - 0.48f) * 1.20f + 0.48f);
++				}
++				if (mode == 1) // cinema amber highlights, restrained cyan shadows
++				{
++					c[0] = c[0] * (1.0f + 0.165f * highlight) - 0.022f * shadow;
++					c[1] = c[1] * (1.0f + 0.037f * shadow);
++					c[2] = c[2] * (1.0f + 0.10f * shadow - 0.19f * highlight) + 0.017f * shadow;
++				}
++				else // mode 2: distinct cold industrial grade with protected whites
++				{
++					c[0] = c[0] * (1.0f - 0.145f * shadow + 0.025f * highlight);
++					c[1] = c[1] * (1.0f + 0.040f * shadow);
++					c[2] = c[2] * (1.0f + 0.18f * shadow - 0.055f * highlight);
++				}
+ 			}
+ 			for (int k = 0; k < 3; ++k)
+ 				rgba[index + k] = (byte)(Com_Clamp(0.0f, 1.0f, c[k]) * 255.0f + 0.5f);
+ 			rgba[index + 3] = 255;

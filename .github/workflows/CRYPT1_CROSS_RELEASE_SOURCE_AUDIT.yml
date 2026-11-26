@@ -1,0 +1,83 @@
+name: Crypt1 September-vs-FourWeek V05 Exact Source Shadow Audit
+on:
+  push:
+    branches: [rend2-crypt1-shadow-causal-20261024]
+    paths:
+      - '.github/workflows/CRYPT1_CROSS_RELEASE_SOURCE_AUDIT.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  source-diff:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct exact October V05 from pinned full approved RC4 chain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p shadow-forensics
+          bash integration/lut-v05/ci_lut_v05_candidate.sh > shadow-forensics/oct-source-chain.log 2>&1 || { tail -100 shadow-forensics/oct-source-chain.log; exit 1; }
+          grep -Fq LUT_V05_DIAGNOSTIC_COMPILE_PASS shadow-forensics/oct-source-chain.log
+          grep -Fq DARKWOLF_RC4_FORCE_SUN_CSM_REPRIME_V1 source/SP/code/rend2/tr_scene.c
+          echo OCTOBER_RECONSTRUCTED_PASS
+      - name: Reconstruct verified September 18 clean production source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p sep-artifact sep-release
+          gh run download 35361762179 --repo "$GITHUB_REPOSITORY" --name iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1 --dir sep-artifact
+          echo '9b24185302c468b47b9c0125a31eb9b1edd9518e7cbd0084a80710c52d395a4b  sep-artifact/iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1.zip' | sha256sum -c -
+          unzip -q sep-artifact/iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1.zip -d sep-release
+          patchfile=sep-release/iortcw-rend2-darkwolf-clean-production-release-v1-full-sp-windows-x64-1/docs/darkwolf-rend2-cumulative-uslrd-clean-production-v1-sp.patch
+          echo '7041376f9dccc1be3a2172ef5834c73bb270cc76d768ad1ad115b0567c1077a0  '"$patchfile" | sha256sum -c -
+          git clone -q https://github.com/iortcw/iortcw.git september
+          git -C september checkout -q --detach 438e7d413b5f7277187c35b032eb0ef9093ae778
+          git -C september apply --check --binary "$GITHUB_WORKSPACE/$patchfile"
+          git -C september apply --binary "$GITHUB_WORKSPACE/$patchfile"
+          echo SEPTEMBER_SOURCE_RECONSTRUCTED_PASS
+      - name: Full renderer SHA inventory and focused real diff
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import pathlib,hashlib,json,difflib,re
+          a,b=pathlib.Path('september/SP/code/rend2'),pathlib.Path('source/SP/code/rend2')
+          files=sorted(set(p.relative_to(a) for p in a.rglob('*') if p.is_file()) | set(p.relative_to(b) for p in b.rglob('*') if p.is_file()))
+          keys=['tr_init.c','tr_scene.c','tr_backend.c','tr_shade.c','tr_fbo.c','tr_glsl.c','tr_image.c','tr_shader.c','tr_bsp.c','tr_local.h',
+            'glsl/shadowmask_fp.glsl','glsl/shadowfill_fp.glsl','glsl/lightall_fp.glsl','glsl/generic_fp.glsl',
+            'glsl/pshadow_fp.glsl','glsl/dwfinal_fp.glsl']
+          inventory=[];diff=[]
+          for f in files:
+              pa,pb=a/f,b/f
+              ba=pa.read_bytes() if pa.exists() else b''
+              bb=pb.read_bytes() if pb.exists() else b''
+              if ba==bb:continue
+              inventory.append({'file':str(f),'sept_sha256':hashlib.sha256(ba).hexdigest() if ba else None,
+                  'oct_sha256':hashlib.sha256(bb).hexdigest() if bb else None,'old_bytes':len(ba),'new_bytes':len(bb)})
+              if str(f) in keys:
+                  al=ba.decode('utf-8','replace').splitlines(True)
+                  bl=bb.decode('utf-8','replace').splitlines(True)
+                  diff.extend(difflib.unified_diff(al,bl,fromfile='Sep18/'+str(f),tofile='Oct24/'+str(f),n=6))
+          out=pathlib.Path('shadow-forensics')
+          (out/'FULL_RENDERER_SOURCE_INVENTORY.json').write_text(json.dumps(inventory,indent=2))
+          (out/'SEPTEMBER_VS_OCTOBER_SHADOW_RENDERER_DIFF.patch').write_text(''.join(diff))
+          print('FILES_CHANGED',len(inventory),'SHADOW_DIFF_LINES',len(diff))
+          for row in inventory:
+              if row['file'] in keys: print('RENDERER_CHANGED',row['file'],row['old_bytes'],row['new_bytes'])
+          for ref,root in [('September',a),('October',b)]:
+              for name in ['tr_init.c','tr_scene.c','tr_image.c']:
+                  text=(root/name).read_text()
+                  important=[line.strip() for line in text.splitlines() if re.search(r'r_shadowFilter = |r_dlightShadowFilter = |r_shadowMapSize = |r_mergeLightmaps = |r_dwTextureFidelity = |r_dwAdaptiveUpsample = |r_dwMaterialFidelity = |r_ext_framebuffer_multisample = ',line)]
+                  print('SOURCE_DEFAULTS',ref,name,'::',' ;; '.join(important)[:1200])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Crypt1-Sep18-vs-Oct24-Exact-Renderer-Diffs
+          path: shadow-forensics/
+          retention-days: 90

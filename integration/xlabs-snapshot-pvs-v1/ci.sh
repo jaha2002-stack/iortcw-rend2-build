@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+name=integration/xlabs-snapshot-pvs-v1
+mkdir -p evidence/xlabs-snapshot-v1-replay/SP/code/server evidence/xlabs-snapshot-v1-qa
+python3 -m py_compile "$name/apply.py" "$name/qa.py" "$name/package.py"
+# Accept the exact RECONSTRUCTED #406839 snapshot source, including
+# any inherited September server edits. Never replace it with upstream.
+# Keep SHA-256 and a small provenance diff for independent review.
+git -C sept-source show 438e7d413b5f7277187c35b032eb0ef9093ae778:SP/code/server/sv_snapshot.c > evidence/XLABS_PVS_UPSTREAM_SNAPSHOT_ORIGINAL.c
+diff -u evidence/XLABS_PVS_UPSTREAM_SNAPSHOT_ORIGINAL.c sept-source/SP/code/server/sv_snapshot.c > evidence/XLABS_PVS_ACCEPTED_UPSTREAM_DELTA.diff || test "$?" -eq 1
+sha256sum sept-source/SP/code/server/sv_snapshot.c | tee evidence/XLABS_PVS_SERVER_BEFORE_SHA256.txt
+printf '%s\n' '64751b3af59b0e5a8274eb44ecc723f65db908153c4e961bdfc454ba8c242a07  sept-source/SP/code/server/sv_snapshot.c' | sha256sum -c -
+test -s sept-source/SP/code/server/sv_snapshot.c
+grep -Fq '#include "server.h"' sept-source/SP/code/server/sv_snapshot.c
+grep -Fq 'SV_AddEntitiesVisibleFromPoint' sept-source/SP/code/server/sv_snapshot.c
+cp sept-source/SP/code/server/sv_snapshot.c evidence/xlabs-snapshot-v1-replay/SP/code/server/sv_snapshot.c
+git -C sept-source diff --name-only > evidence/XLABS_PVS_ALL_CHANGES_BEFORE.txt
+python3 "$name/apply.py" sept-source \
+  --proof evidence/XLABS_SNAPSHOT_V1_SOURCE_PROOF.json \
+  --patch evidence/XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch \
+  | tee evidence/XLABS_SNAPSHOT_V1_APPLY.txt
+grep -Fq DW_XLABS_LINKED_TESLA_NEAR_SNAPSHOT_PVS_TEST_V1_SOURCE_PASS evidence/XLABS_SNAPSHOT_V1_APPLY.txt
+git -C sept-source diff --check
+git -C sept-source apply --reverse --check ../evidence/XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch
+if git -C sept-source apply --check ../evidence/XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch >/dev/null 2>&1; then
+  echo 'DUPLICATE_PVS_PATCH_NOT_REJECTED' >&2
+  exit 1
+fi
+# Independent patch replay in a separate directory, byte-compare result,
+# then undo and verify every byte matches untouched upstream server source.
+(cd evidence/xlabs-snapshot-v1-replay && git apply --check ../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch && git apply ../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch)
+cmp sept-source/SP/code/server/sv_snapshot.c evidence/xlabs-snapshot-v1-replay/SP/code/server/sv_snapshot.c
+(cd evidence/xlabs-snapshot-v1-replay && git apply --reverse --check ../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch && git apply --reverse ../XLABS_SNAPSHOT_V1_EXACT_SOURCE.patch)
+# Replay returns to the exact accepted reconstructed source, not upstream.
+printf '%s\n' "$(cut -d' ' -f1 evidence/XLABS_PVS_SERVER_BEFORE_SHA256.txt)" > evidence/XLABS_PVS_RECONSTRUCTED_SOURCE_HASH.txt
+sha256sum evidence/xlabs-snapshot-v1-replay/SP/code/server/sv_snapshot.c | cut -d' ' -f1 | cmp - evidence/XLABS_PVS_RECONSTRUCTED_SOURCE_HASH.txt
+git -C sept-source diff --name-only > evidence/XLABS_PVS_ALL_CHANGES_AFTER.txt
+python3 - <<'PY'
+from pathlib import Path
+before=set(Path("evidence/XLABS_PVS_ALL_CHANGES_BEFORE.txt").read_text().splitlines())
+after=set(Path("evidence/XLABS_PVS_ALL_CHANGES_AFTER.txt").read_text().splitlines())
+allowed={"SP/code/server/sv_snapshot.c"}
+assert after-before<=allowed,("PVS_SOURCE_SCOPE_DRIFT",after-before)
+assert "SP/code/server/sv_snapshot.c" in before and "SP/code/server/sv_snapshot.c" in after,("EXPECTED_INHERITED_SERVER_MODIFICATIONS",before,after)
+assert not (before-after),("REMOVED_ACCEPTED_FEATURE_FILES",before-after)
+print("DW_XLABS_PVS_SERVER_ONLY_PATCH_SOURCE_ALLOWLIST_PASS")
+PY
+printf '%s\n' '280266b9662268dddd206dd6500af0f84cce4cc5ff41e19964f82549b715d70e  sept-source/SP/code/server/sv_snapshot.c' | sha256sum -c -
+python3 "$name/qa.py" sept-source \
+  --proof evidence/XLABS_SNAPSHOT_V1_SOURCE_PROOF.json \
+  --out evidence/xlabs-snapshot-v1-qa | tee evidence/XLABS_SNAPSHOT_V1_QA.txt
+grep -Fq DW_XLABS_PVS_TEST_V1_SOURCE_AND_SNAPSHOT_ELIGIBILITY_PASS evidence/XLABS_SNAPSHOT_V1_QA.txt
+echo DW_XLABS_ACTIVE_TESLA_LOCAL_PVS_SOURCE_AND_REPLAY_PASS

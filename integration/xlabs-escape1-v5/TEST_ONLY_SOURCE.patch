@@ -1,0 +1,237 @@
+--- a/SP/code/rend2/tr_main.c
++++ b/SP/code/rend2/tr_main.c
+@@ -2870,8 +2870,23 @@
+ 		cache->lastUse = tr.dlightWorldClock;
+ 		tr.refdef.dlightWorldSlot[i] = slot;
+ 		VectorCopy(cache->origin, tr.refdef.dlightWorldOrigin[i]);
+ 		tr.refdef.dlightWorldOrigin[i][3] = 1.0f / cache->radius;
++		// DW_XLABS_TESLA_CUBE_FACE_FILTER_ESCAPE1_NATIVE_MASK_TEST_V5_20261028:
++		// Shadow-mask sampling only, no changes to actual light/shadow capture.
++		// w<0 is a TEST-ONLY packed selector; w>0 remains original Crypt1 PCF2x2.
++		{
++			static cvar_t *testFilter = NULL;
++			int mode;
++			if (!testFilter)
++				testFilter = ri.Cvar_Get("r_dwTeslaWorldFilterTest", "0", 0);
++			mode = testFilter ? testFilter->integer : 0;
++			if (mode >= 1 && mode <= 2 && tr.world && !Q_stricmp(tr.world->baseName, "xlabs") &&
++				fabs(dl->origin[0] + 548.8f) < 1.0f &&
++				fabs(dl->origin[1] - 464.0f) < 1.0f &&
++				fabs(dl->origin[2] - 124.0f) < 1.0f && dl->worldOcclusion)
++				tr.refdef.dlightWorldOrigin[i][3] = -(float)mode - 1.0f / cache->radius;
++		}
+ 	}
+ }
+ 
+ static qboolean R_FireVolProductionCacheMatchesHint(const fireVolumetricSyntheticShadowCache_t *cache, const fireVolumetricSyntheticShadowHint_t *hint)
+--- a/SP/code/rend2/tr_scene.c
++++ b/SP/code/rend2/tr_scene.c
+@@ -468,8 +468,28 @@
+ 	// Fire speaker classification already uses the approved FireVol source matcher.
+ 	// A Tesla marker is passed only by ET_TESLA_EF, and does not change Tesla light energy.
+ 	dl->worldOcclusion = ((r_dlightWorldContainment->integer >= 2) && worldOcclusionMarker)
+ 		|| ((r_dlightWorldContainment->integer >= 1) && fireVolumetricSourceMarker);
++	// DW_XLABS_TESLA_CUBE_FACE_FILTER_ESCAPE1_NATIVE_MASK_TEST_V5_20261028:
++	// Test-only, exact-coordinate control for two known Escape1 native warm lights.
++	// No changes to FireVol classification, source intensity, player, or lighting budget.
++	{
++		static cvar_t *escapeNativeTest = NULL;
++		int mask;
++		if (!escapeNativeTest)
++			escapeNativeTest = ri.Cvar_Get("r_dwEscape1NativeWorldMaskTest", "0", 0);
++		mask = escapeNativeTest ? escapeNativeTest->integer : 0;
++		if (mask && tr.world && !Q_stricmp(tr.world->baseName, "escape1") &&
++			nativeAuthoredDlightMarker && !dl->worldOcclusion)
++		{
++			qboolean sourceA = (fabs(org[0] + 1340.0f) < 2.0f &&
++				fabs(org[1] - 692.0f) < 2.0f && fabs(org[2] + 36.0f) < 2.0f);
++			qboolean sourceB = (fabs(org[0] + 1212.0f) < 2.0f &&
++				fabs(org[1] - 1492.0f) < 2.0f && fabs(org[2] + 140.0f) < 2.0f);
++			if (((mask & 1) && sourceA) || ((mask & 2) && sourceB))
++				dl->worldOcclusion = qtrue;
++		}
++	}
+ 	dl->fireVolumetricSource = fireVolumetricSourceMarker; // DARKWOLF_FIRE_VOLUMETRIC_V0_1
+ 	// DARKWOLF_STAGE11_UNIFIED_ASSET_SHADOW_COVERAGE_V0_1: class priority is explicit source marker > existing authored semantics > other dynamic.
+ 	if (shadowSourceTeslaMuzzleMarker)
+ 		dl->shadowSourceClass = DWSHADOW_SOURCE_TESLA_MUZZLE;
+--- a/SP/code/rend2/glsl/dlight_fp.glsl
++++ b/SP/code/rend2/glsl/dlight_fp.glsl
+@@ -13,10 +13,87 @@
+ // Keep solid-world containment. Compare four nearest 256x256 cubemap texels
+ // independently, and bilinearly interpolate their binary visibility results.
+ // Do NOT interpolate RGB-packed depth values, and do NOT change 2048x2048
+ // primary DLight PCF: this mask only rejects light crossing architecture.
++// DW_XLABS_TESLA_CUBE_FACE_FILTER_ESCAPE1_NATIVE_MASK_TEST_V5_20261028
++// V5 test only. W carries -(mode + inverse_radius) ONLY for the Xlabs
++// stationary Tesla; all other emitters use the byte-for-byte legacy path.
++// Decode no external uniform: sign/mode is from renderer main-scene snapshot.
++float DW_TeslaWorldCubeFacePcfTest(vec3 worldPosition)
++{
++    float encodedMode = -u_DlightWorldOrigin.w;
++    int mode = int(floor(encodedMode));  // 1: signed cubeface 2x2; 2: signed 4x4 tent
++    float invRange = encodedMode - float(mode);
++    if (mode < 1 || mode > 2 || invRange <= 0.0) return 1.0;
++
++    vec3 v = u_DlightWorldOrigin.xyz - worldPosition;
++    vec3 a = abs(v);
++    float major = max(a.x, max(a.y, a.z));
++    if (major < 0.0001) return 1.0;
++    vec3 baseRay = v / major;
++    int axis = (a.x >= a.y && a.x >= a.z) ? 0 : ((a.y >= a.z) ? 1 : 2);
++    float faceSign = (axis == 0) ? ((baseRay.x >= 0.0) ? 1.0 : -1.0) :
++                     ((axis == 1) ? ((baseRay.y >= 0.0) ? 1.0 : -1.0) :
++                                    ((baseRay.z >= 0.0) ? 1.0 : -1.0));
++    // OpenGL cubemap face convention, including signed face orientation:
++    // +/-X: sc=-sign(X)*Z, tc=-Y; +/-Y: sc=X,tc=sign(Y)*Z;
++    // +/-Z: sc=sign(Z)*X, tc=-Y. The old 2x2 used unswizzled world axes.
++    vec2 st = (axis == 0) ? vec2(-faceSign * baseRay.z, -baseRay.y) :
++              ((axis == 1) ? vec2(baseRay.x, faceSign * baseRay.z) :
++                             vec2(faceSign * baseRay.x, -baseRay.y));
++    const float worldSize = 256.0;
++    vec2 samplePos = (st * 0.5 + 0.5) * worldSize - 0.5;
++    vec2 firstTexel = floor(samplePos) - ((mode == 2) ? vec2(1.0) : vec2(0.0));
++    vec2 subpixel = fract(samplePos);
++    vec3 receiverNormal = cross(dFdx(worldPosition), dFdy(worldPosition));
++    float numerator = dot(receiverNormal, v);
++    float originalDepth = length(v);
++    float visibility = 0.0;
++    float totalWeight = 0.0;
++    for (int iy = 0; iy < 4; ++iy)
++    {
++        if (mode == 1 && iy >= 2) break;
++        for (int ix = 0; ix < 4; ++ix)
++        {
++            if (mode == 1 && ix >= 2) break;
++            vec2 unbounded = firstTexel + vec2(float(ix), float(iy));
++            vec2 texel = clamp(unbounded, vec2(0.0), vec2(worldSize - 1.0));
++            vec2 uv = (texel + vec2(0.5)) * (2.0 / worldSize) - vec2(1.0);
++            vec3 ray = (axis == 0) ? vec3(faceSign, -uv.y, -faceSign * uv.x) :
++                       ((axis == 1) ? vec3(uv.x, faceSign, faceSign * uv.y) :
++                                      vec3(faceSign * uv.x, -uv.y, faceSign));
++            ray = normalize(ray);
++            float depth = originalDepth;
++            float denominator = dot(receiverNormal, ray);
++            if (abs(denominator) > 0.000001)
++            {
++                float planeDepth = numerator / denominator;
++                if (planeDepth > 0.0) depth = planeDepth;
++            }
++#if __VERSION__ >= 130
++            vec3 encodedDepth = texture(u_DlightWorldMap, ray).rgb;
++#else
++            vec3 encodedDepth = textureCube(u_DlightWorldMap, ray).rgb;
++#endif
++            float stored = dot(encodedDepth, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
++            float accepted = step((depth - 0.35) * invRange, stored);
++            float wx = (mode == 1) ? ((ix == 0) ? (1.0 - subpixel.x) : subpixel.x) :
++                       max(0.0, 2.0 - abs(unbounded.x - samplePos.x));
++            float wy = (mode == 1) ? ((iy == 0) ? (1.0 - subpixel.y) : subpixel.y) :
++                       max(0.0, 2.0 - abs(unbounded.y - samplePos.y));
++            float weight = wx * wy;
++            visibility += accepted * weight;
++            totalWeight += weight;
++        }
++    }
++    return totalWeight > 0.00001 ? clamp(visibility / totalWeight, 0.0, 1.0) : 1.0;
++}
++
+ float DlightWorldVisibility(vec3 worldPosition)
+ {
++    // Tesla-only test variant. All positive/zero w inputs take original path.
++    if (u_DlightWorldOrigin.w < -0.5)
++        return DW_TeslaWorldCubeFacePcfTest(worldPosition);
+     if (u_DlightWorldOrigin.w <= 0.0) return 1.0;
+ 
+     vec3 v = u_DlightWorldOrigin.xyz - worldPosition;
+     vec3 a = abs(v);
+--- a/SP/code/rend2/glsl/lightall_fp.glsl
++++ b/SP/code/rend2/glsl/lightall_fp.glsl
+@@ -33,10 +33,87 @@
+ // Keep solid-world containment. Compare four nearest 256x256 cubemap texels
+ // independently, and bilinearly interpolate their binary visibility results.
+ // Do NOT interpolate RGB-packed depth values, and do NOT change 2048x2048
+ // primary DLight PCF: this mask only rejects light crossing architecture.
++// DW_XLABS_TESLA_CUBE_FACE_FILTER_ESCAPE1_NATIVE_MASK_TEST_V5_20261028
++// V5 test only. W carries -(mode + inverse_radius) ONLY for the Xlabs
++// stationary Tesla; all other emitters use the byte-for-byte legacy path.
++// Decode no external uniform: sign/mode is from renderer main-scene snapshot.
++float DW_TeslaWorldCubeFacePcfTest(vec3 worldPosition)
++{
++    float encodedMode = -u_DlightWorldOrigin.w;
++    int mode = int(floor(encodedMode));  // 1: signed cubeface 2x2; 2: signed 4x4 tent
++    float invRange = encodedMode - float(mode);
++    if (mode < 1 || mode > 2 || invRange <= 0.0) return 1.0;
++
++    vec3 v = u_DlightWorldOrigin.xyz - worldPosition;
++    vec3 a = abs(v);
++    float major = max(a.x, max(a.y, a.z));
++    if (major < 0.0001) return 1.0;
++    vec3 baseRay = v / major;
++    int axis = (a.x >= a.y && a.x >= a.z) ? 0 : ((a.y >= a.z) ? 1 : 2);
++    float faceSign = (axis == 0) ? ((baseRay.x >= 0.0) ? 1.0 : -1.0) :
++                     ((axis == 1) ? ((baseRay.y >= 0.0) ? 1.0 : -1.0) :
++                                    ((baseRay.z >= 0.0) ? 1.0 : -1.0));
++    // OpenGL cubemap face convention, including signed face orientation:
++    // +/-X: sc=-sign(X)*Z, tc=-Y; +/-Y: sc=X,tc=sign(Y)*Z;
++    // +/-Z: sc=sign(Z)*X, tc=-Y. The old 2x2 used unswizzled world axes.
++    vec2 st = (axis == 0) ? vec2(-faceSign * baseRay.z, -baseRay.y) :
++              ((axis == 1) ? vec2(baseRay.x, faceSign * baseRay.z) :
++                             vec2(faceSign * baseRay.x, -baseRay.y));
++    const float worldSize = 256.0;
++    vec2 samplePos = (st * 0.5 + 0.5) * worldSize - 0.5;
++    vec2 firstTexel = floor(samplePos) - ((mode == 2) ? vec2(1.0) : vec2(0.0));
++    vec2 subpixel = fract(samplePos);
++    vec3 receiverNormal = cross(dFdx(worldPosition), dFdy(worldPosition));
++    float numerator = dot(receiverNormal, v);
++    float originalDepth = length(v);
++    float visibility = 0.0;
++    float totalWeight = 0.0;
++    for (int iy = 0; iy < 4; ++iy)
++    {
++        if (mode == 1 && iy >= 2) break;
++        for (int ix = 0; ix < 4; ++ix)
++        {
++            if (mode == 1 && ix >= 2) break;
++            vec2 unbounded = firstTexel + vec2(float(ix), float(iy));
++            vec2 texel = clamp(unbounded, vec2(0.0), vec2(worldSize - 1.0));
++            vec2 uv = (texel + vec2(0.5)) * (2.0 / worldSize) - vec2(1.0);
++            vec3 ray = (axis == 0) ? vec3(faceSign, -uv.y, -faceSign * uv.x) :
++                       ((axis == 1) ? vec3(uv.x, faceSign, faceSign * uv.y) :
++                                      vec3(faceSign * uv.x, -uv.y, faceSign));
++            ray = normalize(ray);
++            float depth = originalDepth;
++            float denominator = dot(receiverNormal, ray);
++            if (abs(denominator) > 0.000001)
++            {
++                float planeDepth = numerator / denominator;
++                if (planeDepth > 0.0) depth = planeDepth;
++            }
++#if __VERSION__ >= 130
++            vec3 encodedDepth = texture(u_DlightWorldMap, ray).rgb;
++#else
++            vec3 encodedDepth = textureCube(u_DlightWorldMap, ray).rgb;
++#endif
++            float stored = dot(encodedDepth, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
++            float accepted = step((depth - 0.35) * invRange, stored);
++            float wx = (mode == 1) ? ((ix == 0) ? (1.0 - subpixel.x) : subpixel.x) :
++                       max(0.0, 2.0 - abs(unbounded.x - samplePos.x));
++            float wy = (mode == 1) ? ((iy == 0) ? (1.0 - subpixel.y) : subpixel.y) :
++                       max(0.0, 2.0 - abs(unbounded.y - samplePos.y));
++            float weight = wx * wy;
++            visibility += accepted * weight;
++            totalWeight += weight;
++        }
++    }
++    return totalWeight > 0.00001 ? clamp(visibility / totalWeight, 0.0, 1.0) : 1.0;
++}
++
+ float DlightWorldVisibility(vec3 worldPosition)
+ {
++    // Tesla-only test variant. All positive/zero w inputs take original path.
++    if (u_DlightWorldOrigin.w < -0.5)
++        return DW_TeslaWorldCubeFacePcfTest(worldPosition);
+     if (u_DlightWorldOrigin.w <= 0.0) return 1.0;
+ 
+     vec3 v = u_DlightWorldOrigin.xyz - worldPosition;
+     vec3 a = abs(v);
