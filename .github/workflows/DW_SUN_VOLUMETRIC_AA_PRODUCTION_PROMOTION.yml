@@ -1,0 +1,125 @@
+name: Promote validated DarkWolf Sun Volumetric AA Production
+
+on:
+  push:
+    branches:
+      - release/dw-sun-volumetric-aa-production-20261126
+    paths:
+      - '.github/workflows/DW_SUN_VOLUMETRIC_AA_PRODUCTION_PROMOTION.yml'
+      - 'integration/sun-volumetric-production/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: darkwolf-sun-volumetric-aa-production-20261126
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Fetch and verify the user-validated ZIP
+        run: |
+          run_api="repos/$GITHUB_REPOSITORY/actions/runs/45788582832"
+          gh api "$run_api" | jq -e '
+            .conclusion == "success" and
+            .head_sha == "c7e13e20bda4fe6671f4fd16791b03247bb087b2"'
+          mkdir -p incoming
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/15102136592/zip" > incoming/test-outer.zip
+          echo '59514d69c2ff09cafa0ea2bba04b0181024da1dfca6d86378bdad84e9c3fc135  incoming/test-outer.zip' | sha256sum -c
+          unzip -q incoming/test-outer.zip -d incoming
+          file=DarkWolf_Rend2_Sun_Volumetric_Silhouette_AA_Test_Win64.zip
+          curl -fLsS --retry 2 --max-time 45 \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/dw-sun-volumetric-silhouette-aa-test-20261126/$file" \
+            -o incoming/test-release.zip
+          cmp "incoming/$file" incoming/test-release.zip
+          echo 'f8eebd3bc2e6df0efa97132d8ff1bb7149e60c4bea5236660b180bec83760c75  incoming/test-release.zip' | sha256sum -c
+
+      - name: Reconstruct the exact accepted source snapshot
+        run: |
+          tag=darkwolf-localvol-modes-235-clean-production-20261126
+          asset=DarkWolf_Rend2_LocalVol_Modes_2_3_5_Exact_Renderer_Source.tar.gz
+          curl -fLsS --retry 2 --max-time 60 "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/$asset" -o incoming/source.tar.gz
+          echo '72ea6460b216e1f52d8bd755f52bc92be84779a47f60e0bf5e4b32aaa852c8c6  incoming/source.tar.gz' | sha256sum -c
+          mkdir source
+          tar xzf incoming/source.tar.gz -C source --strip-components=1
+          (cd source && sha256sum --quiet -c SOURCE_SHA256SUMS.txt)
+          git -C source init -q
+          patch="$PWD/integration/sun-volumetric-edge/fix.patch"
+          git -C source apply --check --whitespace=error-all "$patch"
+          git -C source apply --whitespace=error-all "$patch"
+
+      - name: Clean package and verify byte-for-byte runtime
+        run: |
+          python3 -B integration/sun-volumetric-production/prepare.py incoming/test-release.zip source dist \
+            --commit "$GITHUB_SHA" --run "$GITHUB_RUN_ID"
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+
+      - name: Upload audited production files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf_Rend2_Sun_Volumetric_AA_Clean_Production
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    needs: package
+    if: github.repository == 'jaha2002-stack/iortcw-rend2-build' && github.ref == 'refs/heads/release/dw-sun-volumetric-aa-production-20261126'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: darkwolf-sun-volumetric-silhouette-aa-clean-production-20261126
+    steps:
+      - name: Verify assets and publish the unique Production release
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name DarkWolf_Rend2_Sun_Volumetric_AA_Clean_Production --dir dist
+          cd dist
+          sha256sum -c SHA256SUMS.txt
+          api="repos/$GITHUB_REPOSITORY/releases"
+          release_id="$(gh api "$api?per_page=100" --paginate | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id')"
+          if [[ -z "$release_id" ]]; then
+            release_id="$(gh api --method POST "$api" \
+              -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -F draft=true -F prerelease=false \
+              -f name='DarkWolf Rend2 — Sun Volumetric AA Clean Production (Win64)' \
+              -f body='CLEAN PRODUCTION — STABLE. The owner verified the Sun Volumetric silhouette AA fix in game. This release preserves the tested binaries and settings from GitHub Actions Run 45788582832. The complete Win64 system ZIP, provenance manifest, SHA-256, audit and exact Rend2 source are provided below.' \
+              --jq .id)"
+          fi
+          release="$api/$release_id"
+          gh api "$release" | jq -e --arg tag "$TAG" --arg commit "$GITHUB_SHA" '
+            .tag_name == $tag and .target_commitish == $commit and .draft'
+          for file in *; do
+            expected="sha256:$(sha256sum "$file" | cut -d' ' -f1)"
+            actual="$(gh api "$release" | jq -r --arg name "$file" '.assets[] | select(.name == $name) | .digest')"
+            if [[ -z "$actual" ]]; then
+              for attempt in 1 2 3; do
+                if gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY"; then
+                  break
+                fi
+                sleep 3
+              done
+            fi
+            gh api "$release" | jq -e --arg name "$file" --arg checksum "$expected" '
+              any(.assets[]; .name == $name and .state == "uploaded" and .digest == $checksum)'
+          done
+          gh api --method PATCH "$release" -F draft=false -F prerelease=false -f make_latest=true \
+            --jq .html_url

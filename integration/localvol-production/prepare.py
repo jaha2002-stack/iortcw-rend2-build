@@ -112,7 +112,7 @@ def inspect_configs(runtime):
     assert len(configs) == 19 and executables == 3
 
 
-def collect_source(source, renderer):
+def collect_source(source, renderer, expected_index_sha=SOURCE_INDEX_SHA):
     files = {}
     for path in (source / 'SP').rglob('*'):
         relative = path.relative_to(source)
@@ -122,7 +122,7 @@ def collect_source(source, renderer):
         assert path.suffix.lower() not in {'.pk3', '.pk4', '.bsp', '.log', '.o', '.pdb'}, path
         files[relative.as_posix()] = path.read_bytes()
     index = checksum_index(files)
-    assert len(files) == 1691 and digest(index) == SOURCE_INDEX_SHA, (len(files), digest(index))
+    assert len(files) == 1691 and digest(index) == expected_index_sha, (len(files), digest(index))
     shader_hashes = {}
     for shader in VOLUMETRIC_SHADERS:
         relative = f'SP/code/rend2/glsl/{shader}.glsl'
@@ -133,28 +133,28 @@ def collect_source(source, renderer):
     return files, index, shader_hashes
 
 
-def write_zip(path, files):
+def write_zip(path, files, root=ZIP_NAME):
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, data in sorted(files.items()):
-            entry = zipfile.ZipInfo(f'{ZIP_NAME}/{name}', (2026, 11, 26, 0, 0, 0))
+            entry = zipfile.ZipInfo(f'{root}/{name}', (2026, 11, 26, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_DEFLATED
             entry.external_attr = 0o100644 << 16
             archive.writestr(entry, data)
     assert unpack(path) == files
 
 
-def write_source_archive(path, files):
+def write_source_archive(path, files, root=SOURCE_NAME):
     with path.open('wb') as handle, gzip.GzipFile(filename='', mode='wb', fileobj=handle, mtime=0) as gz:
         with tarfile.open(fileobj=gz, mode='w') as archive:
             for name, data in sorted(files.items()):
-                entry = tarfile.TarInfo(f'{SOURCE_NAME}/{name}')
+                entry = tarfile.TarInfo(f'{root}/{name}')
                 entry.size = len(data)
                 entry.mode = 0o755 if name.endswith('.sh') else 0o644
                 archive.addfile(entry, io.BytesIO(data))
     with tarfile.open(path, 'r:gz') as archive:
         assert len(archive.getmembers()) == len(files)
         for member in archive:
-            assert archive.extractfile(member).read() == files[member.name.removeprefix(f'{SOURCE_NAME}/')]
+            assert archive.extractfile(member).read() == files[member.name.removeprefix(f'{root}/')]
 
 
 def main():
