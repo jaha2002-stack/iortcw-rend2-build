@@ -1,0 +1,362 @@
+diff --git a/SP/Makefile b/SP/Makefile
+index f1550fc..9e9a235 100644
+--- a/SP/Makefile
++++ b/SP/Makefile
+@@ -1898,6 +1898,7 @@ Q3R2STRINGOBJ = \
+   $(B)/rend2/glsl/bloom_fp.o \
+   $(B)/rend2/glsl/bloom_vp.o \
+   $(B)/rend2/glsl/dwfinal_fp.o \
++  $(B)/rend2/glsl/viewmodeledge_fp.o \
+   $(B)/rend2/glsl/dwfinal_vp.o \
+   $(B)/rend2/glsl/calclevels4x_fp.o \
+   $(B)/rend2/glsl/calclevels4x_vp.o \
+diff --git a/SP/code/rend2/glsl/viewmodeledge_fp.glsl b/SP/code/rend2/glsl/viewmodeledge_fp.glsl
+new file mode 100644
+index 0000000..d16dec1
+--- /dev/null
++++ b/SP/code/rend2/glsl/viewmodeledge_fp.glsl
+@@ -0,0 +1,39 @@
++// Coverage-guided smoothing of first-person geometry after the scene resolve.
++uniform sampler2D u_TextureMap;
++uniform sampler2D u_ScreenDepthMap; // inverted viewmodel coverage
++uniform vec4 u_ViewInfo;           // inclusive viewport bounds in pixels
++
++float coverage(ivec2 pixel)
++{
++    return 1.0 - texelFetch(u_ScreenDepthMap, pixel, 0).r;
++}
++
++void main()
++{
++    ivec2 p = ivec2(gl_FragCoord.xy);
++    float c = coverage(p);
++    if (c <= 0.001 || c >= 0.999)
++        discard;
++
++    ivec2 lo = ivec2(u_ViewInfo.xy);
++    ivec2 hi = ivec2(u_ViewInfo.zw);
++    ivec2 left  = max(p - ivec2(1, 0), lo);
++    ivec2 right = min(p + ivec2(1, 0), hi);
++    ivec2 down  = max(p - ivec2(0, 1), lo);
++    ivec2 up    = min(p + ivec2(0, 1), hi);
++    vec2 normal = abs(vec2(coverage(right) - coverage(left), coverage(up) - coverage(down)));
++    float slope = normal.x + normal.y;
++
++    // A balanced thin wire or isolated tip has no reliable direction.
++    if (slope < 0.5)
++        discard;
++
++    vec4 center = texelFetch(u_TextureMap, p, 0);
++    vec3 horizontal = 0.5 * (texelFetch(u_TextureMap, left, 0).rgb + texelFetch(u_TextureMap, right, 0).rgb);
++    vec3 vertical = 0.5 * (texelFetch(u_TextureMap, down, 0).rgb + texelFetch(u_TextureMap, up, 0).rgb);
++    vec3 alongEdge = (horizontal * normal.y + vertical * normal.x) / slope;
++
++    // Smooth across one adjacent pixel only, with maximum weight on half-covered pixels.
++    float amount = 0.32 * (4.0 * c * (1.0 - c));
++    gl_FragColor = vec4(mix(center.rgb, alongEdge, amount), center.a);
++}
+diff --git a/SP/code/rend2/tr_backend.c b/SP/code/rend2/tr_backend.c
+index 9b8066d..c80641e 100644
+--- a/SP/code/rend2/tr_backend.c
++++ b/SP/code/rend2/tr_backend.c
+@@ -2155,6 +2155,66 @@ static void RB_FireV07CaptureDrawSurfs(drawSurf_t *drawSurfs, int numDrawSurfs)
+ }
+ 
+ 
++
++static void RB_CaptureViewmodelCoverage(const drawSurfsCommand_t *cmd)
++{
++    drawSurf_t surfaces[256];
++    int count = 0;
++    int i;
++    ivec4_t rect;
++    unsigned long state;
++    int culling;
++
++    backEnd.viewmodelMaskReady = qfalse;
++    if (!r_viewmodelEdgeAA->integer || !r_postProcess->integer || !tr.viewmodelEdgeShader.program ||
++        !tr.viewmodelMaskFbo || glState.currentFBO != tr.renderFbo ||
++        (backEnd.refdef.rdflags & (RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL)) ||
++        (backEnd.viewParms.flags & (VPF_SHADOWMAP | VPF_DEPTHSHADOW | VPF_ORTHOGRAPHIC)) ||
++        backEnd.viewParms.isPortal || backEnd.viewParms.targetFbo ||
++        backEnd.viewParms.stereoFrame != STEREO_CENTER || r_materialDebug->integer || r_showtris->integer || r_shownormals->integer)
++        return;
++
++    for (i = 0; i < cmd->numDrawSurfs; i++)
++    {
++        const drawSurf_t *surface = &cmd->drawSurfs[i];
++        int entityNum = (surface->sort >> QSORT_REFENTITYNUM_SHIFT) & REFENTITYNUM_MASK;
++        const refEntity_t *entity;
++        if (entityNum == REFENTITYNUM_WORLD)
++            continue;
++        entity = &backEnd.refdef.entities[entityNum].e;
++        if (entity->reType != RT_MODEL || entity->fadeStartTime ||
++            (entity->renderfx & (RF_FIRST_PERSON | RF_DEPTHHACK | RF_CROSSHAIR)) != (RF_FIRST_PERSON | RF_DEPTHHACK))
++            continue;
++        if (count == ARRAY_LEN(surfaces))
++            return;
++        surfaces[count++] = *surface;
++    }
++    if (!count)
++        return;
++
++    VectorSet4(rect, backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
++        backEnd.viewParms.viewportWidth, backEnd.viewParms.viewportHeight);
++    state = glState.glStateBits;
++    culling = glState.faceCulling;
++    FBO_Bind(tr.viewmodelMaskFbo);
++    SetViewportAndScissor();
++    tr.viewmodelMaskClear(GL_COLOR, 0, colorWhite);
++
++    backEnd.depthFill = qtrue;
++    backEnd.viewmodelMaskFill = qtrue;
++    RB_RenderDrawSurfList(surfaces, count);
++    backEnd.viewmodelMaskFill = qfalse;
++    backEnd.depthFill = qfalse;
++
++    FBO_FastBlit(tr.viewmodelMaskFbo, rect, tr.viewmodelMaskResolveFbo, rect, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++    FBO_Bind(tr.renderFbo);
++    SetViewportAndScissor();
++    GL_State(state);
++    GL_Cull(culling);
++    Vector4Copy(rect, backEnd.viewmodelMaskRect);
++    backEnd.viewmodelMaskReady = qtrue;
++}
++
+ const void	*RB_DrawSurfs( const void *data ) {
+ 	const drawSurfsCommand_t	*cmd;
+ 	qboolean isShadowView;
+@@ -2518,6 +2578,9 @@ const void	*RB_DrawSurfs( const void *data ) {
+ 	{
+ 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
+ 
++		if (!backEnd.viewParms.targetFbo && !backEnd.viewParms.isPortal)
++			RB_CaptureViewmodelCoverage(cmd);
++
+ 		if (r_drawSun->integer)
+ 		{
+ 			RB_DrawSun(0.2, tr.sunShader);
+@@ -2766,6 +2829,7 @@ const void	*RB_SwapBuffers( const void *data ) {
+ 	}
+ 
+ 	cmd = (const swapBuffersCommand_t *)data;
++	backEnd.viewmodelMaskReady = qfalse;
+ 
+ 	// we measure overdraw by reading back the stencil buffer and
+ 	// counting up the number of increments that have happened
+@@ -10329,6 +10393,29 @@ static void RB_DWFinalPolish(FBO_t *srcFbo, ivec4_t srcBox)
+ 	FBO_FastBlit(tr.screenScratchFbo, srcBox, srcFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+ }
+ 
++
++static void RB_ViewmodelEdgeAA(FBO_t *srcFbo, ivec4_t srcBox)
++{
++    shaderProgram_t *shader = &tr.viewmodelEdgeShader;
++    vec4_t clampRect;
++
++    if (!backEnd.viewmodelMaskReady)
++        return;
++    backEnd.viewmodelMaskReady = qfalse;
++    if (!r_viewmodelEdgeAA->integer || srcFbo != tr.msaaResolveFbo ||
++        memcmp(srcBox, backEnd.viewmodelMaskRect, sizeof(ivec4_t)))
++        return;
++
++    // Composite after lighting and grading. Sample a color-only copy while
++    // preserving the exact scene color and depth outside the weapon edge.
++    FBO_FastBlit(srcFbo, srcBox, tr.volumetricFullresFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++    VectorSet4(clampRect, srcBox[0], srcBox[1], srcBox[0] + srcBox[2] - 1, srcBox[1] + srcBox[3] - 1);
++    GLSL_BindProgram(shader);
++    GLSL_SetUniformVec4(shader, UNIFORM_VIEWINFO, clampRect);
++    GL_BindToTMU(tr.viewmodelMaskResolveFbo->colorImage[0], TB_NORMALMAP);
++    FBO_Blit(tr.volumetricFullresFbo, srcBox, NULL, srcFbo, srcBox, shader, NULL, 0);
++}
++
+ const void *RB_PostProcess(const void *data)
+ {
+ 	const postProcessCommand_t *cmd = data;
+@@ -10591,6 +10678,7 @@ const void *RB_PostProcess(const void *data)
+ 		RB_GaussianBlur(srcFbo, srcFbo, backEnd.refdef.blurFactor);
+ 	RB_USLRDRootCauseSampleStage(srcFbo, srcBox, s_uslrdRcAfterBokeh);
+ 	RB_DWFinalPolish(srcFbo, srcBox); // DARKWOLF_CAS_A2C_LUT_V01
++	RB_ViewmodelEdgeAA(srcFbo, srcBox);
+ 
+ 	RB_USLRDRootCauseEndPixelSample(srcFbo, srcBox, autoExposure);
+ 
+diff --git a/SP/code/rend2/tr_fbo.c b/SP/code/rend2/tr_fbo.c
+index ce25f08..c9e55ce 100644
+--- a/SP/code/rend2/tr_fbo.c
++++ b/SP/code/rend2/tr_fbo.c
+@@ -214,6 +214,7 @@ void FBO_CreateBuffer(FBO_t *fbo, int format, int index, int multisample)
+ 	{
+ 		case GL_RGB:
+ 		case GL_RGBA:
++		case GL_R8:
+ 		case GL_RGB8:
+ 		case GL_RGBA8:
+ 		case GL_RGB16F_ARB:
+@@ -676,6 +677,35 @@ void FBO_Init(void)
+             tr.volumetricLampHalfFbo = lampHalf;
+     }
+ 
++    // The weapon mask shares the scene depth for exact depth-tested coverage.
++    if (multisample && tr.volumetricFullresFbo && QGL_VERSION_ATLEAST(3, 2) &&
++        tr.numFBOs <= MAX_FBOS - 2 &&
++        (tr.viewmodelMaskClear = (PFNGLCLEARBUFFERFVPROC)SDL_GL_GetProcAddress("glClearBufferfv")))
++    {
++        int width = tr.renderFbo->width;
++        int height = tr.renderFbo->height;
++        FBO_t *mask = FBO_Create("_viewmodelMask", width, height);
++        FBO_CreateBuffer(mask, GL_R8, 0, multisample);
++        if (tr.volumetricCoverageDepthTexture)
++            qglNamedFramebufferTexture2DEXT(mask->frameBuffer, GL_DEPTH_ATTACHMENT,
++                GL_TEXTURE_2D_MULTISAMPLE, tr.volumetricCoverageDepthTexture, 0);
++        else
++            qglNamedFramebufferRenderbufferEXT(mask->frameBuffer, GL_DEPTH_ATTACHMENT,
++                GL_RENDERBUFFER, tr.renderFbo->depthBuffer);
++        if (R_CheckFBO(mask))
++        {
++            image_t *coverage = R_CreateImage("*viewmodelCoverage", NULL, width, height,
++                IMGTYPE_COLORALPHA, IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_R8);
++            FBO_t *resolve = FBO_Create("_viewmodelMaskResolve", width, height);
++            FBO_AttachImage(resolve, coverage, GL_COLOR_ATTACHMENT0, 0);
++            if (R_CheckFBO(resolve))
++            {
++                tr.viewmodelMaskFbo = mask;
++                tr.viewmodelMaskResolveFbo = resolve;
++            }
++        }
++    }
++
+ 	GL_CheckErrors();
+ 
+ 	GL_BindFramebuffer(GL_FRAMEBUFFER, 0);
+diff --git a/SP/code/rend2/tr_glsl.c b/SP/code/rend2/tr_glsl.c
+index c4895b6..59d47c3 100644
+--- a/SP/code/rend2/tr_glsl.c
++++ b/SP/code/rend2/tr_glsl.c
+@@ -30,6 +30,7 @@ extern const char *fallbackShader_bloom_vp; // REND2_BLOOM_V1_HDR_EXTRACT_LDR_CO
+ extern const char *fallbackShader_bloom_fp;
+ extern const char *fallbackShader_dwfinal_vp; // DARKWOLF_CAS_A2C_LUT_V01
+ extern const char *fallbackShader_dwfinal_fp;
++extern const char *fallbackShader_viewmodeledge_fp;
+ extern const char *fallbackShader_calclevels4x_vp;
+ extern const char *fallbackShader_calclevels4x_fp;
+ extern const char *fallbackShader_depthblur_vp;
+@@ -1503,6 +1504,18 @@ void GLSL_InitGPUShaders(void)
+ 
+ 	numEtcShaders++;
+ 
++
++    if (tr.viewmodelMaskResolveFbo &&
++        GLSL_InitGPUShaderInternal(&tr.viewmodelEdgeShader, "viewmodeledge", ATTR_POSITION | ATTR_TEXCOORD,
++            qtrue, "", qtrue, fallbackShader_texturecolor_vp, fallbackShader_viewmodeledge_fp, qtrue))
++    {
++        GLSL_InitUniforms(&tr.viewmodelEdgeShader);
++        GLSL_SetUniformInt(&tr.viewmodelEdgeShader, UNIFORM_TEXTUREMAP, TB_COLORMAP);
++        GLSL_SetUniformInt(&tr.viewmodelEdgeShader, UNIFORM_SCREENDEPTHMAP, TB_NORMALMAP);
++        GLSL_FinishGPUShader(&tr.viewmodelEdgeShader);
++        numEtcShaders++;
++    }
++
+ 	// DARKWOLF_CAS_A2C_LUT_V01: do not compile optional shader when both features are OFF.
+ 	// Both enable CVars are latched, so program lifetime cannot race with a live toggle.
+ 	if ((r_dwCas && r_dwCas->integer) || (r_dwLut && r_dwLut->integer))
+@@ -1803,6 +1816,7 @@ void GLSL_ShutdownGPUShaders(void)
+ 	GLSL_DeleteGPUShader(&tr.bokehShader);
+ 	GLSL_DeleteGPUShader(&tr.bloomShader); // REND2_BLOOM_V1_HDR_EXTRACT_LDR_COMPOSITE
+ 	GLSL_DeleteGPUShader(&tr.tonemapShader);
++	GLSL_DeleteGPUShader(&tr.viewmodelEdgeShader);
+ 	GLSL_DeleteGPUShader(&tr.dwFinalPolishShader); // DARKWOLF_CAS_A2C_LUT_V01
+ 
+ 	for ( i = 0; i < 2; i++)
+diff --git a/SP/code/rend2/tr_init.c b/SP/code/rend2/tr_init.c
+index 6b54ad7..9dc1701 100644
+--- a/SP/code/rend2/tr_init.c
++++ b/SP/code/rend2/tr_init.c
+@@ -400,6 +400,7 @@ cvar_t  *r_genNormalMaps;
+ cvar_t *r_dwTextureFidelity;
+ cvar_t *r_dwMaterialFidelity;
+ // DARKWOLF_CAS_A2C_LUT_V01: independent safe-off feature toggles.
++cvar_t *r_viewmodelEdgeAA;
+ cvar_t *r_dwCas;
+ cvar_t *r_dwCasStrength;
+ cvar_t *r_dwA2C;
+@@ -2086,6 +2087,7 @@ void R_Register( void ) {
+ 	ri.Cvar_CheckRange(r_dwTextureFidelity, 0, 1, qtrue);
+ 	ri.Cvar_CheckRange(r_dwMaterialFidelity, 0, 1, qtrue);
+ 	// DARKWOLF_CAS_A2C_LUT_V01: no forced on/reset, no effects changed without opt-in.
++	r_viewmodelEdgeAA = ri.Cvar_Get("r_viewmodelEdgeAA", "1", CVAR_ARCHIVE);
+ 	r_dwCas = ri.Cvar_Get("r_dwCas", "1", CVAR_ARCHIVE | CVAR_LATCH);
+ 	r_dwCasStrength = ri.Cvar_Get("r_dwCasStrength", "0.55", CVAR_ARCHIVE);
+ 	r_dwA2C = ri.Cvar_Get("r_dwA2C", "1", CVAR_ARCHIVE);
+diff --git a/SP/code/rend2/tr_local.h b/SP/code/rend2/tr_local.h
+index 41b485e..6a6c357 100644
+--- a/SP/code/rend2/tr_local.h
++++ b/SP/code/rend2/tr_local.h
+@@ -1812,6 +1812,9 @@ typedef struct {
+ 	FBO_t *last2DFBO;
+ 	qboolean    colorMask[4];
+ 	qboolean    depthFill;
++	qboolean    viewmodelMaskFill;
++	qboolean    viewmodelMaskReady;
++	ivec4_t     viewmodelMaskRect;
+ 	qboolean    ssgiEntityDepthFill; // REND2_GI_2_V1_5_SCENE_ENTITY_WORLD_MASK
+ 	int dlightDiagLightallDraws;
+ 	int dlightDiagShadowLightallDraws;
+@@ -1897,6 +1900,9 @@ typedef struct {
+ 
+ 	FBO_t					*renderFbo;
+ 	FBO_t					*msaaResolveFbo;
++	PFNGLCLEARBUFFERFVPROC   viewmodelMaskClear;
++	FBO_t                   *viewmodelMaskFbo;
++	FBO_t                   *viewmodelMaskResolveFbo;
+ 	FBO_t					*sunRaysFbo;
+ 	FBO_t					*depthFbo;
+ 	FBO_t					*pshadowFbos[MAX_DRAWN_PSHADOWS];
+@@ -1969,6 +1975,7 @@ typedef struct {
+ 	shaderProgram_t bokehShader;
+ 	shaderProgram_t bloomShader; // REND2_BLOOM_V1_HDR_EXTRACT_LDR_COMPOSITE
+ 	shaderProgram_t tonemapShader;
++	shaderProgram_t viewmodelEdgeShader;
+ 	shaderProgram_t dwFinalPolishShader; // DARKWOLF_CAS_A2C_LUT_V01
+ 	shaderProgram_t calclevels4xShader[2];
+ 	shaderProgram_t shadowmaskShader;
+@@ -2201,6 +2208,7 @@ extern cvar_t  *r_picmip2;                      // controls picmip values for de
+ extern cvar_t *r_dwTextureFidelity;
+ extern cvar_t *r_dwMaterialFidelity;
+ // DARKWOLF_CAS_A2C_LUT_V01
++extern cvar_t *r_viewmodelEdgeAA;
+ extern cvar_t *r_dwCas;
+ extern cvar_t *r_dwCasStrength;
+ extern cvar_t *r_dwA2C;
+diff --git a/SP/code/rend2/tr_shade.c b/SP/code/rend2/tr_shade.c
+index 5b6e99d..6c069e3 100644
+--- a/SP/code/rend2/tr_shade.c
++++ b/SP/code/rend2/tr_shade.c
+@@ -1919,6 +1919,13 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
+ 			break;
+ 		}
+ 
++
++        // Opaque, depth-writing stages have the same coverage in the replay.
++        if (backEnd.viewmodelMaskFill &&
++            (!(pStage->stateBits & GLS_DEPTHMASK_TRUE) ||
++            (pStage->stateBits & (GLS_ATEST_BITS | GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS))))
++            break;
++
+ 		// REND2_MAT_0_V2_4_CLASSIFIER_CORRECTION
+ 		// Trace actual runtime stage identity before any diagnostic suppression.
+ 		R_Mat0TraceStage(pStage, renderToCubemap);
+@@ -2511,6 +2518,12 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
+ 		//
+ 		// draw. Restore fixed-function A2C before ANY subsequent stage/draw.
+ 		//
++
++        // Write the foreground marker (zero) only where the scene depth matches.
++        // The scene depth is shared, so the depth-write flag must stay clear.
++        if (backEnd.viewmodelMaskFill)
++            GL_State(GLS_DEPTHFUNC_EQUAL | GLS_SRCBLEND_ZERO | GLS_DSTBLEND_ZERO);
++
+ 		if (dwA2C)
+ 			qglEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+ 		R_DrawElements(input->numIndexes, input->firstIndex);

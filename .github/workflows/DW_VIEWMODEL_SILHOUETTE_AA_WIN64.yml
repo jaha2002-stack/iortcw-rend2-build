@@ -1,0 +1,171 @@
+name: DarkWolf Viewmodel Silhouette AA Win64 Test
+
+on:
+  push:
+    branches:
+      - fix/dw-viewmodel-silhouette-aa
+    paths:
+      - '.github/workflows/DW_VIEWMODEL_SILHOUETTE_AA_WIN64.yml'
+      - 'integration/viewmodel-edge/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: darkwolf-viewmodel-silhouette-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Fetch the accepted LocalVol runtime and reconstruct its source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/45953757143" | jq -e '
+            .status == "completed" and .conclusion == "success" and
+            .head_sha == "f577f184e629426880a374616428848f64e8bb29"'
+          mkdir -p incoming
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/darkwolf-forcesun-dlight-cubemap-clean-production-20261127"
+          approved="https://github.com/$GITHUB_REPOSITORY/releases/download/dw-localvol-lamp-coverage-aa-test-20261127"
+          curl -fLsS --retry 3 --max-time 75 "$approved/DarkWolf_Rend2_LocalVol_Lamp_Coverage_Test_Win64.zip" -o incoming/base.zip
+          curl -fLsS --retry 3 --max-time 75 "$base/DarkWolf_Rend2_ForceSun_Dlight_Cubemap_Exact_Renderer_Source.tar.gz" -o incoming/source.tar.gz
+          cat <<'SUMS' | sha256sum -c
+          3701374b08f7fa9bd6fa7795f3161130b112c85a1417d2ddb56f0f0ffc58aca5  incoming/base.zip
+          c83d0bbcddd66be007dbc8c9392986a3926f13adc4140499bdb027be67fe96c7  incoming/source.tar.gz
+          SUMS
+          mkdir source
+          tar xzf incoming/source.tar.gz -C source --strip-components=1
+          (cd source && sha256sum --quiet -c SOURCE_SHA256SUMS.txt)
+          git -C source init -q
+          mkdir -p baseline/SP/code/rend2/glsl
+          cp source/SP/code/rend2/glsl/volumetriclocal_{fp,vp}.glsl baseline/SP/code/rend2/glsl/
+          patch="$PWD/integration/localvol-edge/fix.patch"
+          git -C source apply --check --whitespace=error-all "$patch"
+          git -C source apply --whitespace=error-all "$patch"
+          (cd source && find SP -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > incoming/accepted-source.txt
+          patch="$PWD/integration/viewmodel-edge/fix.patch"
+          git -C source apply --check --whitespace=error-all "$patch"
+          git -C source apply --whitespace=error-all "$patch"
+
+      - name: Install the Win64 toolchain and Mesa test dependencies
+        timeout-minutes: 7
+        run: |
+          opts=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20
+                -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-)
+          sudo apt-get "${opts[@]}" update
+          sudo apt-get "${opts[@]}" install -y --no-install-recommends \
+            build-essential git jq unzip zip file glslang-tools \
+            python3-numpy libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri libopengl0 \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+          python3 -m pip install --disable-pip-version-check --target "$RUNNER_TEMP/localvol-python" PyOpenGL==3.1.10
+
+      - name: Check sun cascades and point-light shader state
+        run: python3 -B integration/forcesun-transition/check.py source
+
+      - name: Check actual MSAA coverage for LocalVol and the weapon silhouette
+        env:
+          EGL_PLATFORM: surfaceless
+          PYOPENGL_PLATFORM: egl
+          PYTHONPATH: ${{ runner.temp }}/localvol-python
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          /usr/bin/python3 -B integration/localvol-edge/test-coverage.py source baseline
+          /usr/bin/python3 -B integration/viewmodel-edge/test-coverage.py source
+
+      - name: Link Sun coverage and accepted LocalVol shader variants
+        run: |
+          python3 integration/sun-volumetric-edge/check-shaders.py source
+          python3 integration/localvol-lamps/check-shaders.py source
+
+      - name: Compile Win64 with the accepted MinGW release configuration
+        run: |
+          mkdir -p logs
+          make -C source/SP -j4 release VERSION=1.51d-SP_DarkWolf-Lamp-Control-V12-Exact-Visible \
+            PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix \
+            WINDRES=x86_64-w64-mingw32-windres > logs/win64.log 2>&1 \
+            || { tail -150 logs/win64.log; exit 1; }
+
+      - name: Package complete test runtime over the approved Win64 ZIP
+        run: |
+          python3 integration/viewmodel-edge/package.py incoming/base.zip \
+            source/SP/build/release-mingw32-x86_64/renderer_sp_rend2_x64.dll \
+            source incoming/accepted-source.txt dist/DarkWolf_Rend2_Viewmodel_Silhouette_AA_Test_Win64.zip \
+            --commit "$GITHUB_SHA" --run "$GITHUB_RUN_ID"
+          (cd dist && sha256sum -c *.zip.sha256)
+
+      - name: Upload verified test ZIP and checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf_Rend2_Viewmodel_Silhouette_AA_Test_Win64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload compiler log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf_Rend2_Viewmodel_Silhouette_AA_Build_Log
+          path: logs/win64.log
+          if-no-files-found: ignore
+
+  release:
+    needs: build
+    if: github.repository == 'jaha2002-stack/iortcw-rend2-build' && github.ref == 'refs/heads/fix/dw-viewmodel-silhouette-aa'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: dw-viewmodel-silhouette-aa-test-20261127
+    steps:
+      - name: Verify assets and publish a separate test release
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name DarkWolf_Rend2_Viewmodel_Silhouette_AA_Test_Win64 --dir dist
+          cd dist
+          sha256sum -c *.zip.sha256
+          api="repos/$GITHUB_REPOSITORY/releases"
+          release_id="$(gh api "$api?per_page=100" --paginate | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id')"
+          if [[ -z "$release_id" ]]; then
+            release_id="$(gh api --method POST "$api" \
+              -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -F draft=true -F prerelease=true \
+              -f name='DarkWolf Rend2 — Viewmodel Silhouette AA Test (Win64)' \
+              -f body='Win64 test candidate based on the accepted LocalVol Run 45953757143. Smoothing is limited to mixed MSAA pixels along the first-person weapon silhouette. See README_RU.md in the ZIP for the live A/B switch and verification steps.' \
+              --jq .id)"
+          fi
+          release="$api/$release_id"
+          gh api "$release" | jq -e --arg tag "$TAG" --arg commit "$GITHUB_SHA" '
+            .tag_name == $tag and .target_commitish == $commit and .draft'
+          for file in *; do
+            expected="sha256:$(sha256sum "$file" | cut -d' ' -f1)"
+            actual="$(gh api "$release" | jq -r --arg name "$file" '.assets[] | select(.name == $name) | .digest')"
+            if [[ -z "$actual" ]]; then
+              for attempt in 1 2 3; do
+                if gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY"; then
+                  break
+                fi
+                sleep 3
+              done
+            fi
+            gh api "$release" | jq -e --arg name "$file" --arg checksum "$expected" '
+              any(.assets[]; .name == $name and .state == "uploaded" and .digest == $checksum)'
+          done
+          gh api --method PATCH "$release" -F draft=false -F prerelease=true -f make_latest=false --jq .html_url
