@@ -8,8 +8,8 @@ from tempfile import TemporaryDirectory
 
 DOCS = Path(__file__).resolve().parent
 sys.path.insert(0, str(DOCS.parent / 'localvol-production'))
-from prepare import (RUNTIME_SUFFIXES, checksum_index, digest, inspect_binaries, inspect_configs,
-                     unpack, write_zip)
+from prepare import (RUNTIME_SUFFIXES, VOLUMETRIC_SHADERS, checksum_index, digest,
+                     inspect_binaries, inspect_configs, unpack, write_zip)
 
 BASE_RUN = 45948709842
 BASE_COMMIT = '54690cc55adb6798d757cbda2f8606d09c22ea6b'
@@ -54,8 +54,15 @@ def main():
     files = dict(base)
     rebuilt = args.renderer.read_bytes()
     assert rebuilt != base[RENDERER]
-    for resource in ('volumetriclocal_coverage', 'USE_LOCAL_MULTISAMPLE_COVERAGE', 'USE_SUN_MULTISAMPLE_DEPTH', 'tableLampJitter'):
-        assert resource.encode() in rebuilt, resource
+    for define in (b'#define USE_LOCAL_MULTISAMPLE_COVERAGE', b'#define USE_SUN_MULTISAMPLE_DEPTH'):
+        assert define in rebuilt, define
+    embedded_shaders = {}
+    for shader in VOLUMETRIC_SHADERS:
+        path = f'SP/code/rend2/glsl/{shader}.glsl'
+        content = (args.source / path).read_bytes()
+        embedded = b''.join(line.rstrip() + b'\n' for line in content.splitlines())
+        assert embedded in rebuilt, path
+        embedded_shaders[path] = digest(content)
     files[RENDERER] = rebuilt
     runtime = {name: data for name, data in files.items() if Path(name).suffix.lower() in RUNTIME_SUFFIXES}
     assert len(runtime) == 30
@@ -86,6 +93,7 @@ def main():
         'upstream': production['upstream'],
         'patch_sha256': digest((DOCS / 'fix.patch').read_bytes()),
         'source_files_changed': sorted(SOURCE_CHANGES),
+        'embedded_shader_source_sha256': embedded_shaders,
         'test_build_commit': args.commit,
         'test_build_run': args.run,
         'only_runtime_file_replaced': RENDERER,
