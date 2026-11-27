@@ -1,0 +1,530 @@
+diff --git a/SP/code/rend2/glsl/volumetriclocal_fp.glsl b/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+index 7e739a1..d129614 100644
+--- a/SP/code/rend2/glsl/volumetriclocal_fp.glsl
++++ b/SP/code/rend2/glsl/volumetriclocal_fp.glsl
+@@ -20,7 +20,14 @@
+ // u_CubeMapInfo:     xyz rendered fire-volume origin, w fire-volume geometry radius
+ // u_DlightInfo:     xyz spotlight direction, w spot cos(outer)
+ // u_DlightShadowParams: enabled, bias, normalized softness, shadow strength
++#if defined(USE_LOCAL_MULTISAMPLE_COVERAGE)
++uniform sampler2DMS u_ScreenDepthMap;
++uniform sampler2D u_TextureMap;
++uniform vec4 u_LocalViewRect;
++uniform vec3 u_LocalCoverageInfo; // sample count, producer width and height
++#else
+ uniform sampler2D u_ScreenDepthMap;
++#endif
+ uniform vec2 u_InvTexRes; // RC4_QUALITY canonical full-resolution depth sample
+ uniform samplerCube u_DlightShadowMap;
+ // DARKWOLF_ALARM_ARCHITECTURAL_OCCLUSION_CLEAN_V1: only red LocalVol mode 3.
+@@ -44,12 +51,15 @@ varying vec3 var_ViewDir;
+ #define DEPTH_MAX_ERROR 0.000000059604644775390625
+ #define LOCALVOL_MAX_SAMPLES 64 // DARKWOLF_VOLUMETRIC_WAVE_CLEAN_V2_20261027 fire ceiling; spotlight still capped at 48
+ 
++#if !defined(USE_LOCAL_MULTISAMPLE_COVERAGE)
+ float getLinearDepth(sampler2D depthMap, vec2 tex, float zFarDivZNear)
+ {
+     float sampleZDivW = texture2D(depthMap, (floor(tex / u_InvTexRes + vec2(0.001)) + vec2(0.5)) * u_InvTexRes).r - DEPTH_MAX_ERROR;
+     return 1.0 / mix(zFarDivZNear, 1.0, sampleZDivW);
+ }
+ 
++#endif
++
+ // DARKWOLF_VOLUMETRIC_WAVE_CLEAN_V2_20261027: decorrelated, per-pixel, stable jitter for ray steps.
+ float stableVolumetricJitter(vec2 p)
+ {
+@@ -304,23 +314,8 @@ bool raySphereSegment(vec3 rayOrigin, vec3 rayDir, vec3 center, float radius,
+     return segmentEnd > segmentStart;
+ }
+ 
+-void main()
++vec4 localScatter(vec3 rayDir, float maxDistance, int mode, vec2 jitterPixel)
+ {
+-    float zFar = max(u_ViewInfo.y, 1.0);
+-    int mode = int(clamp(u_EnableTextures.w, 1.0, 9.0) + 0.5);
+-    float rayLength = max(length(var_ViewDir), 0.0001);
+-    vec3 rayDir = var_ViewDir / rayLength;
+-    float maxDistance = max(u_Color.w, 1.0);
+-
+-    // v0.7.2 isolation: mode 9 keeps the exact view-ray and sphere intersection
+-    // but removes only scene-depth clipping. All other modes are byte-behavior equivalent.
+-    if (mode != 9)
+-    {
+-        float sceneDepth = getLinearDepth(u_ScreenDepthMap, var_DepthTex, u_ViewInfo.x);
+-        float sceneDistance = rayLength * sceneDepth;
+-        maxDistance = min(sceneDistance, maxDistance);
+-    }
+-
+     vec3 lightOrigin = u_PrimaryLightOrigin.xyz;
+     float lightRadius = max(u_PrimaryLightOrigin.w, 1.0);
+     vec3 volumeOrigin = ((mode >= 5 && mode <= 8) ? u_CubeMapInfo.xyz : lightOrigin);
+@@ -328,10 +323,7 @@ void main()
+     float segmentStart, segmentEnd;
+     if (!raySphereSegment(u_ViewOrigin, rayDir, volumeOrigin, volumeRadius,
+                           maxDistance, segmentStart, segmentEnd))
+-    {
+-        gl_FragColor = vec4(0.0);
+-        return;
+-    }
++        return vec4(0.0);
+ 
+     float strength = max(u_Color.x, 0.0);
+     float density = max(u_Color.y, 0.000001);
+@@ -359,9 +351,9 @@ void main()
+     bool filteredLamp = (mode == 2 || mode == 3) && u_ViewInfo.w > 0.5;
+     float jitter;
+     if (filteredLamp)
+-        jitter = (stableLampJitter(gl_FragCoord.xy) - 0.5) * min(0.98, 10.0 * jitterAmount);
++        jitter = (stableLampJitter(jitterPixel) - 0.5) * min(0.98, 10.0 * jitterAmount);
+     else
+-        jitter = (stableVolumetricJitter(gl_FragCoord.xy) - 0.5) * jitterAmount;
++        jitter = (stableVolumetricJitter(jitterPixel) - 0.5) * jitterAmount;
+     vec4 fireSetup = vec4(0.0);
+     float fireTongueOffset = 0.0;
+     vec3 fireSourceTint = vec3(0.0);
+@@ -474,8 +466,7 @@ void main()
+     {
+         float mask = clamp(1.0 - exp(-debugCoverage * 12.0), 0.0, 1.0);
+         // Electric cyan is deliberately non-physical and highly distinguishable from RTCW fire sprites.
+-        gl_FragColor = vec4(vec3(0.0, 4.0, 7.0) * mask, 0.0);
+-        return;
++        return vec4(vec3(0.0, 4.0, 7.0) * mask, 0.0);
+     }
+ 
+     float lightPeak = max(max(u_PrimaryLightColor.r, u_PrimaryLightColor.g),
+@@ -491,8 +482,7 @@ void main()
+         fireScatter *= energyGain;
+         float firePeak = max(max(fireScatter.r, fireScatter.g), fireScatter.b);
+         fireScatter /= (1.0 + kneeStrength * firePeak);
+-        gl_FragColor = vec4(max(fireScatter, vec3(0.0)), 0.0);
+-        return;
++        return vec4(max(fireScatter, vec3(0.0)), 0.0);
+     }
+ 
+     float scatterAmount = integrated * strength * colorEnergy;
+@@ -501,5 +491,95 @@ void main()
+     scatterAmount *= energyGain;
+     scatterAmount = scatterAmount / (1.0 + kneeStrength * scatterAmount);
+ 
+-    gl_FragColor = vec4(max(lightTint * scatterAmount, vec3(0.0)), 0.0);
++    return vec4(max(lightTint * scatterAmount, vec3(0.0)), 0.0);
++}
++
++#if defined(USE_LOCAL_MULTISAMPLE_COVERAGE)
++#define MAX_LOCAL_COVERAGE_SAMPLES 32
++
++float localSampleDepth(ivec2 pixel, int index, float depthCap)
++{
++    float depth = texelFetch(u_ScreenDepthMap, pixel, index).r - DEPTH_MAX_ERROR;
++    return min(1.0 / mix(u_ViewInfo.x, 1.0, depth), depthCap);
++}
++
++vec4 resolveLocalCoverage(vec3 rayDir, float rayLength, float maxDistance, int mode)
++{
++    vec4 reconstructed = vec4(texture2D(u_TextureMap, var_DepthTex).rgb, 0.0);
++    float segmentStart, segmentEnd;
++    if (!raySphereSegment(u_ViewOrigin, rayDir, u_PrimaryLightOrigin.xyz,
++                         max(u_PrimaryLightOrigin.w, 1.0), maxDistance, segmentStart, segmentEnd))
++        return reconstructed;
++
++    // Coverage beyond the sphere cannot change the integral.
++    float depthCap = segmentEnd / rayLength;
++    ivec2 pixel = ivec2(gl_FragCoord.xy);
++    int sampleCount = int(u_LocalCoverageInfo.x + 0.5);
++    float nearest = depthCap;
++    float farthest = 0.0;
++    for (int index = 0; index < MAX_LOCAL_COVERAGE_SAMPLES; ++index)
++    {
++        if (index >= sampleCount)
++            break;
++        float depth = localSampleDepth(pixel, index, depthCap);
++        nearest = min(nearest, depth);
++        farthest = max(farthest, depth);
++    }
++
++    // Retain the filtered half-resolution result on continuous surfaces.
++    if (farthest - nearest <= 0.06 * max(nearest, 1.0 / u_ViewInfo.y))
++        return reconstructed;
++
++    float splitDepth = 0.5 * (nearest + farthest);
++    float nearSum = 0.0;
++    float farSum = 0.0;
++    float nearCount = 0.0;
++    float farCount = 0.0;
++    for (int index = 0; index < MAX_LOCAL_COVERAGE_SAMPLES; ++index)
++    {
++        if (index >= sampleCount)
++            break;
++        float depth = localSampleDepth(pixel, index, depthCap);
++        if (depth < splitDepth)
++        {
++            nearSum += depth;
++            nearCount += 1.0;
++        }
++        else
++        {
++            farSum += depth;
++            farCount += 1.0;
++        }
++    }
++    if (nearCount < 1.0 || farCount < 1.0)
++        return reconstructed;
++
++    // Use the producer's inverted Y grid for the accepted lamp jitter.
++    vec2 viewUV = (var_DepthTex - u_LocalViewRect.xy) / u_LocalViewRect.zw;
++    vec2 jitterPixel = floor(vec2(viewUV.x, 1.0 - viewUV.y) * u_LocalCoverageInfo.yz);
++    vec4 nearLight = localScatter(rayDir, rayLength * (nearSum / nearCount), mode, jitterPixel);
++    vec4 farLight = localScatter(rayDir, rayLength * (farSum / farCount), mode, jitterPixel);
++    return mix(nearLight, farLight, farCount / float(sampleCount));
++}
++#endif
++
++void main()
++{
++    int mode = int(clamp(u_EnableTextures.w, 1.0, 9.0) + 0.5);
++    float rayLength = max(length(var_ViewDir), 0.0001);
++    vec3 rayDir = var_ViewDir / rayLength;
++    float maxDistance = max(u_Color.w, 1.0);
++#if defined(USE_LOCAL_MULTISAMPLE_COVERAGE)
++    gl_FragColor = resolveLocalCoverage(rayDir, rayLength, maxDistance, mode);
++#else
++    // v0.7.2 isolation: mode 9 keeps the exact view-ray and sphere intersection
++    // but removes only scene-depth clipping. All other modes are byte-behavior equivalent.
++    if (mode != 9)
++    {
++        float sceneDepth = getLinearDepth(u_ScreenDepthMap, var_DepthTex, u_ViewInfo.x);
++        float sceneDistance = rayLength * sceneDepth;
++        maxDistance = min(sceneDistance, maxDistance);
++    }
++    gl_FragColor = localScatter(rayDir, maxDistance, mode, gl_FragCoord.xy);
++#endif
+ }
+diff --git a/SP/code/rend2/glsl/volumetriclocal_vp.glsl b/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+index b258acb..e36e25c 100644
+--- a/SP/code/rend2/glsl/volumetriclocal_vp.glsl
++++ b/SP/code/rend2/glsl/volumetriclocal_vp.glsl
+@@ -14,6 +14,9 @@ uniform vec3 u_ViewForward;
+ uniform vec3 u_ViewLeft;
+ uniform vec3 u_ViewUp;
+ uniform vec4 u_ViewInfo;
++#if defined(USE_LOCAL_MULTISAMPLE_COVERAGE)
++uniform vec4 u_LocalViewRect;
++#endif
+ 
+ varying vec2 var_DepthTex;
+ varying vec3 var_ViewDir;
+@@ -21,7 +24,13 @@ varying vec3 var_ViewDir;
+ void main()
+ {
+     gl_Position = u_ModelViewProjectionMatrix * vec4(attr_Position.xyz, 1.0);
+-    vec2 screenCoords = gl_Position.xy / gl_Position.w;
+     var_DepthTex = attr_TexCoord0.xy;
++#if defined(USE_LOCAL_MULTISAMPLE_COVERAGE)
++    // Full-resolution composite coordinates are upright and may cover a sub-viewport.
++    vec2 ndc = 2.0 * (var_DepthTex - u_LocalViewRect.xy) / u_LocalViewRect.zw - 1.0;
++    var_ViewDir = u_ViewForward - u_ViewLeft * ndc.x + u_ViewUp * ndc.y;
++#else
++    vec2 screenCoords = gl_Position.xy / gl_Position.w;
+     var_ViewDir = u_ViewForward + u_ViewLeft * -screenCoords.x + u_ViewUp * -screenCoords.y;
++#endif
+ }
+diff --git a/SP/code/rend2/tr_backend.c b/SP/code/rend2/tr_backend.c
+index a7f11b7..9b8066d 100644
+--- a/SP/code/rend2/tr_backend.c
++++ b/SP/code/rend2/tr_backend.c
+@@ -4292,11 +4292,11 @@ static void RB_VolumetricSun(FBO_t *srcFbo, ivec4_t srcBox)
+ 			vec4_t rect;
+ 			VectorSet4(rect, srcBox[0] / (float)srcFbo->width, srcBox[1] / (float)srcFbo->height,
+ 				srcBox[2] / (float)srcFbo->width, srcBox[3] / (float)srcFbo->height);
+-			viewInfo[2] = (float)tr.sunCoverageSamples;
++			viewInfo[2] = (float)tr.volumetricCoverageSamples;
+ 			RB_VolumetricSunInputs(coverage, viewInfo, sunDir, volumetricSunColor, qualityParams, energyParams, xmax, ymax);
+ 			GLSL_SetUniformVec4(coverage, UNIFORM_SUNVIEWRECT, rect);
+-			if (tr.sunCoverageDepthTexture)
+-				GL_BindMultiTexture(GL_TEXTURE0 + TB_NORMALMAP, GL_TEXTURE_2D_MULTISAMPLE, tr.sunCoverageDepthTexture);
++			if (tr.volumetricCoverageDepthTexture)
++				GL_BindMultiTexture(GL_TEXTURE0 + TB_NORMALMAP, GL_TEXTURE_2D_MULTISAMPLE, tr.volumetricCoverageDepthTexture);
+ 			else
+ 				GL_BindToTMU(tr.renderDepthImage, TB_NORMALMAP);
+ 			FBO_Blit(tr.volumetricFullresFbo, srcBox, NULL, srcFbo, srcBox, coverage, params, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+@@ -5554,7 +5554,9 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ {
+ 	vec4_t viewInfo, source, volumeInfo, params, qualityParams, energyParams, dlightInfo, shadowParams;
+ 	image_t *shadowImage = NULL;
+-	vec3_t viewVector, lightColor;
++	vec3_t viewForward, viewLeft, viewUp, lightColor;
++	shaderProgram_t *coverage = NULL;
++	int pass;
+ 	float zmax, ymax, xmax;
+ 	float radiusOrRange;
+ 	qboolean useShadow = qfalse;
+@@ -5656,10 +5658,14 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+             else VectorSet4(alarmWorldCapture, 0, 0, 0, 0);
+         }
+     }
+-	GLSL_BindProgram(&tr.volumetricLocalShader);
++	// Apply MSAA coverage only to the point-lamp composite, reading depth from
++	// the original multisample FBO while adding light to the resolved scene.
++	if (filteredLamp && srcFbo == tr.msaaResolveFbo &&
++		tr.volumetricCoverageDepthTexture && tr.volumetricLocalCoverageShader.program &&
++		tr.volumetricFullresFbo && tr.volumetricLocalUpscaleShader.program)
++		coverage = &tr.volumetricLocalCoverageShader;
++
+ 	GL_BindToTMU(tr.renderDepthImage, TB_NORMALMAP);
+-	GLSL_SetUniformInt(&tr.volumetricLocalShader, UNIFORM_DLIGHTWORLDMAP, TB_LIGHTMAP);
+-	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_DLIGHTWORLDORIGIN, alarmWorldCapture);
+ 	if (alarmWorldCube) GL_BindToTMU(alarmWorldCube, TB_LIGHTMAP);
+ 	else if (tr.dlightWorldCubemaps[0]) GL_BindToTMU(tr.dlightWorldCubemaps[0], TB_LIGHTMAP);
+ 	if (useShadow)
+@@ -5667,20 +5673,11 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ 
+ 	zmax = backEnd.viewParms.zFar;
+ 	RB_FarPlaneExtents(zmax, backEnd.viewParms.fovX, backEnd.viewParms.fovY, &xmax, &ymax);
+-	GLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_VIEWORIGIN, backEnd.refdef.vieworg);
+-	VectorScale(backEnd.refdef.viewaxis[0], zmax, viewVector);
+-	GLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_VIEWFORWARD, viewVector);
+-	VectorScale(backEnd.refdef.viewaxis[1], xmax, viewVector);
+-	GLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_VIEWLEFT, viewVector);
+-	VectorScale(backEnd.refdef.viewaxis[2], ymax, viewVector);
+-	GLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_VIEWUP, viewVector);
+-	// DARKWOLF_FIRE_VOLUMETRIC_V0_2_CORE_SHAPE: z carries seconds for procedural fire turbulence.
+-	// w selects the higher-precision lamp sampling path.
++	VectorScale(backEnd.refdef.viewaxis[0], zmax, viewForward);
++	VectorScale(backEnd.refdef.viewaxis[1], xmax, viewLeft);
++	VectorScale(backEnd.refdef.viewaxis[2], ymax, viewUp);
++	// z carries the fire turbulence time, w selects filtered lamp sampling.
+ 	VectorSet4(viewInfo, zmax / r_znear->value, zmax, (float)backEnd.refdef.time * 0.001f, filteredLamp ? 1.0f : 0.0f);
+-	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_VIEWINFO, viewInfo);
+-	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_PRIMARYLIGHTORIGIN, source);
+-	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_CUBEMAPINFO, volumeInfo); // DARKWOLF_FIREVOL_OCCLUSION_PRODUCTION_V1
+-	GLSL_SetUniformVec3(&tr.volumetricLocalShader, UNIFORM_PRIMARYLIGHTCOLOR, lightColor);
+ 
+ 	if (mode >= 5 && mode <= 8)
+ 	{
+@@ -5703,7 +5700,6 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ 			Com_Clamp(0.0f, 4.0f, r_volumetricLocalKnee->value),
+ 			0.0f, 0.0f);
+ 	}
+-	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_DLIGHTINFO, dlightInfo);
+ 	VectorSet4(params,
+ 		Com_Clamp(0.0f, 3.0f, (mode >= 5 && mode <= 8) ? s_rVolumetricFireStrength->value : r_volumetricLocalStrength->value) * Com_Clamp(0.0f, 1.0f, sourceWeight),
+ 		Com_Clamp(0.000001f, 0.05f, (mode >= 5 && mode <= 8) ? s_rVolumetricFireDensity->value : r_volumetricLocalDensity->value),
+@@ -5739,9 +5735,24 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ 	{
+ 		VectorSet4(shadowParams, 0.0f, 0.0f, 0.0f, 0.0f);
+ 	}
+-	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_DLIGHTSHADOWPARAMS, shadowParams);
+-	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_ENABLETEXTURES, qualityParams);
+-	GLSL_SetUniformVec4(&tr.volumetricLocalShader, UNIFORM_BASECOLOR, energyParams);
++	for (pass = 0; pass < (coverage ? 2 : 1); ++pass)
++	{
++		shaderProgram_t *shader = pass ? coverage : &tr.volumetricLocalShader;
++		GLSL_BindProgram(shader);
++		GLSL_SetUniformVec4(shader, UNIFORM_DLIGHTWORLDORIGIN, alarmWorldCapture);
++		GLSL_SetUniformVec3(shader, UNIFORM_VIEWORIGIN, backEnd.refdef.vieworg);
++		GLSL_SetUniformVec3(shader, UNIFORM_VIEWFORWARD, viewForward);
++		GLSL_SetUniformVec3(shader, UNIFORM_VIEWLEFT, viewLeft);
++		GLSL_SetUniformVec3(shader, UNIFORM_VIEWUP, viewUp);
++		GLSL_SetUniformVec4(shader, UNIFORM_VIEWINFO, viewInfo);
++		GLSL_SetUniformVec4(shader, UNIFORM_PRIMARYLIGHTORIGIN, source);
++		GLSL_SetUniformVec4(shader, UNIFORM_CUBEMAPINFO, volumeInfo);
++		GLSL_SetUniformVec3(shader, UNIFORM_PRIMARYLIGHTCOLOR, lightColor);
++		GLSL_SetUniformVec4(shader, UNIFORM_DLIGHTINFO, dlightInfo);
++		GLSL_SetUniformVec4(shader, UNIFORM_DLIGHTSHADOWPARAMS, shadowParams);
++		GLSL_SetUniformVec4(shader, UNIFORM_ENABLETEXTURES, qualityParams);
++		GLSL_SetUniformVec4(shader, UNIFORM_BASECOLOR, energyParams);
++	}
+ 
+ 	FBO_Blit(srcFbo, srcBox, NULL, raymarchFbo, NULL, &tr.volumetricLocalShader, params, 0);
+ 	{
+@@ -5773,7 +5784,20 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+                 1.0f, 0.0f);
+ 			RB_VolumetricUpscaleInputs(srcFbo, srcBox, viewInfo);
+ 			FBO_Blit(raymarchFbo, NULL, NULL, tr.volumetricFullresFbo, srcBox, &tr.volumetricLocalUpscaleShader, upscaleParams, 0);
+-			FBO_Blit(tr.volumetricFullresFbo, srcBox, NULL, srcFbo, srcBox, NULL, NULL, GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
++			if (coverage)
++			{
++				vec4_t rect;
++				vec3_t coverageInfo;
++				VectorSet4(rect, srcBox[0] / (float)srcFbo->width, srcBox[1] / (float)srcFbo->height,
++					srcBox[2] / (float)srcFbo->width, srcBox[3] / (float)srcFbo->height);
++				VectorSet(coverageInfo, tr.volumetricCoverageSamples, raymarchFbo->width, raymarchFbo->height);
++				GLSL_BindProgram(coverage);
++				GLSL_SetUniformVec4(coverage, UNIFORM_LOCALVIEWRECT, rect);
++				GLSL_SetUniformVec3(coverage, UNIFORM_LOCALCOVERAGEINFO, coverageInfo);
++				GL_BindMultiTexture(GL_TEXTURE0 + TB_NORMALMAP, GL_TEXTURE_2D_MULTISAMPLE, tr.volumetricCoverageDepthTexture);
++			}
++			FBO_Blit(tr.volumetricFullresFbo, srcBox, NULL, srcFbo, srcBox, coverage, coverage ? params : NULL,
++				GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE);
+ 		}
+ 		else if (reconstructionMode == 3 && tr.screenScratchFbo && tr.volumetricLocalUpscaleShader.program)
+ 		{
+diff --git a/SP/code/rend2/tr_fbo.c b/SP/code/rend2/tr_fbo.c
+index aa0288c..ce25f08 100644
+--- a/SP/code/rend2/tr_fbo.c
++++ b/SP/code/rend2/tr_fbo.c
+@@ -349,23 +349,24 @@ void FBO_Bind(FBO_t * fbo)
+ FBO_Init
+ ============
+ */
+-// Use the scene's original depth coverage when SunVol will need it after the color resolve.
+-#define MAX_SUN_COVERAGE_SAMPLES 32
+-typedef void (APIENTRYP sunGetTexLevelProc_t)(GLenum, GLint, GLenum, GLint *);
+-static qboolean FBO_AttachSunCoverageDepth(FBO_t *fbo, int samples)
++// Use the scene's original depth coverage for volumetrics after the color resolve.
++#define MAX_VOLUMETRIC_COVERAGE_SAMPLES 32
++typedef void (APIENTRYP getTexLevelProc_t)(GLenum, GLint, GLenum, GLint *);
++static qboolean FBO_AttachVolumetricCoverageDepth(FBO_t *fbo, int samples)
+ {
+     PFNGLTEXIMAGE2DMULTISAMPLEPROC storage;
+-    sunGetTexLevelProc_t getLevel;
++    getTexLevelProc_t getLevel;
+     GLint maxSamples, oldBinding, actualSamples = 0;
+     GLuint texture;
+     GLenum error;
+ 
+-    if (!r_hdr->integer || !r_volumetricSun->integer || !QGL_VERSION_ATLEAST(3, 2) ||
++    if (!r_hdr->integer || !(r_volumetricSun->integer || r_volumetricLocal->integer) ||
++        !QGL_VERSION_ATLEAST(3, 2) ||
+         (glRefConfig.glslMajorVersion == 1 && glRefConfig.glslMinorVersion < 50) ||
+-        samples > MAX_SUN_COVERAGE_SAMPLES)
++        samples > MAX_VOLUMETRIC_COVERAGE_SAMPLES)
+         return qfalse;
+     storage = (PFNGLTEXIMAGE2DMULTISAMPLEPROC)SDL_GL_GetProcAddress("glTexImage2DMultisample");
+-    getLevel = (sunGetTexLevelProc_t)SDL_GL_GetProcAddress("glGetTexLevelParameteriv");
++    getLevel = (getTexLevelProc_t)SDL_GL_GetProcAddress("glGetTexLevelParameteriv");
+     if (!storage || !getLevel)
+         return qfalse;
+ 
+@@ -381,14 +382,14 @@ static qboolean FBO_AttachSunCoverageDepth(FBO_t *fbo, int samples)
+     if (error == GL_NO_ERROR)
+         getLevel(GL_TEXTURE_2D_MULTISAMPLE, 0, GL_TEXTURE_SAMPLES, &actualSamples);
+     qglBindTexture(GL_TEXTURE_2D_MULTISAMPLE, oldBinding);
+-    if (actualSamples >= 2 && actualSamples <= MAX_SUN_COVERAGE_SAMPLES)
++    if (actualSamples >= 2 && actualSamples <= MAX_VOLUMETRIC_COVERAGE_SAMPLES)
+     {
+         qglNamedFramebufferTexture2DEXT(fbo->frameBuffer, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D_MULTISAMPLE, texture, 0);
+         if (R_CheckFBO(fbo))
+         {
+             fbo->depthFormat = GL_DEPTH_COMPONENT24;
+-            tr.sunCoverageDepthTexture = texture;
+-            tr.sunCoverageSamples = actualSamples;
++            tr.volumetricCoverageDepthTexture = texture;
++            tr.volumetricCoverageSamples = actualSamples;
+             return qtrue;
+         }
+     }
+@@ -434,7 +435,7 @@ void FBO_Init(void)
+ 	{
+ 		tr.renderFbo = FBO_Create("_render", tr.renderDepthImage->width, tr.renderDepthImage->height);
+ 		FBO_CreateBuffer(tr.renderFbo, hdrFormat, 0, multisample);
+-		if (!FBO_AttachSunCoverageDepth(tr.renderFbo, multisample))
++		if (!FBO_AttachVolumetricCoverageDepth(tr.renderFbo, multisample))
+ 			FBO_CreateBuffer(tr.renderFbo, GL_DEPTH_COMPONENT24, 0, multisample);
+ 		R_CheckFBO(tr.renderFbo);
+ 
+@@ -697,10 +698,10 @@ void FBO_Shutdown(void)
+ 		return;
+ 
+ 	FBO_Bind(NULL);
+-	if (tr.sunCoverageDepthTexture)
+-		qglDeleteTextures(1, &tr.sunCoverageDepthTexture);
+-	tr.sunCoverageDepthTexture = 0;
+-	tr.sunCoverageSamples = 0;
++	if (tr.volumetricCoverageDepthTexture)
++		qglDeleteTextures(1, &tr.volumetricCoverageDepthTexture);
++	tr.volumetricCoverageDepthTexture = 0;
++	tr.volumetricCoverageSamples = 0;
+ 
+ 	for(i = 0; i < tr.numFBOs; i++)
+ 	{
+diff --git a/SP/code/rend2/tr_glsl.c b/SP/code/rend2/tr_glsl.c
+index c384eb9..c4895b6 100644
+--- a/SP/code/rend2/tr_glsl.c
++++ b/SP/code/rend2/tr_glsl.c
+@@ -159,6 +159,8 @@ static uniformInfo_t uniformsInfo[] =
+ 
+ 	{ "u_ViewInfo",        GLSL_VEC4 },
+ 	{ "u_SunViewRect",     GLSL_VEC4 },
++	{ "u_LocalViewRect",   GLSL_VEC4 },
++	{ "u_LocalCoverageInfo", GLSL_VEC3 },
+ 	{ "u_ViewOrigin",      GLSL_VEC3 },
+ 	{ "u_LocalViewOrigin", GLSL_VEC3 },
+ 	{ "u_ViewForward",     GLSL_VEC3 },
+@@ -1599,7 +1601,7 @@ void GLSL_InitGPUShaders(void)
+ 		numEtcShaders++;
+ 
+ 		Q_strcat(extradefines, sizeof(extradefines), "#define USE_SUN_COVERAGE_RESOLVE\n");
+-		if (tr.sunCoverageDepthTexture)
++		if (tr.volumetricCoverageDepthTexture)
+ 			Q_strcat(extradefines, sizeof(extradefines), "#define USE_SUN_MULTISAMPLE_DEPTH\n");
+ 		if (GLSL_InitGPUShaderInternal(&tr.volumetricSunCoverageShader, "volumetricsun_coverage", attribs, qtrue,
+ 				extradefines, qtrue, fallbackShader_volumetricsun_vp, fallbackShader_volumetricsun_fp, qtrue))
+@@ -1634,9 +1636,31 @@ void GLSL_InitGPUShaders(void)
+ 	GLSL_InitUniforms(&tr.volumetricLocalShader);
+ 	GLSL_SetUniformInt(&tr.volumetricLocalShader, UNIFORM_SCREENDEPTHMAP, TB_NORMALMAP);
+ 	GLSL_SetUniformInt(&tr.volumetricLocalShader, UNIFORM_DLIGHTSHADOWMAP, TB_CUBEMAP);
++	GLSL_SetUniformInt(&tr.volumetricLocalShader, UNIFORM_DLIGHTWORLDMAP, TB_LIGHTMAP);
+ 	GLSL_FinishGPUShader(&tr.volumetricLocalShader);
+ 	numEtcShaders++;
+ 
++	if (r_volumetricLocal->integer && tr.volumetricCoverageDepthTexture)
++	{
++		shaderProgram_t *coverage = &tr.volumetricLocalCoverageShader;
++		if (GLSL_InitGPUShaderInternal(coverage, "volumetriclocal_coverage", attribs, qtrue,
++			"#define USE_LOCAL_MULTISAMPLE_COVERAGE\n", qtrue,
++			fallbackShader_volumetriclocal_vp, fallbackShader_volumetriclocal_fp, qtrue))
++		{
++			GLSL_InitUniforms(coverage);
++			GLSL_SetUniformInt(coverage, UNIFORM_TEXTUREMAP, TB_COLORMAP);
++			GLSL_SetUniformInt(coverage, UNIFORM_SCREENDEPTHMAP, TB_NORMALMAP);
++			GLSL_SetUniformInt(coverage, UNIFORM_DLIGHTSHADOWMAP, TB_CUBEMAP);
++			GLSL_SetUniformInt(coverage, UNIFORM_DLIGHTWORLDMAP, TB_LIGHTMAP);
++			GLSL_FinishGPUShader(coverage);
++			numEtcShaders++;
++		}
++		else
++		{
++			ri.Printf(PRINT_WARNING, "Local Volumetric coverage shader unavailable; using the previous composite.\n");
++		}
++	}
++
+ 	// DARKWOLF_FIREVOL_SPATIAL_RECONSTRUCTION_EDGE_QUALITY_PC01
+ 	// Shared depth-aware spatial reconstruction must be available even when r_volumetricLocal=0,
+ 	// because production FireVol is intentionally independent from Local Volumetric.
+@@ -1788,6 +1812,7 @@ void GLSL_ShutdownGPUShaders(void)
+ 	GLSL_DeleteGPUShader(&tr.volumetricSunCoverageShader);
+ 	GLSL_DeleteGPUShader(&tr.volumetricSunShader); // DARKWOLF_SUN_VOLUMETRIC_V0_3
+ 	GLSL_DeleteGPUShader(&tr.volumetricLocalShader); // DARKWOLF_LOCAL_VOLUMETRIC_V0_1
++	GLSL_DeleteGPUShader(&tr.volumetricLocalCoverageShader);
+ 	GLSL_DeleteGPUShader(&tr.volumetricLocalUpscaleShader); // DARKWOLF_LOCAL_VOLUMETRIC_SPOTLIGHT_QUALITY_V0_4
+ 	GLSL_DeleteGPUShader(&tr.ssaoShader);
+ 	GLSL_DeleteGPUShader(&tr.ssgiShader); // REND2_GI_2_V1_SCREEN_SPACE_LOCAL_INDIRECT
+diff --git a/SP/code/rend2/tr_local.h b/SP/code/rend2/tr_local.h
+index 74ff4cb..41b485e 100644
+--- a/SP/code/rend2/tr_local.h
++++ b/SP/code/rend2/tr_local.h
+@@ -921,6 +921,8 @@ typedef enum
+ 
+ 	UNIFORM_VIEWINFO, // znear, zfar, width/2, height/2
+ 	UNIFORM_SUNVIEWRECT,
++	UNIFORM_LOCALVIEWRECT,
++	UNIFORM_LOCALCOVERAGEINFO,
+ 	UNIFORM_VIEWORIGIN,
+ 	UNIFORM_LOCALVIEWORIGIN,
+ 	UNIFORM_VIEWFORWARD,
+@@ -1970,11 +1972,12 @@ typedef struct {
+ 	shaderProgram_t dwFinalPolishShader; // DARKWOLF_CAS_A2C_LUT_V01
+ 	shaderProgram_t calclevels4xShader[2];
+ 	shaderProgram_t shadowmaskShader;
+-	GLuint sunCoverageDepthTexture;
+-	int sunCoverageSamples;
++	GLuint volumetricCoverageDepthTexture;
++	int volumetricCoverageSamples;
+ 	shaderProgram_t volumetricSunCoverageShader;
+ 	shaderProgram_t volumetricSunShader; // DARKWOLF_SUN_VOLUMETRIC_V0_3
+ 	shaderProgram_t volumetricLocalShader; // DARKWOLF_LOCAL_VOLUMETRIC_V0_1
++	shaderProgram_t volumetricLocalCoverageShader;
+ 	shaderProgram_t volumetricLocalUpscaleShader; // DARKWOLF_LOCAL_VOLUMETRIC_SPOTLIGHT_QUALITY_V0_4
+ 	shaderProgram_t ssaoShader;
+ 	// REND2_GI_2_V1_SCREEN_SPACE_LOCAL_INDIRECT
