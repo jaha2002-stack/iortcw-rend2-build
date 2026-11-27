@@ -1,0 +1,144 @@
+name: Promote validated DarkWolf LocalVol Lamp Coverage Production
+
+on:
+  push:
+    branches:
+      - release/dw-localvol-lamp-coverage-production-20261127
+    paths:
+      - '.github/workflows/DW_LOCALVOL_LAMP_COVERAGE_PRODUCTION_PROMOTION.yml'
+      - 'integration/localvol-edge-production/**'
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: darkwolf-localvol-lamp-coverage-production-20261127
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Verify the approved run and fetch its published Win64 ZIP
+        run: |
+          api="repos/$GITHUB_REPOSITORY"
+          commit=f577f184e629426880a374616428848f64e8bb29
+          tag=dw-localvol-lamp-coverage-aa-test-20261127
+          file=DarkWolf_Rend2_LocalVol_Lamp_Coverage_Test_Win64.zip
+          gh api "$api/actions/runs/45953757143" | jq -e --arg commit "$commit" '
+            .status == "completed" and .conclusion == "success" and
+            .head_branch == "fix/dw-localvol-lamp-coverage-aa" and .head_sha == $commit'
+          gh api "$api/actions/runs/45953757143/artifacts" | jq -e '
+            any(.artifacts[];
+              .id == 15177189144 and .name == "DarkWolf_Rend2_LocalVol_Lamp_Coverage_Test_Win64" and
+              .digest == "sha256:18004bf9f55c72e730626eea379de8eab8cd6cb3161b71a56a221b30646ac6d2")'
+          gh api "$api/releases/tags/$tag" | jq -e --arg commit "$commit" --arg file "$file" '
+            .target_commitish == $commit and .prerelease and (.draft | not) and
+            any(.assets[]; .id == 799321892 and .name == $file and .state == "uploaded" and
+              .digest == "sha256:3701374b08f7fa9bd6fa7795f3161130b112c85a1417d2ddb56f0f0ffc58aca5")'
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir incoming \
+            --pattern "$file" --pattern "$file.sha256"
+          (cd incoming && sha256sum -c "$file.sha256")
+          gh run download 45953757143 --repo "$GITHUB_REPOSITORY" \
+            --name "${file%.zip}" --dir tested-artifact
+          cmp "incoming/$file" "tested-artifact/$file"
+          cmp "incoming/$file.sha256" "tested-artifact/$file.sha256"
+
+      - name: Restore the exact renderer source and verify the previous production inputs
+        run: |
+          tag=darkwolf-forcesun-dlight-cubemap-clean-production-20261127
+          zip=DarkWolf_Rend2_ForceSun_Dlight_Cubemap_Clean_Production_Win64.zip
+          source=DarkWolf_Rend2_ForceSun_Dlight_Cubemap_Exact_Renderer_Source.tar.gz
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir incoming \
+            --pattern "$zip" --pattern "$source"
+          cat <<'SUMS' | sha256sum -c
+          e4eca0d7abb5bc8cdb24e4b3e6d56915ff51f8fd2937d1f1f3dc6e0851614e56  incoming/DarkWolf_Rend2_ForceSun_Dlight_Cubemap_Clean_Production_Win64.zip
+          c83d0bbcddd66be007dbc8c9392986a3926f13adc4140499bdb027be67fe96c7  incoming/DarkWolf_Rend2_ForceSun_Dlight_Cubemap_Exact_Renderer_Source.tar.gz
+          SUMS
+          mkdir source
+          tar -xzf "incoming/$source" -C source --strip-components=1
+          (cd source && sha256sum --quiet -c SOURCE_SHA256SUMS.txt)
+          git -C source init -q
+          patch="$PWD/integration/localvol-edge/fix.patch"
+          git -C source apply --check --whitespace=error-all "$patch"
+          git -C source apply --whitespace=error-all "$patch"
+
+      - name: Clean package and compare all runtime files byte for byte
+        run: |
+          python3 -B integration/localvol-edge-production/prepare.py \
+            incoming/DarkWolf_Rend2_LocalVol_Lamp_Coverage_Test_Win64.zip \
+            incoming/DarkWolf_Rend2_ForceSun_Dlight_Cubemap_Clean_Production_Win64.zip \
+            source dist --commit "$GITHUB_SHA" --run "$GITHUB_RUN_ID"
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+
+      - name: Upload audited production files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf_Rend2_LocalVol_Lamp_Coverage_Clean_Production
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    needs: package
+    if: github.repository == 'jaha2002-stack/iortcw-rend2-build' && github.ref == 'refs/heads/release/dw-localvol-lamp-coverage-production-20261127'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: darkwolf-localvol-lamp-coverage-clean-production-20261127
+    steps:
+      - name: Verify assets and publish the Production release
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name DarkWolf_Rend2_LocalVol_Lamp_Coverage_Clean_Production --dir dist
+          cd dist
+          sha256sum -c SHA256SUMS.txt
+          api="repos/$GITHUB_REPOSITORY/releases"
+          release_id="$(gh api "$api?per_page=100" --paginate | jq -r --arg tag "$TAG" '
+            .[] | select(.tag_name == $tag) | .id')"
+          if [[ -z "$release_id" ]]; then
+            release_id="$(gh api --method POST "$api" \
+              -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -F draft=true -F prerelease=false \
+              -f name='DarkWolf Rend2 — LocalVol Lamp Coverage Clean Production (Win64)' \
+              -f body="CLEAN PRODUCTION — STABLE. The owner confirmed that the stair-step artifacts on the gate bars disappeared in Win64 Actions Run 45953757143. The production ZIP preserves all tested runtime files byte for byte. Includes verified checksums, the audit, and the exact renderer source snapshot. Promotion Run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              --jq .id)"
+          fi
+          release="$api/$release_id"
+          gh api "$release" | jq -e --arg tag "$TAG" --arg commit "$GITHUB_SHA" '
+            .tag_name == $tag and .target_commitish == $commit and (.prerelease | not)'
+          draft="$(gh api "$release" --jq .draft)"
+
+          for file in *; do
+            expected="sha256:$(sha256sum "$file" | cut -d' ' -f1)"
+            actual="$(gh api "$release" | jq -r --arg name "$file" '
+              .assets[] | select(.name == $name) | .digest')"
+            if [[ "$draft" == true && -z "$actual" ]]; then
+              gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY"
+            fi
+            gh api "$release" | jq -e --arg name "$file" --arg checksum "$expected" '
+              any(.assets[]; .name == $name and .state == "uploaded" and .digest == $checksum)'
+          done
+
+          expected_assets="$(printf '%s\n' * | jq -R . | jq -cs sort)"
+          gh api "$release" | jq -e --argjson names "$expected_assets" '
+            ([.assets[].name] | sort) == $names'
+          if [[ "$draft" == true ]]; then
+            gh api --method PATCH "$release" -F draft=false -F prerelease=false -f make_latest=true --jq .html_url
+          fi
+          gh api "$release" | jq -e '(.draft or .prerelease) | not'

@@ -1,11 +1,11 @@
 ## Current Production Baseline
 
-- Status: CLEAN PRODUCTION — STABLE. The owner validated the Sun Volumetric silhouette AA fix in game with `r_volumetricSun 1`.
-- Use production tag `darkwolf-sun-volumetric-silhouette-aa-clean-production-20261126` as the starting point for subsequent fixes unless the owner specifies another baseline.
-- Approved runtime: GitHub Actions Run `45788582832` at `c7e13e20bda4fe6671f4fd16791b03247bb087b2`. The production release preserves those binaries and configuration byte for byte.
-- The preceding Local Volumetric 2, 3 and 5 baseline is Run `45778124832`, tag `darkwolf-localvol-modes-235-clean-production-20261126`.
-- ioRTCW upstream: `438e7d413b5f7277187c35b032eb0ef9093ae778`. Verify the production manifest and checksums before developing or rolling back.
-- Download the Win64 ZIP, production audit and exact Rend2 source snapshot from [the Production Release](https://github.com/jaha2002-stack/iortcw-rend2-build/releases/tag/darkwolf-sun-volumetric-silhouette-aa-clean-production-20261126).
+- Status: CLEAN PRODUCTION — STABLE. The owner verified the LocalVol lamp coverage fix on the gate bars in Escape1.
+- Use production tag `darkwolf-localvol-lamp-coverage-clean-production-20261127` for subsequent fixes unless the owner specifies another baseline.
+- Approved runtime: GitHub Actions Run `45953757143` at `f577f184e629426880a374616428848f64e8bb29`. The production release preserves its binaries and configuration byte for byte.
+- Previous production: Run `45948709842`, tag `darkwolf-forcesun-dlight-cubemap-clean-production-20261127`.
+- ioRTCW upstream: `438e7d413b5f7277187c35b032eb0ef9093ae778`. Verify the manifest and checksums before developing or rolling back.
+- Download the Win64 ZIP, production audit and exact Rend2 source snapshot from [the Production Release](https://github.com/jaha2002-stack/iortcw-rend2-build/releases/tag/darkwolf-localvol-lamp-coverage-clean-production-20261127).
 
 \# DarkWolf RTCW — Engineering Instructions
 
