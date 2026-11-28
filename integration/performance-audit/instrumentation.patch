@@ -85,10 +85,10 @@ index a1e7dc0..77721ee 100644
  	Com_WriteConfiguration();
 diff --git a/SP/code/qcommon/dw_perf_io.inc b/SP/code/qcommon/dw_perf_io.inc
 new file mode 100644
-index 0000000..aaa181f
+index 0000000..eba1a78
 --- /dev/null
 +++ b/SP/code/qcommon/dw_perf_io.inc
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,82 @@
 +/* Shared implementation for the standalone diagnostic EXE and Rend2 DLL. */
 +#ifdef USE_LOCAL_HEADERS
 +#include "SDL.h"
@@ -111,6 +111,11 @@ index 0000000..aaa181f
 +        SDL_RWclose(file->stream);
 +        file->stream = NULL;
 +    }
++#ifdef HAVE_STDIO_H
++    else if (file->stream->type == SDL_RWOPS_STDFILE) {
++        fflush(file->stream->hidden.stdio.fp);
++    }
++#endif
 +    file->used = 0;
 +}
 +
@@ -134,6 +139,8 @@ index 0000000..aaa181f
 +        return;
 +    file->stream = SDL_RWFromFile(path, "ab");
 +}
++
++static void DwPerfWrite(dwPerfFile_t *file, const char *format, ...) __attribute__((format(printf, 2, 3)));
 +
 +static void DwPerfWrite(dwPerfFile_t *file, const char *format, ...)
 +{
@@ -166,10 +173,10 @@ index 0000000..aaa181f
 +}
 diff --git a/SP/code/qcommon/dw_perf_main.inc b/SP/code/qcommon/dw_perf_main.inc
 new file mode 100644
-index 0000000..3c0e572
+index 0000000..440788e
 --- /dev/null
 +++ b/SP/code/qcommon/dw_perf_main.inc
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,161 @@
 +#ifndef DEDICATED
 +#include "dw_perf_io.inc"
 +
@@ -254,10 +261,11 @@ index 0000000..3c0e572
 +    DwPerfWrite(&dwMainLog,
 +        "kind\tframe\tclock_ms\ttotal_ms\tconfig_ms\tlimiter_ms\tinput_commands_ms\tserver_ms\t"
 +        "events_ms\tclient_ms\ttail_ms\trequested_frame_ms\thunk_left_bytes\n");
-+    DwPerfFlush(&dwMainLog);
 +#ifdef _WIN32
++    DwPerfWrite(&dwMainLog, "clock_sync\t%lu\t%d\n", (unsigned long)GetTickCount(), Sys_Milliseconds());
 +    DwPerfOpenFaultFile();
 +#endif
++    DwPerfFlush(&dwMainLog);
 +}
 +
 +static void DwMainBegin(void)
@@ -553,10 +561,10 @@ index 33e131f..904fb40 100644
  
 diff --git a/SP/code/rend2/tr_dw_perf.inc b/SP/code/rend2/tr_dw_perf.inc
 new file mode 100644
-index 0000000..349a91e
+index 0000000..6610b26
 --- /dev/null
 +++ b/SP/code/rend2/tr_dw_perf.inc
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,271 @@
 +/* Diagnostic scopes only. GPU queries are timestamp pairs and are never waited on. */
 +#include "../qcommon/dw_perf_io.inc"
 +
@@ -743,7 +751,7 @@ index 0000000..349a91e
 +    dwSceneEntities = tr.refdef.num_entities;
 +}
 +
-+void DwPerfDrawRing(int total)
++void DwPerfDrawRing(int total, int viewSurfaces)
 +{
 +    if (!dwRenderActive)
 +        return;
@@ -751,8 +759,9 @@ index 0000000..349a91e
 +    if (total > MAX_DRAWSURFS) {
 +        dwDrawRingWraps++;
 +        if (dwDrawRingWraps == 1) {
-+            DwPerfWrite(&dwRenderLog, "surface_ring_overflow\t%u\t%d\t%s\t%d\t%d\n",
-+                dwRenderFrame, ri.Milliseconds(), tr.world ? tr.world->baseName : "-", total, MAX_DRAWSURFS);
++            DwPerfWrite(&dwRenderLog, "surface_ring_overflow\t%u\t%d\t%s\t%d\t%d\t%d\t0x%x\n",
++                dwRenderFrame, ri.Milliseconds(), tr.world ? tr.world->baseName : "-", total, MAX_DRAWSURFS,
++                viewSurfaces, (unsigned int)tr.viewParms.flags);
 +            DwPerfFlush(&dwRenderLog);
 +        }
 +    }
@@ -865,7 +874,7 @@ index 6b54ad7..1dd70ab 100644
  	}
  
 diff --git a/SP/code/rend2/tr_local.h b/SP/code/rend2/tr_local.h
-index 41b485e..449d05b 100644
+index 41b485e..eb2a212 100644
 --- a/SP/code/rend2/tr_local.h
 +++ b/SP/code/rend2/tr_local.h
 @@ -3337,6 +3337,31 @@ RENDERER BACK END FUNCTIONS
@@ -892,7 +901,7 @@ index 41b485e..449d05b 100644
 +void DwPerfRenderBegin(void);
 +void DwPerfRenderEnd(void);
 +void DwPerfScene(void);
-+void DwPerfDrawRing(int total);
++void DwPerfDrawRing(int total, int viewSurfaces);
 +dwPerfScope_t DwPerfBegin(dwPerfStage_t kind, qboolean gpu);
 +void DwPerfEnd(dwPerfScope_t scope);
 +void DwPerfCount(dwPerfStage_t kind);
@@ -901,14 +910,14 @@ index 41b485e..449d05b 100644
  
  /*
 diff --git a/SP/code/rend2/tr_main.c b/SP/code/rend2/tr_main.c
-index 321830b..021f6c9 100644
+index 321830b..bfde636 100644
 --- a/SP/code/rend2/tr_main.c
 +++ b/SP/code/rend2/tr_main.c
 @@ -2316,6 +2316,8 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs ) {
  // GR - tessellation flag
  	int atiTess;
  
-+	DwPerfDrawRing(tr.refdef.numDrawSurfs);
++	DwPerfDrawRing(tr.refdef.numDrawSurfs, numDrawSurfs);
 +
  	//ri.Printf(PRINT_ALL, "firstDrawSurf %d numDrawSurfs %d\n", (int)(drawSurfs - tr.refdef.drawSurfs), numDrawSurfs);
  
