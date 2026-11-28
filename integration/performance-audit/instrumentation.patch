@@ -1,0 +1,986 @@
+diff --git a/SP/code/qcommon/common.c b/SP/code/qcommon/common.c
+index a1e7dc0..77721ee 100644
+--- a/SP/code/qcommon/common.c
++++ b/SP/code/qcommon/common.c
+@@ -131,6 +131,8 @@ int time_backend;           // renderer backend time
+ int com_frameTime;
+ int com_frameNumber;
+ 
++#include "dw_perf_main.inc"
++
+ qboolean	com_errorEntered = qfalse;
+ qboolean	com_fullyInitialized = qfalse;
+ qboolean	com_gameRestarting = qfalse;
+@@ -315,6 +317,7 @@ void QDECL Com_Error( int code, const char *fmt, ... ) {
+ 	va_start( argptr,fmt );
+ 	Q_vsnprintf (com_errorMessage, sizeof(com_errorMessage),fmt,argptr);
+ 	va_end( argptr );
++	DwMainError(code, com_errorMessage);
+ 
+ 	if ( code != ERR_DISCONNECT && code != ERR_NEED_CD && code != ERR_ENDGAME ) {
+ 		Cvar_Set( "com_errorMessage", com_errorMessage );
+@@ -2322,6 +2325,7 @@ void Com_Init( char *commandLine ) {
+ 	com_homepath = Cvar_Get("com_homepath", "", CVAR_INIT|CVAR_PROTECTED);
+ 
+ 	FS_InitFilesystem();
++	DwMainInit();
+ 
+ 	Com_InitJournaling();
+ 
+@@ -2721,8 +2725,11 @@ void Com_Frame( void ) {
+ 	timeAfter = 0;
+ 
+ 
++	DwMainBegin();
++
+ 	// write config file if anything changed
+ 	Com_WriteConfiguration();
++	DwMainMark(DW_MAIN_WAIT);
+ 
+ 	//
+ 	// main event loop
+@@ -2780,6 +2787,7 @@ void Com_Frame( void ) {
+ 		else
+ 			NET_Sleep(timeVal - 1);
+ 	} while(Com_TimeVal(minMsec));
++	DwMainMark(DW_MAIN_INPUT);
+ 
+ 	IN_Frame();
+ 	
+@@ -2806,7 +2814,9 @@ void Com_Frame( void ) {
+ 		timeBeforeServer = Sys_Milliseconds();
+ 	}
+ 
++	DwMainMark(DW_MAIN_SERVER);
+ 	SV_Frame( msec );
++	DwMainMark(DW_MAIN_EVENTS);
+ 
+ 	// if "dedicated" has been modified, start up
+ 	// or shut down the client system.
+@@ -2844,7 +2854,9 @@ void Com_Frame( void ) {
+ 		timeBeforeClient = Sys_Milliseconds ();
+ 	}
+ 
++	DwMainMark(DW_MAIN_CLIENT);
+ 	CL_Frame( msec );
++	DwMainMark(DW_MAIN_TAIL);
+ 
+ 	if ( com_speeds->integer ) {
+ 		timeAfter = Sys_Milliseconds ();
+@@ -2894,6 +2906,7 @@ void Com_Frame( void ) {
+ 
+ 	Com_ReadFromPipe( );
+ 
++	DwMainEnd(minMsec);
+ 	com_frameNumber++;
+ }
+ 
+@@ -2903,6 +2916,7 @@ Com_Shutdown
+ =================
+ */
+ void Com_Shutdown( void ) {
++	DwMainShutdown();
+ 
+ 	// write config file if anything changed
+ 	Com_WriteConfiguration();
+diff --git a/SP/code/qcommon/dw_perf_io.inc b/SP/code/qcommon/dw_perf_io.inc
+new file mode 100644
+index 0000000..aaa181f
+--- /dev/null
++++ b/SP/code/qcommon/dw_perf_io.inc
+@@ -0,0 +1,75 @@
++/* Shared implementation for the standalone diagnostic EXE and Rend2 DLL. */
++#ifdef USE_LOCAL_HEADERS
++#include "SDL.h"
++#else
++#include <SDL.h>
++#endif
++
++typedef struct {
++    SDL_RWops *stream;
++    unsigned int bytes;
++    unsigned int used;
++    char pending[8192];
++} dwPerfFile_t;
++
++static void DwPerfFlush(dwPerfFile_t *file)
++{
++    if (!file->stream || !file->used)
++        return;
++    if (SDL_RWwrite(file->stream, file->pending, 1, file->used) != file->used) {
++        SDL_RWclose(file->stream);
++        file->stream = NULL;
++    }
++    file->used = 0;
++}
++
++static void DwPerfClose(dwPerfFile_t *file)
++{
++    DwPerfFlush(file);
++    if (file->stream) {
++        SDL_RWclose(file->stream);
++        file->stream = NULL;
++    }
++}
++
++static void DwPerfOpen(dwPerfFile_t *file, const char *directory, const char *name)
++{
++    char path[2048];
++    int length;
++    if (!directory || !*directory)
++        return;
++    length = snprintf(path, sizeof(path), "%s/%s", directory, name);
++    if (length <= 0 || length >= sizeof(path))
++        return;
++    file->stream = SDL_RWFromFile(path, "ab");
++}
++
++static void DwPerfWrite(dwPerfFile_t *file, const char *format, ...)
++{
++    char text[3072];
++    va_list args;
++    int length;
++    if (!file->stream)
++        return;
++    va_start(args, format);
++    length = vsnprintf(text, sizeof(text), format, args);
++    va_end(args);
++    if (length <= 0 || length >= sizeof(text))
++        return;
++    if (file->bytes >= 64U * 1024U * 1024U) {
++        DwPerfClose(file);
++        return;
++    }
++    if (file->used + length > sizeof(file->pending))
++        DwPerfFlush(file);
++    if (!file->stream)
++        return;
++    memcpy(file->pending + file->used, text, length);
++    file->used += length;
++    file->bytes += length;
++}
++
++static double DwPerfMilliseconds(uint64_t a, uint64_t b)
++{
++    return (double)(b - a) * 1000.0 / (double)SDL_GetPerformanceFrequency();
++}
+diff --git a/SP/code/qcommon/dw_perf_main.inc b/SP/code/qcommon/dw_perf_main.inc
+new file mode 100644
+index 0000000..3c0e572
+--- /dev/null
++++ b/SP/code/qcommon/dw_perf_main.inc
+@@ -0,0 +1,160 @@
++#ifndef DEDICATED
++#include "dw_perf_io.inc"
++
++typedef enum {
++    DW_MAIN_IDLE, DW_MAIN_CONFIG, DW_MAIN_WAIT, DW_MAIN_INPUT, DW_MAIN_SERVER,
++    DW_MAIN_EVENTS, DW_MAIN_CLIENT, DW_MAIN_TAIL, DW_MAIN_COUNT
++} dwMainStage_t;
++static dwPerfFile_t dwMainLog;
++static uint64_t dwMainStart, dwMainStep;
++static int dwMainStamp, dwMainFlush;
++static double dwMainTimes[DW_MAIN_COUNT];
++static volatile int dwMainStage;
++
++#ifdef _WIN32
++/* First-chance fault breadcrumb. Continue normal OS/engine exception processing. */
++static HANDLE dwFaultFile = INVALID_HANDLE_VALUE;
++static PVOID dwFaultHandler;
++static volatile LONG dwFaultCount;
++
++static LONG CALLBACK DwPerfFault(EXCEPTION_POINTERS *exception)
++{
++    struct {
++        DWORD code, phase, tick, pid, tid;
++        uintptr_t address, imageBase, detail, accessAddress;
++    } record;
++    MEMORY_BASIC_INFORMATION image;
++    EXCEPTION_RECORD *source = exception->ExceptionRecord;
++    DWORD bytes;
++    byte raw[5 * sizeof(DWORD) + 4 * sizeof(uintptr_t)];
++    switch (source->ExceptionCode) {
++    case EXCEPTION_ACCESS_VIOLATION:
++    case EXCEPTION_STACK_OVERFLOW:
++    case EXCEPTION_ILLEGAL_INSTRUCTION:
++    case EXCEPTION_IN_PAGE_ERROR:
++    case EXCEPTION_INT_DIVIDE_BY_ZERO:
++    case 0xc0000374u: /* heap corruption */
++    case 0xc0000409u: /* fast-fail class, if vectored dispatch occurs */
++        break;
++    default:
++        return EXCEPTION_CONTINUE_SEARCH;
++    }
++    if (InterlockedIncrement(&dwFaultCount) > 32)
++        return EXCEPTION_CONTINUE_SEARCH;
++    record.code = source->ExceptionCode;
++    record.phase = dwMainStage;
++    record.tick = GetTickCount();
++    record.pid = GetCurrentProcessId();
++    record.tid = GetCurrentThreadId();
++    record.address = (uintptr_t)source->ExceptionAddress;
++    record.imageBase = VirtualQuery(source->ExceptionAddress, &image, sizeof(image)) ?
++        (uintptr_t)image.AllocationBase : 0;
++    record.detail = source->NumberParameters > 0 ? source->ExceptionInformation[0] : 0;
++    record.accessAddress = source->NumberParameters > 1 ? source->ExceptionInformation[1] : 0;
++    /* Write fields separately to avoid recording uninitialized struct padding. */
++    memcpy(raw, &record, 5 * sizeof(DWORD));
++    memcpy(raw + 5 * sizeof(DWORD), &record.address, 4 * sizeof(uintptr_t));
++    WriteFile(dwFaultFile, raw, sizeof(raw), &bytes, NULL);
++    return EXCEPTION_CONTINUE_SEARCH;
++}
++
++static void DwPerfOpenFaultFile(void)
++{
++    WCHAR path[2048];
++    DWORD length = GetEnvironmentVariableW(L"DARKWOLF_PERF_DIR", path, ARRAY_LEN(path));
++    static const WCHAR filename[] = L"\\faults.bin";
++    if (length == 0 || length >= ARRAY_LEN(path) - ARRAY_LEN(filename))
++        return;
++    memcpy(path + length, filename, sizeof(filename));
++    dwFaultFile = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS,
++        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, NULL);
++    if (dwFaultFile != INVALID_HANDLE_VALUE)
++        dwFaultHandler = AddVectoredExceptionHandler(1, DwPerfFault);
++}
++#endif
++
++static void DwMainInit(void)
++{
++    const char *directory = SDL_getenv("DARKWOLF_PERF_DIR");
++    DwPerfOpen(&dwMainLog, directory, "engine.tsv");
++    if (!dwMainLog.stream)
++        return;
++    DwPerfWrite(&dwMainLog,
++        "kind\tframe\tclock_ms\ttotal_ms\tconfig_ms\tlimiter_ms\tinput_commands_ms\tserver_ms\t"
++        "events_ms\tclient_ms\ttail_ms\trequested_frame_ms\thunk_left_bytes\n");
++    DwPerfFlush(&dwMainLog);
++#ifdef _WIN32
++    DwPerfOpenFaultFile();
++#endif
++}
++
++static void DwMainBegin(void)
++{
++    if (!dwMainLog.stream)
++        return;
++    memset(dwMainTimes, 0, sizeof(dwMainTimes));
++    dwMainStart = dwMainStep = SDL_GetPerformanceCounter();
++    dwMainStamp = Sys_Milliseconds();
++    dwMainStage = DW_MAIN_CONFIG;
++}
++
++static void DwMainMark(dwMainStage_t next)
++{
++    uint64_t now;
++    if (!dwMainLog.stream)
++        return;
++    now = SDL_GetPerformanceCounter();
++    dwMainTimes[dwMainStage] += DwPerfMilliseconds(dwMainStep, now);
++    dwMainStep = now;
++    dwMainStage = next;
++}
++
++static void DwMainEnd(int target)
++{
++    int now;
++    if (!dwMainLog.stream)
++        return;
++    DwMainMark(DW_MAIN_IDLE);
++    now = Sys_Milliseconds();
++    DwPerfWrite(&dwMainLog, "frame\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\n",
++        com_frameNumber, dwMainStamp, DwPerfMilliseconds(dwMainStart, dwMainStep),
++        dwMainTimes[DW_MAIN_CONFIG], dwMainTimes[DW_MAIN_WAIT], dwMainTimes[DW_MAIN_INPUT],
++        dwMainTimes[DW_MAIN_SERVER], dwMainTimes[DW_MAIN_EVENTS], dwMainTimes[DW_MAIN_CLIENT],
++        dwMainTimes[DW_MAIN_TAIL], target, Hunk_MemoryRemaining());
++    if (now - dwMainFlush >= 500 || now - dwMainStamp > 75) {
++        DwPerfFlush(&dwMainLog);
++        dwMainFlush = now;
++    }
++}
++
++static void DwMainError(int code, const char *message)
++{
++    char safe[512];
++    int i;
++    if (!dwMainLog.stream)
++        return;
++    Q_strncpyz(safe, message, sizeof(safe));
++    for (i = 0; safe[i]; i++)
++        if (safe[i] == '\r' || safe[i] == '\n' || safe[i] == '\t') safe[i] = ' ';
++    DwPerfWrite(&dwMainLog, "error\t%d\t%d\t%d\t%d\t%s\n",
++        com_frameNumber, Sys_Milliseconds(), code, dwMainStage, safe);
++    DwPerfFlush(&dwMainLog);
++}
++
++static void DwMainShutdown(void)
++{
++    DwPerfWrite(&dwMainLog, "shutdown\t%d\t%d\n", com_frameNumber, Sys_Milliseconds());
++    DwPerfClose(&dwMainLog);
++#ifdef _WIN32
++    if (dwFaultHandler) RemoveVectoredExceptionHandler(dwFaultHandler);
++    if (dwFaultFile != INVALID_HANDLE_VALUE) CloseHandle(dwFaultFile);
++#endif
++}
++#else
++#define DwMainInit() ((void)0)
++#define DwMainBegin() ((void)0)
++#define DwMainMark(stage) ((void)0)
++#define DwMainEnd(target) ((void)0)
++#define DwMainError(code, message) ((void)0)
++#define DwMainShutdown() ((void)0)
++#endif
+diff --git a/SP/code/rend2/tr_backend.c b/SP/code/rend2/tr_backend.c
+index 9b8066d..b58c891 100644
+--- a/SP/code/rend2/tr_backend.c
++++ b/SP/code/rend2/tr_backend.c
+@@ -32,6 +32,8 @@ If you have questions concerning this license or the applicable additional terms
+ backEndData_t	*backEndData;
+ backEndState_t	backEnd;
+ 
++#include "tr_dw_perf.inc"
++
+ 
+ static float	s_flipMatrix[16] = {
+ 	// convert from our coordinate system (looking down X)
+@@ -2800,12 +2802,19 @@ const void	*RB_SwapBuffers( const void *data ) {
+ 	}
+ 
+ 	if ( !glState.finishCalled ) {
++		dwPerfScope_t scope = DwPerfBegin(DW_PERF_FINISH, qfalse);
+ 		qglFinish();
++		DwPerfEnd(scope);
+ 	}
+ 
+ 	GLimp_LogComment( "***************** RB_SwapBuffers *****************\n\n\n" );
+ 
+-	GLimp_EndFrame();
++	{
++		dwPerfScope_t scope = DwPerfBegin(DW_PERF_PRESENT, qfalse);
++		GLimp_EndFrame();
++		DwPerfEnd(scope);
++	}
++	DwPerfRenderEnd();
+ 
+ 	backEnd.projection2D = qfalse;
+ 
+@@ -5754,6 +5763,7 @@ static void RB_LocalVolumetricRenderEx(FBO_t *srcFbo, ivec4_t srcBox, int mode,
+ 		GLSL_SetUniformVec4(shader, UNIFORM_BASECOLOR, energyParams);
+ 	}
+ 
++	DwPerfCount((mode >= 5 && mode <= 9) ? DW_PERF_FIRE_PASS : DW_PERF_LOCAL_PASS);
+ 	FBO_Blit(srcFbo, srcBox, NULL, raymarchFbo, NULL, &tr.volumetricLocalShader, params, 0);
+ 	{
+ 		int reconstructionMode = 0;
+@@ -10334,6 +10344,7 @@ const void *RB_PostProcess(const void *data)
+ 	const postProcessCommand_t *cmd = data;
+ 	FBO_t *srcFbo, *dstFbo;
+ 	ivec4_t srcBox, dstBox;
++	dwPerfScope_t perf;
+ 	qboolean autoExposure = qfalse; // DARKWOLF_USLRD_ROOT_CAUSE_V0_1: initialized for diagnostic sampler only.
+ 
+ 	// finish any 2D drawing if needed
+@@ -10357,10 +10368,12 @@ const void *RB_PostProcess(const void *data)
+ 
+ 	if (tr.msaaResolveFbo)
+ 	{
++		perf = DwPerfBegin(DW_PERF_RESOLVE, qtrue);
+ 		// Resolve the MSAA before anything else
+ 		// Can't resolve just part of the MSAA FBO, so multiple views will suffer a performance hit here
+ 		FBO_FastBlit(tr.renderFbo, NULL, tr.msaaResolveFbo, NULL, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+ 		srcFbo = tr.msaaResolveFbo;
++		DwPerfEnd(perf);
+ 	}
+ 
+ 	dstBox[0] = backEnd.viewParms.viewportX;
+@@ -10369,6 +10382,7 @@ const void *RB_PostProcess(const void *data)
+ 	dstBox[3] = backEnd.viewParms.viewportHeight;
+ 
+ 	RB_USLRDRootCauseBeginFrameSample(srcFbo, dstBox);
++	perf = DwPerfBegin(DW_PERF_GI, qtrue);
+ 
+ 	if (r_ssao->integer)
+ 	{
+@@ -10525,6 +10539,7 @@ const void *RB_PostProcess(const void *data)
+ 		}
+ 	}
+ 
++	DwPerfEnd(perf);
+ 	RB_USLRDRootCauseSampleStage(srcFbo, dstBox, s_uslrdRcHdrAfterSsgi);
+ 
+ 	srcBox[0] = backEnd.viewParms.viewportX;
+@@ -10533,26 +10548,36 @@ const void *RB_PostProcess(const void *data)
+ 	srcBox[3] = backEnd.viewParms.viewportHeight;
+ 
+ 	// REND2_BLOOM_V1_HDR_EXTRACT_LDR_COMPOSITE: prepare from untouched HDR before native ToneMap/Auto Exposure.
++	perf = DwPerfBegin(DW_PERF_BLOOM_PRE, qtrue);
+ 	RB_BloomV1Prepare(srcFbo, srcBox);
++	DwPerfEnd(perf);
+ 
+ 	if (srcFbo)
+ 	{
+ 		// DARKWOLF_SUN_VOLUMETRIC_V0_3: production HDR volumetric pass.
+ 		tr.volumetricSunPerfRaymarchThisFrame = 0; // DARKWOLF_SUN_VOLUMETRIC_PERF_ISOLATION_V0_3
+-		if (r_volumetricSun->integer)
++		if (r_volumetricSun->integer) {
++			perf = DwPerfBegin(DW_PERF_SUN, qtrue);
+ 			RB_VolumetricSun(srcFbo, srcBox);
++			DwPerfEnd(perf);
++		}
+ 		RB_VolumetricSunPerfTrace();
+ 		RB_USLRDRootCauseSampleStage(srcFbo, srcBox, s_uslrdRcHdrAfterSun);
+ 
+ 		// DARKWOLF_LOCAL_VOLUMETRIC_V0_1: independent local lamp / spotlight pass.
+ 		RB_USLRDRootCauseBeginPixelSample(srcFbo, srcBox);
+-		if (r_volumetricLocal->integer)
++		if (r_volumetricLocal->integer) {
++			perf = DwPerfBegin(DW_PERF_LOCAL, qtrue);
+ 			RB_VolumetricLocal(srcFbo, srcBox);
++			DwPerfEnd(perf);
++		}
+ 		RB_USLRDRootCauseAfterLocal(srcFbo, srcBox);
+ 
+ 		// DARKWOLF_FIRE_VOLUMETRIC_V0_1: independent environmental-fire pass.
+ 		// Master defaults OFF, so ordinary launch remains byte-behavior compatible until explicitly tested.
++		perf = DwPerfBegin(DW_PERF_FIRE, qtrue);
+ 		RB_VolumetricFire(srcFbo, srcBox);
++		DwPerfEnd(perf);
+ 		RB_USLRDRootCauseSampleStage(srcFbo, srcBox, s_uslrdRcHdrAfterFire);
+ 
+ 		if (r_hdr->integer && (r_toneMap->integer || r_forceToneMap->integer))
+@@ -10561,8 +10586,10 @@ const void *RB_PostProcess(const void *data)
+ 
+ 			// Use an intermediate FBO because it can't blit to the same FBO directly
+ 			// and can't read from an MSAA dstFbo later.
++			perf = DwPerfBegin(DW_PERF_TONEMAP, qtrue);
+ 			RB_ToneMap(srcFbo, srcBox, tr.screenScratchFbo, srcBox, autoExposure);
+ 			FBO_FastBlit(tr.screenScratchFbo, srcBox, srcFbo, srcBox, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++			DwPerfEnd(perf);
+ 		}
+ 		else if (r_cameraExposure->value != 0.0f)
+ 		{
+@@ -10579,18 +10606,25 @@ const void *RB_PostProcess(const void *data)
+ 	RB_USLRDRootCauseSampleStage(srcFbo, srcBox, s_uslrdRcAfterTone);
+ 
+ 	// REND2_BLOOM_V1_HDR_EXTRACT_LDR_COMPOSITE: composite after native ToneMap so Bloom cannot feed back into Auto Exposure.
++	perf = DwPerfBegin(DW_PERF_BLOOM_FINAL, qtrue);
+ 	RB_BloomV1Composite(srcFbo, srcBox);
++	DwPerfEnd(perf);
+ 
+-	if (r_drawSunRays->integer)
++	if (r_drawSunRays->integer) {
++		perf = DwPerfBegin(DW_PERF_SUN_RAYS, qtrue);
+ 		RB_SunRays(srcFbo, srcBox, srcFbo, srcBox);
++		DwPerfEnd(perf);
++	}
+ 	RB_USLRDRootCauseSampleStage(srcFbo, srcBox, s_uslrdRcAfterSunRays);
+ 
++	perf = DwPerfBegin(DW_PERF_FINAL_FX, qtrue);
+ 	if (1)
+ 		RB_BokehBlur(srcFbo, srcBox, srcFbo, srcBox, backEnd.refdef.blurFactor);
+ 	else
+ 		RB_GaussianBlur(srcFbo, srcFbo, backEnd.refdef.blurFactor);
+ 	RB_USLRDRootCauseSampleStage(srcFbo, srcBox, s_uslrdRcAfterBokeh);
+ 	RB_DWFinalPolish(srcFbo, srcBox); // DARKWOLF_CAS_A2C_LUT_V01
++	DwPerfEnd(perf);
+ 
+ 	RB_USLRDRootCauseEndPixelSample(srcFbo, srcBox, autoExposure);
+ 
+@@ -10989,8 +11023,27 @@ void RB_ExecuteRenderCommands( const void *data ) {
+ 			data = RB_StretchPicGradient( data );
+ 			break;
+ 		case RC_DRAW_SURFS:
+-			data = RB_DrawSurfs( data );
+-			break;
++        {
++            const drawSurfsCommand_t *draw = data;
++            int flags = draw->viewParms.flags;
++            int sceneFlags = draw->refdef.rdflags;
++            dwPerfStage_t kind = DW_PERF_DRAW_WORLD;
++            dwPerfScope_t scope;
++            if (flags & VPF_DLIGHT_WORLD_OCCLUSION) kind = DW_PERF_DRAW_OCCLUSION;
++            else if (flags & VPF_FIREVOL_SYNTHETIC_SHADOW) kind = DW_PERF_DRAW_FIRE;
++            else if (flags & VPF_SHADOWMAP) kind = DW_PERF_DRAW_POINT;
++            else if ((flags & (VPF_DEPTHSHADOW | VPF_ORTHOGRAPHIC)) ==
++                (VPF_DEPTHSHADOW | VPF_ORTHOGRAPHIC)) kind = DW_PERF_DRAW_CSM;
++            else if (sceneFlags & RDF_SKYBOXPORTAL) kind = DW_PERF_DRAW_SKY;
++            else if (sceneFlags & RDF_NOWORLDMODEL || draw->viewParms.targetFbo || draw->viewParms.isPortal)
++                kind = DW_PERF_DRAW_OTHER;
++            else if (dwRenderActive)
++                dwSceneSurfaces += draw->numDrawSurfs;
++            scope = DwPerfBegin(kind, qtrue);
++            data = RB_DrawSurfs( data );
++            DwPerfEnd(scope);
++            break;
++        }
+ 		case RC_DRAW_BUFFER:
+ 			data = RB_DrawBuffer( data );
+ 			break;
+@@ -11010,8 +11063,12 @@ void RB_ExecuteRenderCommands( const void *data ) {
+ 			data = RB_ClearDepth(data);
+ 			break;
+ 		case RC_CAPSHADOWMAP:
+-			data = RB_CapShadowMap(data);
+-			break;
++        {
++            dwPerfScope_t scope = DwPerfBegin(DW_PERF_COPY_SHADOW, qtrue);
++            data = RB_CapShadowMap(data);
++            DwPerfEnd(scope);
++            break;
++        }
+ 		case RC_POSTPROCESS:
+ 			data = RB_PostProcess(data);
+ 			break;
+diff --git a/SP/code/rend2/tr_cmds.c b/SP/code/rend2/tr_cmds.c
+index 33e131f..904fb40 100644
+--- a/SP/code/rend2/tr_cmds.c
++++ b/SP/code/rend2/tr_cmds.c
+@@ -145,6 +145,7 @@ void *R_GetCommandBufferReserved( int bytes, int reservedBytes ) {
+ 			ri.Error( ERR_FATAL, "R_GetCommandBuffer: bad size %i", bytes );
+ 		}
+ 		// if we run out of room, just start dropping commands
++		DwPerfCount(DW_PERF_DROP);
+ 		return NULL;
+ 	}
+ 
+@@ -394,6 +395,7 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
+ 	}
+ 	glState.finishCalled = qfalse;
+ 
++	DwPerfRenderBegin();
+ 	tr.frameCount++;
+ 	tr.frameSceneNum = 0;
+ 
+diff --git a/SP/code/rend2/tr_dw_perf.inc b/SP/code/rend2/tr_dw_perf.inc
+new file mode 100644
+index 0000000..349a91e
+--- /dev/null
++++ b/SP/code/rend2/tr_dw_perf.inc
+@@ -0,0 +1,270 @@
++/* Diagnostic scopes only. GPU queries are timestamp pairs and are never waited on. */
++#include "../qcommon/dw_perf_io.inc"
++
++#define DW_PERF_PENDING 12
++#define DW_PERF_GPU_SCOPES 192
++
++typedef struct {
++    int kind;
++    qboolean ended;
++} dwGpuPair_t;
++
++typedef struct {
++    GLuint queries[DW_PERF_GPU_SCOPES * 2];
++    dwGpuPair_t pairs[DW_PERF_GPU_SCOPES];
++    unsigned int frame;
++    int stamp, count, overflow;
++    qboolean pending;
++} dwGpuFrame_t;
++
++static const char *const dwPerfNames[] = {
++    "front_fixtures", "front_point_shadow", "front_world_shadow", "front_fire_shadow",
++    "front_csm", "front_view", "draw_world", "draw_sky", "draw_point_shadow",
++    "draw_world_shadow", "draw_fire_shadow", "draw_csm", "draw_other", "copy_shadow",
++    "resolve", "ssao_ssgi", "bloom_extract", "sun_vol", "local_vol", "fire_vol",
++    "tonemap", "bloom_final", "sun_rays", "final_fx", "finish_gl", "present", "flare_readback"
++};
++
++static dwPerfFile_t dwRenderLog, dwGpuLog;
++static PFNGLQUERYCOUNTERPROC dwQueryCounter;
++static PFNGLGETQUERYOBJECTUI64VPROC dwQueryResult;
++static dwGpuFrame_t dwGpuFrames[DW_PERF_PENDING];
++static dwGpuFrame_t *dwGpuCurrent;
++static unsigned int dwRenderFrame;
++static int dwRenderStamp, dwRenderFlush, dwSettingsStamp;
++static uint64_t dwRenderStart;
++static double dwCpuTimes[DW_PERF_COUNT];
++static unsigned int dwCounts[DW_PERF_COUNTERS];
++static float dwCamera[3];
++static int dwSceneLights, dwSceneEntities, dwSceneSurfaces, dwDrawRingPeak, dwDrawRingWraps;
++static qboolean dwRenderActive;
++
++static void DwPerfHeader(dwPerfFile_t *file, const char *prefix)
++{
++    int i;
++    DwPerfWrite(file, "%s", prefix);
++    for (i = 0; i < DW_PERF_COUNT; ++i)
++        DwPerfWrite(file, "\t%s_ms", dwPerfNames[i]);
++    DwPerfWrite(file, "\n");
++    DwPerfFlush(file);
++}
++
++static void DwGpuCollect(dwGpuFrame_t *frame)
++{
++    GLint available = GL_FALSE;
++    double times[DW_PERF_COUNT] = {0};
++    int i;
++    if (!frame->pending)
++        return;
++    if (frame->count && frame->pairs[frame->count - 1].ended)
++        qglGetQueryObjectiv(frame->queries[frame->count * 2 - 1], GL_QUERY_RESULT_AVAILABLE, &available);
++    if (!available)
++        return;
++    for (i = 0; i < frame->count; ++i) {
++        GLuint64 start, end;
++        if (!frame->pairs[i].ended)
++            continue;
++        dwQueryResult(frame->queries[2 * i], GL_QUERY_RESULT, &start);
++        dwQueryResult(frame->queries[2 * i + 1], GL_QUERY_RESULT, &end);
++        if (end >= start)
++            times[frame->pairs[i].kind] += (double)(end - start) * 0.000001;
++    }
++    DwPerfWrite(&dwGpuLog, "frame\t%u\t%d\t%d\t%d", frame->frame, frame->stamp, frame->count, frame->overflow);
++    for (i = 0; i < DW_PERF_COUNT; ++i)
++        DwPerfWrite(&dwGpuLog, "\t%.3f", times[i]);
++    DwPerfWrite(&dwGpuLog, "\n");
++    frame->pending = qfalse;
++}
++
++static void DwRenderSettings(void)
++{
++    static const char *const names[] = {
++        "com_maxfps", "r_swapInterval", "r_finish", "r_flares", "r_hdr", "r_postProcess",
++        "r_ext_framebuffer_multisample", "r_msaaSelectiveSampleShading", "r_depthPrepass",
++        "r_ssao", "r_ssgi", "r_bloomMode", "r_volumetricSun", "r_volumetricSunMode",
++        "r_volumetricSunSamples", "r_volumetricLocal", "r_volumetricLocalMode",
++        "r_volumetricLocalSamples", "r_volumetricLocalLampMaxActive", "r_volumetricFire",
++        "r_volumetricFireMode", "r_volumetricFireMaxActive", "r_dlightMode",
++        "r_dlightShadowMaxLights", "r_dlightShadowMapSize", "r_shadowCascadeZFar",
++        "r_cubeMapping", "r_parallaxMapping", "r_pbr", "r_drawSunRays"
++    };
++    unsigned int i;
++    DwPerfWrite(&dwRenderLog, "settings\t%u\t%d\t", dwRenderFrame, dwRenderStamp);
++    for (i = 0; i < ARRAY_LEN(names); ++i)
++        DwPerfWrite(&dwRenderLog, "%s=%d%s", names[i], ri.Cvar_VariableIntegerValue(names[i]),
++            i + 1 < ARRAY_LEN(names) ? ";" : "\n");
++}
++
++void DwPerfRenderInit(void)
++{
++    const char *directory = SDL_getenv("DARKWOLF_PERF_DIR");
++    int i;
++    if (!directory || !*directory)
++        return;
++    DwPerfOpen(&dwRenderLog, directory, "render.tsv");
++    if (!dwRenderLog.stream)
++        return;
++    DwPerfHeader(&dwRenderLog, "kind\tframe\tclock_ms\tmap\tx\ty\tz\tlights\tentities\tsurfaces\t"
++        "point_views\tworld_shadow_views\tfire_shadow_views\tcsm_views\tflare_reads\t"
++        "local_passes\tfire_passes\tcommand_drops\tsurface_ring_peak\tsurface_ring_wraps\tquery_status\tcpu_elapsed_ms");
++    DwPerfWrite(&dwRenderLog, "device\t%d\t%d\t%d\t%s\t%s\t%s\n", ri.Milliseconds(), glConfig.vidWidth,
++        glConfig.vidHeight, glConfig.vendor_string, glConfig.renderer_string, glConfig.version_string);
++    dwSettingsStamp = -5000;
++    if (!qglGenQueries || !qglGetQueryObjectiv ||
++        !(QGL_VERSION_ATLEAST(3, 3) || SDL_GL_ExtensionSupported("GL_ARB_timer_query")))
++        return;
++    dwQueryCounter = (PFNGLQUERYCOUNTERPROC)SDL_GL_GetProcAddress("glQueryCounter");
++    dwQueryResult = (PFNGLGETQUERYOBJECTUI64VPROC)SDL_GL_GetProcAddress("glGetQueryObjectui64v");
++    if (!dwQueryCounter || !dwQueryResult) {
++        dwQueryCounter = NULL;
++        return;
++    }
++    DwPerfOpen(&dwGpuLog, directory, "gpu.tsv");
++    if (!dwGpuLog.stream) {
++        dwQueryCounter = NULL;
++        return;
++    }
++    DwPerfHeader(&dwGpuLog, "kind\tframe\tclock_ms\tpairs\toverflow");
++    for (i = 0; i < DW_PERF_PENDING; ++i)
++        qglGenQueries(ARRAY_LEN(dwGpuFrames[i].queries), dwGpuFrames[i].queries);
++}
++
++void DwPerfRenderShutdown(void)
++{
++    int i;
++    if (dwQueryCounter) {
++        for (i = 0; i < DW_PERF_PENDING; ++i) {
++            DwGpuCollect(&dwGpuFrames[i]);
++            qglDeleteQueries(ARRAY_LEN(dwGpuFrames[i].queries), dwGpuFrames[i].queries);
++        }
++    }
++    memset(dwGpuFrames, 0, sizeof(dwGpuFrames));
++    dwQueryCounter = NULL;
++    dwGpuCurrent = NULL;
++    dwRenderActive = qfalse;
++    DwPerfClose(&dwGpuLog);
++    DwPerfClose(&dwRenderLog);
++}
++
++void DwPerfRenderBegin(void)
++{
++    int i;
++    if (!dwRenderLog.stream || dwRenderActive)
++        return;
++    dwRenderFrame++;
++    dwRenderStamp = ri.Milliseconds();
++    dwRenderStart = SDL_GetPerformanceCounter();
++    dwRenderActive = qtrue;
++    memset(dwCpuTimes, 0, sizeof(dwCpuTimes));
++    memset(dwCounts, 0, sizeof(dwCounts));
++    memset(dwCamera, 0, sizeof(dwCamera));
++    dwSceneLights = dwSceneEntities = dwSceneSurfaces = dwDrawRingPeak = dwDrawRingWraps = 0;
++    if (!dwQueryCounter)
++        return;
++    for (i = 0; i < DW_PERF_PENDING; ++i) {
++        if (dwRenderFrame - dwGpuFrames[i].frame >= 3)
++            DwGpuCollect(&dwGpuFrames[i]);
++    }
++    dwGpuCurrent = &dwGpuFrames[dwRenderFrame % DW_PERF_PENDING];
++    if (dwGpuCurrent->pending) {
++        dwGpuCurrent = NULL;
++        return;
++    }
++    dwGpuCurrent->frame = dwRenderFrame;
++    dwGpuCurrent->stamp = dwRenderStamp;
++    dwGpuCurrent->count = dwGpuCurrent->overflow = 0;
++}
++
++void DwPerfScene(void)
++{
++    if (!dwRenderActive)
++        return;
++    VectorCopy(tr.refdef.vieworg, dwCamera);
++    dwSceneLights = tr.refdef.num_dlights;
++    dwSceneEntities = tr.refdef.num_entities;
++}
++
++void DwPerfDrawRing(int total)
++{
++    if (!dwRenderActive)
++        return;
++    dwDrawRingPeak = MAX(dwDrawRingPeak, total);
++    if (total > MAX_DRAWSURFS) {
++        dwDrawRingWraps++;
++        if (dwDrawRingWraps == 1) {
++            DwPerfWrite(&dwRenderLog, "surface_ring_overflow\t%u\t%d\t%s\t%d\t%d\n",
++                dwRenderFrame, ri.Milliseconds(), tr.world ? tr.world->baseName : "-", total, MAX_DRAWSURFS);
++            DwPerfFlush(&dwRenderLog);
++        }
++    }
++}
++
++void DwPerfRenderEnd(void)
++{
++    int now, i;
++    if (!dwRenderActive)
++        return;
++    DwPerfWrite(&dwRenderLog, "frame\t%u\t%d\t%s\t%.1f\t%.1f\t%.1f\t%d\t%d\t%d\t"
++        "%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%d\t%d\t%s\t%.3f",
++        dwRenderFrame, dwRenderStamp, tr.world ? tr.world->baseName : "-", dwCamera[0], dwCamera[1], dwCamera[2],
++        dwSceneLights, dwSceneEntities, dwSceneSurfaces, dwCounts[DW_PERF_DRAW_POINT],
++        dwCounts[DW_PERF_DRAW_OCCLUSION], dwCounts[DW_PERF_DRAW_FIRE], dwCounts[DW_PERF_DRAW_CSM],
++        dwCounts[DW_PERF_FLARE_READ], dwCounts[DW_PERF_LOCAL_PASS], dwCounts[DW_PERF_FIRE_PASS],
++        dwCounts[DW_PERF_DROP], dwDrawRingPeak, dwDrawRingWraps, dwGpuCurrent ? "submitted" : dwQueryCounter ? "queue_full" : "unavailable",
++        DwPerfMilliseconds(dwRenderStart, SDL_GetPerformanceCounter()));
++    for (i = 0; i < DW_PERF_COUNT; ++i)
++        DwPerfWrite(&dwRenderLog, "\t%.3f", dwCpuTimes[i]);
++    DwPerfWrite(&dwRenderLog, "\n");
++    if (dwGpuCurrent)
++        dwGpuCurrent->pending = dwGpuCurrent->count > 0;
++    dwGpuCurrent = NULL;
++    dwRenderActive = qfalse;
++
++    now = ri.Milliseconds();
++    if (now - dwSettingsStamp >= 5000) {
++        DwRenderSettings();
++        dwSettingsStamp = now;
++    }
++    if (now - dwRenderFlush >= 500 || now - dwRenderStamp > 75) {
++        DwPerfFlush(&dwRenderLog);
++        DwPerfFlush(&dwGpuLog);
++        dwRenderFlush = now;
++    }
++}
++
++dwPerfScope_t DwPerfBegin(dwPerfStage_t kind, qboolean gpu)
++{
++    dwPerfScope_t scope = {0, kind, -1};
++    if (!dwRenderActive)
++        return scope;
++    scope.cpu = SDL_GetPerformanceCounter();
++    if (gpu && dwGpuCurrent) {
++        if (dwGpuCurrent->count < DW_PERF_GPU_SCOPES) {
++            scope.query = dwGpuCurrent->count++;
++            dwGpuCurrent->pairs[scope.query].kind = kind;
++            dwGpuCurrent->pairs[scope.query].ended = qfalse;
++            dwQueryCounter(dwGpuCurrent->queries[scope.query * 2], GL_TIMESTAMP);
++        } else {
++            dwGpuCurrent->overflow++;
++        }
++    }
++    return scope;
++}
++
++void DwPerfEnd(dwPerfScope_t scope)
++{
++    if (!scope.cpu)
++        return;
++    if (scope.query >= 0 && dwGpuCurrent) {
++        dwQueryCounter(dwGpuCurrent->queries[scope.query * 2 + 1], GL_TIMESTAMP);
++        dwGpuCurrent->pairs[scope.query].ended = qtrue;
++    }
++    dwCpuTimes[scope.kind] += DwPerfMilliseconds(scope.cpu, SDL_GetPerformanceCounter());
++    dwCounts[scope.kind]++;
++}
++
++void DwPerfCount(dwPerfStage_t kind)
++{
++    if (dwRenderActive)
++        dwCounts[kind]++;
++}
+diff --git a/SP/code/rend2/tr_flares.c b/SP/code/rend2/tr_flares.c
+index 149d64b..7d6e4fa 100644
+--- a/SP/code/rend2/tr_flares.c
++++ b/SP/code/rend2/tr_flares.c
+@@ -366,7 +366,11 @@ void RB_TestFlare( flare_t *f ) {
+ 		}
+ 
+ 		// read back the z buffer contents
+-		qglReadPixels( f->windowX, f->windowY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth );
++		{
++			dwPerfScope_t scope = DwPerfBegin(DW_PERF_FLARE_READ, qfalse);
++			qglReadPixels( f->windowX, f->windowY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth );
++			DwPerfEnd(scope);
++		}
+ 
+ 		// if we're doing multisample rendering, switch to the old FBO
+ 		if (tr.msaaResolveFbo)
+diff --git a/SP/code/rend2/tr_init.c b/SP/code/rend2/tr_init.c
+index 6b54ad7..1dd70ab 100644
+--- a/SP/code/rend2/tr_init.c
++++ b/SP/code/rend2/tr_init.c
+@@ -2502,6 +2502,7 @@ void R_Init( void ) {
+ 		FBO_Init();
+ 
+ 	GLSL_InitGPUShaders();
++	DwPerfRenderInit();
+ 
+ 	R_InitVaos();
+ 
+@@ -2631,6 +2632,7 @@ void RE_Shutdown( qboolean destroyWindow ) {
+ 			FBO_Shutdown();
+ 		R_DeleteTextures();
+ 		R_ShutdownVaos();
++		DwPerfRenderShutdown();
+ 		GLSL_ShutdownGPUShaders();
+ 	}
+ 
+diff --git a/SP/code/rend2/tr_local.h b/SP/code/rend2/tr_local.h
+index 41b485e..449d05b 100644
+--- a/SP/code/rend2/tr_local.h
++++ b/SP/code/rend2/tr_local.h
+@@ -3337,6 +3337,31 @@ RENDERER BACK END FUNCTIONS
+ =============================================================
+ */
+ 
++typedef enum {
++    DW_PERF_FRONT_FIXTURES, DW_PERF_FRONT_POINT, DW_PERF_FRONT_OCCLUSION, DW_PERF_FRONT_FIRE,
++    DW_PERF_FRONT_CSM, DW_PERF_FRONT_VIEW, DW_PERF_DRAW_WORLD, DW_PERF_DRAW_SKY, DW_PERF_DRAW_POINT,
++    DW_PERF_DRAW_OCCLUSION, DW_PERF_DRAW_FIRE, DW_PERF_DRAW_CSM, DW_PERF_DRAW_OTHER, DW_PERF_COPY_SHADOW,
++    DW_PERF_RESOLVE, DW_PERF_GI, DW_PERF_BLOOM_PRE, DW_PERF_SUN, DW_PERF_LOCAL, DW_PERF_FIRE,
++    DW_PERF_TONEMAP, DW_PERF_BLOOM_FINAL, DW_PERF_SUN_RAYS, DW_PERF_FINAL_FX,
++    DW_PERF_FINISH, DW_PERF_PRESENT, DW_PERF_FLARE_READ,
++    DW_PERF_COUNT, DW_PERF_DROP, DW_PERF_LOCAL_PASS, DW_PERF_FIRE_PASS, DW_PERF_COUNTERS
++} dwPerfStage_t;
++
++typedef struct {
++    uint64_t cpu;
++    int kind, query;
++} dwPerfScope_t;
++
++void DwPerfRenderInit(void);
++void DwPerfRenderShutdown(void);
++void DwPerfRenderBegin(void);
++void DwPerfRenderEnd(void);
++void DwPerfScene(void);
++void DwPerfDrawRing(int total);
++dwPerfScope_t DwPerfBegin(dwPerfStage_t kind, qboolean gpu);
++void DwPerfEnd(dwPerfScope_t scope);
++void DwPerfCount(dwPerfStage_t kind);
++
+ void RB_ExecuteRenderCommands( const void *data );
+ 
+ /*
+diff --git a/SP/code/rend2/tr_main.c b/SP/code/rend2/tr_main.c
+index 321830b..021f6c9 100644
+--- a/SP/code/rend2/tr_main.c
++++ b/SP/code/rend2/tr_main.c
+@@ -2316,6 +2316,8 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs ) {
+ // GR - tessellation flag
+ 	int atiTess;
+ 
++	DwPerfDrawRing(tr.refdef.numDrawSurfs);
++
+ 	//ri.Printf(PRINT_ALL, "firstDrawSurf %d numDrawSurfs %d\n", (int)(drawSurfs - tr.refdef.drawSurfs), numDrawSurfs);
+ 
+ 	// it is possible for some views to not have any surfaces
+diff --git a/SP/code/rend2/tr_scene.c b/SP/code/rend2/tr_scene.c
+index 7ac3e7c..33a12b5 100644
+--- a/SP/code/rend2/tr_scene.c
++++ b/SP/code/rend2/tr_scene.c
+@@ -6902,6 +6902,7 @@ void RE_RenderScene( const refdef_t *fd ) {
+ 	int				startTime;
+ 	viewParmFlags_t		sunFlags;
+ 	int dlightDiagInjectedIndex;
++	dwPerfScope_t scope;
+ 
+ 	if ( !tr.registered ) {
+ 		return;
+@@ -6918,6 +6919,7 @@ void RE_RenderScene( const refdef_t *fd ) {
+ 		ri.Error (ERR_DROP, "R_RenderScene: NULL worldmodel");
+ 	}
+ 
++	scope = DwPerfBegin(DW_PERF_FRONT_FIXTURES, qfalse);
+ 	dlightDiagInjectedIndex = R_AddDlightDiagnosticSource(fd);
+ 	// REND2_STATIC_LIGHT_PROMOTION_POC_V9_0: append at most two selected static BSP lights
+ 	// before RE_BeginScene snapshots the current scene dlight range.
+@@ -6935,19 +6937,30 @@ void RE_RenderScene( const refdef_t *fd ) {
+ 			s_localVolumetricSpotCount * sizeof(localVolumetricSpot_t));
+ 
+ 	tr.refdef.dlightDiagInjectedIndex = dlightDiagInjectedIndex;
++	DwPerfEnd(scope);
++	if (!(fd->rdflags & (RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL)))
++		DwPerfScene();
+ 
+ 	// SmileTheory: playing with shadow mapping
+ 	if (!( fd->rdflags & RDF_NOWORLDMODEL ) && tr.refdef.num_dlights && r_dlightMode->integer >= 2)
+ 	{
++		scope = DwPerfBegin(DW_PERF_FRONT_POINT, qfalse);
+ 		R_RenderDlightCubemaps(fd);
++		DwPerfEnd(scope);
+ 	}
++	scope = DwPerfBegin(DW_PERF_FRONT_OCCLUSION, qfalse);
+ 	R_RenderDlightWorldOcclusion(fd); // Required solid-world visibility, not the optional 3+2 object-shadow pool.
++	DwPerfEnd(scope);
+ 	R_IFLC_CaptureShadowSlots(fd); // Read-only command diagnostics after actual allocation.
+ 	R_ELSS_CaptureShadowSlots(fd);
+ 	R_ElectricPhysicalOwnerAuditFrame(fd); // DARKWOLF_ELECTRIC_PHYSICAL_OWNER_AUDIT_V1 read-only post-allocation telemetry.
+ 	// DARKWOLF_FIREVOL_OCCLUSION_PRODUCTION_V1: uses only previous-frame accepted selections and never changes FireVol residency/priority.
+ 	if (!(fd->rdflags & RDF_NOWORLDMODEL) && r_dlightMode->integer >= 2)
++	{
++		scope = DwPerfBegin(DW_PERF_FRONT_FIRE, qfalse);
+ 		R_RenderFireVolumetricSyntheticShadows(fd);
++		DwPerfEnd(scope);
++	}
+ 
+ 	/* playing with more shadows */
+ 	if(glRefConfig.framebufferObject && !( fd->rdflags & RDF_NOWORLDMODEL ) && r_shadows->integer == 4)
+@@ -6955,7 +6968,9 @@ void RE_RenderScene( const refdef_t *fd ) {
+ 		R_RenderPshadowMaps(fd);
+ 	}
+ 
++	scope = DwPerfBegin(DW_PERF_FRONT_CSM, qfalse);
+ 	sunFlags = R_PrepareSunCascades(fd);
++	DwPerfEnd(scope);
+ 
+ 	// playing with cube maps
+ 	// this is where dynamic cubemaps would be rendered
+@@ -6999,7 +7014,9 @@ void RE_RenderScene( const refdef_t *fd ) {
+ 
+ 	parms.flags = sunFlags;
+ 
++	scope = DwPerfBegin(DW_PERF_FRONT_VIEW, qfalse);
+ 	R_RenderView( &parms );
++	DwPerfEnd(scope);
+ 
+ 	// DARKWOLF_PCRB_E2E_V0_7_VISIBLE_SURFACE_INFLUENCE_AUDIT
+ 	// Finalize only after the normal main-view world/bmodel surfaces have been walked.

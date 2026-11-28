@@ -1,0 +1,158 @@
+name: DarkWolf Render Performance Audit Win64
+
+on:
+  push:
+    branches:
+      - diag/dw-performance-win64-20261127
+    paths:
+      - '.github/workflows/DW_PERFORMANCE_AUDIT_WIN64.yml'
+      - 'integration/performance-audit/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: darkwolf-performance-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Verify exact Production runtime and renderer source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/45990828104" | jq -e '
+            .status == "completed" and .conclusion == "success" and
+            .head_sha == "77de4465581e9e104a6110a3cb97a37ee5a3d602"'
+          mkdir incoming
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/darkwolf-localvol-lamp-coverage-clean-production-20261127"
+          curl -fLsS --retry 3 --max-time 75 "$base/DarkWolf_Rend2_LocalVol_Lamp_Coverage_Clean_Production_Win64.zip" -o incoming/base.zip
+          curl -fLsS --retry 3 --max-time 75 "$base/DarkWolf_Rend2_LocalVol_Lamp_Coverage_Exact_Renderer_Source.tar.gz" -o incoming/source.tar.gz
+          cat <<'SUMS' | sha256sum -c
+          1cdf83aed0a0d740b028a62797fce3238d8e02cddff793845505ead9656ebacb  incoming/base.zip
+          c0a30c1f1b43f2e0c87bf06e947bc10dcad061f7498858298aef25190a59c89b  incoming/source.tar.gz
+          SUMS
+          mkdir source
+          tar xzf incoming/source.tar.gz -C source --strip-components=1
+          (cd source && sha256sum --quiet -c SOURCE_SHA256SUMS.txt)
+          git -C source init -q
+          patch="$PWD/integration/performance-audit/instrumentation.patch"
+          git -C source apply --check --whitespace=error-all "$patch"
+          git -C source apply --whitespace=error-all "$patch"
+
+      - name: Install MinGW and existing shader verification tools
+        timeout-minutes: 7
+        run: |
+          opts=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20
+                -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-)
+          sudo apt-get "${opts[@]}" update
+          sudo apt-get "${opts[@]}" install -y --no-install-recommends \
+            build-essential git jq unzip zip file glslang-tools \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
+
+      - name: Verify production sun, point-light state and GLSL variants
+        run: |
+          python3 -B integration/forcesun-transition/check.py source
+          python3 -B integration/sun-volumetric-edge/check-shaders.py source
+          python3 -B integration/localvol-lamps/check-shaders.py source
+
+      - name: Compile Win64 with the accepted MinGW release configuration
+        run: |
+          mkdir -p logs
+          make -C source/SP -j4 release VERSION=1.51d-SP_DarkWolf-Perf-Audit OPTIMIZE='-O3 -ffast-math -g1' \
+            PLATFORM=mingw32 ARCH=x86_64 BUILD_CLIENT=1 BUILD_SERVER=0 BUILD_GAME_SO=1 \
+            BUILD_GAME_QVM=0 BUILD_BASEGAME=1 BUILD_RENDERER_REND2=1 USE_RENDERER_DLOPEN=1 \
+            CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix \
+            WINDRES=x86_64-w64-mingw32-windres > logs/win64.log 2>&1 \
+            || { tail -150 logs/win64.log; exit 1; }
+
+      - name: Package complete test runtime over the approved Win64 ZIP
+        run: |
+          build=source/SP/build/release-mingw32-x86_64
+          mkdir -p symbols
+          for module in ioWolfSP.x64.exe renderer_sp_rend2_x64.dll; do
+            cp "$build/$module" "symbols/$module"
+            x86_64-w64-mingw32-strip --strip-debug "$build/$module"
+          done
+          python3 integration/performance-audit/package.py incoming/base.zip \
+            "$build/ioWolfSP.x64.exe" "$build/renderer_sp_rend2_x64.dll" \
+            source dist/DarkWolf_Rend2_Performance_Audit_Win64.zip \
+            --commit "$GITHUB_SHA" --run "$GITHUB_RUN_ID"
+          (cd dist && sha256sum -c *.zip.sha256)
+
+      - name: Upload verified test ZIP and checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf_Rend2_Performance_Audit_Win64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload compiler log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DarkWolf_Rend2_Performance_Audit_Build_Log
+          path: |
+            logs/win64.log
+            symbols/*
+          if-no-files-found: ignore
+
+  release:
+    needs: build
+    if: github.repository == 'jaha2002-stack/iortcw-rend2-build' && github.ref == 'refs/heads/diag/dw-performance-win64-20261127'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: dw-performance-audit-test-20261127
+    steps:
+      - name: Verify assets and publish a separate test release
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name DarkWolf_Rend2_Performance_Audit_Win64 --dir dist
+          cd dist
+          sha256sum -c *.zip.sha256
+          api="repos/$GITHUB_REPOSITORY/releases"
+          release_id="$(gh api "$api?per_page=100" --paginate | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id')"
+          if [[ -z "$release_id" ]]; then
+            release_id="$(gh api --method POST "$api" \
+              -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -F draft=true -F prerelease=true \
+              -f name='DarkWolf Rend2 — Performance Audit Test (Win64)' \
+              -f body='Win64 diagnostics based on Production Run 45990828104. Run RUN_DARKWOLF_PERF.bat with the normal graphics profile. The package records phase timings and crash breadcrumbs locally. See README_RU.md and PERFORMANCE_AUDIT_RU.md.' \
+              --jq .id)"
+          fi
+          release="$api/$release_id"
+          gh api "$release" | jq -e --arg tag "$TAG" --arg commit "$GITHUB_SHA" '
+            .tag_name == $tag and .target_commitish == $commit and .draft'
+          for file in *; do
+            expected="sha256:$(sha256sum "$file" | cut -d' ' -f1)"
+            actual="$(gh api "$release" | jq -r --arg name "$file" '.assets[] | select(.name == $name) | .digest')"
+            if [[ -z "$actual" ]]; then
+              for attempt in 1 2 3; do
+                if gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY"; then
+                  break
+                fi
+                sleep 3
+              done
+            fi
+            gh api "$release" | jq -e --arg name "$file" --arg checksum "$expected" '
+              any(.assets[]; .name == $name and .state == "uploaded" and .digest == $checksum)'
+          done
+          gh api --method PATCH "$release" -F draft=false -F prerelease=true -f make_latest=false --jq .html_url
