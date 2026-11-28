@@ -29,6 +29,12 @@ Remove-Item Env:DARKWOLF_PERF_DIR
 "start_utc=`t$Utc`r`npid=`t$($proc.Id)" | Set-Content -LiteralPath (Join-Path $Session 'session.txt') -Encoding UTF8
 "elapsed_s`tworking_set_bytes`tprivate_bytes`tprocess_cpu_seconds" | Set-Content -LiteralPath (Join-Path $Session 'memory.tsv') -Encoding ASCII
 "elapsed_s`tmodule`tbase_hex`tsize_bytes" | Set-Content -LiteralPath (Join-Path $Session 'modules.tsv') -Encoding UTF8
+$gpuFile = Join-Path $Session 'gpu-memory.tsv'
+"elapsed_s`tinstance`tdedicated_bytes`tshared_bytes`tlocal_bytes`tnonlocal_bytes" |
+    Set-Content -LiteralPath $gpuFile -Encoding UTF8
+$gpuCounterAvailable = $true
+$nextGpuSample = 2
+$pidPrefix = "pid_$($proc.Id)_"
 $seen = @{}
 $everSampled = $false
 $timer = [Diagnostics.Stopwatch]::StartNew()
@@ -52,6 +58,20 @@ while (!$proc.WaitForExit(1000)) {
         }
     } catch {
         if ($proc.HasExited) { break }
+    }
+    if ($gpuCounterAvailable -and $elapsed -ge $nextGpuSample) {
+        $nextGpuSample = $elapsed + 5
+        try {
+            $gpuRows = Get-CimInstance -ClassName Win32_PerfFormattedData_GPUPerformanceCounters_GPUProcessMemory -Filter "Name LIKE '${pidPrefix}%'" -OperationTimeoutSec 2
+            foreach ($row in $gpuRows) {
+                if (!$row.Name.StartsWith($pidPrefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
+                "$elapsed`t$($row.Name)`t$($row.DedicatedUsage)`t$($row.SharedUsage)`t$($row.LocalUsage)`t$($row.NonLocalUsage)" |
+                    Add-Content -LiteralPath $gpuFile -Encoding UTF8
+            }
+        } catch {
+            $gpuCounterAvailable = $false
+            "$elapsed`tunavailable" | Add-Content -LiteralPath $gpuFile -Encoding UTF8
+        }
     }
 }
 "stop_utc=`t$([DateTime]::UtcNow.ToString('o'))`r`nexit_dec=`t$($proc.ExitCode)`r`nexit_hex=`t$($proc.ExitCode.ToString('X8'))" |
