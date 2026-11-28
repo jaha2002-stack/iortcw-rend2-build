@@ -561,10 +561,10 @@ index 33e131f..904fb40 100644
  
 diff --git a/SP/code/rend2/tr_dw_perf.inc b/SP/code/rend2/tr_dw_perf.inc
 new file mode 100644
-index 0000000..6c2f909
+index 0000000..25b60c9
 --- /dev/null
 +++ b/SP/code/rend2/tr_dw_perf.inc
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,279 @@
 +/* Diagnostic scopes only. GPU queries are timestamp pairs and are never waited on. */
 +#include "../qcommon/dw_perf_io.inc"
 +
@@ -604,7 +604,8 @@ index 0000000..6c2f909
 +static double dwCpuTimes[DW_PERF_COUNT];
 +static unsigned int dwCounts[DW_PERF_COUNTERS];
 +static float dwCamera[3];
-+static int dwSceneLights, dwSceneEntities, dwSceneSurfaces, dwDrawRingPeak, dwDrawRingWraps;
++static int dwSceneLights, dwSceneEntities, dwSceneSurfaces;
++static int dwDrawStoragePeak, dwDrawStorageCapacity, dwDrawStorageGrowths;
 +static qboolean dwRenderActive;
 +
 +static void DwPerfHeader(dwPerfFile_t *file, const char *prefix)
@@ -674,7 +675,8 @@ index 0000000..6c2f909
 +        return;
 +    DwPerfHeader(&dwRenderLog, "kind\tframe\tclock_ms\tmap\tx\ty\tz\tlights\tentities\tsurfaces\t"
 +        "point_views\tworld_shadow_views\tfire_shadow_views\tcsm_views\tflare_reads\t"
-+        "local_passes\tfire_passes\tcommand_drops\tsurface_ring_peak\tsurface_ring_wraps\tquery_status\tcpu_elapsed_ms");
++        "local_passes\tfire_passes\tcommand_drops\tsurface_buffer_peak\tsurface_buffer_capacity\t"
++        "surface_buffer_growths\tquery_status\tcpu_elapsed_ms");
 +    DwPerfWrite(&dwRenderLog, "device\t%d\t%d\t%d\t%s\t%s\t%s\n", ri.Milliseconds(), glConfig.vidWidth,
 +        glConfig.vidHeight, glConfig.vendor_string, glConfig.renderer_string, glConfig.version_string);
 +    dwSettingsStamp = -5000;
@@ -726,7 +728,8 @@ index 0000000..6c2f909
 +    memset(dwCpuTimes, 0, sizeof(dwCpuTimes));
 +    memset(dwCounts, 0, sizeof(dwCounts));
 +    memset(dwCamera, 0, sizeof(dwCamera));
-+    dwSceneLights = dwSceneEntities = dwSceneSurfaces = dwDrawRingPeak = dwDrawRingWraps = 0;
++    dwSceneLights = dwSceneEntities = dwSceneSurfaces = 0;
++    dwDrawStoragePeak = dwDrawStorageCapacity = dwDrawStorageGrowths = 0;
 +    if (!dwQueryCounter)
 +        return;
 +    for (i = 0; i < DW_PERF_PENDING; ++i) {
@@ -752,20 +755,23 @@ index 0000000..6c2f909
 +    dwSceneEntities = tr.refdef.num_entities;
 +}
 +
-+void DwPerfDrawRing(int total, int viewSurfaces)
++void DwPerfDrawStorageUsage(int total, int capacity)
 +{
 +    if (!dwRenderActive)
 +        return;
-+    dwDrawRingPeak = MAX(dwDrawRingPeak, total);
-+    if (total > MAX_DRAWSURFS) {
-+        dwDrawRingWraps++;
-+        if (dwDrawRingWraps == 1) {
-+            DwPerfWrite(&dwRenderLog, "surface_ring_overflow\t%u\t%d\t%s\t%d\t%d\t%d\t0x%x\n",
-+                dwRenderFrame, ri.Milliseconds(), tr.world ? tr.world->baseName : "-", total, MAX_DRAWSURFS,
-+                viewSurfaces, (unsigned int)tr.viewParms.flags);
-+            DwPerfFlush(&dwRenderLog);
-+        }
-+    }
++    dwDrawStoragePeak = MAX(dwDrawStoragePeak, total);
++    dwDrawStorageCapacity = capacity;
++}
++
++void DwPerfDrawStorageGrowth(int previousCapacity, int capacity)
++{
++    if (!dwRenderActive)
++        return;
++    dwDrawStorageGrowths++;
++    DwPerfWrite(&dwRenderLog, "surface_buffer_grow\t%u\t%d\t%s\t%d\t%d\t0x%x\n",
++        dwRenderFrame, ri.Milliseconds(), tr.world ? tr.world->baseName : "-", previousCapacity, capacity,
++        (unsigned int)tr.viewParms.flags);
++    DwPerfFlush(&dwRenderLog);
 +}
 +
 +void DwPerfRenderEnd(void)
@@ -774,12 +780,13 @@ index 0000000..6c2f909
 +    if (!dwRenderActive)
 +        return;
 +    DwPerfWrite(&dwRenderLog, "frame\t%u\t%d\t%s\t%.1f\t%.1f\t%.1f\t%d\t%d\t%d\t"
-+        "%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%d\t%d\t%s\t%.3f",
++        "%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%d\t%d\t%d\t%s\t%.3f",
 +        dwRenderFrame, dwRenderStamp, tr.world ? tr.world->baseName : "-", dwCamera[0], dwCamera[1], dwCamera[2],
 +        dwSceneLights, dwSceneEntities, dwSceneSurfaces, dwCounts[DW_PERF_DRAW_POINT],
 +        dwCounts[DW_PERF_DRAW_OCCLUSION], dwCounts[DW_PERF_DRAW_FIRE], dwCounts[DW_PERF_DRAW_CSM],
 +        dwCounts[DW_PERF_FLARE_READ], dwCounts[DW_PERF_LOCAL_PASS], dwCounts[DW_PERF_FIRE_PASS],
-+        dwCounts[DW_PERF_DROP], dwDrawRingPeak, dwDrawRingWraps, dwGpuCurrent ? "submitted" : dwQueryCounter ? "queue_full" : "unavailable",
++        dwCounts[DW_PERF_DROP], dwDrawStoragePeak, dwDrawStorageCapacity, dwDrawStorageGrowths,
++        dwGpuCurrent ? "submitted" : dwQueryCounter ? "queue_full" : "unavailable",
 +        DwPerfMilliseconds(dwRenderStart, SDL_GetPerformanceCounter()));
 +    for (i = 0; i < DW_PERF_COUNT; ++i)
 +        DwPerfWrite(&dwRenderLog, "\t%.3f", dwCpuTimes[i]);
@@ -838,9 +845,22 @@ index 0000000..6c2f909
 +        dwCounts[kind]++;
 +}
 diff --git a/SP/code/rend2/tr_flares.c b/SP/code/rend2/tr_flares.c
-index 149d64b..7d6e4fa 100644
+index 149d64b..59f5b9a 100644
 --- a/SP/code/rend2/tr_flares.c
 +++ b/SP/code/rend2/tr_flares.c
+@@ -354,9 +354,9 @@ void RB_TestFlare( flare_t *f ) {
+ 	 * depth cannot make it visible. Avoid a synchronous GPU readback. */
+ 	visible = (qboolean)( f->flags & 1 );
+ 	if ( visible ) {
+-		// doing a readpixels is as good as doing a glFinish(), so
+-		// don't bother with another sync
+-		glState.finishCalled = qfalse;
++		// Do not re-enable an explicit GPU wait when r_finish is off.
++		if (r_finish->integer != 0)
++			glState.finishCalled = qfalse;
+ 
+ 		// if we're doing multisample rendering, read from the correct FBO
+ 		oldFbo = glState.currentFBO;
 @@ -366,7 +366,11 @@ void RB_TestFlare( flare_t *f ) {
  		}
  
@@ -855,7 +875,7 @@ index 149d64b..7d6e4fa 100644
  		// if we're doing multisample rendering, switch to the old FBO
  		if (tr.msaaResolveFbo)
 diff --git a/SP/code/rend2/tr_init.c b/SP/code/rend2/tr_init.c
-index 6b54ad7..1dd70ab 100644
+index 6b54ad7..eacb742 100644
 --- a/SP/code/rend2/tr_init.c
 +++ b/SP/code/rend2/tr_init.c
 @@ -2502,6 +2502,7 @@ void R_Init( void ) {
@@ -866,7 +886,7 @@ index 6b54ad7..1dd70ab 100644
  
  	R_InitVaos();
  
-@@ -2631,6 +2632,7 @@ void RE_Shutdown( qboolean destroyWindow ) {
+@@ -2631,9 +2632,11 @@ void RE_Shutdown( qboolean destroyWindow ) {
  			FBO_Shutdown();
  		R_DeleteTextures();
  		R_ShutdownVaos();
@@ -874,11 +894,34 @@ index 6b54ad7..1dd70ab 100644
  		GLSL_ShutdownGPUShaders();
  	}
  
++	R_ResetDrawSurfStorage(qtrue);
+ 	R_DoneFreeType();
+ 
+ 	// shut down platform specific OpenGL stuff
 diff --git a/SP/code/rend2/tr_local.h b/SP/code/rend2/tr_local.h
-index 41b485e..eb2a212 100644
+index 41b485e..4054c62 100644
 --- a/SP/code/rend2/tr_local.h
 +++ b/SP/code/rend2/tr_local.h
-@@ -3337,6 +3337,31 @@ RENDERER BACK END FUNCTIONS
+@@ -1620,8 +1620,7 @@ extern refimport_t ri;
+ #define	MAX_SKINS				1024
+ 
+ 
+-#define	MAX_DRAWSURFS			0x10000
+-#define	DRAWSURF_MASK			(MAX_DRAWSURFS-1)
++#define	INITIAL_DRAWSURFS		0x10000
+ 
+ /*
+ 
+@@ -3232,6 +3231,8 @@ SCENE GENERATION
+ */
+ 
+ void R_InitNextFrame( void );
++void R_ResetDrawSurfStorage(qboolean shutdown);
++drawSurf_t *R_DrawSurfStorage(void);
+ 
+ void RE_ClearScene( void );
+ void RE_AddRefEntityToScene( const refEntity_t *ent );
+@@ -3337,6 +3338,32 @@ RENDERER BACK END FUNCTIONS
  =============================================================
  */
  
@@ -902,7 +945,8 @@ index 41b485e..eb2a212 100644
 +void DwPerfRenderBegin(void);
 +void DwPerfRenderEnd(void);
 +void DwPerfScene(void);
-+void DwPerfDrawRing(int total, int viewSurfaces);
++void DwPerfDrawStorageUsage(int total, int capacity);
++void DwPerfDrawStorageGrowth(int previousCapacity, int capacity);
 +dwPerfScope_t DwPerfBegin(dwPerfStage_t kind, qboolean gpu);
 +void DwPerfEnd(dwPerfScope_t scope);
 +void DwPerfCount(dwPerfStage_t kind);
@@ -910,24 +954,246 @@ index 41b485e..eb2a212 100644
  void RB_ExecuteRenderCommands( const void *data );
  
  /*
+@@ -3486,7 +3513,7 @@ typedef enum {
+ // all of the information needed by the back end must be
+ // contained in a backEndData_t
+ typedef struct {
+-	drawSurf_t	drawSurfs[MAX_DRAWSURFS];
++	drawSurf_t	drawSurfs[INITIAL_DRAWSURFS];
+ 	dlight_t	dlights[MAX_DLIGHTS];
+ 	corona_t	coronas[MAX_CORONAS];	//----(SA)
+ 	trRefEntity_t	entities[MAX_REFENTITIES];
 diff --git a/SP/code/rend2/tr_main.c b/SP/code/rend2/tr_main.c
-index 321830b..bfde636 100644
+index 321830b..41b8e2d 100644
 --- a/SP/code/rend2/tr_main.c
 +++ b/SP/code/rend2/tr_main.c
-@@ -2316,6 +2316,8 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs ) {
+@@ -35,6 +35,7 @@ If you have questions concerning this license or the applicable additional terms
+ 
+ #include "tr_local.h"
+ 
++#include <limits.h>
+ #include <string.h> // memcpy
+ 
+ trGlobals_t tr;
+@@ -1623,13 +1624,21 @@ R_Radix
+ /* RC2-01: one histogram traversal, stable LSD order, no passes for constant bytes. */
+ static void R_RadixSort(drawSurf_t *source, int size)
+ {
+-    static drawSurf_t scratch[MAX_DRAWSURFS];
++    static drawSurf_t scratch[INITIAL_DRAWSURFS];
++    drawSurf_t *largeScratch = NULL;
+     int count[4][256] = {{0}};
+     int index[256];
+     int i, pass, bucket;
+     drawSurf_t *from = source, *to = scratch, *swap;
+     if (size < 2)
+         return;
++    if (size > ARRAY_LEN(scratch))
++    {
++        largeScratch = malloc((size_t)size * sizeof(*largeScratch));
++        if (!largeScratch)
++            ri.Error(ERR_DROP, "Could not allocate sort storage for %d draw surfaces", size);
++        to = largeScratch;
++    }
+     for (i = 0; i < size; ++i)
+     {
+         unsigned int key = source[i].sort;
+@@ -1654,10 +1663,68 @@ static void R_RadixSort(drawSurf_t *source, int size)
+     }
+     if (from != source)
+         Com_Memcpy(source, from, size * sizeof(*source));
++    if (largeScratch)
++        free(largeScratch);
+ }
+ 
+ //==========================================================================================
+ 
++typedef struct drawSurfBuffer_s {
++	struct drawSurfBuffer_s *previous;
++	int capacity;
++	drawSurf_t surfaces[];
++} drawSurfBuffer_t;
++
++static drawSurfBuffer_t *s_drawSurfBuffer;
++
++void R_ResetDrawSurfStorage(qboolean shutdown) {
++	// Draw commands and the portal's parent view can still reference old buffers
++	// until the frame has been submitted. Keep the largest allocation for reuse.
++	drawSurfBuffer_t *buffer = s_drawSurfBuffer;
++	if (!shutdown && buffer) {
++		buffer = buffer->previous;
++		s_drawSurfBuffer->previous = NULL;
++	} else {
++		s_drawSurfBuffer = NULL;
++	}
++	while (buffer) {
++		drawSurfBuffer_t *previous = buffer->previous;
++		free(buffer);
++		buffer = previous;
++	}
++}
++
++drawSurf_t *R_DrawSurfStorage(void) {
++	return s_drawSurfBuffer ? s_drawSurfBuffer->surfaces : backEndData->drawSurfs;
++}
++
++static int R_DrawSurfCapacity(void) {
++	return s_drawSurfBuffer ? s_drawSurfBuffer->capacity : INITIAL_DRAWSURFS;
++}
++
++static void R_GrowDrawSurfStorage(int count) {
++	drawSurfBuffer_t *buffer;
++	int capacity;
++	size_t bytes;
++
++	if (count > INT_MAX / 2 ||
++		(size_t)count > (((size_t)-1 - sizeof(*buffer)) / sizeof(drawSurf_t)) / 2) {
++		ri.Error(ERR_DROP, "Draw surface storage limit reached at %d surfaces", count);
++	}
++	capacity = count * 2;
++	bytes = sizeof(*buffer) + (size_t)capacity * sizeof(drawSurf_t);
++	buffer = malloc(bytes);
++	if (!buffer) {
++		ri.Error(ERR_DROP, "Could not allocate storage for %d draw surfaces", capacity);
++	}
++	Com_Memcpy(buffer->surfaces, tr.refdef.drawSurfs, (size_t)count * sizeof(drawSurf_t));
++	buffer->capacity = capacity;
++	buffer->previous = s_drawSurfBuffer;
++	s_drawSurfBuffer = buffer;
++	tr.refdef.drawSurfs = buffer->surfaces;
++	DwPerfDrawStorageGrowth(count, capacity);
++}
++
+ /*
+ =================
+ R_AddDrawSurf
+@@ -1667,9 +1734,10 @@ void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
+ 					int fogIndex, int dlightMap, int pshadowMap, int cubemap, int atiTess ) {
+ 	int index;
+ 
+-	// instead of checking for overflow, we just mask the index
+-	// so it wraps around
+-	index = tr.refdef.numDrawSurfs & DRAWSURF_MASK;
++	index = tr.refdef.numDrawSurfs;
++	if (index == R_DrawSurfCapacity()) {
++		R_GrowDrawSurfStorage(index);
++	}
+ 	// the sort data is packed into a single 32 bit value so it can be
+ 	// compared quickly during the qsorting process
+ // GR - add tesselation flag to the sort
+@@ -2316,6 +2384,8 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs ) {
  // GR - tessellation flag
  	int atiTess;
  
-+	DwPerfDrawRing(tr.refdef.numDrawSurfs, numDrawSurfs);
++	DwPerfDrawStorageUsage(tr.refdef.numDrawSurfs, R_DrawSurfCapacity());
 +
  	//ri.Printf(PRINT_ALL, "firstDrawSurf %d numDrawSurfs %d\n", (int)(drawSurfs - tr.refdef.drawSurfs), numDrawSurfs);
  
  	// it is possible for some views to not have any surfaces
+@@ -2590,7 +2660,6 @@ or a mirror / remote location
+ */
+ void R_RenderView( viewParms_t *parms ) {
+ 	int firstDrawSurf;
+-	int numDrawSurfs;
+ 
+ 	if ( parms->viewportWidth <= 0 || parms->viewportHeight <= 0 ) {
+ 		return;
+@@ -2613,15 +2682,7 @@ void R_RenderView( viewParms_t *parms ) {
+ 
+ 	R_GenerateDrawSurfs();
+ 
+-	// if we overflowed MAX_DRAWSURFS, the drawsurfs
+-	// wrapped around in the buffer and we will be missing
+-	// the first surfaces, not the last ones
+-	numDrawSurfs = tr.refdef.numDrawSurfs;
+-	if ( numDrawSurfs > MAX_DRAWSURFS ) {
+-		numDrawSurfs = MAX_DRAWSURFS;
+-	}
+-
+-	R_SortDrawSurfs( tr.refdef.drawSurfs + firstDrawSurf, numDrawSurfs - firstDrawSurf );
++	R_SortDrawSurfs( tr.refdef.drawSurfs + firstDrawSurf, tr.refdef.numDrawSurfs - firstDrawSurf );
+ 
+ 	// draw main system development information (surface outlines, etc)
+ 	R_DebugGraphics();
+@@ -2839,14 +2900,18 @@ void R_RenderDlightWorldOcclusion(const refdef_t *fd)
+ 		dlight_t *dl = &tr.refdef.dlights[i];
+ 		vec3_t testCaptureOrigin;
+ 		float requiredRadius;
++		unsigned int brushKey;
+ 		if (!dl->worldOcclusion || !(dl->radius > 0.0f)) continue;
+ 		if (!R_ElectricCapturePolicy(dl, &electricFixture[i]))
+ 			electricFixture[i] = R_ElectricFixtureForLightAuto(dl);
+ 		electricKey[i] = R_ElectricFixtureKey(electricFixture[i]);
+ 		R_DWProductionTeslaWorldCaptureOrigin(dl, testCaptureOrigin);
+ 		requiredRadius = dl->radius + fabs(testCaptureOrigin[0] - dl->origin[0]);
++		brushKey = R_ArchitecturalBrushKey(tr.refdef.entities, tr.refdef.num_entities,
++			testCaptureOrigin, requiredRadius);
+ 		for (j = 0; j < DLIGHT_WORLD_CACHE_MAX; ++j)
+-			if (R_DlightWorldCacheMatches(&tr.dlightWorldCache[j], testCaptureOrigin, requiredRadius, R_IFLC_FixturePolicyKey(R_IFLC_ShadowFixture(dl)), electricKey[i], R_ArchitecturalBrushKey(tr.refdef.entities, tr.refdef.num_entities, testCaptureOrigin, requiredRadius)))
++			if (R_DlightWorldCacheMatches(&tr.dlightWorldCache[j], testCaptureOrigin, requiredRadius,
++				R_IFLC_FixturePolicyKey(R_IFLC_ShadowFixture(dl)), electricKey[i], brushKey))
+ 			{
+ 				active[j] = qtrue;
+ 				tr.refdef.dlightWorldSlot[i] = j;
+@@ -2864,9 +2929,16 @@ void R_RenderDlightWorldOcclusion(const refdef_t *fd)
+ 		R_DWProductionTeslaWorldCaptureOrigin(dl, testCaptureOrigin);
+ 		requiredRadius = dl->radius + fabs(testCaptureOrigin[0] - dl->origin[0]);
+ 		// A preceding miss can have populated the same exact origin this scene.
+-		if (slot < 0)
++		if (slot < 0) {
++			const unsigned int brushKey = R_ArchitecturalBrushKey(tr.refdef.entities,
++				tr.refdef.num_entities, testCaptureOrigin, requiredRadius);
+ 			for (j = 0; j < DLIGHT_WORLD_CACHE_MAX; ++j)
+-				if (R_DlightWorldCacheMatches(&tr.dlightWorldCache[j], testCaptureOrigin, requiredRadius, R_IFLC_FixturePolicyKey(R_IFLC_ShadowFixture(dl)), electricKey[i], R_ArchitecturalBrushKey(tr.refdef.entities, tr.refdef.num_entities, testCaptureOrigin, requiredRadius))) { slot = j; break; }
++				if (R_DlightWorldCacheMatches(&tr.dlightWorldCache[j], testCaptureOrigin, requiredRadius,
++					R_IFLC_FixturePolicyKey(R_IFLC_ShadowFixture(dl)), electricKey[i], brushKey)) {
++					slot = j;
++					break;
++				}
++		}
+ 		if (slot < 0)
+ 		{
+ 			unsigned int oldest = ~0u;
+@@ -2898,7 +2970,7 @@ void R_RenderDlightWorldOcclusion(const refdef_t *fd)
+ 			shadowParms.electricFixtureKey = electricKey[i];
+ 			shadowParms.zFar = range;
+ 			VectorCopy(testCaptureOrigin, shadowParms.or.origin);
+-			// Cold-cache captures may exceed the shared command/surface rings.
++			// Cold-cache captures can fill the render command buffer.
+ 			// Consume earlier views before reusing their storage; submit each new
+ 			// face completely before declaring the cache entry valid. No glFinish.
+ 			R_IssuePendingRenderCommands();
+@@ -2907,8 +2979,6 @@ void R_RenderDlightWorldOcclusion(const refdef_t *fd)
+ 			{
+ 				R_FireVolProductionSetCubeAxis(&shadowParms, side);
+ 				R_RenderView(&shadowParms);
+-				if (tr.refdef.numDrawSurfs > MAX_DRAWSURFS)
+-					ri.Error(ERR_DROP, "Dlight architectural capture exceeds surface ring");
+ 				R_AddCapShadowmapCmd(DLIGHT_WORLD_MAP_BASE + slot, side);
+ 				R_IssuePendingRenderCommands();
+ 				tr.refdef.numDrawSurfs = 0;
 diff --git a/SP/code/rend2/tr_scene.c b/SP/code/rend2/tr_scene.c
-index 7ac3e7c..33a12b5 100644
+index 7ac3e7c..6bc52ae 100644
 --- a/SP/code/rend2/tr_scene.c
 +++ b/SP/code/rend2/tr_scene.c
-@@ -6902,6 +6902,7 @@ void RE_RenderScene( const refdef_t *fd ) {
+@@ -97,6 +97,7 @@ R_InitNextFrame
+ */
+ void R_InitNextFrame( void ) {
+ 	backEndData->commands.used = 0;
++	R_ResetDrawSurfStorage(qfalse);
+ 
+ 	r_firstSceneDrawSurf = 0;
+ 
+@@ -6561,7 +6562,7 @@ void RE_BeginScene(const refdef_t *fd)
+ 	tr.refdef.floatTime = tr.refdef.time * 0.001;
+ 
+ 	tr.refdef.numDrawSurfs = r_firstSceneDrawSurf;
+-	tr.refdef.drawSurfs = backEndData->drawSurfs;
++	tr.refdef.drawSurfs = R_DrawSurfStorage();
+ 
+ 	tr.refdef.num_entities = r_numentities - r_firstSceneEntity;
+ 	tr.refdef.entities = &backEndData->entities[r_firstSceneEntity];
+@@ -6902,6 +6903,7 @@ void RE_RenderScene( const refdef_t *fd ) {
  	int				startTime;
  	viewParmFlags_t		sunFlags;
  	int dlightDiagInjectedIndex;
@@ -935,7 +1201,7 @@ index 7ac3e7c..33a12b5 100644
  
  	if ( !tr.registered ) {
  		return;
-@@ -6918,6 +6919,7 @@ void RE_RenderScene( const refdef_t *fd ) {
+@@ -6918,6 +6920,7 @@ void RE_RenderScene( const refdef_t *fd ) {
  		ri.Error (ERR_DROP, "R_RenderScene: NULL worldmodel");
  	}
  
@@ -943,7 +1209,7 @@ index 7ac3e7c..33a12b5 100644
  	dlightDiagInjectedIndex = R_AddDlightDiagnosticSource(fd);
  	// REND2_STATIC_LIGHT_PROMOTION_POC_V9_0: append at most two selected static BSP lights
  	// before RE_BeginScene snapshots the current scene dlight range.
-@@ -6935,19 +6937,30 @@ void RE_RenderScene( const refdef_t *fd ) {
+@@ -6935,19 +6938,30 @@ void RE_RenderScene( const refdef_t *fd ) {
  			s_localVolumetricSpotCount * sizeof(localVolumetricSpot_t));
  
  	tr.refdef.dlightDiagInjectedIndex = dlightDiagInjectedIndex;
@@ -974,7 +1240,7 @@ index 7ac3e7c..33a12b5 100644
  
  	/* playing with more shadows */
  	if(glRefConfig.framebufferObject && !( fd->rdflags & RDF_NOWORLDMODEL ) && r_shadows->integer == 4)
-@@ -6955,7 +6968,9 @@ void RE_RenderScene( const refdef_t *fd ) {
+@@ -6955,7 +6969,9 @@ void RE_RenderScene( const refdef_t *fd ) {
  		R_RenderPshadowMaps(fd);
  	}
  
@@ -984,7 +1250,7 @@ index 7ac3e7c..33a12b5 100644
  
  	// playing with cube maps
  	// this is where dynamic cubemaps would be rendered
-@@ -6999,7 +7014,9 @@ void RE_RenderScene( const refdef_t *fd ) {
+@@ -6999,7 +7015,9 @@ void RE_RenderScene( const refdef_t *fd ) {
  
  	parms.flags = sunFlags;
  
@@ -994,3 +1260,16 @@ index 7ac3e7c..33a12b5 100644
  
  	// DARKWOLF_PCRB_E2E_V0_7_VISIBLE_SURFACE_INFLUENCE_AUDIT
  	// Finalize only after the normal main-view world/bmodel surfaces have been walked.
+diff --git a/SP/code/rend2/tr_world.c b/SP/code/rend2/tr_world.c
+index e6a7a01..7ac445c 100644
+--- a/SP/code/rend2/tr_world.c
++++ b/SP/code/rend2/tr_world.c
+@@ -2164,7 +2164,7 @@ static void R_AddWorldSurface( msurface_t *surf, int dlightBits, int pshadowBits
+ 
+ // GR - not tessellated
+ 	R_AddDrawSurf( surf->data, surf->shader, surf->fogIndex, dlightBits, pshadowBits, surf->cubemapIndex, ATI_TESS_NONE );
+-	tr.refdef.drawSurfs[(tr.refdef.numDrawSurfs - 1) & DRAWSURF_MASK].mapLightingKey = R_MapLightingLearnWorldSurfaceKey(surf); // DARKWOLF_MAP_LIGHTING_LEARN_V0_1_INTERACTIVE_ZONE_AUTHORING_PROFILE_PERSISTENCE
++	tr.refdef.drawSurfs[tr.refdef.numDrawSurfs - 1].mapLightingKey = R_MapLightingLearnWorldSurfaceKey(surf); // DARKWOLF_MAP_LIGHTING_LEARN_V0_1_INTERACTIVE_ZONE_AUTHORING_PROFILE_PERSISTENCE
+ 	if (materialTarget)
+ 		dlightMaterialDiagShadowAdded++;
+ }

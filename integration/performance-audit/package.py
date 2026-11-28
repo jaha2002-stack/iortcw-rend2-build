@@ -21,7 +21,7 @@ RENDERER = 'renderer_sp_rend2_x64.dll'
 ENGINE = 'ioWolfSP_Diagnostics.x64.exe'
 ADDED = {'SP/code/qcommon/dw_perf_main.inc', 'SP/code/qcommon/dw_perf_io.inc', 'SP/code/rend2/tr_dw_perf.inc'}
 CHANGED = {'SP/code/qcommon/common.c'} | {f'SP/code/rend2/{name}' for name in (
-    'tr_backend.c', 'tr_cmds.c', 'tr_flares.c', 'tr_init.c', 'tr_local.h', 'tr_main.c', 'tr_scene.c'
+    'tr_backend.c', 'tr_cmds.c', 'tr_flares.c', 'tr_init.c', 'tr_local.h', 'tr_main.c', 'tr_scene.c', 'tr_world.c'
 )}
 
 
@@ -79,7 +79,8 @@ def main():
     files['docs/BASE_PRODUCTION_MANIFEST.json'] = files.pop('PRODUCTION_MANIFEST.json')
     files.pop('PRODUCTION_RELEASE_FINALIZATION_REPORT_RU.md')
     files['PERFORMANCE_TEST_MANIFEST.json'] = (json.dumps({
-        'status': 'PERFORMANCE_DIAGNOSTIC',
+        'status': 'PERFORMANCE_FOLLOWUP_TEST',
+        'previous_diagnostic_run': 46117890741,
         'base_run': BASE_RUN,
         'base_commit': BASE_COMMIT,
         'base_zip_sha256': BASE_ZIP,
